@@ -3,8 +3,9 @@
 //! Windows waits for every low-level hook before any key reaches any app, and drops a hook that
 //! keeps it waiting too long, so the callback only decides (from the key and a flag) whether to
 //! swallow the key, and hands what it saw to the UI. It never waits on the UI. Only Alt+Tab and
-//! Alt+Shift+Tab are taken; while the switcher is open, also Esc, Enter and the arrow keys. Every
-//! other key passes untouched. The hook belongs to this process: if it ends, Windows' own Alt+Tab
+//! Alt+Shift+Tab are taken; while the switcher is open, also Esc, Enter and the arrow keys; and
+//! the release of a lone Win tap, which opens the launcher (`winkey`). Every other key passes
+//! untouched. The hook belongs to this process: if it ends, Windows' own Alt+Tab
 //! is back.
 
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -99,7 +100,7 @@ static OPEN: AtomicBool = AtomicBool::new(false);
 static SINK: OnceLock<Box<dyn Fn(Key) + Send + Sync>> = OnceLock::new();
 static THREAD: AtomicU32 = AtomicU32::new(0);
 /// Marks the keys this process sends, so the hook lets them by.
-const OURS: usize = 0x5348_4D4E; // "SHMN"
+const OURS: usize = crate::winkey::OURS;
 /// Asks the hook thread to send the mask key.
 const WM_MASK: u32 = WM_APP + 1;
 /// A key no keyboard has and no app uses.
@@ -174,6 +175,11 @@ unsafe extern "system" fn on_key(code: i32, wparam: WPARAM, lparam: LPARAM) -> L
         return CallNextHookEx(None, code, wparam, lparam);
     }
     let info = &*(lparam.0 as *const KBDLLHOOKSTRUCT);
+    // Every key goes past the Win key's watch first: it has to see the keys between Win's press
+    // and release to tell a lone tap from a shortcut.
+    if info.dwExtraInfo != OURS && crate::winkey::on_key(info, crate::winkey::shellman_is_shell, crate::winkey::summon) {
+        return LRESULT(1);
+    }
     let vk = VIRTUAL_KEY(info.vkCode as u16);
     let watched = matches!(
         vk,

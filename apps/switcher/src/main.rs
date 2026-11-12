@@ -1,5 +1,6 @@
 #![windows_subsystem = "windows"]
-//! Shellman's window switcher: hold Alt and press Tab.
+//! Shellman's window switcher: hold Alt and press Tab. Its keyboard hook also turns a lone Win
+//! key into the launcher (`winkey`).
 //!
 //! A resident process with one window, hidden between uses. The keyboard hook (`keys`) wakes the
 //! UI, which runs the switcher (`switcher`) and draws it (`panel`) only while it is open.
@@ -11,6 +12,7 @@ mod panel;
 mod select;
 mod shape;
 mod switcher;
+mod winkey;
 
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use shellman_ui::appearance::{self, Appearance};
