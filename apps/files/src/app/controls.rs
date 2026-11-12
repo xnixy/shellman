@@ -18,6 +18,14 @@ const KEYS: [(SortKey, &str); 4] = [
     (SortKey::Size, "Size"),
 ];
 
+/// Menu entries in a plain popup show as rows, filled only when hovered, as they do in a context
+/// menu (a popup otherwise gives each button a frame).
+pub(super) fn flat_items(ui: &mut Ui) {
+    let w = &mut ui.visuals_mut().widgets;
+    w.inactive.weak_bg_fill = egui::Color32::TRANSPARENT;
+    w.inactive.bg_stroke = egui::Stroke::NONE;
+}
+
 impl super::FileMan {
     pub(super) fn window_controls(&mut self, ui: &mut Ui, pill: Rect, actions: &mut Vec<Action>) {
         let inner = pill.shrink(PAD);
@@ -53,6 +61,7 @@ impl super::FileMan {
 
     fn sort_menu(&mut self, ui: &mut Ui, actions: &mut Vec<Action>) {
         ui.set_min_width(200.0);
+        flat_items(ui);
         let tab = &mut self.tabs[self.active];
         for (key, name) in KEYS {
             let g = if tab.sort == key { glyph::CHECK } else { ' ' };

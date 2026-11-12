@@ -34,8 +34,12 @@ impl super::FileMan {
                 let under = ui.painter().add(Shape::Noop);
                 islands::drag_gaps(ui, screen);
 
-                let tabs = self.tab_strip(ui, plan.tabs_row, actions);
-                list.push(Island::pill(tabs));
+                let top = if self.pick.is_some() {
+                    self.pick_title(ui, plan.tabs_row, actions)
+                } else {
+                    self.tab_strip(ui, plan.tabs_row, actions)
+                };
+                list.push(Island::pill(top));
                 self.window_controls(ui, plan.controls, actions);
                 list.push(Island::pill(plan.controls));
                 self.toolbar(ui, plan.bar, actions);
@@ -63,7 +67,15 @@ impl super::FileMan {
                 self.folder_body(&mut child, actions);
 
                 let mut extra = Vec::new();
-                if let Some(pill) = self.band(ui, plan.band, actions, &mut extra) {
+                let pill = if self.pick.is_some() {
+                    // Messages go up beside the title, the bottom being the picker's.
+                    self.toast_pill(ui, plan.tabs_row, &mut extra);
+                    self.pick_band(ui, plan.band)
+                } else {
+                    self.toast_pill(ui, plan.band, &mut extra);
+                    self.band(ui, plan.band, actions)
+                };
+                if let Some(pill) = pill {
                     list.push(Island::pill(pill));
                 }
                 list.extend(extra.into_iter().map(Island::pill));

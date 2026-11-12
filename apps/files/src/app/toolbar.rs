@@ -340,6 +340,9 @@ impl super::FileMan {
             actions.push(Action::Navigate(Loc::Pc));
         } else if p.is_dir() {
             actions.push(Action::Navigate(Loc::Dir(p)));
+        } else if p.is_file() && self.pick.is_some() {
+            // In a picker, a typed file is the one chosen.
+            self.pick_typed_path(&p);
         } else if p.is_file() {
             fsops::open(&p);
         } else {
@@ -349,7 +352,7 @@ impl super::FileMan {
 }
 
 /// Expands %VARS% in a typed path, like Explorer's address bar.
-fn expand_env(s: &str) -> String {
+pub(super) fn expand_env(s: &str) -> String {
     let mut out = String::new();
     let mut rest = s;
     while let Some(start) = rest.find('%') {

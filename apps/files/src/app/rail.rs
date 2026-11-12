@@ -98,7 +98,7 @@ impl super::FileMan {
     pub(super) fn rail(&mut self, ui: &mut Ui, area: Rect, actions: &mut Vec<Action>) -> Rect {
         let places = quick_places();
         let groups = [
-            places.len() + 1,
+            places.len() + usize::from(self.pick.is_none()),
             self.settings.pins.len(),
             self.shown_apps().len(),
             1 + self.drives.len(),
@@ -136,12 +136,15 @@ impl super::FileMan {
                         actions.push(Action::NewTab(loc));
                     }
                 }
-                let bin = glyph_item(ui, glyph::DELETE, "Recycle Bin", current == Loc::Bin);
-                if bin.clicked() {
-                    actions.push(Action::Navigate(Loc::Bin));
-                }
-                if bin.middle_clicked() {
-                    actions.push(Action::NewTab(Loc::Bin));
+                // A picker has no use for the bin.
+                if !self.pick_hides(&Loc::Bin) {
+                    let bin = glyph_item(ui, glyph::DELETE, "Recycle Bin", current == Loc::Bin);
+                    if bin.clicked() {
+                        actions.push(Action::Navigate(Loc::Bin));
+                    }
+                    if bin.middle_clicked() {
+                        actions.push(Action::NewTab(Loc::Bin));
+                    }
                 }
                 group(ui, groups[1]);
                 self.rail_pins(ui, &current, actions);

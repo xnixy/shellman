@@ -1,0 +1,17 @@
+[package]
+name = "shellman-pickhook"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "An in-process COM server that hands apps' Open and Save dialogs to the Files picker"
+
+[lib]
+name = "shellman_pickhook"
+# The DLL itself, and a Rust library so the test host can reach the class factory directly.
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+shellman-pick.workspace = true
+windows.workspace = true
+windows-core.workspace = true

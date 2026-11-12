@@ -14,6 +14,8 @@ mod layout;
 mod list;
 mod menu;
 mod pc;
+mod pick_band;
+mod picker;
 mod pins;
 mod places;
 mod plan;
@@ -107,6 +109,8 @@ pub(crate) struct FileMan {
     apps: places::Registered,
     /// Which pinned folders are still there.
     pin_exists: pins::Exists,
+    /// Picker mode: the window is another app's file dialog (see `picker`). None when browsing.
+    pick: Option<picker::Picker>,
 }
 
 impl FileMan {
@@ -115,10 +119,18 @@ impl FileMan {
         settings: crate::settings::Settings,
         look: shellman_ui::appearance::Appearance,
         start: crate::args::Start,
+        pick: Option<crate::pick::Session>,
         hwnd: isize,
         panel: Option<shellman_ui::glass::GlassPanel>,
     ) -> Self {
         let (tx, rx) = channel();
+        let mut settings = settings;
+        let pick = pick.map(|session| {
+            if session.req.show_hidden {
+                settings.show_hidden = true;
+            }
+            picker::Picker::new(session)
+        });
         let mut locs: Vec<Loc> = settings
             .tabs
             .iter()
@@ -129,7 +141,13 @@ impl FileMan {
             crate::args::Start::Saved => {}
             crate::args::Start::Folder(dir) => locs = vec![Loc::Dir(dir)],
             crate::args::Start::RecycleBin => locs = vec![Loc::Bin],
+            // Only the one place the picker opens on (below).
+            crate::args::Start::Pick(_) => {}
         }
+        let pick = pick.map(|(p, loc)| {
+            locs = vec![loc];
+            p
+        });
         if locs.is_empty() {
             locs.push(dirs::home_dir().map_or(Loc::Pc, Loc::Dir));
         }
@@ -178,11 +196,13 @@ impl FileMan {
             menu_settle_target: None,
             apps: places::Registered::new(&ctx_for_apps),
             pin_exists: pins::Exists::default(),
+            pick,
         };
         for loc in locs {
             app.push_tab(loc);
         }
         app.active = 0;
+        app.pick_apply_filter();
         app.load_drives();
         app
     }
@@ -435,6 +455,11 @@ impl FileMan {
 
 impl eframe::App for FileMan {
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        // A picker leaves Files' own settings alone; closing it unanswered is a cancel.
+        if self.pick.is_some() {
+            self.pick_closing();
+            return;
+        }
         // Remember where the window is; a maximized one keeps the earlier spot.
         if let Some(rect) = crate::placement::window_rect(self.hwnd) {
             self.settings.window = Some(rect);
@@ -466,7 +491,12 @@ impl eframe::App for FileMan {
         }
         self.thumbs.poll(ctx);
         self.apps.poll(ctx);
+        if self.pick.is_some() {
+            self.pick_follow_selection();
+            self.pick_poll();
+        }
         let mut actions = Vec::new();
+        self.pick_keys(ctx, &mut actions);
         self.keyboard(ctx, &mut actions);
         self.take_dropped_files(ctx);
 
@@ -479,12 +509,16 @@ impl eframe::App for FileMan {
         // After the actions, so a menu opened by this frame's right click is drawn in this frame.
         self.context_menu(ctx);
 
-        let title = format!("{} - Files", self.tabs[self.active].loc.title());
+        let title = match self.picker() {
+            Some(p) => crate::pick::button::title(&p.session.req),
+            None => format!("{} - Files", self.tabs[self.active].loc.title()),
+        };
         if title != self.title {
             ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
             self.title = title;
         }
-        if std::mem::take(&mut self.save_pending) {
+        // A picker's changes (the view, hidden items) last only while it is open.
+        if std::mem::take(&mut self.save_pending) && self.pick.is_none() {
             self.settings.tabs = self
                 .tabs
                 .iter()
