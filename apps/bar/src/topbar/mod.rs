@@ -75,9 +75,15 @@ impl TopBar {
     fn draw(&mut self, ctx: &egui::Context, front: Option<&AppWindow>, glass: bool, with_tray: bool) {
         theme::set_light(crate::app::light(ctx));
         let c = colors();
-        // Over composed glass (the dock's material, under the window) nothing is filled here;
-        // without it, the bar paints a solid surface.
-        let surface = shellman_ui::glass::content_frame(glass, &crate::bars::top_style()).corner_radius(0);
+        // Over composed glass (the dock's material, under the window) only a scrim is filled
+        // here, so the bar's small muted text stays legible at the clearest glass settings (at
+        // glass 1 over a white window the date all but vanished); without glass, the bar paints
+        // a solid surface.
+        let style = crate::bars::top_style();
+        let mut surface = shellman_ui::glass::content_frame(glass, &style).corner_radius(0);
+        if glass {
+            surface = surface.fill(scrim(style.tint));
+        }
         egui::CentralPanel::default()
             .frame(surface)
             .show(ctx, |ui| {
@@ -87,6 +93,15 @@ impl TopBar {
                 left::draw(ui, bar, front, limit - 14.0);
             });
     }
+}
+
+/// What tops the glass's tint up to at least `COVER` of the backdrop hidden, in the tint's own
+/// colour; transparent when the tint already hides that much.
+fn scrim(tint: egui::Color32) -> egui::Color32 {
+    const COVER: f32 = 0.85;
+    let a = tint.a() as f32 / 255.0;
+    let extra = (1.0 - (1.0 - COVER) / (1.0 - a).max(0.001)).max(0.0);
+    theme::with_alpha(tint.to_opaque(), (extra * 255.0).round() as u8)
 }
 
 /// The one hairline along the bar's lower edge.
