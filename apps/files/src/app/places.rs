@@ -65,9 +65,12 @@ impl Registered {
         }
         while let Ok((id, px, image)) = self.done.try_recv() {
             let slot = match image {
-                Some(img) => Slot::Ready(ctx.load_texture(
+                Some(mut img) => Slot::Ready(ctx.load_texture(
                     format!("place:{id}:{px}"),
-                    img,
+                    {
+                        mono(&mut img.pixels);
+                        img
+                    },
                     TextureOptions::LINEAR,
                 )),
                 None => Slot::Missing,
@@ -102,6 +105,34 @@ impl Registered {
 }
 
 /// `ids` with `id` added: the hidden list's only operations, kept apart so they can be tested.
+/// Turn an app's coloured icon into a one-colour mark, so it sits with the rail's glyphs: every
+/// pixel becomes white, and how solid it is follows how far its brightness stands out from the
+/// rest of the icon. The part that covers less of the icon is taken for the figure (iCloud's
+/// white cloud on its blue tile, a dark logo on a light tile). A flat icon keeps its outline.
+fn mono(pixels: &mut [egui::Color32]) {
+    let lum = |c: &egui::Color32| {
+        // Colours are stored premultiplied; undo that so a soft edge is not read as dark.
+        let a = c.a().max(1) as f32;
+        (0.2126 * c.r() as f32 + 0.7152 * c.g() as f32 + 0.0722 * c.b() as f32) / a
+    };
+    let solid: Vec<f32> = pixels.iter().filter(|c| c.a() > 24).map(lum).collect();
+    let (lo, hi) = solid.iter().fold((f32::MAX, f32::MIN), |(lo, hi), &l| (lo.min(l), hi.max(l)));
+    let flat = solid.is_empty() || hi - lo < 0.15;
+    let level = |l: f32| ((l - lo) / (hi - lo)).clamp(0.0, 1.0);
+    // Mostly bright means the figure is the dark part.
+    let invert = !flat && solid.iter().map(|&l| level(l)).sum::<f32>() / solid.len() as f32 > 0.5;
+    for c in pixels.iter_mut() {
+        let part = if flat {
+            1.0
+        } else {
+            let v = level(lum(c));
+            if invert { 1.0 - v } else { v }
+        };
+        let a = (c.a() as f32 * part).round() as u8;
+        *c = egui::Color32::from_rgba_premultiplied(a, a, a, a);
+    }
+}
+
 pub(super) fn hide(hidden: &mut Vec<String>, id: &str) -> bool {
     if hidden.iter().any(|h| h.eq_ignore_ascii_case(id)) {
         return false;
@@ -159,7 +190,9 @@ impl super::FileMan {
                             id,
                             at,
                             egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                            egui::Color32::WHITE,
+                            // The texture is a white mask (see `mono`), so this draws it in the
+                            // rail's own colour, like the glyphs beside it.
+                            fg,
                         );
                     } else if !wait {
                         p.text(
@@ -235,6 +268,29 @@ impl super::FileMan {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_coloured_icon_becomes_a_white_mark_of_its_figure() {
+        use egui::Color32 as C;
+        // A blue tile with a small white figure: the figure stays, the tile goes.
+        let mut px = vec![C::from_rgb(20, 90, 230); 12];
+        px.extend([C::WHITE; 4]);
+        px.push(C::TRANSPARENT);
+        mono(&mut px);
+        assert_eq!(px[0].a(), 0);
+        assert_eq!(px[12], C::WHITE);
+        assert_eq!(px[16].a(), 0);
+        // A light tile with a small dark figure: the dark part is the figure.
+        let mut px = vec![C::WHITE; 12];
+        px.extend([C::from_rgb(10, 10, 10); 4]);
+        mono(&mut px);
+        assert_eq!(px[0].a(), 0);
+        assert_eq!(px[12], C::WHITE);
+        // One flat colour keeps its shape.
+        let mut px = vec![C::from_rgb(200, 30, 30); 4];
+        mono(&mut px);
+        assert!(px.iter().all(|c| *c == C::WHITE));
+    }
 
     #[test]
     fn hidden_list_hides_once_and_shows_back() {
