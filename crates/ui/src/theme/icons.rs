@@ -52,6 +52,27 @@ pub mod glyph {
     pub const MAXIMIZE: char = '\u{E922}';
     pub const RESTORE: char = '\u{E923}';
     pub const CHROME_CLOSE: char = '\u{E8BB}';
+    // System controls: the control centre, and the top bar's status.
+    pub const WIFI: char = '\u{E701}';
+    pub const BLUETOOTH: char = '\u{E702}';
+    pub const ETHERNET: char = '\u{E839}';
+    pub const GLOBE: char = '\u{E774}';
+    pub const MOON: char = '\u{E708}';
+    pub const VOLUME: char = '\u{E767}';
+    pub const MUTED: char = '\u{E74F}';
+    pub const BRIGHTNESS: char = '\u{E706}';
+    pub const MICROPHONE: char = '\u{E720}';
+    pub const MICROPHONE_OFF: char = '\u{EC54}';
+    pub const PLAY: char = '\u{E768}';
+    pub const PAUSE: char = '\u{E769}';
+    pub const PREVIOUS: char = '\u{E892}';
+    pub const NEXT: char = '\u{E893}';
+    pub const LOCK: char = '\u{E72E}';
+    pub const POWER: char = '\u{E7E8}';
+    pub const RESTART: char = '\u{E777}';
+    pub const SIGN_OUT: char = '\u{E748}';
+    pub const BATTERY: char = '\u{E83F}';
+    pub const CHARGING: char = '\u{E945}';
 }
 
 pub fn icon_font(size: f32) -> egui::FontId {

@@ -1,0 +1,258 @@
+//! Appearing on request, and only one control centre at a time.
+//!
+//! The same pattern as the launcher's (copied rather than shared while the launcher is being
+//! reworked; the two could move to `shellman_core` together). The process stays resident with
+//! its window hidden. Running `shellman-control.exe` again finds the first one through a named
+//! mutex, signals it through a named event, and exits at once; the resident process then shows
+//! its window, or hides it if it is showing. `SHELLMAN_INSTANCE` is appended to both names, so a
+//! test copy can run beside the real one.
+
+use crate::{outside, place};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+use windows::core::HSTRING;
+use windows::Win32::Foundation::{GetLastError, ERROR_ALREADY_EXISTS, HANDLE, HWND, POINT, RECT};
+use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, MonitorFromPoint, MONITORINFO, MONITOR_DEFAULTTONEAREST};
+use windows::Win32::System::Threading::{CreateEventW, CreateMutexW, SetEvent, WaitForSingleObject, INFINITE};
+use windows::Win32::UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI};
+use windows::Win32::UI::Input::KeyboardAndMouse::{
+    SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, VIRTUAL_KEY,
+};
+use windows::Win32::UI::WindowsAndMessaging::{
+    AllowSetForegroundWindow, GetCursorPos, GetForegroundWindow, GetWindowLongPtrW, GetWindowRect,
+    IsWindowVisible, SetForegroundWindow, SetWindowLongPtrW, SetWindowPos, ShowWindow, ASFW_ANY,
+    GWL_STYLE, HWND_TOPMOST, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOZORDER, SWP_SHOWWINDOW,
+    SW_HIDE, WS_CAPTION, WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_SYSMENU, WS_THICKFRAME,
+};
+
+/// The environment variable that names a separate instance, for testing.
+pub const INSTANCE_VAR: &str = "SHELLMAN_INSTANCE";
+/// A summon this soon after a click outside closed the panel is that same click reaching the
+/// top bar's button: it closes, it does not reopen.
+const CLICK_CLOSE_GRACE: Duration = Duration::from_millis(500);
+
+/// Whether this process is the resident one; if not, the resident one has been signalled and
+/// this process has nothing more to do.
+pub enum Claim {
+    Resident(Instance),
+    Signalled,
+}
+
+/// The resident process's end of the signal.
+pub struct Instance {
+    event: HANDLE,
+    /// Keeps the mutex alive for as long as the process runs.
+    _mutex: HANDLE,
+}
+
+/// What the window and the signal thread tell each other.
+#[derive(Default)]
+pub struct Shared {
+    hide_requested: AtomicBool,
+    /// Counts showings, so the window notices a new one.
+    shown: AtomicU32,
+    /// The monitor the panel shows on, `(left, top, right, bottom)` in pixels, and its scale.
+    monitor: Mutex<Option<((i32, i32, i32, i32), f32)>>,
+    /// The content's height in points, as last laid out (f32 bits).
+    height: AtomicU32,
+    /// When a click outside last closed the panel.
+    closed_by_click: Mutex<Option<Instant>>,
+}
+
+impl Shared {
+    pub fn take_hide_request(&self) -> bool {
+        self.hide_requested.swap(false, Ordering::AcqRel)
+    }
+
+    pub fn shown_count(&self) -> u32 {
+        self.shown.load(Ordering::Acquire)
+    }
+
+    pub fn closed_by_click(&self) {
+        if let Ok(mut at) = self.closed_by_click.lock() {
+            *at = Some(Instant::now());
+        }
+    }
+
+    fn height(&self) -> f32 {
+        f32::from_bits(self.height.load(Ordering::Relaxed))
+    }
+}
+
+/// The mutex and event names, with the instance's suffix.
+fn names(instance: Option<&str>) -> (String, String) {
+    let suffix = instance.filter(|s| !s.is_empty()).map(|s| format!("-{s}")).unwrap_or_default();
+    (
+        format!("Local\\shellman-control-summon{suffix}"),
+        format!("Local\\shellman-control-resident{suffix}"),
+    )
+}
+
+/// Become the resident process, or signal the one that is. Both sides create the event before
+/// the mutex, so whichever order two starts interleave in, the one that loses the mutex finds
+/// the event.
+pub fn claim() -> Claim {
+    let instance = std::env::var(INSTANCE_VAR).ok();
+    let (event_name, mutex_name) = names(instance.as_deref());
+    unsafe {
+        let Ok(event) = CreateEventW(None, false, false, &HSTRING::from(event_name)) else {
+            // Cannot coordinate; run on our own rather than not at all.
+            return Claim::Resident(Instance { event: HANDLE::default(), _mutex: HANDLE::default() });
+        };
+        let mutex = CreateMutexW(None, false, &HSTRING::from(mutex_name));
+        if mutex.is_ok() && GetLastError() == ERROR_ALREADY_EXISTS {
+            // The resident process may take the foreground for the window it is about to show.
+            let _ = AllowSetForegroundWindow(ASFW_ANY);
+            let _ = SetEvent(event);
+            return Claim::Signalled;
+        }
+        Claim::Resident(Instance { event, _mutex: mutex.unwrap_or_default() })
+    }
+}
+
+impl Instance {
+    /// Show the window now, as if the exe had been run again.
+    pub fn summon(&self) {
+        if !self.event.is_invalid() {
+            unsafe {
+                let _ = SetEvent(self.event);
+            }
+        }
+    }
+
+    /// Serve summons for the window `hwnd` from a thread of its own, until the process ends.
+    pub fn serve(&self, hwnd: isize, ctx: egui::Context, shared: Arc<Shared>) {
+        if self.event.is_invalid() {
+            return;
+        }
+        let event = self.event.0 as isize;
+        std::thread::spawn(move || {
+            let event = HANDLE(event as *mut _);
+            let hwnd = HWND(hwnd as *mut _);
+            // The event wakes this thread, so nothing polls while the panel is hidden.
+            while unsafe { WaitForSingleObject(event, INFINITE) }.0 == 0 {
+                let just_closed = shared
+                    .closed_by_click
+                    .lock()
+                    .ok()
+                    .and_then(|mut at| at.take())
+                    .is_some_and(|at| at.elapsed() < CLICK_CLOSE_GRACE);
+                if unsafe { IsWindowVisible(hwnd) }.as_bool() {
+                    shared.hide_requested.store(true, Ordering::Release);
+                } else if !just_closed {
+                    show(hwnd, &shared);
+                    shared.shown.fetch_add(1, Ordering::AcqRel);
+                }
+                ctx.request_repaint();
+            }
+        });
+    }
+}
+
+/// Hide the window. Called by the window itself.
+pub fn hide(hwnd: isize) {
+    unsafe {
+        let _ = ShowWindow(HWND(hwnd as *mut _), SW_HIDE);
+    }
+}
+
+/// Show the panel on the monitor under the pointer, and take the keyboard focus.
+fn show(hwnd: HWND, shared: &Shared) {
+    unsafe {
+        let mut at = POINT::default();
+        let _ = GetCursorPos(&mut at);
+        let monitor = MonitorFromPoint(at, MONITOR_DEFAULTTONEAREST);
+        let mut info = MONITORINFO { cbSize: size_of::<MONITORINFO>() as u32, ..Default::default() };
+        if !GetMonitorInfoW(monitor, &mut info).as_bool() {
+            return;
+        }
+        let (mut dpi_x, mut dpi_y) = (96, 96);
+        let _ = GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &mut dpi_x, &mut dpi_y);
+        let scale = dpi_x as f32 / 96.0;
+        let m = info.rcMonitor;
+        let rect = (m.left, m.top, m.right, m.bottom);
+        if let Ok(mut slot) = shared.monitor.lock() {
+            *slot = Some((rect, scale));
+        }
+        let r = place::panel_rect(rect, scale, shared.height());
+        strip_frame(hwnd);
+        let _ = SetWindowPos(hwnd, Some(HWND_TOPMOST), r.x, r.y, r.w, r.h, SWP_SHOWWINDOW | SWP_FRAMECHANGED);
+        outside::set_rect(r.x, r.y, r.w, r.h);
+        take_foreground(hwnd);
+    }
+}
+
+/// Keep the window where it belongs for content `height` points tall: called on every frame,
+/// it corrects a height change, and Windows resizing the window when it lands on a monitor with
+/// another scale.
+pub fn fit(hwnd: isize, shared: &Shared, height: f32) {
+    shared.height.store(height.to_bits(), Ordering::Relaxed);
+    let Some((rect, scale)) = shared.monitor.lock().ok().and_then(|m| *m) else {
+        return;
+    };
+    let want = place::panel_rect(rect, scale, height);
+    let hwnd = HWND(hwnd as *mut _);
+    let mut now = RECT::default();
+    unsafe {
+        let _ = GetWindowRect(hwnd, &mut now);
+        let have = place::Px { x: now.left, y: now.top, w: now.right - now.left, h: now.bottom - now.top };
+        if have != want {
+            let _ = SetWindowPos(hwnd, None, want.x, want.y, want.w, want.h, SWP_NOZORDER | SWP_NOACTIVATE);
+        }
+    }
+    outside::set_rect(want.x, want.y, want.w, want.h);
+}
+
+/// Windows lets a process take the foreground only in narrow cases, chiefly when it sent the
+/// last input; the top bar that summons the panel never takes the focus, so the first request
+/// is often refused. Then one press of a key no keyboard has (the switcher's trick) makes this
+/// process the last input's sender, and the second request is granted.
+unsafe fn take_foreground(hwnd: HWND) {
+    let _ = SetForegroundWindow(hwnd);
+    if GetForegroundWindow() == hwnd {
+        return;
+    }
+    send_mask();
+    let _ = SetForegroundWindow(hwnd);
+}
+
+/// One press and release of VK 0xE8, which is unassigned.
+fn send_mask() {
+    let key = |flags| INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT { wVk: VIRTUAL_KEY(0xE8), dwFlags: flags, ..Default::default() },
+        },
+    };
+    let inputs = [key(Default::default()), key(KEYEVENTF_KEYUP)];
+    unsafe {
+        SendInput(&inputs, size_of::<INPUT>() as i32);
+    }
+}
+
+/// No caption, system menu or sizing frame: over glass, Windows would otherwise draw its
+/// caption buttons into the panel. Done on every showing, since the window library re-applies
+/// its own styles now and then.
+fn strip_frame(hwnd: HWND) {
+    unsafe {
+        let style = GetWindowLongPtrW(hwnd, GWL_STYLE) as u32;
+        let bare = style & !(WS_CAPTION.0 | WS_SYSMENU.0 | WS_THICKFRAME.0 | WS_MINIMIZEBOX.0 | WS_MAXIMIZEBOX.0);
+        SetWindowLongPtrW(hwnd, GWL_STYLE, bare as isize);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn instances_get_their_own_names() {
+        let (event, mutex) = names(None);
+        assert_eq!(event, "Local\\shellman-control-summon");
+        assert_eq!(mutex, "Local\\shellman-control-resident");
+        assert_eq!(names(Some("")), names(None));
+        let (event, mutex) = names(Some("test"));
+        assert!(event.ends_with("-summon-test") && mutex.ends_with("-resident-test"));
+    }
+}

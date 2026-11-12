@@ -1871,6 +1871,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "shellman-control"
+version = "0.1.0"
+dependencies = [
+ "eframe",
+ "egui",
+ "raw-window-handle",
+ "shellman-core",
+ "shellman-ui",
+ "windows",
+ "winresource",
+]
+
+[[package]]
 name = "shellman-core"
 version = "0.1.0"
 dependencies = [
