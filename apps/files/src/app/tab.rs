@@ -12,6 +12,8 @@ pub(super) enum Loc {
     Dir(PathBuf),
     /// The Recycle Bin: a place of its own, not a folder, so it has no path.
     Bin,
+    /// Every item with this tag (from 0), wherever it is: a list, like search results.
+    Tag(u8),
 }
 
 impl Loc {
@@ -19,6 +21,7 @@ impl Loc {
         match self {
             Loc::Pc => "This PC".into(),
             Loc::Bin => "Recycle Bin".into(),
+            Loc::Tag(i) => super::tag_ui::name_of(*i as usize),
             Loc::Dir(p) => p
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
@@ -28,14 +31,14 @@ impl Loc {
 
     pub(super) fn dir(&self) -> Option<&Path> {
         match self {
-            Loc::Pc | Loc::Bin => None,
+            Loc::Pc | Loc::Bin | Loc::Tag(_) => None,
             Loc::Dir(p) => Some(p),
         }
     }
 
     pub(super) fn parent(&self) -> Option<Loc> {
         match self {
-            Loc::Pc | Loc::Bin => None,
+            Loc::Pc | Loc::Bin | Loc::Tag(_) => None,
             Loc::Dir(p) => Some(p.parent().map_or(Loc::Pc, |q| Loc::Dir(q.to_path_buf()))),
         }
     }
@@ -53,6 +56,15 @@ impl Only {
     fn shows(&self, e: &Entry) -> bool {
         e.is_dir || (!self.folders && self.files.matches(&e.name))
     }
+}
+
+/// A rubber band in progress: where it began, in content coordinates (see `select::Layout`),
+/// and what was selected before it, kept when Ctrl was held.
+#[derive(Clone, Debug)]
+pub(super) struct Band {
+    pub(super) from: egui::Pos2,
+    pub(super) before: std::collections::BTreeSet<usize>,
+    pub(super) add: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -93,6 +105,12 @@ pub(super) struct Tab {
     pub(super) sort_before_bin: Option<(SortKey, bool)>,
     /// What a picker shows of the folder; None when browsing.
     pub(super) only: Option<Only>,
+    /// A rectangle being dragged out over the items to select them.
+    pub(super) band: Option<Band>,
+    /// Where the scrolled view showed, on screen, last frame: rubber band coordinates start here.
+    pub(super) view_rect: egui::Rect,
+    /// A scroll the rubber band asked for, applied in the next frame.
+    pub(super) scroll_to: Option<f32>,
     /// Every entry index, sorted by `sorted_for`. Typing in the filter only walks this, so a
     /// keystroke never re-sorts. Hidden items stay in it and are skipped while filtering.
     order: Vec<usize>,
@@ -133,6 +151,9 @@ impl Tab {
             bin: HashMap::new(),
             sort_before_bin: None,
             only: None,
+            band: None,
+            view_rect: egui::Rect::NOTHING,
+            scroll_to: None,
             order: Vec::new(),
             sorted_for: None,
             entries_sig: (0, 0),
@@ -277,6 +298,28 @@ impl Tab {
             .filter(|e| self.selected.contains(&e.path))
             .cloned()
             .collect()
+    }
+
+    /// The selection as rows (see `select`). Costs as much as the selection.
+    pub(super) fn sel(&self) -> super::select::Sel {
+        super::select::Sel {
+            rows: self.selected.iter().filter_map(|p| self.row_of(p)).collect(),
+            anchor: self.anchor,
+            cursor: self.cursor,
+        }
+    }
+
+    /// Take a selection worked out as rows.
+    pub(super) fn set_sel(&mut self, sel: super::select::Sel) {
+        let n = self.view.len();
+        self.selected = sel
+            .rows
+            .iter()
+            .filter(|&&r| r < n)
+            .map(|&r| self.entry(r).path.clone())
+            .collect();
+        self.anchor = sel.anchor.filter(|&r| r < n);
+        self.cursor = sel.cursor.filter(|&r| r < n);
     }
 
     pub(super) fn select_only(&mut self, row: usize) {

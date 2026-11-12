@@ -8,7 +8,6 @@ use egui::{ColorImage, TextureHandle, TextureOptions, Ui, Vec2};
 use shellman_core::places::Place;
 use shellman_core::places_reg::{self, PlacesWatcher};
 use shellman_ui::theme::{glyph, icon_font};
-use shellman_ui::widgets::menu_item;
 use std::collections::HashMap;
 use std::sync::mpsc::{channel, Receiver, Sender};
 
@@ -209,8 +208,8 @@ impl super::FileMan {
                         );
                     }
                 },
-            )
-            .on_hover_text(format!("{}\n{}", place.name, place.target.display()));
+            );
+            super::rail::label(ui, &resp, &format!("{}\n{}", place.name, place.target.display()));
             if resp.clicked() {
                 actions.push(Action::Navigate(loc.clone()));
             }
@@ -218,11 +217,12 @@ impl super::FileMan {
                 actions.push(Action::NewTab(loc.clone()));
             }
             resp.context_menu(|ui| {
-                if menu_item(ui, glyph::ADD, "Open in new tab", "") {
+                super::controls::flat_items(ui);
+                if super::controls::mi(ui, glyph::ADD, "Open in new tab", "") {
                     actions.push(Action::NewTab(loc.clone()));
                     ui.close_menu();
                 }
-                if menu_item(ui, glyph::CLOSE, "Hide from the rail", "") {
+                if super::controls::mi(ui, glyph::CLOSE, "Hide from the rail", "") {
                     actions.push(Action::HidePlace(place.id.clone()));
                     ui.close_menu();
                 }
@@ -243,18 +243,18 @@ impl super::FileMan {
             .filter(|p| is_hidden(&self.settings.hidden_places, &p.id))
             .collect();
         resp.context_menu(|ui| {
+                super::controls::flat_items(ui);
             if hidden.is_empty() {
-                ui.add_enabled(false, egui::Button::new("No hidden places"));
+                super::controls::mdisabled(ui, glyph::INFO, "No hidden places");
                 return;
             }
-            ui.menu_button("Show hidden places", |ui| {
-                for p in &hidden {
-                    if menu_item(ui, glyph::FOLDER, &p.name, "") {
-                        actions.push(Action::ShowPlace(p.id.clone()));
-                        ui.close_menu();
-                    }
+            // The hidden places, to show again.
+            for p in &hidden {
+                if super::controls::mi(ui, glyph::FOLDER, &format!("Show {}", p.name), "") {
+                    actions.push(Action::ShowPlace(p.id.clone()));
+                    ui.close_menu();
                 }
-            });
+            }
         });
     }
 

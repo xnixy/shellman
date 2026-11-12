@@ -5,8 +5,8 @@ use super::actions::Action;
 use super::tab::SortKey;
 use egui::{Id, PopupCloseBehavior, Rect, Ui, Vec2};
 use shellman_ui::chips::{chip, window_buttons, Chip, CHIP_H};
+use shellman_ui::menu::{self, Icon};
 use shellman_ui::theme::glyph;
-use shellman_ui::widgets::menu_item;
 
 const PAD: f32 = 6.0;
 
@@ -18,12 +18,30 @@ const KEYS: [(SortKey, &str); 4] = [
     (SortKey::Size, "Size"),
 ];
 
-/// Menu entries in a plain popup show as rows, filled only when hovered, as they do in a context
-/// menu (a popup otherwise gives each button a frame).
+/// Every Files popup and context menu is drawn with shellman's flat menu rows (see
+/// `shellman_ui::menu::flat_item`): call this first in the popup.
 pub(super) fn flat_items(ui: &mut Ui) {
-    let w = &mut ui.visuals_mut().widgets;
-    w.inactive.weak_bg_fill = egui::Color32::TRANSPARENT;
-    w.inactive.bg_stroke = egui::Stroke::NONE;
+    menu::flat_popup(ui);
+}
+
+/// A menu entry with a glyph. True when clicked.
+pub(super) fn mi(ui: &mut Ui, g: char, label: &str, shortcut: &str) -> bool {
+    menu::flat_item(ui, Icon::Glyph(g), label, shortcut, false, true)
+}
+
+/// A menu entry with a tick when `on`.
+pub(super) fn mcheck(ui: &mut Ui, on: bool, label: &str, shortcut: &str) -> bool {
+    menu::flat_item(ui, Icon::None, label, shortcut, on, true)
+}
+
+/// A menu entry that cannot be picked now.
+pub(super) fn mdisabled(ui: &mut Ui, g: char, label: &str) {
+    menu::flat_item(ui, Icon::Glyph(g), label, "", false, false);
+}
+
+/// A line between groups of entries.
+pub(super) fn msep(ui: &mut Ui) {
+    menu::flat_separator(ui);
 }
 
 impl super::FileMan {
@@ -59,13 +77,12 @@ impl super::FileMan {
         window_buttons(ui, buttons);
     }
 
-    fn sort_menu(&mut self, ui: &mut Ui, actions: &mut Vec<Action>) {
-        ui.set_min_width(200.0);
+    pub(super) fn sort_menu(&mut self, ui: &mut Ui, actions: &mut Vec<Action>) {
+        ui.set_min_width(220.0);
         flat_items(ui);
         let tab = &mut self.tabs[self.active];
         for (key, name) in KEYS {
-            let g = if tab.sort == key { glyph::CHECK } else { ' ' };
-            if menu_item(ui, g, name, "") {
+            if mcheck(ui, tab.sort == key, name, "") {
                 if tab.sort == key {
                     tab.ascending = !tab.ascending;
                 } else {
@@ -76,26 +93,16 @@ impl super::FileMan {
                 ui.memory_mut(|m| m.close_popup());
             }
         }
-        ui.separator();
+        msep(ui);
         for (ascending, name) in [(true, "Ascending"), (false, "Descending")] {
-            let g = if tab.ascending == ascending {
-                glyph::CHECK
-            } else {
-                ' '
-            };
-            if menu_item(ui, g, name, "") {
+            if mcheck(ui, tab.ascending == ascending, name, "") {
                 tab.ascending = ascending;
                 tab.dirty = true;
                 ui.memory_mut(|m| m.close_popup());
             }
         }
-        ui.separator();
-        let g = if self.settings.show_hidden {
-            glyph::CHECK
-        } else {
-            ' '
-        };
-        if menu_item(ui, g, "Hidden items", "Ctrl+H") {
+        msep(ui);
+        if mcheck(ui, self.settings.show_hidden, "Hidden items", "Ctrl+H") {
             actions.push(Action::ToggleHidden);
             ui.memory_mut(|m| m.close_popup());
         }

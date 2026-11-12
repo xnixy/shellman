@@ -12,7 +12,6 @@ use super::{FileMan, Msg};
 use egui::{Align2, CornerRadius, Id, Rect, Sense, Ui};
 use shellman_core::recycle_bin::{self, BinItem, BinState, Handle};
 use shellman_ui::theme::{self, colors, glyph, icon_font};
-use shellman_ui::widgets::menu_item;
 
 /// Width of the toolbar slot the two buttons take, in place of the view toggle.
 pub(super) const BUTTONS_W: f32 = 268.0;
@@ -265,20 +264,21 @@ fn pill(ui: &mut Ui, rect: Rect, g: char, label: &str, enabled: bool, tip: &str)
 
 /// The right-click menu of an item in the bin.
 pub(super) fn item_menu(ui: &mut Ui, actions: &mut Vec<Action>) {
-    if menu_item(ui, glyph::UNDO, "Restore", "") {
+    super::controls::flat_items(ui);
+    if super::controls::mi(ui, glyph::UNDO, "Restore", "") {
         actions.push(Action::BinRestore);
         ui.close_menu();
     }
-    ui.separator();
-    if menu_item(ui, glyph::DELETE, "Delete permanently", "Del") {
+    super::controls::msep(ui);
+    if super::controls::mi(ui, glyph::DELETE, "Delete permanently", "Del") {
         actions.push(Action::BinDelete);
         ui.close_menu();
     }
-    if menu_item(ui, glyph::FOLDER, "Show in original folder", "") {
+    if super::controls::mi(ui, glyph::FOLDER, "Show in original folder", "") {
         actions.push(Action::BinShowOriginal);
         ui.close_menu();
     }
-    if menu_item(ui, glyph::COPY, "Copy original path", "Ctrl+Shift+C") {
+    if super::controls::mi(ui, glyph::COPY, "Copy original path", "Ctrl+Shift+C") {
         actions.push(Action::CopyPath);
         ui.close_menu();
     }
@@ -286,11 +286,12 @@ pub(super) fn item_menu(ui: &mut Ui, actions: &mut Vec<Action>) {
 
 /// The right-click menu of the empty space in the bin.
 pub(super) fn backdrop_menu(ui: &mut Ui, no_items: bool, actions: &mut Vec<Action>) {
-    if !no_items && menu_item(ui, glyph::DELETE, "Empty Recycle Bin", "") {
+    super::controls::flat_items(ui);
+    if !no_items && super::controls::mi(ui, glyph::DELETE, "Empty Recycle Bin", "") {
         actions.push(Action::BinEmpty);
         ui.close_menu();
     }
-    if menu_item(ui, glyph::REFRESH, "Refresh", "F5") {
+    if super::controls::mi(ui, glyph::REFRESH, "Refresh", "F5") {
         actions.push(Action::Refresh);
         ui.close_menu();
     }

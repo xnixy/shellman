@@ -27,6 +27,10 @@ pub(super) const RAIL_W: f32 = 56.0;
 pub(super) const BAND_H: f32 = 44.0;
 /// The window buttons' pill: Sort, then minimize, maximize and close.
 pub(super) const CONTROLS_W: f32 = 212.0;
+/// The details island, when it shows (the design's 336 of 1600).
+pub(super) const DETAILS_W: f32 = 300.0;
+/// Narrower than this, the content keeps its room and the details island does not show.
+const DETAILS_MIN_CONTENT: f32 = 400.0;
 
 /// The fixed islands of one frame, and the areas the sized-to-fit ones may use.
 #[derive(Debug, Clone, Copy)]
@@ -40,10 +44,12 @@ pub(super) struct Plan {
     pub(super) content: Rect,
     /// Where the bottom pill sits, centred under the content.
     pub(super) band: Rect,
+    /// The details island on the right, when it shows.
+    pub(super) details: Option<Rect>,
 }
 
 impl Plan {
-    pub(super) fn new(screen: Rect) -> Self {
+    pub(super) fn new(screen: Rect, details: bool) -> Self {
         let left = screen.left() + MARGIN;
         let right = screen.right() - MARGIN;
         let top = screen.top() + MARGIN;
@@ -58,9 +64,15 @@ impl Plan {
         let bar = Rect::from_min_max(pos2(inner_left, bar_top), pos2(right, bar_top + BAR_H));
         let content_top = bar.bottom() + GAP;
         let band = Rect::from_min_max(pos2(inner_left, bottom - BAND_H), pos2(right, bottom));
+        let content_bottom = (band.top() - GAP).max(content_top);
+        let room = right - inner_left;
+        let details = (details && room - DETAILS_W - GAP >= DETAILS_MIN_CONTENT).then(|| {
+            Rect::from_min_max(pos2(right - DETAILS_W, content_top), pos2(right, content_bottom))
+        });
+        let content_right = details.map_or(right, |d| d.left() - GAP);
         let content = Rect::from_min_max(
             pos2(inner_left, content_top),
-            pos2(right, (band.top() - GAP).max(content_top)),
+            pos2(content_right, content_bottom),
         );
         let rail_area = Rect::from_min_max(pos2(left, content_top), pos2(left + RAIL_W, bottom));
         Self {
@@ -70,6 +82,7 @@ impl Plan {
             rail_area,
             content,
             band,
+            details,
         }
     }
 }
@@ -115,7 +128,7 @@ mod tests {
     #[test]
     fn islands_never_overlap_down_to_the_smallest_window() {
         for (w, h) in [MIN_SIZE, (1100.0, 700.0), (2560.0, 1400.0)] {
-            let p = Plan::new(screen(w, h));
+            let p = Plan::new(screen(w, h), false);
             let rail = rail(p.rail_area, 10_000.0);
             let all = [p.tabs_row, p.controls, p.bar, rail, p.content, p.band];
             for (i, a) in all.iter().enumerate() {
@@ -139,12 +152,27 @@ mod tests {
 
     #[test]
     fn content_lines_up_with_the_bar_and_the_rail() {
-        let p = Plan::new(screen(1100.0, 700.0));
+        let p = Plan::new(screen(1100.0, 700.0), false);
         assert_eq!(p.content.left(), p.bar.left());
         assert_eq!(p.content.right(), p.bar.right());
         assert_eq!(p.rail_area.top(), p.content.top());
         assert_eq!(p.controls.right(), p.bar.right());
         assert_eq!(p.content.left() - p.rail_area.right(), GAP);
+    }
+
+    #[test]
+    fn the_details_island_takes_the_right_and_never_overlaps() {
+        let p = Plan::new(screen(1400.0, 800.0), true);
+        let d = p.details.expect("room for it");
+        assert_eq!(d.right(), p.bar.right());
+        assert_eq!(d.top(), p.content.top());
+        assert_eq!(d.bottom(), p.content.bottom());
+        assert_eq!(d.left() - p.content.right(), GAP);
+        assert!(apart(d, p.band) && apart(d, p.content));
+        // Too narrow: the content keeps its room.
+        let (w, _) = MIN_SIZE;
+        assert!(Plan::new(screen(w, 600.0), true).details.is_none());
+        assert!(Plan::new(screen(1400.0, 800.0), false).details.is_none());
     }
 
     #[test]

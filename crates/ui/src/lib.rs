@@ -7,6 +7,7 @@ pub mod font_atlas;
 pub mod font_picker;
 pub mod fonts;
 pub mod glass;
+pub mod hover;
 pub mod look_controls;
 pub mod menu;
 pub mod nav;

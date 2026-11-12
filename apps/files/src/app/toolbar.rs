@@ -67,6 +67,24 @@ impl super::FileMan {
         } else {
             self.view_toggle(ui, toggle, actions);
         }
+        // The details island's switch, lit while it shows.
+        let info = Rect::from_center_size(
+            egui::pos2(toggle.left() - 8.0 - BUTTON / 2.0, bar.center().y),
+            Vec2::splat(BUTTON),
+        );
+        let on = self.details_on();
+        if on {
+            let c = colors();
+            ui.painter().circle_filled(info.center(), BUTTON / 2.0, soft_colors(c.light).1);
+        }
+        let tip = if on { "Hide details" } else { "Show details" };
+        if round_icon(ui, info, Id::new("details-toggle"), glyph::INFO, true, false)
+            .on_hover_text(tip)
+            .clicked()
+        {
+            actions.push(Action::ToggleDetails);
+        }
+        let toggle = Rect::from_min_max(egui::pos2(info.left(), toggle.top()), toggle.max);
         let room = (toggle.left() - 10.0 - x).max(0.0);
         let search_w = (room * 0.4).clamp(140.0, SEARCH_W);
         let search = Rect::from_min_max(
