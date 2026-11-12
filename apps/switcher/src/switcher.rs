@@ -13,6 +13,7 @@ use shellman_core::live_thumb::{fit, LiveThumb, PxRect};
 use shellman_core::thumbs::Thumbs;
 use shellman_core::winlist::{self, AppWindow, WindowList, WindowWatcher};
 use shellman_ui::theme;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant};
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_MENU};
@@ -239,9 +240,14 @@ impl Switcher {
     fn close(&mut self) {
         shape::hide(self.hwnd);
         self.open = None;
+        // One frame with nothing drawn, so the next showing never starts from this panel's image.
+        self.ctx.request_repaint();
     }
 }
 
+/// Set in a test copy, which has no keyboard: Alt counts as held until Esc.
+pub static DEMO: AtomicBool = AtomicBool::new(false);
+
 fn alt_held() -> bool {
-    (unsafe { GetAsyncKeyState(VK_MENU.0 as i32) }) < 0
+    DEMO.load(Ordering::Relaxed) || (unsafe { GetAsyncKeyState(VK_MENU.0 as i32) }) < 0
 }

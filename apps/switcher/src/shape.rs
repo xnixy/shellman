@@ -3,12 +3,14 @@
 //! windows, and is shown and hidden directly rather than through the window library, which would
 //! activate it.
 //!
-//! The same treatment as the dock's (`apps/bar/src/shape.rs`), plus three states:
-//! - hidden between uses: Windows sends a hidden window no paint messages, so the UI sleeps;
-//! - awake: on, but cloaked (the compositor leaves it out, and clicks pass it by), so the UI runs
-//!   while Alt+Tab is held but before the panel should be seen;
+//! The same treatment as the dock's (`apps/bar/src/shape.rs`), plus two states:
+//! - out of sight: on, but cloaked (the compositor leaves it out, and clicks pass it by); it
+//!   still gets paint messages, so a frame egui asked for finishes and the UI goes idle. This is
+//!   also the "awake" state while Alt+Tab is held but before the panel should be seen. (Between
+//!   uses it used to be hidden, which spun a core: a hidden window is never painted.)
 //! - shown.
 
+use shellman_ui::glass;
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_BORDER_COLOR, DWMWA_CLOAK};
 use windows::Win32::Graphics::Gdi::{
@@ -21,7 +23,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     GetWindowLongPtrW, GetWindowRect, IsWindowVisible, PostMessageW, SetWindowLongPtrW,
     SetWindowPos, ShowWindow, GWL_EXSTYLE, SW_SHOWNOACTIVATE, WM_APP,
     GWL_STYLE, HWND_TOPMOST, STYLESTRUCT, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE,
-    SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW, SW_HIDE, WM_STYLECHANGING, WS_CAPTION,
+    SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW, WM_STYLECHANGING, WS_CAPTION,
     WS_EX_APPWINDOW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_MAXIMIZEBOX,
     WS_MINIMIZEBOX, WS_SYSMENU, WS_THICKFRAME,
 };
@@ -157,7 +159,7 @@ pub fn show_at(hwnd: isize, r: RECT) {
     let hwnd = HWND(hwnd as *mut _);
     let (w, h) = (r.right - r.left, r.bottom - r.top);
     unsafe {
-        if !IsWindowVisible(hwnd).as_bool() {
+        if !is_on(hwnd.0 as isize) {
             cloak(hwnd, true);
         }
         let _ = SetWindowPos(hwnd, Some(HWND_TOPMOST), r.left, r.top, w, h, SWP_NOACTIVATE | SWP_SHOWWINDOW);
@@ -169,12 +171,22 @@ pub fn show_at(hwnd: isize, r: RECT) {
     cloak(hwnd, false);
 }
 
+/// Out of sight between uses: cloaked, not hidden. A hidden window gets no paint messages, so a
+/// frame egui had already asked for never comes and the window library retries it on a whole
+/// core until the next use (measured: 10 s of CPU in 10 s after one Alt+Tab). Cloaked, it still
+/// paints, and the compositor leaves it out. The window never takes focus, so there is none to
+/// hand back.
 pub fn hide(hwnd: isize) {
+    let hwnd = HWND(hwnd as *mut _);
+    cloak(hwnd, true);
     unsafe {
-        let _ = ShowWindow(HWND(hwnd as *mut _), SW_HIDE);
+        if !IsWindowVisible(hwnd).as_bool() {
+            let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+        }
     }
 }
 
+/// Whether the panel is on screen: shown and not cloaked.
 pub fn is_on(hwnd: isize) -> bool {
-    unsafe { IsWindowVisible(HWND(hwnd as *mut _)) }.as_bool()
+    unsafe { IsWindowVisible(HWND(hwnd as *mut _)) }.as_bool() && !glass::is_cloaked(hwnd)
 }
