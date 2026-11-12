@@ -28,8 +28,27 @@ pub fn display_name(app_id: &str, exe: Option<&Path>) -> String {
     name
 }
 
+/// Shellman's own apps are named by their exe (`shellman-files.exe`), which has no description
+/// worth showing; they get their proper names.
+fn own_app_name(exe: &Path) -> Option<&'static str> {
+    let stem = exe.file_stem()?.to_str()?.to_ascii_lowercase();
+    Some(match stem.strip_prefix("shellman-")? {
+        "files" => "Files",
+        "settings" => "Settings",
+        "launcher" => "Launcher",
+        "switcher" => "Switcher",
+        "desktop" => "Desktop",
+        "bar" => "Bar",
+        "session" => "Shellman",
+        _ => return None,
+    })
+}
+
 fn resolve(app_id: &str, exe: Option<&Path>) -> String {
     let nonempty = |s: &String| !s.trim().is_empty();
+    if let Some(n) = exe.and_then(own_app_name) {
+        return n.to_owned();
+    }
     if !app_id.contains('\\') {
         if let Some(n) = shell_name(app_id).filter(nonempty) {
             return n;
@@ -111,6 +130,17 @@ mod tests {
         let n = display_name(&id, Some(exe));
         assert!(!n.is_empty() && n != id, "{n}");
         assert_eq!(n, display_name(&id, Some(exe)), "cache must be stable");
+    }
+
+    #[test]
+    fn own_apps_get_proper_names() {
+        let name = |p: &str| own_app_name(Path::new(p));
+        assert_eq!(name(r"C:\x\target\debug\shellman-files.exe"), Some("Files"));
+        assert_eq!(name(r"C:\x\Shellman-Settings.EXE"), Some("Settings"));
+        assert_eq!(name(r"C:\x\shellman-unknown.exe"), None);
+        assert_eq!(name(r"C:\x\files.exe"), None);
+        let exe = Path::new(r"C:\x\shellman-files.exe");
+        assert_eq!(display_name(r"c:\x\shellman-files.exe", Some(exe)), "Files");
     }
 
     #[test]
