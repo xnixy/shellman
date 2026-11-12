@@ -78,7 +78,7 @@ impl SoundView {
                 self.microphone(ui, muted, watch);
             }
             ui.add_space(2.0);
-            open_settings = settings_link(ui);
+            open_settings = settings_link(ui, "Sound settings");
         });
         open_settings
     }
@@ -158,8 +158,8 @@ impl SoundView {
     }
 }
 
-/// A small link under the sound controls that opens our settings on the Sound page.
-fn settings_link(ui: &mut Ui) -> bool {
+/// A small link under a view's controls that opens our settings on that view's page.
+pub(super) fn settings_link(ui: &mut Ui, text: &str) -> bool {
     let c = colors();
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), ROW), Sense::click());
     if resp.hovered() {
@@ -168,6 +168,6 @@ fn settings_link(ui: &mut Ui) -> bool {
     let color = if resp.hovered() { c.text } else { c.muted };
     let at = Pos2::new(rect.right() - 8.0, rect.center().y);
     ui.painter().text(at, Align2::CENTER_CENTER, glyph::OPEN_EXTERNAL, icon_font(10.0), color);
-    kit::clipped_text(ui, Pos2::new(rect.left(), rect.center().y), Align2::LEFT_CENTER, "Sound settings", small_font(), color, rect.width() - 24.0);
+    kit::clipped_text(ui, Pos2::new(rect.left(), rect.center().y), Align2::LEFT_CENTER, text, small_font(), color, rect.width() - 24.0);
     resp.clicked()
 }

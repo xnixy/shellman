@@ -2,7 +2,7 @@
 //! Edits apply by saving the same files the other apps watch.
 
 use crate::saver::Saver;
-use crate::sections::SoundView;
+use crate::sections::{DisplayView, SoundView};
 use shellman_core::settings::bar::BarSettings;
 use shellman_core::settings::dock::{self, DockSettings};
 use shellman_core::settings::launcher::LauncherSettings;
@@ -25,6 +25,8 @@ pub struct State {
     pub thumbs: Thumbs,
     /// The Sound page's live state; started when the page is shown.
     pub sound: SoundView,
+    /// The Display page's live state; started when the page is shown.
+    pub display: DisplayView,
     pub hwnd: isize,
     /// Whether the window has real acrylic; without it the glass slider has nothing to do.
     pub glass: bool,
@@ -42,6 +44,7 @@ impl State {
             saver: Saver::new(),
             thumbs: Thumbs::new(ctx.clone()),
             sound: SoundView::default(),
+            display: DisplayView::default(),
             hwnd,
             glass,
         };

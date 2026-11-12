@@ -3,12 +3,15 @@
 mod about;
 mod appearance;
 mod bar;
+mod display;
+mod display_map;
 mod dock;
 mod launcher;
 mod sound;
 mod sound_mixer;
 mod sound_rows;
 
+pub use display::DisplayView;
 pub use sound::SoundView;
 use crate::state::State;
 use shellman_ui::theme::glyph;
@@ -17,6 +20,7 @@ use shellman_ui::theme::glyph;
 pub enum Section {
     Appearance,
     Sound,
+    Display,
     Dock,
     TopBar,
     Launcher,
@@ -24,9 +28,10 @@ pub enum Section {
 }
 
 impl Section {
-    pub const ALL: [Section; 6] = [
+    pub const ALL: [Section; 7] = [
         Section::Appearance,
         Section::Sound,
+        Section::Display,
         Section::Dock,
         Section::TopBar,
         Section::Launcher,
@@ -37,6 +42,7 @@ impl Section {
         match self {
             Section::Appearance => "Appearance",
             Section::Sound => "Sound",
+            Section::Display => "Display",
             Section::Dock => "Dock",
             Section::TopBar => "Top bar",
             Section::Launcher => "Launcher",
@@ -48,6 +54,7 @@ impl Section {
         match self {
             Section::Appearance => '\u{E790}',
             Section::Sound => glyph::VOLUME,
+            Section::Display => glyph::DESKTOP,
             Section::Dock => glyph::APP,
             Section::TopBar => glyph::DESKTOP,
             Section::Launcher => glyph::SEARCH,
@@ -59,6 +66,7 @@ impl Section {
         match self {
             Section::Appearance => appearance::show(ui, state),
             Section::Sound => sound::show(ui, state),
+            Section::Display => display::show(ui, state),
             Section::Dock => dock::show(ui, state),
             Section::TopBar => bar::show(ui, state),
             Section::Launcher => launcher::show(ui, state),
@@ -73,6 +81,7 @@ impl Section {
         match self {
             Section::Appearance => "appearance",
             Section::Sound => "sound",
+            Section::Display => "display",
             Section::Dock => "dock",
             Section::TopBar => "top-bar",
             Section::Launcher => "launcher",

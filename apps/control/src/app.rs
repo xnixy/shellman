@@ -180,7 +180,9 @@ impl Control {
         if self.sound.show(ui, live.map(|l| &l.sound)) {
             asked = Asked::SoundSettings;
         }
-        self.display.show(ui, live.map(|l| &l.brightness));
+        if self.display.show(ui, live.map(|l| &l.brightness)) {
+            asked = Asked::DisplaySettings;
+        }
         self.media.show(ui, live.map(|l| &l.media));
         if let Some(b) = self.battery {
             footer::battery(ui, b);
@@ -210,6 +212,10 @@ impl Control {
                 self.hide();
                 shellman_core::sibling::start_with("settings", &["--page", "sound"]);
             }
+            Asked::DisplaySettings => {
+                self.hide();
+                shellman_core::sibling::start_with("settings", &["--page", "display"]);
+            }
             Asked::Footer(footer::Asked::Settings) => {
                 self.hide();
                 shellman_core::sibling::start("settings");
@@ -228,6 +234,8 @@ enum Asked {
     Footer(footer::Asked),
     /// The "Sound settings" link under the sound controls.
     SoundSettings,
+    /// The "Display settings" link under the brightness sliders.
+    DisplaySettings,
 }
 
 /// Lock, sleep and the rest, once the panel is gone, so it is not the last thing on screen.

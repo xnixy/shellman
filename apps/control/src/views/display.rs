@@ -19,10 +19,12 @@ impl DisplayView {
         }
     }
 
-    pub fn show(&mut self, ui: &mut Ui, watch: Option<&BrightnessWatch>) {
+    /// True when the "Display settings" link was clicked.
+    pub fn show(&mut self, ui: &mut Ui, watch: Option<&BrightnessWatch>) -> bool {
         if self.screens.is_empty() {
-            return;
+            return false;
         }
+        let mut open_settings = false;
         let c = colors();
         let names = labels(&self.screens);
         kit::tile(ui, |ui| {
@@ -53,7 +55,10 @@ impl DisplayView {
             if !still_dragging {
                 self.dragging = None;
             }
+            ui.add_space(2.0);
+            open_settings = super::sound::settings_link(ui, "Display settings");
         });
+        open_settings
     }
 }
 

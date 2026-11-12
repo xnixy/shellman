@@ -11,6 +11,7 @@ pub mod audio_watch;
 pub mod backlight;
 pub mod brightness;
 pub mod clock;
+pub mod display;
 pub mod display_names;
 pub mod live;
 pub mod media;
