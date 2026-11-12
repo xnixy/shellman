@@ -65,12 +65,14 @@ pub fn run() {
                 win::announce_taskbar();
                 // Any Explorer seen from now on is someone's choice, not Winlogon's reflex.
                 st.death = None;
+                win::restore_taskman();
             }
             Step::StopHost(pid) => {
                 let asked = win::quit_shell(pid);
                 let gone = asked && Handle::watch(pid).is_none_or(|h| h.wait(QUIT) == Wait::Process);
                 st.say(format!("setting off: asked host {pid} to quit: {asked}, gone: {gone}"));
                 st.stopped_cleanly = true;
+                win::restore_taskman();
                 rest(&mut st);
             }
             Step::Idle(why) => {
@@ -157,6 +159,7 @@ fn ended(st: &mut State, pid: u32, code: Option<u32>) {
     }
     st.death = None;
     st.stopped_cleanly = true;
+    win::restore_taskman();
     st.say("no Explorer replaced it, so it was asked to stop: leaving it stopped".into());
 }
 

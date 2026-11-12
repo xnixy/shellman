@@ -154,6 +154,32 @@ pub fn announce_taskbar() {
     }
 }
 
+/// Give the shell's task-window role back to the bar's tray window once the host has gone. The
+/// host takes the role while it runs (the bar's own claim is then refused), and it is left empty
+/// when the host ends; Windows only hides minimized windows (rather than drawing title-bar stubs
+/// on the desktop) while someone holds it. Left alone while Explorer's tray is the one there.
+/// Both calls are exported by user32 but not declared in the SDK, so they are looked up by name.
+pub fn restore_taskman() {
+    use windows::core::s;
+    use windows::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
+    unsafe {
+        let Ok(user32) = GetModuleHandleW(w!("user32.dll")) else { return };
+        let (Some(get), Some(set)) = (GetProcAddress(user32, s!("GetTaskmanWindow")), GetProcAddress(user32, s!("SetTaskmanWindow"))) else {
+            return;
+        };
+        let get: unsafe extern "system" fn() -> HWND = std::mem::transmute(get);
+        let set: unsafe extern "system" fn(HWND) -> i32 = std::mem::transmute(set);
+        if !get().is_invalid() || explorer_is_shell() {
+            return;
+        }
+        if let Ok(tray) = FindWindowW(w!("Shell_TrayWnd"), None) {
+            if !tray.is_invalid() {
+                set(tray);
+            }
+        }
+    }
+}
+
 /// Whether modern (UWP / CoreWindow) apps can open right now: something hosts the immersive
 /// shell, whose window this is. Explorer and ShellAppRuntime both create it; without it,
 /// activating such an app times out. One window lookup, cheap enough to ask at every showing.
