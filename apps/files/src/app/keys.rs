@@ -169,6 +169,29 @@ impl super::FileMan {
             }
         });
     }
+
+    /// Picker mode's Esc, outside any text field: away with the replace question, or cancel.
+    /// Read before the browsing keys, which would only clear the selection.
+    pub(super) fn pick_keys(&mut self, ctx: &egui::Context, actions: &mut Vec<Action>) {
+        if self.pick.is_none() {
+            return;
+        }
+        // Esc with a list open (the file types, Sort) only closes the list.
+        if ctx.memory(|m| m.any_popup_open()) {
+            if ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape)) {
+                ctx.memory_mut(|m| m.close_popup());
+            }
+            return;
+        }
+        if self.dialog.is_some() || self.menu.is_open() || ctx.wants_keyboard_input() {
+            return;
+        }
+        ctx.input_mut(|i| {
+            if i.consume_key(Modifiers::NONE, Key::Escape) {
+                actions.push(Action::PickEscape);
+            }
+        });
+    }
 }
 
 /// Whether the Menu (application) key went down since the last frame, while this window has focus.

@@ -55,6 +55,8 @@ pub(super) enum Action {
     /// Hide, or bring back, an app's entry in the sidebar, by its id.
     HidePlace(String),
     ShowPlace(String),
+    /// Picker mode's Esc: put away the replace question, or cancel.
+    PickEscape,
 }
 
 pub(super) struct Rename {
@@ -73,6 +75,9 @@ pub(super) enum Dialog {
 
 impl super::FileMan {
     pub(super) fn apply(&mut self, action: Action) {
+        let Some(action) = self.pick_action(action) else {
+            return;
+        };
         let show_hidden = self.settings.show_hidden;
         if self.tabs[self.active].loc == Loc::Bin && super::bin::blocked(&action) {
             return;
@@ -308,6 +313,8 @@ impl super::FileMan {
                     shellman_core::shell_menu::properties(self.hwnd, &p);
                 }
             }
+            // Only picker mode has it, and `pick_action` took it.
+            Action::PickEscape => {}
             Action::SetView(view) => {
                 self.settings.view = view;
                 self.tabs[self.active].scroll_to_cursor = true;
@@ -315,6 +322,32 @@ impl super::FileMan {
             }
         }
         let _ = show_hidden;
+    }
+
+    /// In picker mode some actions mean something else (Enter and double clicks choose; a new
+    /// tab is the same tab) and some are not there (tabs, the bin). None when it is handled.
+    fn pick_action(&mut self, action: Action) -> Option<Action> {
+        if self.pick.is_none() {
+            return Some(action);
+        }
+        match action {
+            Action::NewTab(Loc::Bin) | Action::Navigate(Loc::Bin) => None,
+            Action::NewTab(loc) => Some(Action::Navigate(loc)),
+            Action::CloseTab(_) | Action::SwitchTab(_) => None,
+            Action::OpenSelected => {
+                self.pick_submit();
+                None
+            }
+            Action::OpenRow(r) => {
+                self.pick_open_row(r);
+                None
+            }
+            Action::PickEscape => {
+                self.pick_escape();
+                None
+            }
+            other => Some(other),
+        }
     }
 
     fn navigate(&mut self, loc: Loc) {

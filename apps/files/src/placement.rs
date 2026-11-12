@@ -55,8 +55,25 @@ pub fn place(work: Rect, scale: f32, saved: Option<Rect>, works: &[Rect]) -> Rec
     Rect { left, top, right: left + w, bottom: top + h }
 }
 
+/// The picker's size, in points: smaller than a browsing window, as a dialog is.
+pub const PICK_SIZE: (f32, f32) = (920.0, 600.0);
+
+/// Where the picker goes: `size` pixels centred over `owner` (the asking app's window) when there
+/// is one, else centred in `work`; moved and cut to stay within `work` either way.
+pub fn centre_over(owner: Option<Rect>, work: Rect, size: (i32, i32)) -> Rect {
+    let w = size.0.min(work.width());
+    let h = size.1.min(work.height());
+    let (cx, cy) = match owner {
+        Some(o) => ((o.left + o.right) / 2, (o.top + o.bottom) / 2),
+        None => ((work.left + work.right) / 2, (work.top + work.bottom) / 2),
+    };
+    let left = (cx - w / 2).clamp(work.left, work.right - w);
+    let top = (cy - h / 2).clamp(work.top, work.bottom - h);
+    Rect { left, top, right: left + w, bottom: top + h }
+}
+
 #[cfg(windows)]
-pub use win::{move_to, pointer_monitor, scale_at, window_rect, work_areas};
+pub use win::{aware, monitor_of, move_to, pointer_monitor, scale_at, window_rect, work_areas};
 
 #[cfg(windows)]
 mod win {
@@ -64,7 +81,8 @@ mod win {
     use windows::core::BOOL;
     use windows::Win32::Foundation::{HWND, LPARAM, POINT, RECT};
     use windows::Win32::Graphics::Gdi::{
-        EnumDisplayMonitors, GetMonitorInfoW, MonitorFromPoint, HDC, HMONITOR, MONITORINFO,
+        EnumDisplayMonitors, GetMonitorInfoW, MonitorFromPoint, MonitorFromRect, HDC, HMONITOR,
+        MONITORINFO,
         MONITOR_DEFAULTTONEAREST,
     };
     use windows::Win32::UI::HiDpi::{
@@ -103,6 +121,20 @@ mod win {
             let mut at = POINT::default();
             GetCursorPos(&mut at).ok()?;
             let monitor = MonitorFromPoint(at, MONITOR_DEFAULTTONEAREST);
+            let mut info = MONITORINFO { cbSize: size_of::<MONITORINFO>() as u32, ..Default::default() };
+            if !GetMonitorInfoW(monitor, &mut info).as_bool() {
+                return None;
+            }
+            Some((rect(info.rcWork), scale(monitor)))
+        }
+    }
+
+    /// The work area and scale of the monitor that holds most of `r`.
+    pub fn monitor_of(r: Rect) -> Option<(Rect, f32)> {
+        aware();
+        let at = RECT { left: r.left, top: r.top, right: r.right, bottom: r.bottom };
+        unsafe {
+            let monitor = MonitorFromRect(&at, MONITOR_DEFAULTTONEAREST);
             let mut info = MONITORINFO { cbSize: size_of::<MONITORINFO>() as u32, ..Default::default() };
             if !GetMonitorInfoW(monitor, &mut info).as_bool() {
                 return None;
@@ -232,6 +264,23 @@ mod tests {
     fn a_saved_rect_restores_whatever_monitor_the_pointer_is_on() {
         let saved = r(200, 300, 1700, 1100);
         assert_eq!(place(LOW, 3.0, Some(saved), &[MAIN, LEFT, LOW]), saved);
+    }
+
+    #[test]
+    fn the_picker_centres_over_its_owner_but_stays_on_the_work_area() {
+        let owner = r(1000, 500, 2000, 1300);
+        let p = centre_over(Some(owner), MAIN, (800, 600));
+        assert_eq!(p, r(1100, 600, 1900, 1200));
+        // An owner near the top left pushes the picker back onto the work area.
+        let corner = r(-100, 0, 300, 200);
+        let p = centre_over(Some(corner), MAIN, (800, 600));
+        assert_eq!((p.left, p.top), (MAIN.left, MAIN.top));
+        // No owner: the middle of the work area.
+        let p = centre_over(None, MAIN, (800, 600));
+        assert_eq!(p.left - MAIN.left, MAIN.right - p.right);
+        // Too big: cut to the work area.
+        let small = r(0, 0, 640, 480);
+        assert_eq!(centre_over(Some(owner), small, (800, 600)), small);
     }
 
     #[test]

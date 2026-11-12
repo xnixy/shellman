@@ -1,0 +1,4 @@
+LIBRARY shellman_pickhook
+EXPORTS
+    DllGetClassObject PRIVATE
+    DllCanUnloadNow PRIVATE

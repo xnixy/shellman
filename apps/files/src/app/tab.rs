@@ -41,6 +41,20 @@ impl Loc {
     }
 }
 
+/// In picker mode, which items a folder shows: folders always (to get around), and files only
+/// when they match the chosen file type, and not at all when folders are being picked.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(super) struct Only {
+    pub(super) folders: bool,
+    pub(super) files: crate::pick::filter::Patterns,
+}
+
+impl Only {
+    fn shows(&self, e: &Entry) -> bool {
+        e.is_dir || (!self.folders && self.files.matches(&e.name))
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub(super) enum SortKey {
     Name,
@@ -77,6 +91,8 @@ pub(super) struct Tab {
     pub(super) bin: HashMap<PathBuf, BinItem>,
     /// The sort to go back to when the tab leaves the bin, which opens newest first.
     pub(super) sort_before_bin: Option<(SortKey, bool)>,
+    /// What a picker shows of the folder; None when browsing.
+    pub(super) only: Option<Only>,
     /// Every entry index, sorted by `sorted_for`. Typing in the filter only walks this, so a
     /// keystroke never re-sorts. Hidden items stay in it and are skipped while filtering.
     order: Vec<usize>,
@@ -116,6 +132,7 @@ impl Tab {
             select_after_load: None,
             bin: HashMap::new(),
             sort_before_bin: None,
+            only: None,
             order: Vec::new(),
             sorted_for: None,
             entries_sig: (0, 0),
@@ -143,10 +160,13 @@ impl Tab {
         }
         let needle = self.filter.trim().to_lowercase();
         let entries = &self.entries;
+        let only = self.only.as_ref();
         self.view.clear();
         self.view.extend(self.order.iter().copied().filter(|&i| {
             let e = &entries[i];
-            (show_hidden || !e.hidden) && (needle.is_empty() || e.key.contains(&needle))
+            (show_hidden || !e.hidden)
+                && (needle.is_empty() || e.key.contains(&needle))
+                && only.is_none_or(|o| o.shows(e))
         }));
         self.rows.clear();
         self.rows.resize(entries.len(), u32::MAX);

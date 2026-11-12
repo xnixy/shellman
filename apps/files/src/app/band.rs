@@ -59,15 +59,9 @@ fn text_width(ui: &Ui, text: &str, font: FontId) -> f32 {
 }
 
 impl super::FileMan {
-    /// Draw the band in `band`; returns the main pill, if one shows. The message pill, when there
-    /// is one, is added to `extra`.
-    pub(super) fn band(
-        &mut self,
-        ui: &mut Ui,
-        band: Rect,
-        actions: &mut Vec<Action>,
-        extra: &mut Vec<Rect>,
-    ) -> Option<Rect> {
+    /// The message pill ("Copy done") at the right of `band`, while there is a message; it is
+    /// added to `extra`.
+    pub(super) fn toast_pill(&mut self, ui: &mut Ui, band: Rect, extra: &mut Vec<Rect>) {
         let c = colors();
         let now = ui.input(|i| i.time);
         if let Some((msg, at)) = &self.toast {
@@ -90,6 +84,11 @@ impl super::FileMan {
                     .request_repaint_after(std::time::Duration::from_secs_f64(left.max(0.05)));
             }
         }
+    }
+
+    /// Draw the band in `band`; returns the main pill, if one shows.
+    pub(super) fn band(&mut self, ui: &mut Ui, band: Rect, actions: &mut Vec<Action>) -> Option<Rect> {
+        let c = colors();
 
         let tab = &self.tabs[self.active];
         if tab.selected.is_empty() || tab.loc == Loc::Pc {
