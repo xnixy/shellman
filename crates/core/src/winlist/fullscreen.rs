@@ -12,8 +12,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 /// Windows that cover the screen without being an app in fullscreen: the desktop and Explorer's
-/// own taskbars.
-const SHELL_CLASSES: [&str; 4] = ["Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd"];
+/// own taskbars, and shellman's own wallpaper windows.
+const SHELL_CLASSES: [&str; 5] = ["Progman", "WorkerW", "Shell_TrayWnd", "Shell_SecondaryTrayWnd", "ShellmanDesktop"];
 
 /// Does `window` reach every edge of `monitor`? Overhang does not matter: borderless windows
 /// and maximized frames both stick out a few pixels.
