@@ -23,7 +23,10 @@ pub fn show(ui: &mut egui::Ui) {
             if ui.button("Open settings folder").clicked() {
                 // It is created by the first save; make sure there is something to open.
                 let _ = std::fs::create_dir_all(&dir);
-                shellman_core::fsops::open(&dir);
+                // In Files, not whatever the system opens folders with (Explorer).
+                if !shellman_core::sibling::start_with("files", &[&dir.display().to_string()]) {
+                    shellman_core::fsops::open(&dir);
+                }
             }
         }
         None => {
