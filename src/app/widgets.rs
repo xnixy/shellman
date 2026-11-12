@@ -3,8 +3,7 @@
 use crate::theme::{self, colors, icon_font};
 use egui::text::{CCursor, CCursorRange, LayoutJob, TextFormat, TextWrapping};
 use egui::{
-    Align, Align2, Color32, CornerRadius, FontId, Id, Rect, RichText, Sense, Stroke, Ui, Vec2,
-    WidgetText,
+    Align, Align2, Color32, CornerRadius, FontId, Id, Rect, RichText, Sense, Ui, Vec2, WidgetText,
 };
 
 /// A glyph and a label in one piece of text.
@@ -56,7 +55,7 @@ pub(super) fn round_button(ui: &mut Ui, g: char, enabled: bool, tip: &str) -> eg
     } else {
         Sense::hover()
     };
-    let (rect, resp) = ui.allocate_exact_size(Vec2::splat(34.0), sense);
+    let (rect, resp) = ui.allocate_exact_size(Vec2::splat(32.0), sense);
     if enabled && resp.hovered() {
         ui.painter()
             .circle_filled(rect.center(), 16.0, c.control_hover);
@@ -64,7 +63,7 @@ pub(super) fn round_button(ui: &mut Ui, g: char, enabled: bool, tip: &str) -> eg
     let col = if enabled {
         c.text
     } else {
-        theme::with_alpha(c.muted, 80)
+        theme::with_alpha(c.muted, 90)
     };
     ui.painter().text(
         rect.center(),
@@ -97,15 +96,73 @@ pub(super) fn menu_item(ui: &mut Ui, g: char, label: &str, shortcut: &str) -> bo
     ui.add(b).clicked()
 }
 
-pub(super) fn hover_outline(ui: &Ui, resp: &egui::Response) {
-    if resp.hovered() {
-        ui.painter().rect_stroke(
-            resp.rect,
-            CornerRadius::same(14),
-            Stroke::new(1.0_f32, theme::with_alpha(colors().accent, 170)),
-            egui::StrokeKind::Inside,
-        );
+/// A two-tone folder: a darker back with a tab, and a lighter front, so a folder reads at a
+/// glance from plain rects instead of one flat glyph. Everything scales from `rect`, the icon's
+/// bounding box, so the same drawing serves the grid's 62x46 and the list's 18x14.
+pub(super) fn folder_icon(
+    painter: &egui::Painter,
+    rect: Rect,
+    accent: Color32,
+    dim: impl Fn(Color32) -> Color32,
+) {
+    let (w, h) = (rect.width(), rect.height());
+    let back = dim(theme::mix(accent, Color32::BLACK, 0.15));
+    let front = dim(theme::mix(accent, Color32::WHITE, 0.25));
+    let k = w / 62.0;
+    let at = |x: f32, y: f32, ww: f32, hh: f32| {
+        Rect::from_min_size(rect.min + Vec2::new(x, y), Vec2::new(ww, hh))
+    };
+    painter.rect_filled(
+        at(0.0, 0.0, w * 0.45, h * 0.18),
+        CornerRadius::same((5.0 * k).round() as u8),
+        back,
+    );
+    painter.rect_filled(
+        at(0.0, h * 0.15, w, h * 0.85),
+        CornerRadius::same((7.0 * k).round() as u8),
+        back,
+    );
+    let inset = w * 0.03;
+    painter.rect_filled(
+        at(inset, h * 0.2, w - inset * 2.0, h * 0.8),
+        CornerRadius::same((7.0 * k).round() as u8),
+        front,
+    );
+}
+
+/// A toggle switch with its label to the right; the knob slides as it flips. Unlike a checkbox
+/// it says "on" or "off" at a glance.
+pub(super) fn switch(ui: &mut Ui, on: &mut bool, label: &str) -> egui::Response {
+    let c = colors();
+    let galley = ui
+        .painter()
+        .layout_no_wrap(label.to_owned(), FontId::proportional(13.5), c.text);
+    let size = Vec2::new(36.0 + 10.0 + galley.size().x, 20.0);
+    let (rect, mut resp) = ui.allocate_exact_size(size, Sense::click());
+    if resp.clicked() {
+        *on = !*on;
+        resp.mark_changed();
     }
+    let t = ui.ctx().animate_bool(resp.id, *on);
+    let track = Rect::from_min_size(rect.min, Vec2::new(36.0, 20.0));
+    let p = ui.painter();
+    p.rect_filled(
+        track,
+        CornerRadius::same(10),
+        theme::mix(c.track, c.accent, t),
+    );
+    let knob_x = track.left() + 10.0 + 16.0 * t;
+    p.circle_filled(
+        egui::pos2(knob_x, track.center().y),
+        7.0,
+        theme::mix(c.muted, Color32::WHITE, t),
+    );
+    let pos = egui::pos2(
+        track.right() + 10.0,
+        rect.center().y - galley.size().y / 2.0,
+    );
+    p.galley(pos, galley, c.text);
+    resp
 }
 
 /// One line of text in a box, cut with an ellipsis when it does not fit.

@@ -7,19 +7,20 @@ use super::actions::Action;
 use super::interact::{self, ItemEvents};
 use super::rows::{file_icon, row_menu};
 use super::tab::Loc;
+use super::widgets;
 use crate::fsops::Op;
-use crate::theme::{self, colors, glyph, icon_font};
+use crate::theme::{self, colors, icon_font};
 use crate::thumbs;
 use egui::text::{LayoutJob, TextFormat, TextWrapping};
 use egui::{Align, Align2, Color32, CornerRadius, FontId, Id, Rect, Sense, Ui, Vec2};
 
 /// Smallest tile width; tiles stretch a little to fill the line exactly.
-const TILE_W: f32 = 118.0;
-const TILE_H: f32 = 140.0;
-const GAP: f32 = 6.0;
+const TILE_W: f32 = 112.0;
+const TILE_H: f32 = 128.0;
+const GAP: f32 = 4.0;
 /// Height of one line of tiles, used for scrolling and Page Up/Down.
 pub(super) const GRID_LINE_H: f32 = TILE_H + GAP;
-const PREVIEW: f32 = 88.0;
+const PREVIEW: f32 = 80.0;
 
 impl super::FileMan {
     pub(super) fn file_grid(&mut self, ui: &mut Ui, actions: &mut Vec<Action>) {
@@ -54,7 +55,8 @@ impl super::FileMan {
         let out = scroll.show_rows(ui, GRID_LINE_H, lines, |ui, line_range| {
             ui.spacing_mut().item_spacing.y = 0.0;
             for line in line_range {
-                let (line_rect, _) = ui.allocate_exact_size(Vec2::new(width, GRID_LINE_H), Sense::hover());
+                let (line_rect, _) =
+                    ui.allocate_exact_size(Vec2::new(width, GRID_LINE_H), Sense::hover());
                 for col in 0..cols {
                     let r = line * cols + col;
                     if r >= n {
@@ -71,9 +73,11 @@ impl super::FileMan {
                     // Selection and hover.
                     let selected = tab.selected.contains(&e.path);
                     if selected {
-                        ui.painter().rect_filled(tile, CornerRadius::same(12), c.row_selected);
+                        ui.painter()
+                            .rect_filled(tile, CornerRadius::same(10), c.row_selected);
                     } else if resp.hovered() {
-                        ui.painter().rect_filled(tile, CornerRadius::same(12), c.control);
+                        ui.painter()
+                            .rect_filled(tile, CornerRadius::same(10), c.control);
                     }
 
                     // Preview: a folder glyph, the shell's preview, or a large type tile.
@@ -85,26 +89,51 @@ impl super::FileMan {
                         .then(|| thumbs.get(&e.path, true).map(|t| (t.id(), t.size_vec2())))
                         .flatten();
                     if e.is_dir {
-                        ui.painter().text(
-                            preview.center(),
-                            Align2::CENTER_CENTER,
-                            glyph::FOLDER_FILL,
-                            icon_font(60.0),
-                            dim(c.accent_text),
-                        );
+                        let icon = Rect::from_center_size(preview.center(), Vec2::new(62.0, 46.0));
+                        widgets::folder_icon(ui.painter(), icon, c.accent_text, &dim);
                     } else if let Some((id, size)) = thumb {
-                        let scale = (preview.width() / size.x).min(preview.height() / size.y);
+                        let program = thumbs::is_program(&e.name);
+                        // Program icons are small and unframed; photos are fitted into a wider
+                        // box and sit on its bottom edge so every name hangs at the same distance.
+                        let max = if program {
+                            Vec2::splat(56.0)
+                        } else {
+                            Vec2::new(80.0, 60.0)
+                        };
+                        let size = size * (max.x / size.x).min(max.y / size.y);
+                        let at = if program {
+                            Rect::from_center_size(preview.center(), size)
+                        } else {
+                            Rect::from_min_size(
+                                egui::pos2(
+                                    preview.center().x - size.x / 2.0,
+                                    preview.bottom() - size.y,
+                                ),
+                                size,
+                            )
+                        };
+                        let radius = if program { 0 } else { 8 };
                         egui::Image::from_texture((id, size))
-                            .corner_radius(CornerRadius::same(8))
+                            .corner_radius(CornerRadius::same(radius))
                             .tint(dim(Color32::WHITE))
-                            .paint_at(ui, Rect::from_center_size(preview.center(), size * scale));
+                            .paint_at(ui, at);
                     } else {
                         let (g, gcol) = file_icon(e, &c);
                         let square = Rect::from_center_size(preview.center(), Vec2::splat(64.0));
                         let alpha = if c.light { 36 } else { 46 };
                         let p = ui.painter();
-                        p.rect_filled(square, CornerRadius::same(16), dim(theme::with_alpha(gcol, alpha)));
-                        p.text(square.center(), Align2::CENTER_CENTER, g, icon_font(26.0), dim(gcol));
+                        p.rect_filled(
+                            square,
+                            CornerRadius::same(16),
+                            dim(theme::with_alpha(gcol, alpha)),
+                        );
+                        p.text(
+                            square.center(),
+                            Align2::CENTER_CENTER,
+                            g,
+                            icon_font(26.0),
+                            dim(gcol),
+                        );
                     }
 
                     // Name, up to two lines, or the rename box.
@@ -114,7 +143,10 @@ impl super::FileMan {
                     );
                     match rename.as_mut().filter(|rn| rn.path == e.path) {
                         Some(rn) => {
-                            let field = Rect::from_min_size(name_rect.min, Vec2::new(name_rect.width(), 24.0));
+                            let field = Rect::from_min_size(
+                                name_rect.min,
+                                Vec2::new(name_rect.width(), 24.0),
+                            );
                             interact::rename_box(ui, field, rn, e.is_dir, &mut ev);
                         }
                         None => centered_name(ui, name_rect, &e.name, dim(c.text)),
@@ -138,7 +170,7 @@ fn centered_name(ui: &Ui, rect: Rect, name: &str, color: Color32) {
     let mut job = LayoutJob::single_section(
         name.to_owned(),
         TextFormat {
-            font_id: FontId::proportional(12.5),
+            font_id: FontId::proportional(12.0),
             color,
             ..Default::default()
         },

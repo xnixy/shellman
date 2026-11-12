@@ -25,9 +25,9 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use tab::{Loc, Tab};
 
-const ROW_H: f32 = 34.0;
-const FOOTER_H: f32 = 30.0;
-const SIDEBAR_W: f32 = 224.0;
+const ROW_H: f32 = 32.0;
+const FOOTER_H: f32 = 26.0;
+const SIDEBAR_W: f32 = 200.0;
 /// Height of the tab strip, which is also the title bar.
 const CAPTION_H: f32 = 40.0;
 

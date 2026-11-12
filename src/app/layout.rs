@@ -17,7 +17,8 @@ impl super::FileMan {
         } else {
             None
         };
-        let caption_h = self.caption.map_or(CAPTION_H, |s| s.y.clamp(32.0, 48.0)) + 6.0;
+        // Exactly the caption buttons' height, so the tabs and the buttons share one centre line.
+        let caption_h = self.caption.map_or(CAPTION_H, |s| s.y.clamp(32.0, 48.0));
         let c = colors();
         // One even tint over the whole window; nothing else paints a band of its own.
         ctx.layer_painter(egui::LayerId::background()).rect_filled(
@@ -53,7 +54,7 @@ impl super::FileMan {
                     .frame(egui::Frame::new().inner_margin(egui::Margin {
                         left: 0,
                         right: 0,
-                        top: 2,
+                        top: 8,
                         bottom: 10,
                     }))
                     .show_separator_line(false)
@@ -61,7 +62,7 @@ impl super::FileMan {
                 egui::Frame::new()
                     .fill(c.sheet)
                     .stroke(Stroke::new(1.0_f32, c.hairline))
-                    .corner_radius(CornerRadius::same(14))
+                    .corner_radius(CornerRadius::same(12))
                     .inner_margin(egui::Margin {
                         left: 8,
                         right: 8,
@@ -69,8 +70,8 @@ impl super::FileMan {
                         bottom: 0,
                     })
                     .shadow(egui::Shadow {
-                        offset: [0, 6],
-                        blur: 24,
+                        offset: [0, 2],
+                        blur: 16,
                         spread: 0,
                         color: c.shadow,
                     })

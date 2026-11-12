@@ -84,16 +84,8 @@ pub fn dialog() -> Frame {
     Frame::new()
         .fill(c.popup)
         .stroke(Stroke::new(1.0_f32, c.hairline))
-        .corner_radius(CornerRadius::same(14))
+        .corner_radius(CornerRadius::same(12))
         .inner_margin(Margin::same(20))
-}
-
-pub fn card<R>(ui: &mut Ui, add_contents: impl FnOnce(&mut Ui) -> R) -> egui::InnerResponse<R> {
-    Frame::new()
-        .fill(colors().control)
-        .corner_radius(CornerRadius::same(14))
-        .inner_margin(Margin::same(14))
-        .show(ui, add_contents)
 }
 
 pub fn muted(text: impl Into<String>) -> RichText {
@@ -104,13 +96,15 @@ pub fn primary_button(text: &str) -> egui::Button<'static> {
     let c = colors();
     egui::Button::new(RichText::new(text).strong().color(c.on_accent))
         .fill(c.accent)
-        .corner_radius(CornerRadius::same(10))
-        .min_size(Vec2::new(110.0, 32.0))
+        .stroke(Stroke::NONE)
+        .corner_radius(CornerRadius::same(8))
+        .min_size(Vec2::new(88.0, 30.0))
 }
 
 pub fn danger_button(text: &str) -> egui::Button<'static> {
     egui::Button::new(RichText::new(text).strong().color(Color32::WHITE))
         .fill(colors().danger)
+        .stroke(Stroke::NONE)
         .corner_radius(CornerRadius::same(10))
         .min_size(Vec2::new(110.0, 32.0))
 }

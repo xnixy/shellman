@@ -2,14 +2,14 @@
 
 use super::actions::Action;
 use super::interact::{self, ItemEvents};
-use super::rows::{file_icon, row_menu};
+use super::rows::{list_icon, row_menu};
 use super::tab::{Loc, SortKey, Tab};
 use super::widgets::draw_text;
 use super::ROW_H;
 use crate::fsops::{self, Op};
 use crate::theme::{self, colors, glyph, icon_font};
 use crate::thumbs;
-use egui::{Align2, Color32, CornerRadius, FontId, Id, Rect, Sense, Stroke, Ui, Vec2};
+use egui::{Align2, CornerRadius, FontId, Id, Rect, Sense, Stroke, Ui, Vec2};
 
 const HEADER_H: f32 = 28.0;
 
@@ -100,42 +100,16 @@ impl super::FileMan {
                     p.rect_filled(row_rect, CornerRadius::same(9), c.control);
                 }
 
-                // Icon: the shell's preview for photos, videos and programs once it has loaded,
-                // otherwise a soft tile in the file type's color.
-                let tile = Rect::from_center_size(
-                    egui::pos2(rect.left() + 22.0, rect.center().y),
-                    Vec2::splat(24.0),
-                );
+                // Icon: the shell's preview for photos, videos and programs once it has loaded.
                 let thumb = (!e.is_dir && thumbs::wants_thumb(&e.name))
                     .then(|| thumbs.get(&e.path, false).map(|t| (t.id(), t.size_vec2())))
                     .flatten();
-                if let Some((id, size)) = thumb {
-                    let scale = (tile.width() / size.x).min(tile.height() / size.y);
-                    egui::Image::from_texture((id, size))
-                        .corner_radius(CornerRadius::same(5))
-                        .tint(dim(Color32::WHITE))
-                        .paint_at(ui, Rect::from_center_size(tile.center(), size * scale));
-                } else {
-                    let (g, gcol) = file_icon(e, &c);
-                    let alpha = if c.light { 36 } else { 46 };
-                    let p = ui.painter();
-                    p.rect_filled(
-                        tile,
-                        CornerRadius::same(7),
-                        dim(theme::with_alpha(gcol, alpha)),
-                    );
-                    p.text(
-                        tile.center(),
-                        Align2::CENTER_CENTER,
-                        g,
-                        icon_font(12.5),
-                        dim(gcol),
-                    );
-                }
+                let center = egui::pos2(rect.left() + 20.0, rect.center().y);
+                list_icon(ui, center, e, thumb, &c, &dim);
 
                 // Name, or the rename box.
                 let name_rect = Rect::from_min_max(
-                    egui::pos2(rect.left() + 46.0, rect.top()),
+                    egui::pos2(rect.left() + 40.0, rect.top()),
                     egui::pos2(rect.left() + cols.name - 8.0, rect.bottom()),
                 );
                 match rename.as_mut().filter(|rn| rn.path == e.path) {
@@ -163,7 +137,7 @@ impl super::FileMan {
                         Vec2::new(w - 20.0, ROW_H),
                     )
                 };
-                let small = FontId::proportional(12.5);
+                let small = FontId::proportional(12.0);
                 let x_kind = cols.name + cols.modified;
                 draw_text(
                     ui,
@@ -224,11 +198,12 @@ fn header(ui: &mut Ui, tab: &mut Tab, cols: &Columns, width: f32) {
         let right = key == SortKey::Size;
         let sorted = tab.sort == key;
         let color = if sorted { c.text } else { c.muted };
+        let font = FontId::proportional(11.5);
         draw_text(
             ui,
             r.shrink2(Vec2::new(10.0, 0.0)),
             label,
-            FontId::proportional(12.5),
+            font.clone(),
             color,
             right,
         );
@@ -238,19 +213,23 @@ fn header(ui: &mut Ui, tab: &mut Tab, cols: &Columns, width: f32) {
             } else {
                 glyph::SORT_DOWN
             };
+            // Hug the label: after it, or before it for the right-aligned Size column.
+            let w = ui
+                .fonts(|f| f.layout_no_wrap(label.to_owned(), font, color))
+                .size()
+                .x;
             let (pos, align) = if right {
                 (
-                    egui::pos2(r.left() + 8.0, r.center().y),
-                    Align2::LEFT_CENTER,
+                    egui::pos2(r.right() - 10.0 - w - 6.0, r.center().y),
+                    Align2::RIGHT_CENTER,
                 )
             } else {
                 (
-                    egui::pos2(r.right() - 10.0, r.center().y),
-                    Align2::RIGHT_CENTER,
+                    egui::pos2(r.left() + 10.0 + w + 6.0, r.center().y),
+                    Align2::LEFT_CENTER,
                 )
             };
-            ui.painter()
-                .text(pos, align, g, icon_font(9.0), c.accent_text);
+            ui.painter().text(pos, align, g, icon_font(8.0), c.muted);
         }
         if resp.clicked() {
             if tab.sort == key {
@@ -262,9 +241,4 @@ fn header(ui: &mut Ui, tab: &mut Tab, cols: &Columns, width: f32) {
             tab.dirty = true;
         }
     }
-    ui.painter().hline(
-        head.x_range(),
-        head.bottom(),
-        Stroke::new(1.0_f32, c.hairline),
-    );
 }

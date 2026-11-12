@@ -2,10 +2,12 @@
 
 use super::actions::Action;
 use super::tab::Loc;
+use super::widgets::folder_icon;
 use super::widgets::menu_item;
 use crate::fsops::{Entry, Op};
-use crate::theme::{self, glyph};
-use egui::{Color32, Ui};
+use crate::theme::{self, glyph, icon_font};
+use crate::thumbs;
+use egui::{Align2, Color32, CornerRadius, Rect, TextureId, Ui, Vec2};
 use std::path::Path;
 
 /// The right-click menu of a file row.
@@ -84,4 +86,42 @@ pub(super) fn file_icon(e: &Entry, c: &theme::Colors) -> (char, Color32) {
         theme::mix(col, Color32::WHITE, 0.15)
     };
     (g, col)
+}
+
+/// The icon of a list row, in one 20pt slot centred on `center` so names line up whatever the
+/// file is: a folder drawing, a cropped photo, a fitted program icon, or just a coloured glyph.
+pub(super) fn list_icon(
+    ui: &Ui,
+    center: egui::Pos2,
+    e: &Entry,
+    thumb: Option<(TextureId, Vec2)>,
+    c: &theme::Colors,
+    dim: impl Fn(Color32) -> Color32,
+) {
+    let slot = Rect::from_center_size(center, Vec2::splat(20.0));
+    if e.is_dir {
+        let icon = Rect::from_center_size(center, Vec2::new(18.0, 14.0));
+        folder_icon(ui.painter(), icon, c.accent_text, dim);
+    } else if let Some((id, size)) = thumb {
+        let image = egui::Image::from_texture((id, size)).tint(dim(Color32::WHITE));
+        if thumbs::is_program(&e.name) {
+            let fitted = size * (20.0 / size.x).min(20.0 / size.y);
+            image.paint_at(ui, Rect::from_center_size(center, fitted));
+        } else {
+            // Centre crop, so photos of any shape fill the same square.
+            let (u, v) = (
+                (1.0 - size.y / size.x).max(0.0) / 2.0,
+                (1.0 - size.x / size.y).max(0.0) / 2.0,
+            );
+            let uv = Rect::from_min_max(egui::pos2(u, v), egui::pos2(1.0 - u, 1.0 - v));
+            image
+                .uv(uv)
+                .corner_radius(CornerRadius::same(4))
+                .paint_at(ui, slot);
+        }
+    } else {
+        let (g, gcol) = file_icon(e, c);
+        ui.painter()
+            .text(center, Align2::CENTER_CENTER, g, icon_font(15.0), dim(gcol));
+    }
 }

@@ -1,8 +1,10 @@
 //! The modal dialogs: settings and confirm-recycle.
 
 use super::actions::Dialog;
+use super::widgets::switch;
 use crate::fsops::Op;
 use crate::theme::{self, colors, glyph, icon_font, AccentChoice};
+use egui::widgets::color_picker::{color_picker_color32, Alpha};
 use egui::{Align, Align2, Color32, Id, Key, Layout, RichText, Sense, Stroke, Ui, Vec2};
 
 impl super::FileMan {
@@ -60,60 +62,79 @@ impl super::FileMan {
                         ui.set_width(420.0);
                         ui.label(
                             RichText::new("Appearance")
-                                .size(18.0)
+                                .size(16.0)
                                 .strong()
                                 .color(c.text),
                         );
                         ui.add_space(8.0);
-                        ui.label(RichText::new("Accent color").color(c.text));
+                        ui.label(theme::muted("Accent color").size(12.0));
                         ui.add_space(2.0);
                         let current = self.settings.accent;
+                        let picker_id = Id::new("custom-picker");
+                        let mut open = ui.data(|d| d.get_temp::<bool>(picker_id)).unwrap_or(false);
                         let mut pick = None;
                         ui.horizontal_wrapped(|ui| {
                             ui.spacing_mut().item_spacing = Vec2::new(6.0, 6.0);
                             let sys = theme::system_accent().unwrap_or(c.accent);
-                            if swatch(ui, sys, current == AccentChoice::System, "Windows accent")
-                                .clicked()
+                            if swatch(
+                                ui,
+                                Swatch::System(sys),
+                                current == AccentChoice::System,
+                                "Windows accent",
+                            )
+                            .clicked()
                             {
                                 pick = Some(AccentChoice::System);
                             }
                             ui.add_space(6.0);
                             for (i, (name, rgb)) in theme::PRESETS.iter().enumerate() {
                                 let col = Color32::from_rgb(rgb[0], rgb[1], rgb[2]);
-                                if swatch(ui, col, current == AccentChoice::Preset(i), name)
-                                    .clicked()
+                                if swatch(
+                                    ui,
+                                    Swatch::Solid(col),
+                                    current == AccentChoice::Preset(i),
+                                    name,
+                                )
+                                .clicked()
                                 {
                                     pick = Some(AccentChoice::Preset(i));
                                 }
                             }
-                        });
-                        ui.add_space(4.0);
-                        ui.horizontal(|ui| {
-                            let mut rgb = match current {
-                                AccentChoice::Custom(v) => v,
-                                _ => [c.accent.r(), c.accent.g(), c.accent.b()],
-                            };
-                            if ui.color_edit_button_srgb(&mut rgb).changed() {
-                                pick = Some(AccentChoice::Custom(rgb));
-                            }
-                            let label = match current {
-                                AccentChoice::System => "Following Windows",
-                                AccentChoice::Preset(i) => {
-                                    theme::PRESETS[i.min(theme::PRESETS.len() - 1)].0
+                            // The eleventh swatch opens the picker, and shows the custom color once chosen.
+                            let kind = match current {
+                                AccentChoice::Custom(v) => {
+                                    Swatch::Solid(Color32::from_rgb(v[0], v[1], v[2]))
                                 }
-                                AccentChoice::Custom(_) => "Custom",
+                                _ => Swatch::Add,
                             };
-                            ui.label(theme::muted(format!(
-                                "{label}  ·  click the box for any color"
-                            )));
+                            let custom = matches!(current, AccentChoice::Custom(_));
+                            if swatch(ui, kind, custom, "Custom color").clicked() {
+                                open = !open;
+                            }
                         });
+                        ui.data_mut(|d| d.insert_temp(picker_id, open));
+                        ui.add_space(2.0);
+                        let label = match current {
+                            AccentChoice::System => "Following Windows",
+                            AccentChoice::Preset(i) => {
+                                theme::PRESETS[i.min(theme::PRESETS.len() - 1)].0
+                            }
+                            AccentChoice::Custom(_) => "Custom",
+                        };
+                        ui.label(theme::muted(label).size(12.0));
+                        if open {
+                            ui.add_space(6.0);
+                            // Live: every change restyles the app as a custom accent.
+                            let mut col = c.accent;
+                            if color_picker_color32(ui, &mut col, Alpha::Opaque) {
+                                pick = Some(AccentChoice::Custom([col.r(), col.g(), col.b()]));
+                            }
+                        }
                         if let Some(p) = pick {
                             self.set_accent(p);
                         }
                         ui.add_space(14.0);
-                        if ui
-                            .checkbox(&mut self.settings.show_hidden, "Show hidden files")
-                            .changed()
+                        if switch(ui, &mut self.settings.show_hidden, "Show hidden files").changed()
                         {
                             self.save_pending = true;
                             for t in &mut self.tabs {
@@ -137,15 +158,51 @@ impl super::FileMan {
     }
 }
 
-fn swatch(ui: &mut Ui, col: Color32, selected: bool, tip: &str) -> egui::Response {
+/// What a swatch is filled with.
+enum Swatch {
+    Solid(Color32),
+    /// Half the system accent, half neutral: it stands for "whatever Windows uses".
+    System(Color32),
+    /// The custom-color button, before a custom color exists.
+    Add,
+}
+
+fn swatch(ui: &mut Ui, kind: Swatch, selected: bool, tip: &str) -> egui::Response {
     let c = colors();
     let (rect, resp) = ui.allocate_exact_size(Vec2::splat(32.0), Sense::click());
     let center = rect.center();
+    let radius = if resp.hovered() { 13.5 } else { 12.5 };
     let p = ui.painter();
-    p.circle_filled(center, if resp.hovered() { 13.5 } else { 12.5 }, col);
+    let under = match kind {
+        Swatch::Solid(col) => {
+            p.circle_filled(center, radius, col);
+            col
+        }
+        Swatch::System(col) => {
+            p.add(half_disc(center, radius, true, col));
+            p.add(half_disc(
+                center,
+                radius,
+                false,
+                theme::with_alpha(c.text, 40),
+            ));
+            col
+        }
+        Swatch::Add => {
+            p.circle_filled(center, radius, c.control);
+            p.text(
+                center,
+                Align2::CENTER_CENTER,
+                glyph::ADD,
+                icon_font(12.0),
+                c.text,
+            );
+            c.control
+        }
+    };
     if selected {
         p.circle_stroke(center, 15.0, Stroke::new(2.0_f32, c.text));
-        let on = theme::Colors::new(c.light, col).on_accent;
+        let on = theme::Colors::new(c.light, under).on_accent;
         p.text(
             center,
             Align2::CENTER_CENTER,
@@ -155,4 +212,17 @@ fn swatch(ui: &mut Ui, col: Color32, selected: bool, tip: &str) -> egui::Respons
         );
     }
     resp.on_hover_text(tip)
+}
+
+/// One half of a disc as a convex polygon, so two of them make a split swatch.
+fn half_disc(center: egui::Pos2, radius: f32, left: bool, fill: Color32) -> egui::Shape {
+    use std::f32::consts::PI;
+    let start = if left { PI / 2.0 } else { -PI / 2.0 };
+    let points = (0..=16)
+        .map(|i| {
+            let a = start + PI * i as f32 / 16.0;
+            center + Vec2::new(a.cos(), a.sin()) * radius
+        })
+        .collect();
+    egui::Shape::convex_polygon(points, fill, Stroke::NONE)
 }

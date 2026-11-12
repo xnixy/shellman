@@ -4,7 +4,7 @@ use super::tab::Loc;
 use super::FOOTER_H;
 use crate::fsops::{self, Op};
 use crate::theme::colors;
-use egui::{Align, Layout, RichText, Sense, Stroke, Ui, Vec2};
+use egui::{Align, Layout, RichText, Sense, Ui, Vec2};
 
 const TOAST_SECS: f64 = 3.0;
 
@@ -14,11 +14,9 @@ impl super::FileMan {
         let c = colors();
         let (rect, _) =
             ui.allocate_exact_size(Vec2::new(ui.available_width(), FOOTER_H), Sense::hover());
-        ui.painter()
-            .hline(rect.x_range(), rect.top(), Stroke::new(1.0_f32, c.hairline));
         let mut child = ui.new_child(
             egui::UiBuilder::new()
-                .max_rect(rect.shrink2(Vec2::new(10.0, 0.0)))
+                .max_rect(rect.shrink2(Vec2::new(14.0, 0.0)))
                 .layout(Layout::left_to_right(Align::Center)),
         );
         let ui = &mut child;
@@ -41,12 +39,12 @@ impl super::FileMan {
             if tab.loading {
                 text += "   ·   Loading…";
             }
-            ui.label(RichText::new(text).size(12.0).color(c.muted));
+            ui.label(RichText::new(text).size(11.5).color(c.muted));
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 let now = ui.input(|i| i.time);
                 if let Some((msg, at)) = &self.toast {
                     if now - at < TOAST_SECS {
-                        ui.label(RichText::new(msg).size(12.5).color(c.accent_text));
+                        ui.label(RichText::new(msg).size(11.5).color(c.accent_text));
                         ui.ctx()
                             .request_repaint_after(std::time::Duration::from_millis(250));
                     }
@@ -55,7 +53,7 @@ impl super::FileMan {
                     let verb = if *op == Op::Move { "cut" } else { "copied" };
                     ui.label(
                         RichText::new(format!("{} {verb}  ·  ", paths.len()))
-                            .size(12.5)
+                            .size(11.5)
                             .color(c.muted),
                     );
                 }

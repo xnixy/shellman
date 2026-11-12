@@ -81,6 +81,19 @@ pub fn wants_thumb(name: &str) -> bool {
     )
 }
 
+/// Programs and icons, whose shell image is a transparent icon rather than a photo: drawn small
+/// and unframed, where a preview is fitted into a larger box.
+pub fn is_program(name: &str) -> bool {
+    let ext = Path::new(name)
+        .extension()
+        .map(|e| e.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+    matches!(
+        ext.as_str(),
+        "exe" | "lnk" | "url" | "msi" | "appref-ms" | "ico"
+    )
+}
+
 impl Thumbs {
     pub fn new(ctx: egui::Context) -> Self {
         let queue: Queue = Arc::new((Mutex::new(Vec::new()), Condvar::new()));

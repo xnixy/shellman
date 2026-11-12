@@ -7,7 +7,8 @@ use crate::fsops::{self, Drive};
 use crate::settings::ViewMode;
 use crate::theme::{self, colors, glyph, icon, icon_font};
 use egui::{
-    Align, Align2, Color32, CornerRadius, Id, Key, Layout, Rect, RichText, Sense, Stroke, Ui, Vec2,
+    Align, Align2, Color32, CornerRadius, FontId, Id, Key, Layout, Rect, RichText, Sense, Stroke,
+    Ui, Vec2,
 };
 use std::path::{Path, PathBuf};
 
@@ -34,16 +35,16 @@ impl super::FileMan {
                 actions.push(Action::Refresh);
             }
             ui.add_space(8.0);
-            let (search_w, toggle_w) = (250.0, 76.0);
+            // The path pill gives way; the search box and the toggle keep their size.
+            let (search_w, toggle_w) = (220.0, 76.0);
             let path_w = (ui.available_width() - search_w - toggle_w - 20.0).max(120.0);
-            let (rect, _) = ui.allocate_exact_size(Vec2::new(path_w, 34.0), Sense::hover());
+            let (rect, _) = ui.allocate_exact_size(Vec2::new(path_w, 32.0), Sense::hover());
             self.path_bar(ui, rect, actions);
             ui.add_space(10.0);
-            let (trect, _) = ui.allocate_exact_size(Vec2::new(toggle_w, 34.0), Sense::hover());
+            let (trect, _) = ui.allocate_exact_size(Vec2::new(toggle_w, 32.0), Sense::hover());
             self.view_toggle(ui, trect, actions);
             ui.add_space(10.0);
-            let (srect, _) =
-                ui.allocate_exact_size(Vec2::new(ui.available_width(), 34.0), Sense::hover());
+            let (srect, _) = ui.allocate_exact_size(Vec2::new(search_w, 32.0), Sense::hover());
             self.search_box(ui, srect);
         });
     }
@@ -51,7 +52,8 @@ impl super::FileMan {
     /// List or grid, as a pill with two halves; the current one is lit.
     fn view_toggle(&self, ui: &mut Ui, rect: Rect, actions: &mut Vec<Action>) {
         let c = colors();
-        ui.painter().rect_filled(rect, CornerRadius::same(17), c.control);
+        ui.painter()
+            .rect_filled(rect, CornerRadius::same(16), c.control);
         let halves = [
             (ViewMode::List, glyph::VIEW_LIST, "List (Ctrl+1)"),
             (ViewMode::Grid, glyph::VIEW_GRID, "Icons (Ctrl+2)"),
@@ -63,15 +65,20 @@ impl super::FileMan {
                 Vec2::new(half_w, rect.height()),
             )
             .shrink(3.0);
-            let resp = ui.interact(r, Id::new(("view", i)), Sense::click()).on_hover_text(tip);
+            let resp = ui
+                .interact(r, Id::new(("view", i)), Sense::click())
+                .on_hover_text(tip);
             let current = self.settings.view == mode;
             if current {
-                ui.painter().rect_filled(r, CornerRadius::same(14), c.control_active);
+                ui.painter()
+                    .rect_filled(r, CornerRadius::same(13), c.control_active);
             } else if resp.hovered() {
-                ui.painter().rect_filled(r, CornerRadius::same(14), c.control_hover);
+                ui.painter()
+                    .rect_filled(r, CornerRadius::same(13), c.control_hover);
             }
             let color = if current { c.accent_text } else { c.muted };
-            ui.painter().text(r.center(), Align2::CENTER_CENTER, g, icon_font(13.0), color);
+            ui.painter()
+                .text(r.center(), Align2::CENTER_CENTER, g, icon_font(13.0), color);
             if resp.clicked() && !current {
                 actions.push(Action::SetView(mode));
             }
@@ -88,11 +95,11 @@ impl super::FileMan {
         } else {
             c.control
         };
-        ui.painter().rect_filled(rect, CornerRadius::same(17), fill);
+        ui.painter().rect_filled(rect, CornerRadius::same(16), fill);
         if focused {
             ui.painter().rect_stroke(
                 rect,
-                CornerRadius::same(17),
+                CornerRadius::same(16),
                 Stroke::new(1.0_f32, theme::with_alpha(c.accent, 170)),
                 egui::StrokeKind::Inside,
             );
@@ -139,7 +146,7 @@ impl super::FileMan {
         } else {
             c.control
         };
-        ui.painter().rect_filled(rect, CornerRadius::same(17), fill);
+        ui.painter().rect_filled(rect, CornerRadius::same(16), fill);
         let loc = self.tabs[self.active].loc.clone();
         if std::mem::take(&mut self.focus_path) && self.editing_path.is_none() {
             self.editing_path = Some(
@@ -202,12 +209,23 @@ impl super::FileMan {
                 crumbs.push((name, Loc::Dir(p.to_path_buf())));
             }
         }
-        // Keep the deepest crumbs that fit, roughly.
+        // Keep the deepest crumbs that fit, by their measured widths: an estimate from the
+        // character count dropped crumbs while there was still room.
         let budget = rect.width() - 40.0;
+        let (name_font, chevron_font) = (FontId::proportional(14.0), icon_font(9.0));
+        let chevron_w = ui
+            .fonts(|f| f.layout_no_wrap(glyph::CHEVRON.to_string(), chevron_font, c.muted))
+            .size()
+            .x;
         let mut used = 0.0;
         let mut first = crumbs.len();
         while first > 0 {
-            let w = crumbs[first - 1].0.chars().count() as f32 * 7.5 + 30.0;
+            let name = crumbs[first - 1].0.clone();
+            let text_w = ui
+                .fonts(|f| f.layout_no_wrap(name, name_font.clone(), c.text))
+                .size()
+                .x;
+            let w = text_w + 22.0 + chevron_w;
             if used + w > budget && first < crumbs.len() {
                 break;
             }

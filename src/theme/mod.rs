@@ -8,7 +8,7 @@ mod icons;
 mod style;
 
 pub use icons::{glyph, icon, icon_font, install_fonts};
-pub use style::{apply, card, danger_button, dialog, muted, primary_button};
+pub use style::{apply, danger_button, dialog, muted, primary_button};
 
 use egui::Color32;
 use serde::{Deserialize, Serialize};
@@ -156,17 +156,17 @@ impl Colors {
                 bg,
                 popup: tint(252, 0.02),
                 text: tint(28, 0.06),
-                muted: tint(96, 0.08),
+                muted: tint(110, 0.08),
                 warn: Color32::from_rgb(160, 96, 0),
                 row_hover: Color32::from_black_alpha(14),
                 row_selected: with_alpha(accent, 48),
-                hairline: Color32::from_black_alpha(28),
+                hairline: Color32::from_black_alpha(16),
                 well: Color32::from_black_alpha(12),
                 track: tint(188, 0.06),
                 danger: Color32::from_rgb(196, 43, 28),
                 danger_text: Color32::from_rgb(150, 24, 28),
                 card: with_alpha(tint(255, 0.02), 200),
-                shadow: Color32::from_black_alpha(26),
+                shadow: Color32::from_black_alpha(20),
                 sidebar_glass: with_alpha(tint(230, 0.05), 170),
                 sidebar_solid: tint(230, 0.05),
                 page_glass: with_alpha(tint(248, 0.03), 120),
@@ -185,25 +185,25 @@ impl Colors {
                 bg: tint(16, 0.06),
                 popup: tint(34, 0.08),
                 text: tint(240, 0.03),
-                muted: tint(184, 0.06),
+                muted: tint(150, 0.08),
                 warn: Color32::from_rgb(230, 186, 120),
                 row_hover: Color32::from_rgba_unmultiplied(255, 255, 255, 14),
                 row_selected: with_alpha(accent, 64),
-                hairline: Color32::from_rgba_unmultiplied(255, 255, 255, 32),
+                hairline: Color32::from_rgba_unmultiplied(255, 255, 255, 16),
                 well: Color32::from_rgba_unmultiplied(255, 255, 255, 12),
                 track: tint(66, 0.1),
                 danger: Color32::from_rgb(196, 43, 28),
                 danger_text: Color32::from_rgb(255, 160, 164),
                 card: with_alpha(tint(34, 0.08), 214),
-                shadow: Color32::from_black_alpha(80),
+                shadow: Color32::from_black_alpha(60),
                 sidebar_glass: with_alpha(tint(10, 0.06), 178),
                 sidebar_solid: tint(12, 0.06),
                 page_glass: with_alpha(tint(16, 0.06), 140),
                 shell: with_alpha(tint(10, 0.06), 150),
-                sheet: with_alpha(tint(22, 0.05), 236),
+                sheet: with_alpha(tint(30, 0.06), 240),
                 // Deep tinted fills, not translucent white: over glass, white lifts toward grey.
-                control: with_alpha(tint(26, 0.07), 190),
-                control_hover: with_alpha(tint(36, 0.09), 215),
+                control: with_alpha(tint(34, 0.07), 200),
+                control_hover: with_alpha(tint(44, 0.09), 215),
                 control_active: with_alpha(tint(44, 0.08), 240),
             }
         }

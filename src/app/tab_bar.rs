@@ -21,14 +21,14 @@ impl super::FileMan {
                 let active = i == self.active;
                 let loc = self.tabs[i].loc.clone();
                 let tab_id = self.tabs[i].id;
-                let (rect, resp) = ui.allocate_exact_size(Vec2::new(tab_w, 32.0), Sense::click());
+                let (rect, resp) = ui.allocate_exact_size(Vec2::new(tab_w, 30.0), Sense::click());
                 let hovered = ui.rect_contains_pointer(rect);
                 if active {
                     ui.painter()
-                        .rect_filled(rect, CornerRadius::same(10), c.control_active);
+                        .rect_filled(rect, CornerRadius::same(8), c.control_active);
                 } else if hovered {
                     ui.painter()
-                        .rect_filled(rect, CornerRadius::same(10), c.control);
+                        .rect_filled(rect, CornerRadius::same(8), c.control);
                 }
                 let g = if loc == Loc::Pc {
                     glyph::PC
@@ -64,7 +64,7 @@ impl super::FileMan {
                     let close = ui.interact(cr, Id::new(("tab-close", tab_id)), Sense::click());
                     if close.hovered() {
                         ui.painter()
-                            .rect_filled(cr, CornerRadius::same(6), c.control_hover);
+                            .rect_filled(cr, CornerRadius::same(5), c.control_hover);
                     }
                     ui.painter().text(
                         cr.center(),
