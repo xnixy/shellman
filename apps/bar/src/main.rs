@@ -35,6 +35,8 @@ fn main() -> eframe::Result {
             .with_decorations(false)
             .with_transparent(true)
             .with_resizable(false)
+            // Cloaked windows are not drawn; this also keeps clicks going through it.
+            .with_mouse_passthrough(true)
             .with_taskbar(false),
         ..Default::default()
     };
