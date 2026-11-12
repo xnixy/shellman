@@ -3,11 +3,10 @@
 mod draw;
 mod items;
 mod menu;
-mod pins;
 
 use crate::{fullscreen, place};
 use items::{Item, Section};
-use pins::{Pin, Pins};
+use shellman_core::settings::dock::{DockSettings as Pins, Pin};
 use shellman_core::thumbs::Thumbs;
 use shellman_core::winlist::{self, AppWindow, WindowList, WindowWatcher};
 use shellman_ui::theme;
@@ -71,13 +70,18 @@ impl Dock {
         dock
     }
 
-    /// Read the pin file again, when something saved it. The bar is its only writer, so this is
-    /// for edits by hand and other bar instances.
+    /// Read the dock's settings again, when something saved them: the settings app (pins, icon
+    /// size), or edits by hand and other bar instances.
     pub fn reload_pins(&mut self) {
         let pins = Pins::load();
         if pins != self.pins {
+            let resized = pins.icon_size != self.pins.icon_size;
             self.pins = pins;
             self.rebuild();
+            if resized {
+                // Make `place` fit the window to the new size.
+                self.placed = None;
+            }
         }
     }
 
@@ -101,7 +105,8 @@ impl Dock {
 
     /// Fit the window to the icons and keep it centred at the bottom.
     fn place(&mut self, ctx: &egui::Context) {
-        let size = egui::vec2(draw::layout(&self.items).1, HEIGHT);
+        let icons = self.pins.icon_size;
+        let size = egui::vec2(draw::layout(&self.items, icons).1, icons.height());
         if self.placed == Some(size) {
             return;
         }
@@ -184,7 +189,7 @@ impl Dock {
     }
 
     fn draw(&mut self, ui: &mut egui::Ui) {
-        let events = draw::paint(ui, self.glass, &mut self.thumbs, &self.items, self.front);
+        let events = draw::paint(ui, self.glass, self.pins.icon_size, &mut self.thumbs, &self.items, self.front);
         if let Some(i) = events.clicked {
             self.activate(&self.items[i]);
         }

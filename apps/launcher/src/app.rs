@@ -77,11 +77,26 @@ impl Launcher {
         self.grid_sel = self.grid.first();
     }
 
+    /// The settings folder changed: take in a cleared history (or one edited by hand).
+    pub fn reload_usage(&mut self) {
+        if self.usage.reload() {
+            self.rebuild_grid();
+            if self.typing() {
+                self.rank();
+            }
+        }
+    }
+
     fn rank(&mut self) {
         let names: Vec<&str> = self.apps.iter().map(|a| a.name.as_str()).collect();
         let uses = |i: usize| self.usage.count(&self.apps[i].id);
         let hits = rank::rank(&names, &uses, &self.query, MAX_RESULTS);
-        self.items = results::items(hits.into_iter().map(|h| h.index), self.query.trim().is_empty());
+        let settings = !rank::rank(&[results::SETTINGS_NAME], &|_| 0, &self.query, 1).is_empty();
+        self.items = results::items(
+            hits.into_iter().map(|h| h.index),
+            settings,
+            self.query.trim().is_empty(),
+        );
         self.result_sel = 0;
         self.reveal = true;
     }
@@ -111,6 +126,9 @@ impl Launcher {
                     com_init();
                     apps_index::launch(&app);
                 });
+            }
+            Item::Settings => {
+                shellman_core::sibling::start("settings");
             }
             Item::Run => {
                 let text = self.query.clone();

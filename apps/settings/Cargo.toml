@@ -1,0 +1,15 @@
+[package]
+name = "shellman-settings"
+version = "0.1.0"
+edition.workspace = true
+description = "Shellman's settings: one place for the look, the dock, the top bar and the launcher"
+license.workspace = true
+publish = false
+
+[dependencies]
+eframe.workspace = true
+egui.workspace = true
+raw-window-handle.workspace = true
+shellman-core.workspace = true
+shellman-ui.workspace = true
+windows.workspace = true

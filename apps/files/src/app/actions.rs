@@ -25,7 +25,8 @@ pub(super) enum Action {
     Reveal,
     ExplorerHere,
     SelectAll,
-    Settings,
+    /// Ctrl+H, as in Explorer: show or hide hidden files.
+    ToggleHidden,
     SetView(crate::settings::ViewMode),
     /// The full Windows menu for the selection, or for the folder when nothing is selected.
     /// `extended` adds the entries Explorer shows with Shift held.
@@ -43,7 +44,6 @@ pub(super) struct Rename {
 }
 
 pub(super) enum Dialog {
-    Settings,
     ConfirmRecycle(Vec<PathBuf>),
 }
 
@@ -215,6 +215,13 @@ impl super::FileMan {
                     fsops::open_in_explorer(d);
                 }
             }
+            Action::ToggleHidden => {
+                self.settings.show_hidden = !self.settings.show_hidden;
+                for t in &mut self.tabs {
+                    t.dirty = true;
+                }
+                self.save_pending = true;
+            }
             Action::SelectAll => {
                 let tab = &mut self.tabs[self.active];
                 tab.selected = tab
@@ -223,7 +230,6 @@ impl super::FileMan {
                     .map(|&i| tab.entries[i].path.clone())
                     .collect();
             }
-            Action::Settings => self.dialog = Some(Dialog::Settings),
             Action::ShellMenu { extended } => self.shell_menu(extended),
             Action::Properties => {
                 let tab = &self.tabs[self.active];

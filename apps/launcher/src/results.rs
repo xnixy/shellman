@@ -14,15 +14,24 @@ const ICON: f32 = 32.0;
 pub enum Item {
     /// An app, by index into the list.
     App(usize),
+    /// shellman's own settings app, a built-in entry that is not in the Apps folder.
+    Settings,
     /// Run what was typed.
     Run,
 }
 
-/// The rows for a ranked list of app indices: the apps, then "Run" always last, so it is there
-/// both when nothing matches and as a deliberate choice when something does.
-pub fn items(ranked: impl Iterator<Item = usize>, query_is_empty: bool) -> Vec<Item> {
+/// What the Settings row is called, and so what a query is matched against to show it.
+pub const SETTINGS_NAME: &str = "shellman Settings";
+
+/// The rows for a ranked list of app indices: the apps, the Settings entry when the query
+/// matches it (`settings`), then "Run" always last, so it is there both when nothing matches and
+/// as a deliberate choice when something does.
+pub fn items(ranked: impl Iterator<Item = usize>, settings: bool, query_is_empty: bool) -> Vec<Item> {
     let mut items: Vec<Item> = ranked.map(Item::App).collect();
     if !query_is_empty {
+        if settings {
+            items.push(Item::Settings);
+        }
         items.push(Item::Run);
     }
     items
@@ -89,6 +98,16 @@ pub fn show(
                         crate::icon::paint(ui, icon, &apps[index], false, thumbs);
                         draw_text(ui, text, &apps[index].name, egui::FontId::proportional(16.0), c.text, false);
                     }
+                    Item::Settings => {
+                        ui.painter().text(
+                            icon.center(),
+                            egui::Align2::CENTER_CENTER,
+                            glyph::SETTINGS,
+                            icon_font(20.0),
+                            c.accent_text,
+                        );
+                        draw_text(ui, text, SETTINGS_NAME, egui::FontId::proportional(16.0), c.text, false);
+                    }
                     Item::Run => {
                         ui.painter().text(
                             icon.center(),
@@ -111,8 +130,23 @@ mod tests {
 
     #[test]
     fn run_row_is_always_last() {
-        assert_eq!(items([3, 1].into_iter(), false), [Item::App(3), Item::App(1), Item::Run]);
-        assert_eq!(items(std::iter::empty(), false), [Item::Run]);
-        assert!(items(std::iter::empty(), true).is_empty());
+        assert_eq!(items([3, 1].into_iter(), false, false), [Item::App(3), Item::App(1), Item::Run]);
+        assert_eq!(items(std::iter::empty(), false, false), [Item::Run]);
+        assert!(items(std::iter::empty(), false, true).is_empty());
+    }
+
+    #[test]
+    fn settings_entry_sits_before_run_and_only_when_it_matches() {
+        assert_eq!(items([2].into_iter(), true, false), [Item::App(2), Item::Settings, Item::Run]);
+        assert_eq!(items(std::iter::empty(), true, false), [Item::Settings, Item::Run]);
+        // Nothing typed: the grid shows, no rows at all.
+        assert!(items(std::iter::empty(), true, true).is_empty());
+    }
+
+    #[test]
+    fn typing_settings_matches_the_entry() {
+        let hit = |q: &str| !crate::rank::rank(&[SETTINGS_NAME], &|_| 0, q, 1).is_empty();
+        assert!(hit("sett") && hit("shellman set") && hit("Settings"));
+        assert!(!hit("calc"));
     }
 }

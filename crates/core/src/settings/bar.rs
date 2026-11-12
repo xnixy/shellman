@@ -1,0 +1,97 @@
+//! The top bar's settings, saved in `%APPDATA%\shellman\bar.json`.
+
+use serde::{Deserialize, Serialize};
+
+pub const NAME: &str = "bar";
+
+/// 12 or 24 hour time, or whatever Windows is set to.
+#[derive(Clone, Copy, Default, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub enum HourCycle {
+    #[default]
+    System,
+    H12,
+    H24,
+}
+
+impl HourCycle {
+    pub const ALL: [HourCycle; 3] = [HourCycle::System, HourCycle::H12, HourCycle::H24];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            HourCycle::System => "Windows setting",
+            HourCycle::H12 => "12 hour",
+            HourCycle::H24 => "24 hour",
+        }
+    }
+
+    /// The Windows time pattern for it, or none to use the user's own.
+    pub fn pattern(self) -> Option<&'static str> {
+        match self {
+            HourCycle::System => None,
+            HourCycle::H12 => Some("h:mm tt"),
+            HourCycle::H24 => Some("HH:mm"),
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ClockSettings {
+    pub hour_cycle: HourCycle,
+    pub show_date: bool,
+}
+
+impl Default for ClockSettings {
+    fn default() -> Self {
+        Self {
+            hour_cycle: HourCycle::default(),
+            show_date: true,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Default, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(default)]
+pub struct BarSettings {
+    pub clock: ClockSettings,
+}
+
+impl BarSettings {
+    pub fn load() -> Self {
+        crate::config::load(NAME)
+    }
+
+    pub fn save(&self) {
+        crate::config::save(NAME, self);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn defaults_match_the_old_clock() {
+        let s = BarSettings::default();
+        assert_eq!(s.clock.hour_cycle, HourCycle::System);
+        assert!(s.clock.show_date);
+    }
+
+    #[test]
+    fn round_trip_and_partial_files() {
+        let dir = std::env::temp_dir().join(format!("shellman-bar-{}", std::process::id()));
+        let path = dir.join("bar.json");
+        let mut s = BarSettings::default();
+        s.clock.hour_cycle = HourCycle::H12;
+        s.clock.show_date = false;
+        crate::config::save_to(&path, &s);
+        assert_eq!(crate::config::load_from::<BarSettings>(&path), s);
+        let _ = std::fs::remove_dir_all(dir);
+
+        // A file with only some fields keeps the defaults for the rest.
+        let partial: BarSettings = serde_json::from_str(r#"{ "clock": { "hour_cycle": "H24" } }"#).unwrap();
+        assert_eq!(partial.clock.hour_cycle, HourCycle::H24);
+        assert!(partial.clock.show_date);
+        assert_eq!(serde_json::from_str::<BarSettings>("{}").unwrap(), BarSettings::default());
+    }
+}
