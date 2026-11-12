@@ -156,6 +156,8 @@ impl eframe::App for Host {
             if look != self.look {
                 self.look = look;
                 look.apply(ctx);
+                // Each bar restyles its glass in its own frame.
+                self.wake.bars();
             }
             let settings = BarSettings::load();
             if settings.docks != self.settings.docks {

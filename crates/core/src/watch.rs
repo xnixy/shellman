@@ -203,7 +203,9 @@ fn run(shared: &Shared, wake: Wake, ctx: &egui::Context) {
                 pending.remove(d);
             }
             shared.ready.lock().unwrap().extend(due);
-            ctx.request_repaint();
+            // The root by name: from this thread a plain `request_repaint` reaches whichever
+            // viewport was last current, and an app with several (the bars) polls in its root.
+            ctx.request_repaint_of(egui::ViewportId::ROOT);
         }
     }
     close_all(&mut watches);
