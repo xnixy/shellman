@@ -171,7 +171,8 @@ impl Colors {
                 sidebar_solid: tint(230, 0.05),
                 page_glass: with_alpha(tint(248, 0.03), 120),
                 shell: with_alpha(tint(238, 0.06), 150),
-                sheet: with_alpha(tint(255, 0.01), 236),
+                // Translucent, so the window's acrylic shows through the sheet as well.
+                sheet: with_alpha(tint(255, 0.01), 120),
                 control: with_alpha(tint(255, 0.02), 150),
                 control_hover: with_alpha(tint(255, 0.03), 210),
                 control_active: with_alpha(tint(255, 0.0), 245),
@@ -200,7 +201,8 @@ impl Colors {
                 sidebar_solid: tint(12, 0.06),
                 page_glass: with_alpha(tint(16, 0.06), 140),
                 shell: with_alpha(tint(10, 0.06), 150),
-                sheet: with_alpha(tint(30, 0.06), 240),
+                // Translucent, so the window's acrylic shows through the sheet as well.
+                sheet: with_alpha(tint(30, 0.06), 95),
                 // Deep tinted fills, not translucent white: over glass, white lifts toward grey.
                 control: with_alpha(tint(34, 0.07), 200),
                 control_hover: with_alpha(tint(44, 0.09), 215),

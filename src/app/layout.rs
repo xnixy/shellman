@@ -6,7 +6,7 @@ use super::tab::Loc;
 use super::{CAPTION_H, FOOTER_H, SIDEBAR_W};
 use crate::settings::ViewMode;
 use crate::theme::colors;
-use egui::{Align, CornerRadius, Layout, Stroke, Ui, Vec2};
+use egui::{Color32, Align, CornerRadius, Layout, Stroke, Ui, Vec2};
 
 impl super::FileMan {
     pub(super) fn layout(&mut self, ctx: &egui::Context, actions: &mut Vec<Action>) {
@@ -69,11 +69,13 @@ impl super::FileMan {
                         top: 6,
                         bottom: 0,
                     })
+                    // Over glass the sheet is see-through, and a shadow under it would darken
+                    // its whole inside; only an opaque sheet gets one.
                     .shadow(egui::Shadow {
                         offset: [0, 2],
                         blur: 16,
                         spread: 0,
-                        color: c.shadow,
+                        color: if self.glass { Color32::TRANSPARENT } else { c.shadow },
                     })
                     .show(ui, |ui| {
                         let size = ui.available_size();
