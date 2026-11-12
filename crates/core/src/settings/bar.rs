@@ -56,6 +56,7 @@ impl Default for ClockSettings {
 pub struct BarSettings {
     pub clock: ClockSettings,
     pub docks: Docks,
+    pub tray: TrayMonitors,
 }
 
 /// Which monitors get a dock. Every monitor always gets a top bar.
@@ -76,6 +77,28 @@ impl Docks {
         match self {
             Docks::All => "Every monitor",
             Docks::Primary => "Main monitor only",
+        }
+    }
+}
+
+/// Which monitors' top bars show the tray.
+#[derive(Clone, Copy, Default, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TrayMonitors {
+    /// The tray on every monitor's top bar.
+    #[default]
+    All,
+    /// The tray on the primary monitor's top bar only.
+    Primary,
+}
+
+impl TrayMonitors {
+    pub const ALL: [TrayMonitors; 2] = [TrayMonitors::All, TrayMonitors::Primary];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            TrayMonitors::All => "Every monitor",
+            TrayMonitors::Primary => "Main monitor only",
         }
     }
 }
@@ -117,6 +140,14 @@ mod tests {
         assert_eq!(partial.clock.hour_cycle, HourCycle::H24);
         assert!(partial.clock.show_date);
         assert_eq!(serde_json::from_str::<BarSettings>("{}").unwrap(), BarSettings::default());
+    }
+
+    #[test]
+    fn tray_defaults_to_every_monitor() {
+        let read = |json: &str| serde_json::from_str::<BarSettings>(json).unwrap().tray;
+        assert_eq!(read("{}"), TrayMonitors::All);
+        assert_eq!(read(r#"{ "tray": "primary" }"#), TrayMonitors::Primary);
+        assert_eq!(read(r#"{ "tray": "all" }"#), TrayMonitors::All);
     }
 
     #[test]

@@ -2,13 +2,13 @@
 
 use crate::page;
 use crate::state::State;
-use shellman_core::settings::bar::HourCycle;
+use shellman_core::settings::bar::{HourCycle, TrayMonitors};
 use shellman_core::system::clock;
 use shellman_ui::theme::{self, colors};
 use shellman_ui::widgets::switch;
 
 pub fn show(ui: &mut egui::Ui, st: &mut State) {
-    page::heading(ui, "Top bar", "The clock in the corner of the top bar.");
+    page::heading(ui, "Top bar", "The clock and the tray icons in the corner of the top bar.");
 
     page::label(ui, "Hours");
     let options = HourCycle::ALL.map(|h| (h, h.label()));
@@ -16,6 +16,11 @@ pub fn show(ui: &mut egui::Ui, st: &mut State) {
 
     page::gap(ui);
     changed |= switch(ui, &mut st.bar.clock.show_date, "Show the date").changed();
+
+    page::gap(ui);
+    page::label(ui, "Show tray icons on");
+    let options = TrayMonitors::ALL.map(|t| (t, t.label()));
+    changed |= page::segmented(ui, &mut st.bar.tray, &options);
 
     page::gap(ui);
     page::label(ui, "It will read");

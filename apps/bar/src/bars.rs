@@ -106,6 +106,15 @@ pub struct Bars {
     sizes: Sizes,
 }
 
+/// A bar window's top-left corner in physical screen pixels.
+pub fn client_origin(hwnd: isize) -> Option<(i32, i32)> {
+    use windows::Win32::Foundation::{HWND, RECT};
+    use windows::Win32::UI::WindowsAndMessaging::GetWindowRect;
+    let mut r = RECT::default();
+    unsafe { GetWindowRect(HWND(hwnd as *mut _), &mut r) }.ok()?;
+    Some((r.left, r.top))
+}
+
 impl Bars {
     pub fn new(mode: Mode) -> Self {
         Self { mode, sets: Vec::new(), sizes: sizes(0.0) }

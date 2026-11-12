@@ -12,7 +12,7 @@ pub(crate) mod log;
 pub mod view;
 
 pub use click::Click;
-pub use host::set_rect;
+pub use host::{forget_device, set_rect, touch};
 
 use std::sync::{Arc, Mutex};
 use windows::core::w;
@@ -33,9 +33,95 @@ pub struct TrayIcon {
     pub image: Option<Arc<egui::ColorImage>>,
     /// Bumped whenever the image changes, so the bar re-uploads only changed icons.
     pub rev: u64,
-    /// Where the bar last drew it: left, top, right, bottom in physical screen pixels. Answers
-    /// `Shell_NotifyIconGetRect`, which many apps (Tauri, `tray-icon`) need before reacting.
-    pub rect: Option<[i32; 4]>,
+    /// Where each monitor's top bar last drew it. Answers `Shell_NotifyIconGetRect`, which many
+    /// apps (Tauri, `tray-icon`) need before reacting.
+    pub rects: Vec<IconRect>,
+    /// The monitor whose copy of this icon was last hovered or clicked.
+    pub last_device: Option<String>,
+}
+
+/// An icon's place on one monitor's top bar: left, top, right, bottom in physical screen pixels.
+#[derive(Clone, Debug, PartialEq)]
+pub struct IconRect {
+    pub device: String,
+    pub primary: bool,
+    pub rect: [i32; 4],
+}
+
+impl TrayIcon {
+    /// Remember where `device`'s top bar drew this icon. True when that changed anything.
+    pub fn record(&mut self, device: &str, primary: bool, rect: [i32; 4]) -> bool {
+        match self.rects.iter_mut().find(|r| r.device == device) {
+            Some(r) if r.rect == rect && r.primary == primary => false,
+            Some(r) => {
+                r.rect = rect;
+                r.primary = primary;
+                true
+            }
+            None => {
+                self.rects.push(IconRect { device: device.into(), primary, rect });
+                true
+            }
+        }
+    }
+
+    /// Note that the user is working with the copy on `device`.
+    pub fn touch(&mut self, device: &str) {
+        if self.last_device.as_deref() != Some(device) && self.rects.iter().any(|r| r.device == device) {
+            self.last_device = Some(device.into());
+        }
+    }
+
+    /// Forget `device`'s copy (its bar stopped drawing the tray, or went away).
+    pub fn forget(&mut self, device: &str) {
+        self.rects.retain(|r| r.device != device);
+        if self.last_device.as_deref() == Some(device) {
+            self.last_device = None;
+        }
+    }
+
+    /// What `Shell_NotifyIconGetRect` answers: the copy on the monitor last touched, else the
+    /// primary's, else any.
+    pub fn answer_rect(&self) -> Option<[i32; 4]> {
+        let last = self.last_device.as_deref().and_then(|d| self.rects.iter().find(|r| r.device == d));
+        last.or_else(|| self.rects.iter().find(|r| r.primary)).or(self.rects.first()).map(|r| r.rect)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn answers_with_the_monitor_last_touched() {
+        let mut i = TrayIcon::default();
+        assert_eq!(i.answer_rect(), None);
+        assert!(i.record("A", true, [3000, 4, 3026, 30]));
+        assert!(i.record("B", false, [-800, 4, -774, 30]));
+        assert!(!i.record("B", false, [-800, 4, -774, 30]), "same place, no change");
+        assert_eq!(i.answer_rect(), Some([3000, 4, 3026, 30]), "primary before any interaction");
+        i.touch("B");
+        assert_eq!(i.answer_rect(), Some([-800, 4, -774, 30]));
+        i.touch("nowhere");
+        assert_eq!(i.last_device.as_deref(), Some("B"), "an unknown monitor is ignored");
+        assert!(i.record("B", false, [-700, 4, -674, 30]));
+        assert_eq!(i.answer_rect(), Some([-700, 4, -674, 30]), "follows a moved icon");
+    }
+
+    #[test]
+    fn forgetting_a_monitor_falls_back_to_the_primary() {
+        let mut i = TrayIcon::default();
+        i.record("A", true, [1, 2, 3, 4]);
+        i.record("B", false, [5, 6, 7, 8]);
+        i.touch("B");
+        i.forget("B");
+        assert_eq!((i.answer_rect(), i.last_device.clone()), (Some([1, 2, 3, 4]), None));
+        i.forget("A");
+        assert_eq!(i.answer_rect(), None);
+        // No primary known: any copy beats none.
+        i.record("C", false, [9, 9, 9, 9]);
+        assert_eq!(i.answer_rect(), Some([9, 9, 9, 9]));
+    }
 }
 
 #[derive(Default)]

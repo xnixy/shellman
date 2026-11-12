@@ -4,7 +4,8 @@
 use super::TrayIcon;
 use std::sync::Arc;
 
-const SIZE: usize = 32;
+/// Big enough to stay sharp on a 300% monitor (16 pt is 48 px there).
+const SIZE: usize = 48;
 
 pub fn icons() -> Vec<TrayIcon> {
     [([86, 156, 214], "Cloud"), ([232, 168, 56], "Sync"), ([106, 190, 120], "Chat"), ([214, 96, 120], "Mail"), ([160, 130, 220], "Player")]

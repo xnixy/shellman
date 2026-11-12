@@ -98,14 +98,33 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPA
     DefWindowProcW(hwnd, msg, wparam, lparam)
 }
 
-/// Remember where the bar drew an icon (physical screen pixels), for `Shell_NotifyIconGetRect`.
-pub fn set_rect(hwnd: isize, uid: u32, rect: [i32; 4]) {
+/// Run `f` on the icon `hwnd`/`uid`, if the bar hosts the tray and has it.
+fn with_icon(hwnd: isize, uid: u32, f: impl FnOnce(&mut TrayIcon)) {
     let Some(state) = STATE.get() else { return };
     let mut state = state.lock().unwrap();
     if let Some(i) = state.icons.iter_mut().find(|i| i.hwnd == hwnd && i.uid == uid) {
-        if i.rect != Some(rect) {
-            i.rect = Some(rect);
-        }
+        f(i);
+    }
+}
+
+/// Remember where `device`'s top bar drew an icon (physical screen pixels), for
+/// `Shell_NotifyIconGetRect`.
+pub fn set_rect(hwnd: isize, uid: u32, device: &str, primary: bool, rect: [i32; 4]) {
+    with_icon(hwnd, uid, |i| {
+        i.record(device, primary, rect);
+    });
+}
+
+/// The user hovered or clicked the icon on `device`: later `GetRect` answers come from there.
+pub fn touch(hwnd: isize, uid: u32, device: &str) {
+    with_icon(hwnd, uid, |i| i.touch(device));
+}
+
+/// `device`'s top bar no longer draws the tray.
+pub fn forget_device(device: &str) {
+    let Some(state) = STATE.get() else { return };
+    for i in state.lock().unwrap().icons.iter_mut() {
+        i.forget(device);
     }
 }
 
@@ -121,7 +140,7 @@ fn rect_of(bytes: &[u8]) -> isize {
             .find(|i| {
                 (i.hwnd == req.hwnd && i.uid == req.uid) || (by_guid && i.guid == Some(req.guid))
             })
-            .and_then(|i| i.rect)
+            .and_then(|i| i.answer_rect())
     });
     let reply = answer.map_or(0, |r| data::rect_answer(req.message, r));
     super::log::line(&format!(

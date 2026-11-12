@@ -49,8 +49,16 @@ pub fn sequence(version: u32, click: Click, uid: u32, anchor: (i32, i32)) -> Vec
         .collect()
 }
 
+/// Where to say an icon was clicked: the middle of its bottom edge, in physical screen pixels,
+/// which is where a menu should hang from.
+pub fn anchor_of(rect: [i32; 4]) -> (i32, i32) {
+    ((rect[0] + rect[2]).div_euclid(2), rect[3])
+}
+
 impl TrayIcon {
-    pub fn click(&self, click: Click) {
+    /// Tell the app. `anchor` is where the icon is on the monitor that was clicked, in physical
+    /// pixels (apps open their menu there); without one the cursor stands in.
+    pub fn click(&self, click: Click, anchor: Option<(i32, i32)>) {
         if self.callback == 0 {
             return;
         }
@@ -66,9 +74,10 @@ impl TrayIcon {
         unsafe {
             let _ = GetCursorPos(&mut pt);
         }
-        let messages = sequence(self.version, click, self.uid, (pt.x, pt.y));
+        let (ax, ay) = anchor.unwrap_or((pt.x, pt.y));
+        let messages = sequence(self.version, click, self.uid, (ax, ay));
         log::line(&format!(
-            "click {click:?} {} anchor=({},{}) grant={granted} key_press={needed_key} elevated={}",
+            "click {click:?} {} anchor=({ax},{ay}) cursor=({},{}) grant={granted} key_press={needed_key} elevated={}",
             self.describe(),
             pt.x,
             pt.y,
@@ -108,6 +117,12 @@ mod tests {
     use super::*;
 
     const UID: u32 = 7;
+
+    #[test]
+    fn anchor_is_the_icons_bottom_middle_on_any_monitor() {
+        assert_eq!(anchor_of([3746 + 6900, 2160 + 6, 3746 + 6900 + 78, 2160 + 84]), (10685, 2244));
+        assert_eq!(anchor_of([-3000, 4, -2961, 40]), (-2981, 40), "a monitor left of the primary");
+    }
 
     #[test]
     fn legacy_left_sends_down_up() {

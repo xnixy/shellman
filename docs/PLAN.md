@@ -44,7 +44,7 @@ Rule: **the top bar is the system, the dock is apps.** Both are windows of one p
 | --- | --- |
 | Start / launcher | top bar, left corner; first icon in the dock (Win key later) |
 | Running and pinned apps, switching windows | dock |
-| Tray icons, all of them | primary's top bar, right (up to 8, the rest behind a chevron) |
+| Tray icons, all of them | top bar, right, on every monitor (up to 8, the rest behind a chevron) |
 | Network, volume, battery | top bar, one status pill |
 | Clock, calendar, notifications | top bar, right corner |
 | Files, Recycle Bin | dock: Files after the launcher, the bin at the end |
@@ -55,7 +55,10 @@ Rule: **the top bar is the system, the dock is apps.** Both are windows of one p
 - Centre: empty, except a "now" pill for media, copy progress, or an app asking for attention.
 - Right: tray, overflow chevron, status pill (scroll for volume), clock ("Wed 11 Nov  14:32").
   The clock wakes once a minute on the boundary, plus on time changes and resume.
-- Tray and its chevron appear on the primary monitor's top bar only.
+- The tray appears on every monitor's top bar by default (`tray: all | primary` in `bar.json`).
+  `Shell_NotifyIconGetRect` answers with the icon's place on the monitor where it was last
+  hovered or clicked (else the primary's), and a click's anchor is that icon's bottom middle
+  there, so an app's menu opens on the bar that was used.
 
 **Dock**: bottom centre, a floating glass pill.
 - Size: a setting, small / medium / large icons (32 / 40 / 48 pt). Cell = icon + 12 pt;
@@ -95,7 +98,7 @@ Rule: **the top bar is the system, the dock is apps.** Both are windows of one p
   a work area that already includes shellman's own reservation. Next to Explorer this goes
   through `SHAppBarMessage`; as the shell, by setting the work area per monitor directly.
 - Monitors: a top bar and a dock on every monitor by default (`docks: all | primary` in
-  `bar.json`). The tray stays on the primary's top bar.
+  `bar.json`). The tray likewise (`tray: all | primary`).
 - Window list from `RegisterShellHookWindow` plus narrow WinEvent ranges, never polling.
 - Tray: copy each icon (owners destroy theirs), coalesce animated updates, check that clicks reach
   elevated apps.
