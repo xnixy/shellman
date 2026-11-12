@@ -5,13 +5,18 @@ mod appearance;
 mod bar;
 mod dock;
 mod launcher;
+mod sound;
+mod sound_mixer;
+mod sound_rows;
 
+pub use sound::SoundView;
 use crate::state::State;
 use shellman_ui::theme::glyph;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Section {
     Appearance,
+    Sound,
     Dock,
     TopBar,
     Launcher,
@@ -19,8 +24,9 @@ pub enum Section {
 }
 
 impl Section {
-    pub const ALL: [Section; 5] = [
+    pub const ALL: [Section; 6] = [
         Section::Appearance,
+        Section::Sound,
         Section::Dock,
         Section::TopBar,
         Section::Launcher,
@@ -30,6 +36,7 @@ impl Section {
     pub fn label(self) -> &'static str {
         match self {
             Section::Appearance => "Appearance",
+            Section::Sound => "Sound",
             Section::Dock => "Dock",
             Section::TopBar => "Top bar",
             Section::Launcher => "Launcher",
@@ -40,6 +47,7 @@ impl Section {
     pub fn glyph(self) -> char {
         match self {
             Section::Appearance => '\u{E790}',
+            Section::Sound => glyph::VOLUME,
             Section::Dock => glyph::APP,
             Section::TopBar => glyph::DESKTOP,
             Section::Launcher => glyph::SEARCH,
@@ -50,10 +58,42 @@ impl Section {
     pub fn show(self, ui: &mut egui::Ui, state: &mut State) {
         match self {
             Section::Appearance => appearance::show(ui, state),
+            Section::Sound => sound::show(ui, state),
             Section::Dock => dock::show(ui, state),
             Section::TopBar => bar::show(ui, state),
             Section::Launcher => launcher::show(ui, state),
             Section::About => about::show(ui, state),
         }
+    }
+}
+
+impl Section {
+    /// The name a `--page` argument and the single-instance events use.
+    pub fn slug(self) -> &'static str {
+        match self {
+            Section::Appearance => "appearance",
+            Section::Sound => "sound",
+            Section::Dock => "dock",
+            Section::TopBar => "top-bar",
+            Section::Launcher => "launcher",
+            Section::About => "about",
+        }
+    }
+
+    pub fn from_slug(slug: &str) -> Option<Section> {
+        Section::ALL.into_iter().find(|s| s.slug() == slug)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_page_is_found_by_its_slug() {
+        for s in Section::ALL {
+            assert_eq!(Section::from_slug(s.slug()), Some(s));
+        }
+        assert_eq!(Section::from_slug("nope"), None);
     }
 }

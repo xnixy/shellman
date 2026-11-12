@@ -177,7 +177,9 @@ impl Control {
         if let Some(a) = connect::show(ui, &self.net, self.links) {
             asked = Asked::Connect(a);
         }
-        self.sound.show(ui, live.map(|l| &l.sound));
+        if self.sound.show(ui, live.map(|l| &l.sound)) {
+            asked = Asked::SoundSettings;
+        }
         self.display.show(ui, live.map(|l| &l.brightness));
         self.media.show(ui, live.map(|l| &l.media));
         if let Some(b) = self.battery {
@@ -203,6 +205,11 @@ impl Control {
             }
             // The panel stays: Settings closes it by taking the focus, if it opens at all.
             Asked::Connect(connect::Asked::Open(uri)) => settings_page::open(uri),
+            // Our own settings app, on its Sound page; it takes the focus and the panel closes.
+            Asked::SoundSettings => {
+                self.hide();
+                shellman_core::sibling::start_with("settings", &["--page", "sound"]);
+            }
             Asked::Footer(footer::Asked::Settings) => {
                 self.hide();
                 shellman_core::sibling::start("settings");
@@ -219,6 +226,8 @@ enum Asked {
     None,
     Connect(connect::Asked),
     Footer(footer::Asked),
+    /// The "Sound settings" link under the sound controls.
+    SoundSettings,
 }
 
 /// Lock, sleep and the rest, once the panel is gone, so it is not the last thing on screen.

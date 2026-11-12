@@ -37,6 +37,7 @@ impl SettingsApp {
         hwnd: isize,
         glass: bool,
         instance: Instance,
+        page: Option<Section>,
     ) -> Self {
         let watcher = shellman_core::watch::Watcher::new(ctx.clone());
         if let Some(dir) = shellman_core::config::config_dir() {
@@ -45,7 +46,7 @@ impl SettingsApp {
         }
         Self {
             st: State::new(ctx, look, hwnd, glass),
-            section: Section::Appearance,
+            section: page.unwrap_or(Section::Appearance),
             watcher,
             reload_due: false,
             caption: None,
@@ -78,6 +79,14 @@ impl SettingsApp {
             self.st.reload(ctx);
         } else {
             ctx.request_repaint_after(RELOAD_RETRY);
+        }
+    }
+
+    /// Go to the page another run asked for (`--page`, from Control Center's link).
+    fn follow_requests(&mut self) {
+        let asked = self._instance.requested.lock().ok().and_then(|mut r| r.take());
+        if let Some(section) = asked {
+            self.section = section;
         }
     }
 
@@ -174,6 +183,10 @@ impl SettingsApp {
                         ui.vertical(|ui| {
                             ui.set_max_width(PAGE_W.min(ui.available_width() - 24.0));
                             self.section.show(ui, &mut self.st);
+                            // The sound worker runs only while its page is shown.
+                            if self.section != Section::Sound {
+                                self.st.sound.stop();
+                            }
                             ui.add_space(24.0);
                         });
                     });
@@ -196,6 +209,7 @@ impl eframe::App for SettingsApp {
         self.track_system(ctx);
         shellman_ui::app_icon::sync_window_icon(ctx, shellman_ui::app_icon::Kind::Settings);
         self.follow_files(ctx);
+        self.follow_requests();
         self.layout(ctx);
     }
 }

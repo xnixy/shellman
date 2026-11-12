@@ -15,7 +15,12 @@ use shellman_ui::{theme, window};
 use windows::Win32::Foundation::HWND;
 
 fn main() -> eframe::Result {
-    let first = match instance::claim() {
+    // `--page sound` opens on that page; a window already open is brought to it.
+    let page = std::env::args()
+        .skip_while(|a| a != "--page")
+        .nth(1)
+        .and_then(|slug| sections::Section::from_slug(&slug));
+    let first = match instance::claim(page) {
         instance::Claim::Signalled => return Ok(()),
         instance::Claim::First(first) => first,
     };
@@ -33,6 +38,10 @@ fn main() -> eframe::Result {
         options,
         Box::new(move |cc| {
             theme::install_fonts(&cc.egui_ctx);
+            // SHELLMAN_FORCE_LIGHT: look at the light look without changing Windows' setting.
+            if std::env::var_os("SHELLMAN_FORCE_LIGHT").is_some() {
+                cc.egui_ctx.set_theme(egui::ThemePreference::Light);
+            }
             theme::set_light(cc.egui_ctx.theme() == egui::Theme::Light);
             let look = Appearance::load_or(Appearance::default());
             look.apply(&cc.egui_ctx);
@@ -47,7 +56,7 @@ fn main() -> eframe::Result {
                 }
             }
             first.serve(hwnd, cc.egui_ctx.clone());
-            Ok(Box::new(app::SettingsApp::new(&cc.egui_ctx, look, hwnd, glass, first)))
+            Ok(Box::new(app::SettingsApp::new(&cc.egui_ctx, look, hwnd, glass, first, page)))
         }),
     )
 }

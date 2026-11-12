@@ -31,10 +31,12 @@ impl SoundView {
         }
     }
 
-    pub fn show(&mut self, ui: &mut Ui, watch: Option<&SoundWatch>) {
+    /// True when the "Sound settings" link was clicked.
+    pub fn show(&mut self, ui: &mut Ui, watch: Option<&SoundWatch>) -> bool {
         let Some(volume) = self.sound.volume else {
-            return;
+            return false;
         };
+        let mut open_settings = false;
         let c = colors();
         kit::tile(ui, |ui| {
             ui.spacing_mut().item_spacing = Vec2::new(GAP, 8.0);
@@ -75,7 +77,10 @@ impl SoundView {
                 ui.add_space(2.0);
                 self.microphone(ui, muted, watch);
             }
+            ui.add_space(2.0);
+            open_settings = settings_link(ui);
         });
+        open_settings
     }
 
     /// The outputs. Folded, only the default one shows, with a chevron; unfolded, every one,
@@ -151,4 +156,18 @@ impl SoundView {
             }
         }
     }
+}
+
+/// A small link under the sound controls that opens our settings on the Sound page.
+fn settings_link(ui: &mut Ui) -> bool {
+    let c = colors();
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), ROW), Sense::click());
+    if resp.hovered() {
+        ui.painter().rect_filled(rect.expand2(Vec2::new(4.0, 0.0)), CornerRadius::same(8), kit::well(false));
+    }
+    let color = if resp.hovered() { c.text } else { c.muted };
+    let at = Pos2::new(rect.right() - 8.0, rect.center().y);
+    ui.painter().text(at, Align2::CENTER_CENTER, glyph::OPEN_EXTERNAL, icon_font(10.0), color);
+    kit::clipped_text(ui, Pos2::new(rect.left(), rect.center().y), Align2::LEFT_CENTER, "Sound settings", small_font(), color, rect.width() - 24.0);
+    resp.clicked()
 }
