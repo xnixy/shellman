@@ -23,6 +23,12 @@ pub(super) fn row_menu(ui: &mut Ui, actions: &mut Vec<Action>, is_dir: bool, loc
         actions.push(Action::NewTab(loc.clone()));
         ui.close_menu();
     }
+    if let Loc::Dir(p) = loc {
+        if menu_item(ui, glyph::PIN, super::pins::menu_label(ui, p), "") {
+            actions.push(Action::TogglePin(p.clone()));
+            ui.close_menu();
+        }
+    }
     ui.separator();
     if menu_item(ui, glyph::CUT, "Cut", "Ctrl+X") {
         actions.push(Action::Clip(Op::Move));

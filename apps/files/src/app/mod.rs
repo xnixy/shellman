@@ -10,6 +10,8 @@ mod keys;
 mod layout;
 mod list;
 mod pc;
+mod pins;
+mod places;
 mod rows;
 mod sidebar;
 mod tab;
@@ -93,6 +95,10 @@ pub(crate) struct FileMan {
     bin_dirs: Vec<PathBuf>,
     /// Whether the window had focus last frame, to re-list the bin when it comes back.
     had_focus: bool,
+    /// The places other apps registered for the navigation pane, followed live.
+    apps: places::Registered,
+    /// Which pinned folders are still there.
+    pin_exists: pins::Exists,
 }
 
 impl FileMan {
@@ -125,6 +131,7 @@ impl FileMan {
         if let Some(dir) = shellman_ui::appearance::file().and_then(|f| f.parent().map(Path::to_path_buf)) {
             look_watch.set_dirs(vec![dir]);
         }
+        let ctx_for_apps = ctx.clone();
         let mut app = Self {
             watcher: shellman_core::watch::Watcher::new(ctx.clone()),
             watched: Vec::new(),
@@ -155,6 +162,8 @@ impl FileMan {
             grid_cols: 1,
             bin_dirs: Vec::new(),
             had_focus: true,
+            apps: places::Registered::new(&ctx_for_apps),
+            pin_exists: pins::Exists::default(),
         };
         for loc in locs {
             app.push_tab(loc);
@@ -405,6 +414,7 @@ impl eframe::App for FileMan {
             }
         }
         self.thumbs.poll(ctx);
+        self.apps.poll(ctx);
         let mut actions = Vec::new();
         self.keyboard(ctx, &mut actions);
         self.take_dropped_files(ctx);

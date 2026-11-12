@@ -11,6 +11,10 @@ pub struct Settings {
     /// Folders open in tabs when the window last closed.
     pub tabs: Vec<PathBuf>,
     pub view: ViewMode,
+    /// Folders the user pinned to the sidebar, in order.
+    pub pins: Vec<PathBuf>,
+    /// Ids (CLSIDs) of apps' sidebar entries the user hid. Kept here, never written to the registry.
+    pub hidden_places: Vec<String>,
     /// Where the window was when it last closed, in physical pixels.
     pub window: Option<crate::placement::Rect>,
 }

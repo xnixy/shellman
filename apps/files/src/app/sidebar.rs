@@ -48,6 +48,8 @@ impl super::FileMan {
         if bin.middle_clicked() {
             actions.push(Action::NewTab(Loc::Bin));
         }
+        self.sidebar_pins(ui, &current, actions);
+        self.sidebar_apps(ui, &current, actions);
         section_label(ui, "Drives");
         if nav_row(ui, glyph::PC, "This PC", current == Loc::Pc).clicked() {
             actions.push(Action::Navigate(Loc::Pc));
@@ -62,5 +64,6 @@ impl super::FileMan {
                 actions.push(Action::NewTab(loc));
             }
         }
+        self.sidebar_background(ui, actions);
     }
 }
