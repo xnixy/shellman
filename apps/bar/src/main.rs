@@ -13,6 +13,7 @@ mod fullscreen;
 mod host;
 mod monitors;
 mod place;
+mod preview;
 mod reserve;
 mod shape;
 mod topbar;
@@ -82,6 +83,7 @@ fn main() -> eframe::Result {
                 dock: dock::Dock::new(cc.egui_ctx.clone(), glass, wake.clone()),
                 top: topbar::TopBar::new(tray),
                 bars: bars::Bars::new(mode),
+                preview: preview::Preview::new(cc.egui_ctx.clone()),
                 glass,
             };
             Ok(Box::new(app::Host::new(shared, wake, look, look_watch, minimized)))

@@ -65,6 +65,8 @@ pub fn check() {
             show(hwnd, visible);
         }
     }
+    // The preview panel is not part of a monitor's group (it comes and goes); it steps aside too.
+    crate::preview::step_aside();
 }
 
 fn show(hwnd: isize, visible: bool) {

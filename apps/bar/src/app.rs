@@ -11,16 +11,18 @@ use crate::bars::{self, Bars, Kind};
 use crate::monitors::{self, layout};
 use crate::wake::Wake;
 use crate::workarea::HiddenMinimized;
-use crate::{dock, host, topbar};
+use crate::{dock, host, preview, topbar};
 use shellman_core::settings::bar::BarSettings;
 use shellman_ui::appearance::Appearance;
 use shellman_ui::theme;
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 
 pub struct Shared {
     pub dock: dock::Dock,
     pub top: topbar::TopBar,
     pub bars: Bars,
+    pub preview: preview::Preview,
     pub glass: bool,
 }
 
@@ -32,9 +34,27 @@ impl Shared {
         self.top.frame(ctx, front.as_ref(), self.glass, primary);
     }
 
+    /// A frame of the preview panel: the hovered app's windows, drawn, and what was clicked.
+    fn preview_frame(&mut self, ctx: &egui::Context) {
+        theme::set_light(ctx.theme() == egui::Theme::Light);
+        self.dock.catch_up(ctx);
+        let Some(app) = self.preview.app_id() else { return };
+        let windows = self.dock.windows_of(&app);
+        let dock = &mut self.dock;
+        match self.preview.frame(ctx, windows, self.glass, &mut |ctx, path| dock.icon(ctx, path)) {
+            Some(preview::Action::Show(hwnd)) => {
+                dock::Dock::show_window(hwnd);
+                self.preview.dismiss();
+            }
+            Some(preview::Action::Close(hwnd)) => dock::close_window(hwnd),
+            None => {}
+        }
+    }
+
     fn dock_frame(&mut self, ctx: &egui::Context, device: &str) {
         let Some(hwnd) = self.bars.dock_hwnd(device) else { return };
-        self.dock.frame(ctx, hwnd, device);
+        let hover = self.dock.frame(ctx, hwnd, device);
+        self.preview.hover_dock(device, hover, hwnd, ctx.pixels_per_point());
         // Icons came or went: every dock takes the new width.
         self.bars.place_docks(self.dock.width());
     }
@@ -69,7 +89,7 @@ impl Host {
     }
 
     /// Open (or keep open) every bar window. Windows not declared in a host frame are closed.
-    fn declare(&self, ctx: &egui::Context, bars: &Bars) {
+    fn declare(&self, ctx: &egui::Context, bars: &Bars, preview_open: bool) {
         for (view, device, primary) in bars.views() {
             let builder = egui::ViewportBuilder::default()
                 .with_title(view.title.clone())
@@ -89,6 +109,13 @@ impl Host {
                     Kind::Top => shared.top_frame(ctx, primary),
                     Kind::Dock => shared.dock_frame(ctx, &device),
                 }
+            });
+        }
+        // The preview panel exists only while open (see `preview`).
+        if preview_open {
+            let shared = self.shared.clone();
+            ctx.show_viewport_deferred(preview::id(), preview::builder(), move |ctx, _| {
+                shared.lock().unwrap().preview_frame(ctx);
             });
         }
     }
@@ -123,15 +150,21 @@ impl eframe::App for Host {
         if layout_needed || sizes != shared.bars.sizes() {
             let slots = layout::plan(&monitors::all(), self.settings.docks, &sizes);
             shared.bars.update(slots, sizes);
-            self.wake.set(shared.bars.ids());
+            // The preview panel is woken with the bars, for when its app's windows change.
+            let mut ids = shared.bars.ids();
+            ids.push(preview::id());
+            self.wake.set(ids);
         }
         if host::take_requery() {
             shared.bars.requery();
         }
-        self.declare(ctx, &shared.bars);
+        let preview_open = shared.preview.tick(Instant::now());
+        self.declare(ctx, &shared.bars, preview_open);
         let glass = shared.glass;
         // New windows exist only after this frame; look again on the next one.
-        if !shared.bars.adopt(glass) {
+        let bars_ready = shared.bars.adopt(glass);
+        let preview_ready = shared.preview.adopt(glass);
+        if !(bars_ready && preview_ready) {
             ctx.request_repaint();
         }
         let width = shared.dock.width();
