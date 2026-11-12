@@ -192,6 +192,59 @@ opens without Explorer (Bluetooth: `bthprops.cpl`; Sound: `mmsys.cpl`; also `mai
 Not yet tried with the host running: toasts, the touch keyboard, snap layouts, sleep and resume,
 display changes, long uptime.
 
+### A host of shellman's own (tried; not working yet)
+
+Goal: replace ShellAppRuntime with a small shellman process doing only the part that brings up
+the immersive shell (no startup apps, no logon tasks, no Start prelaunch, no Win key to Start),
+with ShellAppRuntime as the fallback. Its own process, never a thread of bar or desktop: twinui
+ends its process on a failed start (below), and that must not take shellman down.
+
+What ShellAppRuntime 10.0.26100.9818 does for it (read from the exe; twinui.pcshell 9278):
+
+- STA main thread: `CoInitializeEx(APARTMENTTHREADED | DISABLE_OLE1DDE)`; `IGlobalOptions`
+  exception handling DONOT_HANDLE_ANY and RO settings 0x218.
+- `CoInitializeSecurity(absolute SD, -1, NULL, NULL, AUTHN_LEVEL_DEFAULT, IMP_LEVEL_IDENTIFY, NULL,
+  EOAC_NONE, NULL)` with `O:BAG:BAD:(A;;0x3;;;PS)(A;;0x3;;;AC)(A;;0x3;;;SY)(A;;0x3;;;BA)` plus
+  `(A;;0x9;;;S-1-5-90-0-<session>)` (the DWM user).
+- Legacy init: AUMID `Microsoft.Windows.Explorer`, BAM ioctl, `EnableMouseInPointer(0)`, shell32
+  #899(3), #188(1) when configured, `CoInitializeEx` again, shell32 #904(1, 1).
+  `SetProcessShutdownParameters(3, NORETRY)`; `OleInitialize` when configured.
+- Creates an object (IID {6597eb02-ceb7-4c90-a0a6-e3176d67e179}) kept for the shell's lifetime;
+  not identified. Then "Progman" / "Program Manager", `WS_EX_TOOLWINDOW`, `WS_POPUP |
+  WS_CLIPCHILDREN`, the virtual screen (its WM_CREATE claims `SetShellWindow`); then the taskman
+  window (WM_CREATE: ARW_HIDE minimized metrics, `SetTaskmanWindow`, `RegisterShellHookWindow`;
+  each SHELLHOOK message goes to `CLSID_ImmersiveShell` {c2f03a33-...} local server ->
+  `IServiceProvider::QueryService({4624bd39-5fc3-44a8-a809-163a836e9031},
+  {914d9b3a-5e53-4e14-bbba-46062acb35a4})` slot 5 (wParam, lParam), except code 0x32;
+  HSHELL_APPCOMMAND also to its audio component).
+- shell32 #938(), then `CoCreateInstance({c71c41f1-ddad-42dc-a8fc-f5bfc61df957}, INPROC,
+  {1c56b3e4-e6ea-4ced-8a74-73b72c6bd435})` (twinui.pcshell's builder), slot 3 ->
+  `IImmersiveShellController` {d6948331-eaf5-4365-86ac-d8d1d03b4600}, slot 3 `Start()`.
+- After Start: logon tasks and `Local\ShellStartupEvent`, tray window, startup apps,
+  `RegisterApplicationRestart`, `ShellReadyEvent`, then a message loop until WM_QUIT; slot 4
+  `Stop()` on the way out.
+
+Result on 10.0.26300, one run of `shellman-apphost` (branch `apphost-experiment`) with all of the
+above except the unidentified object, OLE, BAM and #188: every step up to and including the
+builder, controller, shell window, taskman and shell hook succeeded; `Start` then raised
+`IMSC_E_SHELL_COMPONENT_STARTUP_FAILURE` (0x80270233, "an immersive shell component failed to
+start correctly") inside twinui.pcshell and the process died. Winlogon started Explorer (seen
+within 8 s), as when ShellAppRuntime is killed: the trigger looks like the shell window's owner
+ending abnormally, whatever the process. So a failed `Start` costs an Explorer that the
+supervisor must stop, plus Explorer's work areas and a moved tray.
+
+Not yet known: which component fails. Suspects, in order: the unidentified object created before
+the shell window (it may proffer a service a component needs), `OleInitialize`, the window
+creation order (ShellAppRuntime makes the shell window from a helper object with its own class
+registration), a check on the host's identity. Finding it means more `Start` attempts, and each
+failure brings Explorer back; it was stopped here (machine in use). Next steps: catch the
+exception with a vectored handler to log the failing component's stack before exiting; check
+whether giving up the shell window (`SetShellWindow(0)`) before exiting keeps Winlogon quiet;
+then try the variants (no shell hook, no taskman, cloaked or 0-sized Progman, no shell32
+ordinals) one by one.
+
+Until then the supervisor keeps running ShellAppRuntime, unchanged.
+
 ## Icons
 
 - shellman's own apps are drawn in the user's accent wherever shellman shows them: dock,
