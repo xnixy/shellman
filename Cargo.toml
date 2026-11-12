@@ -1,0 +1,30 @@
+[package]
+name = "fileman"
+version = "0.1.0"
+edition = "2021"
+description = "A file manager in Blurman's frosted style, with an accent color you pick"
+license = "MIT"
+publish = false
+
+[dependencies]
+dirs = "6"
+eframe = { version = "0.31", default-features = false, features = ["default_fonts", "glow", "persistence"] }
+egui = "0.31"
+raw-window-handle = "0.6"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+windows = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Dwm",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Registry",
+    "Win32_System_Time",
+    "Win32_UI_Controls",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
