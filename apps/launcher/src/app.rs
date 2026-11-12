@@ -293,6 +293,11 @@ impl Launcher {
             }
         }
         self.follow_window(ctx);
+        // Hidden: draw nothing. A drawn search box keeps the focus, and its caret blink asks for
+        // repaints that a hidden window never gets, which spins the event loop on a whole core.
+        if !self.shared.is_showing() {
+            return;
+        }
         self.keys(ctx);
 
         // SHELLMAN_FORCE_LIGHT: look at the light palette without changing Windows' setting.

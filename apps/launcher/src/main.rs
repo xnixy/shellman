@@ -58,6 +58,9 @@ fn main() -> eframe::Result {
             // Rounded glass under the panel; without it, the panel paints its own surface.
             let panel = (hwnd != 0).then(|| GlassPanel::attach(hwnd, Style::from_theme(summon::RADIUS)));
             let glass = panel.as_ref().is_some_and(GlassPanel::composed);
+            if hwnd != 0 {
+                summon::prepare(hwnd);
+            }
             let shared = Arc::new(summon::Shared::default());
             instance.serve(hwnd, cc.egui_ctx.clone(), shared.clone());
             if !background {

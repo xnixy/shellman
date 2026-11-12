@@ -30,12 +30,16 @@
 //!
 //! Using it: attach a panel once the window exists, paint the content inside
 //! [`content_frame`]`(panel.composed(), ..)`, and pass the theme's style to
-//! [`GlassPanel::set_style`] when it may have changed. Everything else follows on its own.
+//! [`GlassPanel::set_style`] when it may have changed. Everything else follows on its own,
+//! except cloaking, which sends no message: cloak the window with [`cloak`], which takes its
+//! glass along (from any thread).
 
 mod backdrop;
+mod cloak;
 mod style;
 mod tree;
 
+pub use cloak::{cloak, is_cloaked};
 pub use style::{content_frame, Geometry, Shadow, Style};
 
 use std::cell::Cell;
@@ -103,6 +107,9 @@ impl GlassPanel {
             effects: Cell::new(effects_enabled()),
             alive: Cell::new(true),
         });
+        if let Some(composed) = &inner.composed {
+            cloak::remember(target, composed.window);
+        }
         unsafe {
             let _ = SetWindowSubclass(
                 target,
@@ -146,6 +153,7 @@ impl Drop for GlassPanel {
         if !inner.alive.get() {
             return;
         }
+        cloak::forget(inner.target);
         unsafe {
             let _ = RemoveWindowSubclass(inner.target, Some(follow_proc), SUBCLASS);
             if let Some(composed) = &inner.composed {
@@ -288,6 +296,7 @@ unsafe extern "system" fn follow_proc(
         }
         WM_NCDESTROY => {
             inner.alive.set(false);
+            cloak::forget(hwnd);
             let _ = RemoveWindowSubclass(hwnd, Some(follow_proc), SUBCLASS);
             if let Some(composed) = &inner.composed {
                 let _ = DestroyWindow(composed.window);
