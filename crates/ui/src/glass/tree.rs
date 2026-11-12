@@ -15,7 +15,8 @@ use windows::UI::Color;
 use windows::UI::Composition::Desktop::DesktopWindowTarget;
 use windows::UI::Composition::{
     CompositionBackdropBrush, CompositionColorBrush, CompositionColorGradientStop,
-    CompositionRoundedRectangleGeometry, Compositor, DropShadow, ShapeVisual, SpriteVisual, Visual,
+    CompositionRoundedRectangleGeometry, CompositionVisualSurface, Compositor, DropShadow,
+    ShapeVisual, SpriteVisual, Visual,
 };
 use windows_numerics::{Vector2, Vector3};
 
@@ -69,11 +70,13 @@ fn v3(x: f32, y: f32) -> Vector3 {
 pub struct Tree {
     /// Keeps the visuals on the window.
     _target: DesktopWindowTarget,
-    /// The shadow's layer, the clipped body and the rim, each placed at the shape's corner.
+    /// The shadow's caster, the clipped body and the rim, each placed at the shape's corner.
     layers: [Visual; 3],
     shadow: DropShadow,
-    shadow_visual: ShapeVisual,
-    shadow_fill: CompositionColorBrush,
+    /// The filled shape, drawn into a surface that both paints the caster and masks its shadow.
+    mask_visual: ShapeVisual,
+    mask: CompositionVisualSurface,
+    mask_fill: CompositionColorBrush,
     backdrop: SpriteVisual,
     host_backdrop: CompositionBackdropBrush,
     solid: CompositionColorBrush,
@@ -99,17 +102,22 @@ impl Tree {
             c.CreateRoundedRectangleGeometry()?,
         ];
 
-        // The shadow is cast by a filled copy of the shape inside a layer; the glass covers the
-        // fill, so only the shadow outside the shape shows.
-        let shadow_layer = c.CreateLayerVisual()?;
+        // The shadow: a sprite painted with the filled shape, which also masks its shadow. (A
+        // layer visual's shadow follows the layer's rectangle, not its content: measured.) The
+        // glass covers the fill, so only the shadow outside the shape shows.
+        let mask_visual = c.CreateShapeVisual()?;
+        let mask_fill = c.CreateColorBrush()?;
+        let mask_shape = c.CreateSpriteShapeWithGeometry(&shapes[1])?;
+        mask_shape.SetFillBrush(&mask_fill)?;
+        mask_visual.Shapes()?.Append(&mask_shape)?;
+        let mask = c.CreateVisualSurface()?;
+        mask.SetSourceVisual(&mask_visual)?;
+        let mask_brush = c.CreateSurfaceBrushWithSurface(&mask)?;
         let shadow = c.CreateDropShadow()?;
-        shadow_layer.SetShadow(&shadow)?;
-        let shadow_visual = c.CreateShapeVisual()?;
-        let shadow_fill = c.CreateColorBrush()?;
-        let shadow_shape = c.CreateSpriteShapeWithGeometry(&shapes[1])?;
-        shadow_shape.SetFillBrush(&shadow_fill)?;
-        shadow_visual.Shapes()?.Append(&shadow_shape)?;
-        shadow_layer.Children()?.InsertAtTop(&shadow_visual)?;
+        shadow.SetMask(&mask_brush)?;
+        let caster = c.CreateSpriteVisual()?;
+        caster.SetBrush(&mask_brush)?;
+        caster.SetShadow(&shadow)?;
 
         let body = c.CreateContainerVisual()?;
         body.SetClip(&c.CreateGeometricClipWithGeometry(&shapes[0])?)?;
@@ -140,15 +148,16 @@ impl Tree {
         rim_visual.Shapes()?.Append(&rim_shape)?;
 
         let children = root.Children()?;
-        children.InsertAtTop(&shadow_layer)?;
+        children.InsertAtTop(&caster)?;
         children.InsertAtTop(&body)?;
         children.InsertAtTop(&rim_visual)?;
         Ok(Self {
             _target: target,
-            layers: [shadow_layer.cast()?, body.cast()?, rim_visual.cast()?],
+            layers: [caster.cast()?, body.cast()?, rim_visual.cast()?],
             shadow,
-            shadow_visual,
-            shadow_fill,
+            mask_visual,
+            mask,
+            mask_fill,
             backdrop,
             host_backdrop: c.CreateHostBackdropBrush()?,
             solid: c.CreateColorBrush()?,
@@ -169,9 +178,10 @@ impl Tree {
             layer.SetOffset(v3(geo.left as f32, geo.top as f32))?;
             layer.SetSize(size)?;
         }
-        for visual in [&self.shadow_visual, &self.rim_visual] {
+        for visual in [&self.mask_visual, &self.rim_visual] {
             visual.SetSize(size)?;
         }
+        self.mask.SetSourceSize(size)?;
         for visual in [&self.backdrop, &self.tint_visual] {
             visual.SetSize(size)?;
         }
@@ -184,20 +194,19 @@ impl Tree {
         rim.SetSize(v2(size.X - 1.0, size.Y - 1.0))?;
         rim.SetCornerRadius(v2((r - 0.5).max(0.0), (r - 0.5).max(0.0)))?;
 
-        let [sr, sg, sb, _] = style.shadow.color.to_srgba_unmultiplied();
+        let [sr, sg, sb, sa] = style.shadow.color.to_srgba_unmultiplied();
         self.shadow.SetColor(Color {
             A: 255,
             R: sr,
             G: sg,
             B: sb,
         })?;
-        self.shadow
-            .SetOpacity(style.shadow.color.a() as f32 / 255.0)?;
+        self.shadow.SetOpacity(sa as f32 / 255.0)?;
         self.shadow.SetBlurRadius(geo.shadow_blur)?;
         self.shadow.SetOffset(v3(0.0, geo.shadow_offset))?;
         // The filled shape under the glass: the tint's colour, so its edge cannot darken the
         // glass's own anti-aliased edge.
-        self.shadow_fill.SetColor(color(style.tint.to_opaque()))?;
+        self.mask_fill.SetColor(color(style.tint.to_opaque()))?;
 
         self.solid.SetColor(color(style.solid))?;
         if effects {

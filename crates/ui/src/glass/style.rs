@@ -91,8 +91,9 @@ impl Geometry {
             .max(0.0);
         let blur = px(style.shadow.blur).max(0.0);
         let offset = px(style.shadow.offset_y);
-        // A composition shadow fades out about one blur radius past its shape.
-        let spread = blur.ceil() as i32;
+        // A composition shadow is still visible one blur radius past its shape (seen at 300%,
+        // where the window's edge cut it off); it is gone by two.
+        let spread = (blur * 2.0).ceil() as i32;
         Self {
             shape,
             radius,
@@ -159,13 +160,13 @@ mod tests {
     fn points_become_pixels_at_each_scale() {
         let g = Geometry::new((1080, 840), 1.5, &style(24.0));
         assert_eq!(g.radius, 36.0);
-        assert_eq!((g.left, g.right), (48, 48));
+        assert_eq!((g.left, g.right), (96, 96));
         // The shadow falls 12 px down: less room above, more below.
-        assert_eq!((g.top, g.bottom), (36, 60));
-        assert_eq!(g.window(), (1080 + 96, 840 + 96));
+        assert_eq!((g.top, g.bottom), (84, 108));
+        assert_eq!(g.window(), (1080 + 192, 840 + 192));
         let g = Geometry::new((2160, 1680), 3.0, &style(24.0));
         assert_eq!(g.radius, 72.0);
-        assert_eq!((g.left, g.top, g.bottom), (96, 72, 120));
+        assert_eq!((g.left, g.top, g.bottom), (192, 168, 216));
     }
 
     #[test]
