@@ -5,7 +5,7 @@ use super::kit::{self, chip, clipped_text, label_font, small_font, CHIP, GAP};
 use egui::{Align2, CornerRadius, Pos2, Rect, Sense, Ui, Vec2};
 use shellman_core::system::audio::Sound;
 use shellman_core::system::audio_watch::SoundWatch;
-use shellman_ui::theme::{colors, glyph, icon_font, with_alpha};
+use shellman_ui::theme::{colors, glyph, icon_font};
 
 const ROW: f32 = 28.0;
 
@@ -97,7 +97,7 @@ impl SoundView {
             let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), ROW), Sense::click());
             let is_default = default.as_deref() == Some(o.id.as_str());
             if resp.hovered() {
-                ui.painter().rect_filled(rect.expand2(Vec2::new(4.0, 0.0)), CornerRadius::same(8), with_alpha(c.text, 18));
+                ui.painter().rect_filled(rect.expand2(Vec2::new(4.0, 0.0)), CornerRadius::same(8), kit::well(false));
             }
             if is_default && self.expanded {
                 let at = Pos2::new(rect.left() + 8.0, rect.center().y);
