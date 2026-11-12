@@ -13,7 +13,7 @@ accent color, fast.
 | `apps/switcher` | Alt+Tab, Task View | working: Alt+Tab with live previews. Next: Task View (Win+Tab) |
 | `apps/desktop` | wallpaper window, desktop icons | working: wallpaper per monitor; keeps Windows' modern-app host running. Next: desktop icons, right-click menu |
 | `apps/settings` | Settings pages for the shell | working: Appearance, Dock, Top bar, Launcher, About |
-| `apps/session` | the shell process itself | last |
+| `apps/session` | the shell process itself | built, not yet the shell: starts and supervises the apps, runs startup items, safety net, `--install`/`--uninstall` (never run yet) |
 
 Shared code:
 
@@ -258,7 +258,65 @@ first time a given failure happens (it compares with the recorded one) and skips
 a repeat, unless a debugger is attached; since the next Explorer clears the record, every attempt
 fails fast.
 
-Decision: the supervisor keeps running ShellAppRuntime, unchanged.
+Decision: no host of our own is possible, and Windows' host is off unless the user turns it on
+(see above). Settings pages people use most are to be rebuilt in shellman Settings.
+
+## Session
+
+`apps/session` (`shellman-session.exe`) is the one process Windows starts as the shell. Plain Win32,
+no egui, no `shellman-core`; it must be the most robust piece. Beside Explorer nothing starts it.
+
+- **Starts** next to its own exe, in order: desktop, bar, switcher, launcher `--background`,
+  control `--background` (250 ms apart). Every child gets `SHELLMAN_SESSION=1`. The bar then leaves
+  the residents to the session; started by hand it still starts them itself.
+- **Supervises** with one `MsgWaitForMultipleObjectsEx` on all process handles plus the window's
+  messages (no polling). Exit code 0 means ended on purpose (the apps have no quit UI yet, and a
+  `--background` start that finds its resident exits 0): not restarted, but another running copy
+  is adopted if there is one. Any other code is a crash: restart after 0.5 s, 2 s, then 8 s; five
+  crashes within a minute and the app is given up on. All decisions are in `policy.rs`, pure and
+  tested. Log: `%LOCALAPPDATA%\shellman\session.log` (64 KB, rotated).
+- **Single instance**: mutex `Local\shellman-session[-<SHELLMAN_INSTANCE>]`.
+- **Adoption**: at start, an app whose exe already runs in this logon session is held, not
+  started again (a session that crashed and was restarted by Winlogon, or a bar started by hand).
+- **Logoff**: a hidden top-level window answers WM_QUERYENDSESSION with yes at once; on
+  WM_ENDSESSION (or WM_CLOSE) it posts WM_CLOSE to every top-level window of the children, waits up
+  to 4 s, logs who is left, never kills.
+- **Startup items** (what Explorer does at logon): RunOnce (HKCU; HKLM only if elevated, the value
+  is deleted before the command starts, or after with a `!` prefix), Policies\Explorer\Run, HKLM
+  Run and its WOW6432Node twin, HKCU Run, the common and the user Startup folders (via ShellExecute).
+  Disabled items are skipped by `...\Explorer\StartupApproved\{Run,Run32,StartupFolder}`: first
+  byte even enabled, odd disabled, missing enabled, HKCU before HKLM (observed, not documented;
+  see `startup/approved.rs`). First start 6 s after the session, then 1.5 s apart. Once per logon:
+  a volatile HKCU key `Software\shellman\session-startup` (it outlives a crashed session and is
+  removed at logoff; a named kernel object would die with the session); a session that adopted
+  apps skips them as well. Not started in test runs. `shellman-session --dry-run` prints the
+  apps and each item with why it is enabled or disabled, and changes nothing.
+  Packaged apps' startup tasks are left out: their state is in
+  `HKCU\Software\Classes\Local Settings\...\AppModel\SystemAppData\<package>\<task>` but
+  there is no public call to run one; ShellAppRuntime (see above) does logon tasks.
+- **Safety net**: if Shift is held at the session's start, or the bar's exe is missing, or the bar
+  was given up on or ended, or there is no `Shell_TrayWnd` 20 s after start, the session starts
+  `explorer.exe` (unless one runs), logs why, and stops supervising (it stays alive, so Winlogon
+  does not restart it in a loop). Shift also skips every shellman app.
+- **Tests**: `SHELLMAN_SESSION_APPS="exe|arg|arg;exe2"` replaces the app list (and turns off
+  startup items and the safety net, which `SHELLMAN_SESSION_SAFETY=on` brings back;
+  `SHELLMAN_SESSION_FALLBACK=<exe>` stands in for explorer.exe). `examples/child.rs` is a
+  throwaway child.
+
+### The shell swap
+
+`shellman-session --install` saves the current per-user value
+(`HKCU\Software\shellman\session`) and sets `HKCU\Software\Microsoft\Windows NT\CurrentVersion\Winlogon`
+`Shell` to the session's full path; it refuses if `shellman-bar.exe` is not beside it. Windows
+reads the per-user value before the machine's (`explorer.exe`). It takes effect at the next
+sign-in. `--uninstall` puts the saved value back, or deletes the value, and leaves a Shell value
+that is not shellman's alone. Both are unit-tested against a fake registry and have never been run.
+
+If the screen is empty after the swap: hold Shift at sign-in (the safety net starts Explorer); or
+Ctrl+Alt+Del, Task Manager, Run new task, `explorer.exe` (then `shellman-session --uninstall`
+from a terminal); or `reg delete "HKCU\Software\Microsoft\Windows NT\CurrentVersion\Winlogon" /v Shell /f`
+from Run new task with `cmd`. Signing in as another user is unaffected (the value is per user).
+
 ## Icons
 
 - shellman's own apps are drawn in the user's accent wherever shellman shows them: dock,
@@ -273,4 +331,4 @@ Decision: the supervisor keeps running ShellAppRuntime, unchanged.
 4. Top bar: "now" pill, notifications and calendar.
 5. Desktop icons and menu.
 6. Task View.
-7. `session`: start and restart the apps, and the shell swap.
+7. `session`: built. Next: try the swap on a spare user account, then on the real one.
