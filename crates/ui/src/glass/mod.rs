@@ -39,20 +39,28 @@
 //! change the shape instead: a resized window shows its old content for a frame, and a resized
 //! backdrop window shows its old visuals, while a shape changed inside both windows reaches the
 //! screen with the window's next frame.
+//!
+//! Or the window can have several separate pieces ("islands", see [`islands`]) through
+//! [`GlassPanel::set_islands`]: then the whole window stays clickable (the gaps between the
+//! islands are the window's own, to drag it by) and only the islands are glass.
 
 mod backdrop;
 mod effect;
 mod cloak;
+pub mod islands;
 mod style;
 mod tree;
 
 pub use cloak::{cloak, is_cloaked};
+pub use islands::Island;
 pub use style::{content_frame, Geometry, Luminosity, Shadow, Style};
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::sync::OnceLock;
-use tree::Tree;
+use tree::{Paint, Placed, Tree};
+use windows::Win32::Foundation::POINT;
+use windows::Win32::Graphics::Gdi::ClientToScreen;
 use windows::core::w;
 use windows::Foundation::TypedEventHandler;
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
@@ -90,6 +98,10 @@ struct Inner {
     shape: Cell<Option<RECT>>,
     /// A part of the window outside the surface that still shows and takes clicks.
     also: Cell<Option<RECT>>,
+    /// Several pieces instead of one shape, and the pixels per point they were laid out at.
+    islands: RefCell<Option<(Vec<Island>, f32)>>,
+    /// Counts changes to `islands`, so a layout can tell it is out of date.
+    islands_seen: Cell<u64>,
     /// What the shape was last laid out for: the window's size, the shape, the extra part and
     /// the DPI. None forces a layout.
     laid_out: Cell<Option<Layout>>,
@@ -105,6 +117,8 @@ struct Layout {
     shape: RECT,
     also: Option<RECT>,
     dpi: u32,
+    /// The islands' change count, and where the client area starts in the window.
+    islands: Option<(u64, (i32, i32))>,
 }
 
 struct Composed {
@@ -127,6 +141,8 @@ impl GlassPanel {
             style: Cell::new(style),
             shape: Cell::new(None),
             also: Cell::new(None),
+            islands: RefCell::new(None),
+            islands_seen: Cell::new(0),
             laid_out: Cell::new(None),
             effects: Cell::new(effects_enabled()),
             alive: Cell::new(true),
@@ -165,10 +181,31 @@ impl GlassPanel {
     /// that shows and takes clicks without glass under it (a label above the surface); the rest
     /// of the window is neither drawn nor clicked. Free when nothing changed.
     pub fn set_shape(&self, shape: Option<RECT>, also: Option<RECT>) {
-        let changed = self.inner.shape.replace(shape) != shape;
+        let mut changed = self.inner.shape.replace(shape) != shape;
+        changed |= self.inner.islands.borrow_mut().take().is_some();
         if (self.inner.also.replace(also) != also) | changed {
             self.inner.follow();
         }
+    }
+
+    /// Put the glass on several separate pieces instead of one shape, in points of the window's
+    /// client area at `scale` pixels per point (egui's `pixels_per_point`). The whole window
+    /// keeps taking clicks; only the islands are glass. An empty list shows no glass. Free when
+    /// nothing changed, so it can be called every frame; [`GlassPanel::set_shape`] goes back to
+    /// one shape.
+    pub fn set_islands(&self, islands: &[Island], scale: f32) {
+        {
+            let mut current = self.inner.islands.borrow_mut();
+            if current
+                .as_ref()
+                .is_some_and(|(list, s)| list == islands && *s == scale)
+            {
+                return;
+            }
+            *current = Some((islands.to_vec(), scale));
+        }
+        self.inner.islands_seen.set(self.inner.islands_seen.get() + 1);
+        self.inner.follow();
     }
 
     /// The look the panel has now.
@@ -240,41 +277,111 @@ impl Inner {
                 return;
             }
             let window = (rc.right - rc.left, rc.bottom - rc.top);
-            let area = self.shape.get().unwrap_or(RECT {
-                left: 0,
-                top: 0,
-                right: window.0,
-                bottom: window.1,
-            });
-            let shape = (area.right - area.left, area.bottom - area.top);
             let dpi = GetDpiForWindow(self.target).max(96);
+            let scale = dpi as f32 / 96.0;
             let style = self.style.get();
-            let mut geo = Geometry::new(shape, dpi as f32 / 96.0, &style);
-            // The backdrop window covers the whole served window (and the shadow's room around
-            // it), and the shape moves inside it. So a shape that changes every frame (the dock
-            // growing as an app opens) only changes the visuals, which land on screen together
-            // with the window's own next frame; moving the backdrop window as well would show it
-            // a frame ahead of them.
-            geo.left += area.left;
-            geo.top += area.top;
-            geo.right += window.0 - area.right;
-            geo.bottom += window.1 - area.bottom;
-            let layout = Layout { window, shape: area, also: self.also.get(), dpi };
+            let islands = self.islands.borrow();
+            let (geo, area, placed, also, key) = match islands.as_ref() {
+                Some((list, points)) => {
+                    // The backdrop covers the whole window and the shadow's room around it; the
+                    // islands are placed inside it, from where the client area starts.
+                    let geo = Geometry::new(window, scale, &style);
+                    let client = client_origin(self.target, &rc);
+                    let placed = list
+                        .iter()
+                        .map(|i| {
+                            let (e, radius) = islands::to_pixels(i, *points);
+                            Placed {
+                                left: geo.left + client.0 + e[0],
+                                top: geo.top + client.1 + e[1],
+                                size: (e[2] - e[0], e[3] - e[1]),
+                                radius,
+                                opacity: i.opacity,
+                                shadow: i.shadow,
+                            }
+                        })
+                        .filter(|p| p.size.0 > 0 && p.size.1 > 0)
+                        .collect();
+                    let whole = RECT {
+                        left: 0,
+                        top: 0,
+                        right: window.0,
+                        bottom: window.1,
+                    };
+                    (geo, whole, placed, None, Some((self.islands_seen.get(), client)))
+                }
+                None => {
+                    let area = self.shape.get().unwrap_or(RECT {
+                        left: 0,
+                        top: 0,
+                        right: window.0,
+                        bottom: window.1,
+                    });
+                    let shape = (area.right - area.left, area.bottom - area.top);
+                    let mut geo = Geometry::new(shape, scale, &style);
+                    // The backdrop window covers the whole served window (and the shadow's room
+                    // around it), and the shape moves inside it. So a shape that changes every
+                    // frame (the dock growing as an app opens) only changes the visuals, which
+                    // land on screen together with the window's own next frame; moving the
+                    // backdrop window as well would show it a frame ahead of them.
+                    geo.left += area.left;
+                    geo.top += area.top;
+                    geo.right += window.0 - area.right;
+                    geo.bottom += window.1 - area.bottom;
+                    let placed = vec![Placed {
+                        left: geo.left,
+                        top: geo.top,
+                        size: geo.shape,
+                        radius: geo.radius,
+                        opacity: 1.0,
+                        shadow: true,
+                    }];
+                    (geo, area, placed, self.also.get(), None)
+                }
+            };
+            drop(islands);
+            let layout = Layout { window, shape: area, also, dpi, islands: key };
             let before = self.laid_out.replace(Some(layout));
             if before != Some(layout) {
-                let moved = before.is_none_or(|b| (b.window, b.shape, b.dpi) != (window, area, dpi));
+                let moved = before.is_none_or(|b| {
+                    (b.window, b.shape, b.dpi, b.islands) != (window, area, dpi, key)
+                });
                 if let Some(composed) = self.composed.as_ref().filter(|_| moved) {
-                    let _ = composed.tree.apply(&geo, &style, self.effects.get());
+                    let paint = Paint {
+                        style,
+                        effects: self.effects.get(),
+                        shadow_blur: geo.shadow_blur,
+                        shadow_offset: geo.shadow_offset,
+                    };
+                    let _ = composed.tree.apply(&placed, paint);
                 }
-                // This sends the window another move message, which finds the layout done.
-                let r = geo.region_radius() * 2;
-                let region = CreateRoundRectRgn(area.left, area.top, area.right + 1, area.bottom + 1, r, r);
-                if let Some(also) = layout.also {
-                    let extra = CreateRectRgn(also.left, also.top, also.right, also.bottom);
-                    CombineRgn(Some(region), Some(region), Some(extra), RGN_OR);
-                    let _ = DeleteObject(extra.into());
+                // Islands keep the whole window (the gaps move it), so its region changes only
+                // with its size; one shape is all of the window that shows and takes clicks.
+                // Either way the region also takes away Windows' own shadow and border.
+                // Setting it sends the window another move message, which finds the layout done.
+                if key.is_some() {
+                    let same = before.is_some_and(|b| b.islands.is_some() && b.window == window);
+                    if !same {
+                        let region = CreateRectRgn(0, 0, window.0, window.1);
+                        SetWindowRgn(self.target, Some(region), true);
+                    }
+                } else {
+                    let r = geo.region_radius() * 2;
+                    let region = CreateRoundRectRgn(
+                        area.left,
+                        area.top,
+                        area.right + 1,
+                        area.bottom + 1,
+                        r,
+                        r,
+                    );
+                    if let Some(also) = layout.also {
+                        let extra = CreateRectRgn(also.left, also.top, also.right, also.bottom);
+                        CombineRgn(Some(region), Some(region), Some(extra), RGN_OR);
+                        let _ = DeleteObject(extra.into());
+                    }
+                    SetWindowRgn(self.target, Some(region), true);
                 }
-                SetWindowRgn(self.target, Some(region), true);
             }
             if let Some(composed) = &self.composed {
                 let (w, h) = geo.window();
@@ -290,6 +397,16 @@ impl Inner {
             }
         }
     }
+}
+
+/// Where the client area starts inside the window `rc` (a maximized window's frame hangs off the
+/// screen around it).
+fn client_origin(hwnd: HWND, rc: &RECT) -> (i32, i32) {
+    let mut p = POINT { x: 0, y: 0 };
+    unsafe {
+        let _ = ClientToScreen(hwnd, &mut p);
+    }
+    (p.x - rc.left, p.y - rc.top)
 }
 
 /// Take away what Windows draws around and behind the window: its corners, its border and any

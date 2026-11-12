@@ -378,6 +378,20 @@ fn main() {
                 let style = Style::from_theme(24.0);
                 let panel = GlassPanel::attach(hwnd.0 as isize, style);
                 report(&format!("panel composed: {}", panel.composed()));
+                if mode == "islands" {
+                    // Three separate pieces at one pixel per point: a pill along the top, a rail
+                    // down the left, and a faint backing for the rest.
+                    use egui::{pos2, Rect};
+                    use shellman_ui::glass::Island;
+                    let (w, h) = (w_ as f32, h as f32);
+                    let islands = [
+                        Island::pill(Rect::from_min_max(pos2(110.0, 20.0), pos2(w - 20.0, 80.0))),
+                        Island::pill(Rect::from_min_max(pos2(20.0, 100.0), pos2(90.0, h - 120.0))),
+                        Island::new(Rect::from_min_max(pos2(110.0, 100.0), pos2(w - 20.0, h - 20.0)), radius as f32)
+                            .faint(0.5),
+                    ];
+                    panel.set_islands(&islands, 1.0);
+                }
                 _panel = Some(panel);
             }
         }

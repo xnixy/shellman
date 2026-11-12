@@ -99,6 +99,15 @@ pub fn remove_caption(hwnd: HWND, glass: bool) {
     }
 }
 
+/// Make `hwnd` an islands window (see `glass::islands`): no caption and no frame drawn by
+/// Windows, but its outer edges still resize it and Snap still works; maximized, its client area
+/// is the monitor's work area. The app draws its own window buttons
+/// (`chips::window_buttons`). Call before attaching its `GlassPanel`, which takes away the
+/// rest of what Windows draws (border, corners, shadow, backdrop).
+pub fn frameless(hwnd: isize) {
+    remove_caption(HWND(hwnd as *mut _), false);
+}
+
 /// Size of the Windows caption buttons in physical pixels, or None when Windows draws none.
 pub fn caption_buttons_size(hwnd: isize) -> Option<(i32, i32)> {
     if hwnd == 0 {

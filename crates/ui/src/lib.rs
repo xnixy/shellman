@@ -2,6 +2,7 @@
 
 pub mod app_icon;
 pub mod appearance;
+pub mod chips;
 pub mod font_atlas;
 pub mod glass;
 pub mod look_controls;
