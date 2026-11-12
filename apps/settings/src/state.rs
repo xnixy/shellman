@@ -2,7 +2,7 @@
 //! Edits apply by saving the same files the other apps watch.
 
 use crate::saver::Saver;
-use crate::sections::{AppsView, DisplayView, FontsView, Section, SoundView, StartupView};
+use crate::sections::{AppsView, DisplayView, FontsView, IconsView, Section, SoundView, StartupView};
 use shellman_core::settings::bar::BarSettings;
 use shellman_core::settings::dock::{self, DockSettings};
 use shellman_core::settings::launcher::LauncherSettings;
@@ -34,6 +34,8 @@ pub struct State {
     pub fonts: FontsView,
     /// A page another page asked to go to (the Fonts page's link to Appearance).
     pub goto: Option<Section>,
+    /// The icon pack group's live state (Appearance).
+    pub icons: IconsView,
     /// Whether the window has real acrylic; without it the glass slider has nothing to do.
     pub glass: bool,
 }
@@ -55,6 +57,7 @@ impl State {
             startup: StartupView::default(),
             fonts: FontsView::default(),
             goto: None,
+            icons: IconsView::default(),
             glass,
         };
         state.rebuild_names();

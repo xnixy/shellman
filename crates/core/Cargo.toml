@@ -19,3 +19,5 @@ serde_json.workspace = true
 windows = { workspace = true, features = ["Win32_System_Performance", "Win32_System_ProcessStatus", "Win32_Graphics_Dxgi", "Win32_Graphics_Dxgi_Common"] }
 windows-core.workspace = true
 windows-future.workspace = true
+# Draws SVG icon packs. No text, no system fonts, no embedded rasters: icons are plain paths.
+resvg = { version = "0.45", default-features = false }

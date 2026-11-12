@@ -5,7 +5,9 @@
 use crate::page;
 use crate::state::State;
 use egui::{Align, CornerRadius, FontId, Layout, Sense, UiBuilder, Vec2};
-use shellman_core::installed::app::App;
+use crate::pick::{self, Pick};
+use shellman_core::icon_pack::{self, IconSettings};
+use shellman_core::installed::app::{App, Kind};
 use shellman_core::installed::list::{self, Sort};
 use shellman_core::installed::worker::{AppsPage, Do, Page};
 use shellman_core::thumbs::Thumbs;
@@ -31,12 +33,51 @@ pub struct AppsView {
     /// sort changes.
     shown: Vec<usize>,
     shown_for: Option<(Arc<Vec<App>>, String, Sort)>,
+    /// The app whose icon choices are showing in its row.
+    icon_menu: Option<String>,
+    /// The image chooser, and the app (by id) it was opened for.
+    icon_pick: Option<(String, Pick)>,
+    /// `icons.json` as last read, and the generation it was read at.
+    icons: IconSettings,
+    icons_generation: u64,
+    note: Option<String>,
 }
 
 impl Default for AppsView {
     fn default() -> Self {
-        Self { handle: None, page: Page::default(), loaded: false, query: String::new(), sort: Sort::Name, confirm: None, shown: Vec::new(), shown_for: None }
+        Self {
+            handle: None,
+            page: Page::default(),
+            loaded: false,
+            query: String::new(),
+            sort: Sort::Name,
+            confirm: None,
+            shown: Vec::new(),
+            shown_for: None,
+            icon_menu: None,
+            icon_pick: None,
+            icons: IconSettings::default(),
+            icons_generation: 0,
+            note: None,
+        }
     }
+}
+
+/// The names an app's icon override is kept under: its id, and its program's path when the icon
+/// comes from one (the dock knows apps by either).
+fn icon_keys(app: &App) -> Vec<String> {
+    let mut keys = vec![app.id.clone()];
+    if let Kind::Packaged { full_name, .. } = &app.kind {
+        // `Name_1.2.3.0_x64__publisherid` is the family `Name_publisherid`.
+        let parts: Vec<&str> = full_name.split('_').collect();
+        if let (Some(name), Some(publisher)) = (parts.first(), parts.last()) {
+            keys.push(format!("{name}_{publisher}"));
+        }
+    }
+    if let Some(exe) = app.icon.as_ref().filter(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("exe"))) {
+        keys.push(exe.to_string_lossy().to_string());
+    }
+    keys
 }
 
 impl AppsView {
@@ -59,6 +100,39 @@ impl AppsView {
             self.page = page;
             self.loaded = true;
         }
+        let generation = icon_pack::generation();
+        if generation != self.icons_generation {
+            self.icons_generation = generation;
+            self.icons = icon_pack::current_settings();
+        }
+        // The image chooser answered: that is the app's icon from now on.
+        let answer = self.icon_pick.as_mut().and_then(|(id, pick)| pick.poll().map(|choice| (id.clone(), choice)));
+        if let Some((id, choice)) = answer {
+            self.icon_pick = None;
+            if let (Some(image), Some(app)) = (choice, self.page.apps.iter().find(|a| a.id == id)) {
+                for key in icon_keys(app) {
+                    self.icons.set_override(&key, &image.to_string_lossy());
+                }
+                self.icons.save();
+            }
+        }
+    }
+
+    /// Show the app's own icon, the pack's, or the one the user chose.
+    fn set_icon(&mut self, app: &App, choice: IconChoice) {
+        for key in icon_keys(app) {
+            match choice {
+                IconChoice::Original => self.icons.use_original(&key),
+                IconChoice::Pack => self.icons.use_pack(&key),
+            }
+        }
+        self.icons.save();
+    }
+
+    /// Whether the app has an icon of the user's choosing, or is kept to its own.
+    fn customised(&self, app: &App) -> bool {
+        let keys: Vec<String> = icon_keys(app).iter().map(|k| icon_pack::settings::key(k)).collect();
+        self.icons.override_for(&keys).is_some() || self.icons.is_skipped(&keys)
     }
 
     /// Work out the visible list again when what it depends on changed.
@@ -77,6 +151,18 @@ enum Press {
     Cancel,
     Uninstall,
     Modify,
+    /// Open the icon choices in the row.
+    Icon,
+    CloseIcon,
+    ChangeIcon,
+    UseOriginal,
+    UsePack,
+}
+
+#[derive(Clone, Copy)]
+enum IconChoice {
+    Original,
+    Pack,
 }
 
 pub fn show(ui: &mut egui::Ui, st: &mut State) {
@@ -94,7 +180,7 @@ pub fn show(ui: &mut egui::Ui, st: &mut State) {
     // are drawn, and the island it sits on is the part of it in view.
     page::group(ui, "", |ui| {
         controls(ui, &mut st.apps);
-        if let Some(note) = &st.apps.page.notice {
+        for note in [&st.apps.page.notice, &st.apps.note].into_iter().flatten() {
             ui.add_space(8.0);
             ui.label(theme::muted(note).size(12.0));
         }
@@ -171,6 +257,8 @@ fn list_rows(ui: &mut egui::Ui, v: &mut AppsView, thumbs: &mut Thumbs) {
             asking: v.confirm.as_deref() == Some(app.id.as_str()),
             busy: v.page.busy.contains(&app.id),
             progress: v.handle.as_ref().and_then(|h| h.progress(&app.id)),
+            icon_menu: v.icon_menu.as_deref() == Some(app.id.as_str()),
+            customised: v.customised(app),
         };
         if let Some(p) = row(ui, app, &state, thumbs) {
             press = Some((v.shown[i], p));
@@ -193,6 +281,27 @@ fn list_rows(ui: &mut egui::Ui, v: &mut AppsView, thumbs: &mut Thumbs) {
                     h.act(&app, Do::Modify);
                 }
             }
+            Press::Icon => {
+                v.confirm = None;
+                v.note = None;
+                v.icon_menu = Some(app.id);
+            }
+            Press::CloseIcon => v.icon_menu = None,
+            Press::ChangeIcon => match Pick::start(shellman_pick::Mode::Open, "Choose an icon", pick::image_types()) {
+                Ok(p) => {
+                    v.icon_menu = None;
+                    v.icon_pick = Some((app.id, p));
+                }
+                Err(e) => v.note = Some(e),
+            },
+            Press::UseOriginal => {
+                v.icon_menu = None;
+                v.set_icon(&app, IconChoice::Original);
+            }
+            Press::UsePack => {
+                v.icon_menu = None;
+                v.set_icon(&app, IconChoice::Pack);
+            }
         }
     }
 }
@@ -204,6 +313,10 @@ struct RowState {
     busy: bool,
     /// How far a Store app's removal is.
     progress: Option<u32>,
+    /// The icon choices are showing in place of the buttons.
+    icon_menu: bool,
+    /// The app has an icon of the user's choosing, or is kept to its own.
+    customised: bool,
 }
 
 /// A small button for a row.
@@ -225,7 +338,11 @@ fn row(ui: &mut egui::Ui, app: &App, state: &RowState, thumbs: &mut Thumbs) -> O
     ui.painter().rect_filled(rect, CornerRadius::same(10), c.control);
 
     let icon = egui::Rect::from_center_size(egui::pos2(rect.left() + 14.0 + ICON / 2.0, rect.center().y), Vec2::splat(ICON));
-    match app.icon.as_ref().and_then(|p| shellman_ui::app_icon::get(ui.ctx(), p, false, thumbs)) {
+    let image = match app.icon.as_deref().and_then(shellman_ui::app_icon::kind_for_exe) {
+        Some(kind) => Some(shellman_ui::app_icon::kind_texture(ui.ctx(), kind, false)),
+        None => thumbs.get_app(app.icon.as_deref(), &app.id, &app.name, false).map(|t| (t.id(), t.size_vec2())),
+    };
+    match image {
         Some((id, size)) => {
             let scale = (ICON / size.x).min(ICON / size.y);
             egui::Image::from_texture((id, size)).paint_at(ui, egui::Rect::from_center_size(icon.center(), size * scale));
@@ -236,12 +353,17 @@ fn row(ui: &mut egui::Ui, app: &App, state: &RowState, thumbs: &mut Thumbs) -> O
     }
 
     // What the right-hand side holds decides how much room the text has.
-    let modify = app.modify().is_some() && !state.busy && !state.asking;
-    let uninstall = app.uninstall().is_some() && !state.busy && !state.asking;
+    let plain = !state.busy && !state.asking && !state.icon_menu;
+    let modify = app.modify().is_some() && plain;
+    let uninstall = app.uninstall().is_some() && plain;
+    let icon_button = plain;
     let controls_w = if state.asking {
         170.0
+    } else if state.icon_menu {
+        // Cancel, Use original, Change icon, and Use pack when there is something to undo.
+        338.0 + if state.customised { 104.0 } else { 0.0 }
     } else {
-        (if modify { 76.0 } else { 0.0 }) + (if uninstall { 96.0 } else { 0.0 })
+        (if modify { 76.0 } else { 0.0 }) + (if uninstall { 96.0 } else { 0.0 }) + (if icon_button { 62.0 } else { 0.0 })
     };
     let text_left = icon.right() + 12.0;
     let text_right = (rect.right() - controls_w - 16.0).max(text_left + 40.0);
@@ -249,6 +371,8 @@ fn row(ui: &mut egui::Ui, app: &App, state: &RowState, thumbs: &mut Thumbs) -> O
 
     let (title, sub) = if state.asking {
         (format!("Uninstall {}?", app.name), "This starts the program's own uninstaller.".to_string())
+    } else if state.icon_menu {
+        (format!("Icon for {}", app.name), "Choose an image, or show the app's own icon.".to_string())
     } else if state.busy {
         let what = match state.progress {
             Some(p) => format!("Removing... {p}%"),
@@ -277,11 +401,29 @@ fn row(ui: &mut egui::Ui, app: &App, state: &RowState, thumbs: &mut Thumbs) -> O
         }
         return None;
     }
+    if state.icon_menu {
+        if small_button(&mut child, "Cancel", false).clicked() {
+            return Some(Press::CloseIcon);
+        }
+        if small_button(&mut child, "Use original", false).clicked() {
+            return Some(Press::UseOriginal);
+        }
+        if state.customised && small_button(&mut child, "Use pack", false).clicked() {
+            return Some(Press::UsePack);
+        }
+        if small_button(&mut child, "Change icon...", false).clicked() {
+            return Some(Press::ChangeIcon);
+        }
+        return None;
+    }
     if uninstall && small_button(&mut child, "Uninstall", false).clicked() {
         return Some(Press::Ask);
     }
     if modify && small_button(&mut child, "Modify", false).clicked() {
         return Some(Press::Modify);
+    }
+    if icon_button && small_button(&mut child, "Icon", false).clicked() {
+        return Some(Press::Icon);
     }
     None
 }

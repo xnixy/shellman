@@ -6,6 +6,7 @@ mod app;
 mod flow;
 mod instance;
 mod page;
+mod pick;
 mod saver;
 mod search;
 mod sections;
