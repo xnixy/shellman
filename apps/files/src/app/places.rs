@@ -118,15 +118,20 @@ fn mono(pixels: &mut [egui::Color32]) {
     let solid: Vec<f32> = pixels.iter().filter(|c| c.a() > 24).map(lum).collect();
     let (lo, hi) = solid.iter().fold((f32::MAX, f32::MIN), |(lo, hi), &l| (lo.min(l), hi.max(l)));
     let flat = solid.is_empty() || hi - lo < 0.15;
-    let level = |l: f32| ((l - lo) / (hi - lo)).clamp(0.0, 1.0);
+    // Steepened, so a tile's own shading (a gradient, a soft shadow) does not come through as a
+    // faint square round the figure.
+    let level = |l: f32| {
+        let t = (((l - lo) / (hi - lo) - 0.45) / 0.35).clamp(0.0, 1.0);
+        t * t * (3.0 - 2.0 * t)
+    };
     // Mostly bright means the figure is the dark part.
-    let invert = !flat && solid.iter().map(|&l| level(l)).sum::<f32>() / solid.len() as f32 > 0.5;
+    let invert = !flat && solid.iter().map(|&l| (l - lo) / (hi - lo)).sum::<f32>() / solid.len() as f32 > 0.5;
     for c in pixels.iter_mut() {
         let part = if flat {
             1.0
         } else {
-            let v = level(lum(c));
-            if invert { 1.0 - v } else { v }
+            let l = lum(c);
+            level(if invert { lo + hi - l } else { l })
         };
         let a = (c.a() as f32 * part).round() as u8;
         *c = egui::Color32::from_rgba_premultiplied(a, a, a, a);
