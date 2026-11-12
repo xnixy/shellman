@@ -3,7 +3,8 @@
 //! launcher opens. For each key sequence it lists the windows that appeared, then closes them
 //! with Esc (sent while this tool's own window has the focus otherwise).
 //!
-//! `winkey_live hook tap R V S A N Tab ShiftS` (or `baseline ...` for no hook, to compare).
+//! `winkey_live hook tap R V S A N Tab ShiftS` (or `baseline ...` for no hook, to compare;
+//! `hook-real ...` summons the real launcher).
 //! Every key it presses is released again on exit, panics included.
 
 #[path = "../src/winkey.rs"]
@@ -34,6 +35,14 @@ fn take() -> bool {
     !shellman_core::app_host::explorer_is_shell()
 }
 
+/// `hook-real`: summon the real launcher, as the switcher does.
+static REAL: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn real() {
+    note();
+    winkey::summon();
+}
+
 fn note() {
     SUMMONS.fetch_add(1, Ordering::SeqCst);
 }
@@ -41,7 +50,8 @@ fn note() {
 unsafe extern "system" fn on_key(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     if code == 0 {
         let info = &*(lparam.0 as *const KBDLLHOOKSTRUCT);
-        if info.dwExtraInfo != winkey::OURS && winkey::on_key(info, take, note) {
+        let summon: fn() = if REAL.load(Ordering::SeqCst) { real } else { note };
+        if info.dwExtraInfo != winkey::OURS && winkey::on_key(info, take, summon) {
             return LRESULT(1);
         }
     }
@@ -210,7 +220,8 @@ fn front(hwnd: HWND) {
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let hooked = args.first().is_some_and(|m| m == "hook");
+    let hooked = args.first().is_some_and(|m| m.starts_with("hook"));
+    REAL.store(args.first().is_some_and(|m| m == "hook-real"), Ordering::SeqCst);
     let _release = Release;
     if hooked {
         std::thread::spawn(|| unsafe {

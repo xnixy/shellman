@@ -9,9 +9,9 @@ accent color, fast.
 | --- | --- | --- |
 | `apps/files` | File Explorer windows | working: tabs, list/grid, thumbnails, shell menu, auto-refresh, Ctrl+H hides or shows hidden files, the Recycle Bin as a place (`--recycle-bin`). No settings UI |
 | `apps/bar` | taskbar, tray, clock, Start button (as a top bar and a dock) | working: a top bar and a dock on every monitor, tray, pins, fullscreen step-aside. Next: hover previews, Win keys |
-| `apps/launcher` | Start menu and search | working: Spotlight-style panel, app grid, ranked search, most used. Next: Win key |
+| `apps/launcher` | Start menu and search | working: Spotlight-style panel, app grid, ranked search, most used, the Win key (through the switcher's hook) |
 | `apps/switcher` | Alt+Tab, Task View | working: Alt+Tab with live previews. Next: Task View (Win+Tab) |
-| `apps/desktop` | wallpaper window, desktop icons | working: wallpaper per monitor. Next: desktop icons, right-click menu |
+| `apps/desktop` | wallpaper window, desktop icons | working: wallpaper per monitor; keeps Windows' modern-app host running. Next: desktop icons, right-click menu |
 | `apps/settings` | Settings pages for the shell | working: Appearance, Dock, Top bar, Launcher, About |
 | `apps/session` | the shell process itself | last |
 
@@ -121,6 +121,8 @@ Rule: **the top bar is the system, the dock is apps.** Both are windows of one p
   logic.
 - Takes only Alt+Tab and Alt+Shift+Tab, plus Esc, Enter and arrows while open. Alt's release
   always passes through.
+- The same hook turns a lone Win tap into the launcher while Explorer is not the shell: Win's
+  press always passes, only a lone tap's release is replaced by 0xE8 and the release.
 - Hidden between uses. While Alt is held it is awake but cloaked, and it shows after 120 ms or on
   the second Tab, so a quick tap never flashes.
 - One press of an unused key (0xE8) wins the foreground and stops apps from opening their menu
@@ -143,6 +145,53 @@ Rule: **the top bar is the system, the dock is apps.** Both are windows of one p
   "shellman Settings" row.
 - Single instance.
 
+## Modern apps without Explorer
+
+Settings, Calculator, the Store and every `ms-settings:` link are immersive (CoreWindow) apps.
+Without Explorer they cannot open: activation fails with 0x80040900 after ~45 s, `ms-settings:`
+fails with error 1155, `shell:AppsFolder\<id>` with 0x80040154. Packaged Win32 apps (Notepad,
+Photos, Terminal) are fine. What is missing is the immersive shell; faking Progman, the shell
+window or shell-ready events does nothing.
+
+Decision: run Windows' own host, `%SystemRoot%\System32\ShellAppRuntime.exe` (the app half of
+Shell Launcher v2), from `shellman_core::app_host`, carried by the desktop process (plain Win32,
+the longest lived and first started app). Measured on 26300 (build 10.0.26100.9818 of the exe):
+
+- Started with no arguments, unelevated, with no shell window, it owns the shell window, the
+  task window and the immersive-shell windows in 0.2 to 6 s, creates no `Shell_TrayWnd` (the bar
+  keeps the tray), and modern apps open in ~0.3 s. Its Progman stays under shellman's desktop.
+- It exits at once if a shell window or another copy exists.
+- A clean stop is WM_QUIT to the shell window's thread: gone in 0.1 to 8 s, nothing restarts.
+  Its exit code is 1 either way, so a crash is told from a stop by Winlogon: after a kill or
+  crash it starts Explorer as the shell (via userinit) within 0.2 s; after WM_QUIT it does not.
+- It takes the task-window role; the bar's own claim is then refused, minimized windows are still
+  hidden, and when the host ends the role is empty, so the supervisor gives it back to the bar.
+- It starts StartMenuExperienceHost, SearchHost and TextInputHost (~116 MB); Win alone would open
+  Windows' Start (see the switcher's `winkey`). Win+A opens Quick settings; Win+R, Win+V, Win+S,
+  Win+N, Win+Shift+S open nothing; Win+Tab only focuses an empty staging window.
+- `IDesktopWallpaper` is still unavailable with it running.
+
+The supervisor starts it when nobody owns the shell window and no Explorer runs, waits on its
+process, and when Winlogon replaces it with Explorer stops that one Explorer (started after the
+host died, by userinit), re-announces the tray (`TaskbarCreated`) and starts the host again; three
+failures in ten minutes and it gives up. A clean stop is left alone. shellman never claims the
+shell window itself. On shellman's exit the host is left running: harmless, and ending it any
+other way than WM_QUIT would bring Explorer back. "Keep Settings, Calculator and the Store
+working" (About page, `shell.json`, default on) turns it off; `SHELLMAN_APP_HOST=off|on` overrides
+for tests. Its log is `%LOCALAPPDATA%\shellman\app-host.log`.
+
+The bar puts its work areas back when they change under it: an Explorer that runs even briefly
+sets every monitor's for its own taskbar.
+
+If the exe is missing or does not take the shell window, nothing else changes: modern apps stay
+unavailable and the Control Center hides its Settings links, except where a Control Panel applet
+opens without Explorer (Bluetooth: `bthprops.cpl`; Sound: `mmsys.cpl`; also `main.cpl`,
+`sysdm.cpl`). Never `ncpa.cpl`, `control.exe` or Power Options (they start Explorer) or
+`desk.cpl` (it opens Settings).
+
+Not yet tried with the host running: toasts, the touch keyboard, snap layouts, sleep and resume,
+display changes, long uptime.
+
 ## Icons
 
 - shellman's own apps are drawn in the user's accent wherever shellman shows them: dock,
@@ -152,7 +201,7 @@ Rule: **the top bar is the system, the dock is apps.** Both are windows of one p
 ## Order of work
 
 1. Dock hover previews (in progress).
-2. Win key and Win+1-9 (with Explorer stopped).
+2. Win+1-9 (the lone Win key is done).
 3. Dock: drag-and-drop onto icons, badges and progress, Recycle Bin empty / full.
 4. Top bar: "now" pill, notifications and calendar.
 5. Desktop icons and menu.
