@@ -4,6 +4,7 @@
 pub mod config;
 pub mod fsops;
 pub mod shell_menu;
+pub mod system;
 pub mod thumbs;
 pub mod watch;
 pub mod winlist;

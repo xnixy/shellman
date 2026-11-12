@@ -1,9 +1,11 @@
 #![windows_subsystem = "windows"]
 //! Shellman's bar: for now, the dock. The top bar joins it in this process later.
 
+mod appbar;
 mod dock;
 mod place;
 mod shape;
+mod topbar;
 
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use shellman_ui::{theme, window};
@@ -37,7 +39,30 @@ fn main() -> eframe::Result {
                     shape::never_activate(hwnd);
                 }
             }
-            Ok(Box::new(dock::Dock::new(cc.egui_ctx.clone(), glass)))
+            Ok(Box::new(Bar {
+                dock: dock::Dock::new(cc.egui_ctx.clone(), glass),
+                top: topbar::TopBar::default(),
+                glass,
+            }))
         }),
     )
+}
+
+/// The bar process: the dock is its main window, the top bar a second one. Both repaint only on
+/// events (window changes, input) and the top bar's clock minute.
+struct Bar {
+    dock: dock::Dock,
+    top: topbar::TopBar,
+    glass: bool,
+}
+
+impl eframe::App for Bar {
+    fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
+        [0.0, 0.0, 0.0, 0.0]
+    }
+
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.dock.frame(ctx);
+        self.top.show(ctx, self.dock.front_window(), self.glass);
+    }
 }

@@ -6,10 +6,16 @@
 
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::UI::Shell::{DefSubclassProc, SetWindowSubclass};
-use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_BORDER_COLOR};
+use windows::Win32::Graphics::Dwm::{
+    DwmSetWindowAttribute, DWMWA_BORDER_COLOR, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DONOTROUND,
+};
+use windows::core::BOOL;
+use windows::Win32::UI::WindowsAndMessaging::{EnumWindows, GetWindowTextW, GetWindowThreadProcessId};
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetWindowLongPtrW, SetWindowLongPtrW, GWL_EXSTYLE, STYLESTRUCT, WM_STYLECHANGING,
-    WS_EX_APPWINDOW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+    GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos, GWL_EXSTYLE, GWL_STYLE, STYLESTRUCT,
+    SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, WM_STYLECHANGING,
+    WS_CAPTION, WS_EX_APPWINDOW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_MAXIMIZEBOX,
+    WS_MINIMIZEBOX, WS_SYSMENU, WS_THICKFRAME,
 };
 
 /// Windows 11's rounded window corner radius, in points.
@@ -30,6 +36,9 @@ pub fn never_activate(hwnd: isize) {
         let _ = SetWindowSubclass(hwnd, Some(dock_proc), 1, 0);
         let ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
         SetWindowLongPtrW(hwnd, GWL_EXSTYLE, fix_ex_style(ex as u32) as isize);
+        let style = GetWindowLongPtrW(hwnd, GWL_STYLE);
+        SetWindowLongPtrW(hwnd, GWL_STYLE, fix_style(style as u32) as isize);
+        let _ = SetWindowPos(hwnd, None, 0, 0, 0, 0, SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
     }
 }
 
@@ -37,6 +46,12 @@ pub fn never_activate(hwnd: isize) {
 /// which other docks can't see), never activated, and a tool window.
 fn fix_ex_style(ex: u32) -> u32 {
     (ex & !WS_EX_APPWINDOW.0) | WS_EX_NOACTIVATE.0 | WS_EX_TOOLWINDOW.0
+}
+
+/// No caption, system menu, or sizing frame: over glass, Windows would otherwise draw a ghost
+/// close button into the bar.
+fn fix_style(style: u32) -> u32 {
+    style & !(WS_CAPTION.0 | WS_SYSMENU.0 | WS_THICKFRAME.0 | WS_MINIMIZEBOX.0 | WS_MAXIMIZEBOX.0)
 }
 
 unsafe extern "system" fn dock_proc(
@@ -56,6 +71,57 @@ unsafe extern "system" fn dock_proc(
             change.styleNew = fix_ex_style(change.styleNew);
             DefSubclassProc(hwnd, msg, wparam, lparam)
         }
+        WM_STYLECHANGING if wparam.0 as i32 == GWL_STYLE.0 => {
+            let change = &mut *(lparam.0 as *mut STYLESTRUCT);
+            change.styleNew = fix_style(change.styleNew);
+            DefSubclassProc(hwnd, msg, wparam, lparam)
+        }
         _ => DefSubclassProc(hwnd, msg, wparam, lparam),
     }
+}
+
+/// Square corners, for a bar that runs flush along a screen edge.
+pub fn square_corners(hwnd: isize) {
+    let value = DWMWCP_DONOTROUND.0;
+    unsafe {
+        let _ = DwmSetWindowAttribute(
+            HWND(hwnd as *mut _),
+            DWMWA_WINDOW_CORNER_PREFERENCE,
+            (&raw const value).cast(),
+            4,
+        );
+    }
+}
+
+/// This process's window with the given title. egui creates extra windows (the top bar) without
+/// handing out their handles, so they are found by title.
+pub fn own_window(title: &str) -> Option<isize> {
+    struct Search<'a> {
+        title: &'a str,
+        pid: u32,
+        found: Option<isize>,
+    }
+    unsafe extern "system" fn visit(hwnd: HWND, lparam: LPARAM) -> BOOL {
+        let search = &mut *(lparam.0 as *mut Search);
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(hwnd, Some(&mut pid));
+        if pid == search.pid {
+            let mut buf = [0u16; 128];
+            let n = GetWindowTextW(hwnd, &mut buf).max(0) as usize;
+            if String::from_utf16_lossy(&buf[..n]) == search.title {
+                search.found = Some(hwnd.0 as isize);
+                return BOOL(0);
+            }
+        }
+        BOOL(1)
+    }
+    let mut search = Search {
+        title,
+        pid: std::process::id(),
+        found: None,
+    };
+    unsafe {
+        let _ = EnumWindows(Some(visit), LPARAM((&raw mut search) as isize));
+    }
+    search.found
 }

@@ -41,6 +41,8 @@ pub struct Dock {
     watcher: WindowWatcher,
     thumbs: Thumbs,
     items: Vec<Item>,
+    /// The latest window list, front to back, for the top bar.
+    windows: Vec<AppWindow>,
     front: Option<isize>,
     /// Size last given to the window, in points, so it is only resized when it changes.
     placed: Option<egui::Vec2>,
@@ -55,6 +57,7 @@ impl Dock {
             watcher: WindowWatcher::start(move || wake.request_repaint()),
             thumbs: Thumbs::new(ctx),
             items: Vec::new(),
+            windows: Vec::new(),
             front: None,
             placed: None,
         }
@@ -62,11 +65,11 @@ impl Dock {
 
     /// Re-group windows into icons. Existing icons keep their places; new apps go at the end.
     fn regroup(&mut self) {
-        let windows: Vec<AppWindow> = self.list.refresh();
+        self.windows = self.list.refresh();
         for item in &mut self.items {
             item.windows.clear();
         }
-        for w in windows {
+        for w in &self.windows {
             match self.items.iter_mut().find(|i| i.app_id == w.app_id) {
                 Some(item) => item.windows.push(w.hwnd),
                 None => self.items.push(Item {
@@ -162,11 +165,8 @@ impl Dock {
                     ui.painter().circle_filled(egui::pos2(x, y), 2.0, c.muted);
                 }
             }
-            let tip = item.exe.as_ref().and_then(|p| p.file_stem()).map(|s| s.to_string_lossy().into_owned());
-            let resp = match tip {
-                Some(t) => resp.on_hover_text(t),
-                None => resp,
-            };
+            let tip = shellman_core::system::app_name::display_name(&item.app_id, item.exe.as_deref());
+            let resp = resp.on_hover_text(tip);
             if resp.clicked() {
                 clicked = Some(i);
             }
@@ -183,12 +183,15 @@ impl Dock {
     }
 }
 
-impl eframe::App for Dock {
-    fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
-        [0.0, 0.0, 0.0, 0.0]
+impl Dock {
+    /// The app window in front, if it is one the dock knows.
+    pub fn front_window(&self) -> Option<&AppWindow> {
+        let front = self.front?;
+        self.windows.iter().find(|w| w.hwnd == front)
     }
 
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    /// One frame of the dock, which is the bar process's main window.
+    pub fn frame(&mut self, ctx: &egui::Context) {
         theme::set_light(ctx.theme() == egui::Theme::Light);
         self.thumbs.poll(ctx);
         if self.watcher.take_dirty() {
