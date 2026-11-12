@@ -9,7 +9,7 @@ use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::Accessibility::{SetWinEventHook, UnhookWinEvent, HWINEVENTHOOK};
 use windows::Win32::UI::WindowsAndMessaging::{
-    DispatchMessageW, GetAncestor, GetMessageW, PostThreadMessageW, TranslateMessage, GA_ROOT, MSG,
+    DispatchMessageW, GetAncestor, GetForegroundWindow, GetMessageW, PostThreadMessageW, TranslateMessage, GA_ROOT, MSG,
     WINEVENT_OUTOFCONTEXT, WINEVENT_SKIPOWNPROCESS, WM_QUIT,
 };
 
@@ -34,6 +34,10 @@ const RANGES: [(u32, u32); 5] = [
 /// Hook callbacks get no context pointer, so the flag and wake-up live here. One watcher per
 /// process is all a shell needs.
 static DIRTY: AtomicBool = AtomicBool::new(true);
+/// The window in front was renamed. Kept apart from `DIRTY` because titles change often (a
+/// terminal or a progress title can change many times a second) and only the front one is shown,
+/// so a rename never needs the whole list rebuilt.
+static FRONT_RENAMED: AtomicBool = AtomicBool::new(false);
 static WAKE: OnceLock<Mutex<Option<Box<dyn Fn() + Send>>>> = OnceLock::new();
 
 pub struct WindowWatcher {
@@ -58,6 +62,11 @@ impl WindowWatcher {
     /// True once after any change since the last call (and on the first call).
     pub fn take_dirty(&self) -> bool {
         DIRTY.swap(false, Ordering::AcqRel)
+    }
+
+    /// True once after the window in front changed its title.
+    pub fn take_front_renamed(&self) -> bool {
+        FRONT_RENAMED.swap(false, Ordering::AcqRel)
     }
 }
 
@@ -117,7 +126,16 @@ unsafe extern "system" fn on_event(
     if event != EVENT_SYSTEM_FOREGROUND && GetAncestor(hwnd, GA_ROOT) != hwnd {
         return;
     }
-    DIRTY.store(true, Ordering::Release);
+    if event == EVENT_OBJECT_NAMECHANGE {
+        // Background windows' titles are not shown anywhere; ignore them without waking the UI.
+        let front = GetForegroundWindow();
+        if front.is_invalid() || GetAncestor(front, GA_ROOT) != hwnd {
+            return;
+        }
+        FRONT_RENAMED.store(true, Ordering::Release);
+    } else {
+        DIRTY.store(true, Ordering::Release);
+    }
     if let Some(w) = WAKE.get() {
         if let Some(wake) = w.lock().unwrap().as_ref() {
             wake();

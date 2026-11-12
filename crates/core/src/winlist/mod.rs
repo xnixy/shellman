@@ -127,6 +127,11 @@ fn is_cloaked(hwnd: HWND) -> bool {
         && cloaked != 0
 }
 
+/// A window's title, read now.
+pub fn title_of(hwnd: isize) -> String {
+    title(HWND(hwnd as *mut _))
+}
+
 fn title(hwnd: HWND) -> String {
     let mut buf = [0u16; 512];
     let n = unsafe { GetWindowTextW(hwnd, &mut buf) }.max(0) as usize;

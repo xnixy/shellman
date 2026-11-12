@@ -196,6 +196,13 @@ impl Dock {
         self.thumbs.poll(ctx);
         if self.watcher.take_dirty() {
             self.regroup();
+        } else if self.watcher.take_front_renamed() {
+            if let Some(front) = self.front {
+                let title = winlist::title_of(front);
+                if let Some(w) = self.windows.iter_mut().find(|w| w.hwnd == front) {
+                    w.title = title;
+                }
+            }
         }
         self.place(ctx);
         egui::CentralPanel::default()
