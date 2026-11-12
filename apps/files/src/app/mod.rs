@@ -512,6 +512,11 @@ impl FileMan {
         if forced && ctx.theme() != egui::Theme::Light {
             ctx.set_theme(egui::ThemePreference::Light);
         }
+        // The preference is saved with the window's state: without this a forced run would
+        // leave Files light for good.
+        if !forced && ctx.options(|o| o.theme_preference) != egui::ThemePreference::System {
+            ctx.set_theme(egui::ThemePreference::System);
+        }
         theme::set_light(forced || ctx.theme() == egui::Theme::Light);
         let now = ctx.input(|i| i.time);
         if self.look.accent == AccentChoice::System && now - self.last_accent_check > 2.0 {
