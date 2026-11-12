@@ -15,16 +15,17 @@ use windows::Win32::UI::Shell::{
     IFileOperationProgressSink, IFileSaveDialog, IFileSaveDialog_Impl, IModalWindow_Impl,
     IShellItem, IShellItemArray, IShellItemFilter, CDCONTROLSTATEF, FDAP, FILEOPENDIALOGOPTIONS,
 };
+use windows::Win32::System::Ole::{IOleWindow, IOleWindow_Impl};
 use windows_core::{IUnknownImpl, Ref, Result, BOOL};
 
 /// What an app gets for `CLSID_FileOpenDialog`.
-#[implement(IFileOpenDialog, IFileDialog2, IFileDialogCustomize, Agile = false)]
+#[implement(IFileOpenDialog, IFileDialog2, IFileDialogCustomize, IOleWindow, Agile = false)]
 pub struct OpenDialog {
     inner: Inner,
 }
 
 /// What an app gets for `CLSID_FileSaveDialog`.
-#[implement(IFileSaveDialog, IFileDialog2, IFileDialogCustomize, Agile = false)]
+#[implement(IFileSaveDialog, IFileDialog2, IFileDialogCustomize, IOleWindow, Agile = false)]
 pub struct SaveDialog {
     inner: Inner,
 }
@@ -43,10 +44,10 @@ impl SaveDialog {
 
 impl IFileOpenDialog_Impl for OpenDialog_Impl {
     fn GetResults(&self) -> Result<IShellItemArray> {
-        guard(|| self.inner.get_results())
+        guard(|| crate::log::trace("GetResults", self.inner.get_results()))
     }
     fn GetSelectedItems(&self) -> Result<IShellItemArray> {
-        guard(|| self.inner.get_selected_items())
+        guard(|| crate::log::trace("GetSelectedItems", self.inner.get_selected_items()))
     }
 }
 
@@ -94,6 +95,21 @@ macro_rules! common {
             }
         }
 
+        /// The real dialog has a window and says so; apps ask for it from their events.
+        impl IOleWindow_Impl for $t {
+            fn GetWindow(&self) -> Result<HWND> {
+                guard(|| {
+                    crate::log::trace(
+                        "GetWindow",
+                        crate::launch::picker_window().ok_or_else(|| windows::Win32::Foundation::E_FAIL.into()),
+                    )
+                })
+            }
+            fn ContextSensitiveHelp(&self, _enter: BOOL) -> Result<()> {
+                Err(E_NOTIMPL.into())
+            }
+        }
+
         impl IFileDialog_Impl for $t {
             fn SetFileTypes(&self, n: u32, specs: *const COMDLG_FILTERSPEC) -> Result<()> {
                 guard(|| self.inner.set_file_types(n, specs))
@@ -102,7 +118,7 @@ macro_rules! common {
                 guard(|| self.inner.set_file_type_index(i))
             }
             fn GetFileTypeIndex(&self) -> Result<u32> {
-                guard(|| self.inner.get_file_type_index())
+                guard(|| crate::log::trace("GetFileTypeIndex", self.inner.get_file_type_index()))
             }
             fn Advise(&self, sink: Ref<'_, IFileDialogEvents>) -> Result<u32> {
                 guard(|| self.inner.advise(sink))
@@ -114,7 +130,7 @@ macro_rules! common {
                 guard(|| self.inner.set_options(fos))
             }
             fn GetOptions(&self) -> Result<FILEOPENDIALOGOPTIONS> {
-                guard(|| self.inner.get_options())
+                guard(|| crate::log::trace("GetOptions", self.inner.get_options()))
             }
             fn SetDefaultFolder(&self, psi: Ref<'_, IShellItem>) -> Result<()> {
                 guard(|| self.inner.set_default_folder(psi))
@@ -123,16 +139,16 @@ macro_rules! common {
                 guard(|| self.inner.set_folder(psi))
             }
             fn GetFolder(&self) -> Result<IShellItem> {
-                guard(|| self.inner.get_folder())
+                guard(|| crate::log::trace("GetFolder", self.inner.get_folder()))
             }
             fn GetCurrentSelection(&self) -> Result<IShellItem> {
-                guard(|| self.inner.get_current_selection())
+                guard(|| crate::log::trace("GetCurrentSelection", self.inner.get_current_selection()))
             }
             fn SetFileName(&self, name: &PCWSTR) -> Result<()> {
                 guard(|| self.inner.set_file_name(name))
             }
             fn GetFileName(&self) -> Result<PWSTR> {
-                guard(|| self.inner.get_file_name())
+                guard(|| crate::log::trace("GetFileName", self.inner.get_file_name()))
             }
             fn SetTitle(&self, title: &PCWSTR) -> Result<()> {
                 guard(|| self.inner.set_title(title))
@@ -144,7 +160,7 @@ macro_rules! common {
                 guard(|| self.inner.set_file_name_label(text))
             }
             fn GetResult(&self) -> Result<IShellItem> {
-                guard(|| self.inner.get_result())
+                guard(|| crate::log::trace("GetResult", self.inner.get_result()))
             }
             fn AddPlace(&self, psi: Ref<'_, IShellItem>, fdap: FDAP) -> Result<()> {
                 guard(|| self.inner.add_place(psi, fdap))

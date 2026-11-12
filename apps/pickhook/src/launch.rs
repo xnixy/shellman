@@ -6,7 +6,7 @@ use shellman_pick::{exit, Request, Response, Verdict};
 use std::os::windows::io::AsRawHandle;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use windows::Win32::Foundation::{HANDLE, HMODULE, HWND, WAIT_OBJECT_0};
 use windows::Win32::System::LibraryLoader::{
     GetModuleFileNameW, GetModuleHandleExW, GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
@@ -91,6 +91,7 @@ fn wait(
     unsafe {
         // The picker may take the foreground (the app has it now and may hand it on).
         let _ = AllowSetForegroundWindow(child.id());
+        PICKER_PID.store(child.id(), Ordering::Relaxed);
     }
     let modal = Modal::begin(owner);
     let handle = HANDLE(child.as_raw_handle());
@@ -233,4 +234,39 @@ fn own_dir() -> Option<PathBuf> {
             .parent()
             .map(PathBuf::from)
     }
+}
+
+/// The process of the picker that is up now (0: none), for apps that ask the dialog for its
+/// window.
+static PICKER_PID: AtomicU32 = AtomicU32::new(0);
+
+/// The picker's window, while one is up: what `IOleWindow::GetWindow` answers. Apps ask for it
+/// from `OnFileOk` (Firefox refuses the choice when the dialog has no window).
+pub fn picker_window() -> Option<HWND> {
+    use windows::Win32::Foundation::LPARAM;
+    use windows_core::BOOL;
+    use windows::Win32::UI::WindowsAndMessaging::{EnumWindows, GetWindowThreadProcessId, IsWindowVisible};
+    let pid = PICKER_PID.load(Ordering::Relaxed);
+    if pid == 0 {
+        return None;
+    }
+    struct Find {
+        pid: u32,
+        found: Option<HWND>,
+    }
+    unsafe extern "system" fn each(hwnd: HWND, l: LPARAM) -> BOOL {
+        let find = &mut *(l.0 as *mut Find);
+        let mut owner = 0u32;
+        GetWindowThreadProcessId(hwnd, Some(&mut owner));
+        if owner == find.pid && IsWindowVisible(hwnd).as_bool() {
+            find.found = Some(hwnd);
+            return BOOL(0);
+        }
+        BOOL(1)
+    }
+    let mut find = Find { pid, found: None };
+    unsafe {
+        let _ = EnumWindows(Some(each), LPARAM(&mut find as *mut Find as isize));
+    }
+    find.found
 }

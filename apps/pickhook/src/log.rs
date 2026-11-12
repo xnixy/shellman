@@ -21,3 +21,13 @@ pub fn line(text: &str) {
         let _ = writeln!(f, "[{}] {text}", std::process::id());
     }
 }
+
+/// Note how a getter the app called turned out (the calls an app makes from `OnFileOk` are what
+/// decide whether it takes the choice).
+pub fn trace<T>(name: &str, r: windows_core::Result<T>) -> windows_core::Result<T> {
+    match &r {
+        Ok(_) => line(&format!("  {name}: ok")),
+        Err(e) => line(&format!("  {name}: {:?}", e.code())),
+    }
+    r
+}

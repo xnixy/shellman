@@ -121,6 +121,13 @@ impl Inner {
             closed: &closed,
         };
         crate::log::line(&format!("picker for {} ({:?})", c.client, req.mode));
+        // The real dialog tells its sinks about the folder it opens on. Apps count on it:
+        // Firefox refuses every choice (`OnFileOk` answers S_FALSE) until it has heard of a
+        // folder and half a second has passed, so a page cannot trick a click into the dialog.
+        let sinks: Vec<IFileDialogEvents> = self.st().sinks.iter().map(|(_, s)| s.clone()).collect();
+        for sink in sinks {
+            let _ = unsafe { (Interface::vtable(&sink).OnFolderChange)(sink.as_raw(), me.as_raw()) };
+        }
         match launch::run(req, owner, hooks) {
             Ran::Chosen(resp) => {
                 crate::log::line(&format!("chosen: {:?}", resp.paths));
