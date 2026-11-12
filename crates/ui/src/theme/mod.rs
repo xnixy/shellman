@@ -8,6 +8,7 @@ mod icons;
 mod style;
 
 pub use icons::{glyph, icon, icon_font, install_fonts, semibold_font};
+pub(crate) use icons::mark_text_font_installed;
 pub use style::{apply, danger_button, dialog, muted, primary_button};
 
 use egui::Color32;

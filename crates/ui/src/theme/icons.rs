@@ -82,12 +82,12 @@ pub fn icon_font(size: f32) -> egui::FontId {
     egui::FontId::new(size, egui::FontFamily::Name("icons".into()))
 }
 
-/// Whether `install_fonts` found a semibold face.
+/// Whether a text font was installed (and with it the semibold family).
 static HAS_SEMIBOLD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-/// Text in a semibold weight, for names and headings. The Segoe UI Variable file cannot be
-/// asked for a weight (egui always draws its regular instance), so this uses the separate
-/// Segoe UI Semibold face; without it the text stays regular.
+/// Text in a semibold weight, for names and headings. A variable font file cannot be asked for
+/// a weight (egui always draws its default instance), so this uses the family's separate
+/// Semibold (or Bold) file, and the regular face when it has neither.
 pub fn semibold_font(size: f32) -> egui::FontId {
     if HAS_SEMIBOLD.load(std::sync::atomic::Ordering::Relaxed) {
         egui::FontId::new(size, egui::FontFamily::Name("semibold".into()))
@@ -100,49 +100,14 @@ pub fn icon(c: char, size: f32) -> RichText {
     RichText::new(c.to_string()).font(icon_font(size))
 }
 
-/// egui's fonts, Segoe UI for text when present, and the icon font.
+/// Called once a text font is installed: the semibold family then exists.
+pub(crate) fn mark_text_font_installed() {
+    HAS_SEMIBOLD.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// egui's fonts for a new window: the saved font choice (SF Pro when installed, else Segoe UI
+/// Variable) and the icon font. `Appearance::apply` swaps the text font later when the choice
+/// changes; the icon font is never touched.
 pub fn install_fonts(ctx: &egui::Context) {
-    use egui::{FontData, FontFamily};
-    use std::sync::Arc;
-    let mut fonts = egui::FontDefinitions::default();
-    // Segoe UI Variable on Windows 11, Segoe UI before it.
-    let text_font = [
-        r"C:\Windows\Fonts\SegUIVar.ttf",
-        r"C:\Windows\Fonts\segoeui.ttf",
-    ]
-    .into_iter()
-    .find_map(|p| std::fs::read(p).ok());
-    if let Some(bytes) = text_font {
-        fonts
-            .font_data
-            .insert("segoe".into(), Arc::new(FontData::from_owned(bytes)));
-        if let Some(family) = fonts.families.get_mut(&FontFamily::Proportional) {
-            family.insert(0, "segoe".into());
-        }
-    }
-    if let Ok(bytes) = std::fs::read(r"C:\Windows\Fonts\seguisb.ttf") {
-        fonts
-            .font_data
-            .insert("semibold".into(), Arc::new(FontData::from_owned(bytes)));
-        // The regular face follows it, for characters Semibold lacks.
-        let mut family = vec!["semibold".to_owned()];
-        family.extend(fonts.families[&FontFamily::Proportional].iter().cloned());
-        fonts.families.insert(FontFamily::Name("semibold".into()), family);
-        HAS_SEMIBOLD.store(true, std::sync::atomic::Ordering::Relaxed);
-    }
-    for path in [
-        r"C:\Windows\Fonts\SegoeIcons.ttf",
-        r"C:\Windows\Fonts\segmdl2.ttf",
-    ] {
-        if let Ok(bytes) = std::fs::read(path) {
-            fonts
-                .font_data
-                .insert("icons".into(), Arc::new(FontData::from_owned(bytes)));
-            fonts
-                .families
-                .insert(FontFamily::Name("icons".into()), vec!["icons".into()]);
-            break;
-        }
-    }
-    ctx.set_fonts(fonts);
+    crate::fonts::install_saved(ctx);
 }
