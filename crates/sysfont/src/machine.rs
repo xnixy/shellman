@@ -546,12 +546,10 @@ fn remove_old_files(backend: &Backend, keep: &[String]) {
         {
             continue;
         }
-        let path = entry.path();
-        if std::fs::remove_file(&path).is_err() {
-            if let Backend::Real = backend {
-                delete_at_restart(&path);
-            }
-        }
+        // A file Windows still has open stays until a later apply or restore finds it free. It is
+        // never marked to go at the next restart: "Use again" before that restart would point the
+        // registry at the same file names, and the restart would then delete fonts in use.
+        let _ = std::fs::remove_file(entry.path());
     }
 }
 
