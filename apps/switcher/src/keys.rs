@@ -181,6 +181,19 @@ unsafe extern "system" fn on_key(code: i32, wparam: WPARAM, lparam: LPARAM) -> L
         return LRESULT(1);
     }
     let vk = VIRTUAL_KEY(info.vkCode as u16);
+    // Ctrl+Shift+Esc: shellman's Task Manager (`taskkey`).
+    if info.dwExtraInfo != OURS {
+        let down = info.flags.0 & LLKHF_UP.0 == 0;
+        let mods = || crate::taskkey::Mods {
+            ctrl: held(VK_CONTROL),
+            shift: held(VK_SHIFT),
+            alt: info.flags.0 & LLKHF_ALTDOWN.0 != 0,
+            win: held(VK_LWIN) || held(VK_RWIN),
+        };
+        if crate::taskkey::on_key(vk, down, mods) {
+            return LRESULT(1);
+        }
+    }
     let watched = matches!(
         vk,
         VK_TAB | VK_MENU | VK_LMENU | VK_RMENU | VK_ESCAPE | VK_RETURN | VK_LEFT | VK_RIGHT | VK_UP | VK_DOWN
