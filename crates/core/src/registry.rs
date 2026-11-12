@@ -30,6 +30,8 @@ pub trait Registry {
     /// Every value of a key; empty when the key is missing.
     fn list(&self, hive: Hive, key: &str) -> Vec<(String, Value)>;
     fn get(&self, hive: Hive, key: &str, name: &str) -> Option<Value>;
+    /// The names of a key's subkeys; empty when the key is missing.
+    fn subkeys(&self, hive: Hive, key: &str) -> Vec<String>;
     fn set_text(&self, hive: Hive, key: &str, name: &str, text: &str) -> Result<(), String>;
     /// Set a binary value, creating the key when it is missing.
     fn set_binary(&self, hive: Hive, key: &str, name: &str, data: &[u8]) -> Result<(), String>;
@@ -113,6 +115,25 @@ mod real {
                 let _ = RegCloseKey(hk);
             }
             v
+        }
+
+        fn subkeys(&self, hive: Hive, key: &str) -> Vec<String> {
+            let Some(hk) = open(hive, key, KEY_READ) else { return Vec::new() };
+            let mut out = Vec::new();
+            for i in 0.. {
+                // A key name is at most 255 characters.
+                let mut buf = vec![0u16; 256];
+                let mut len = buf.len() as u32;
+                let r = unsafe { RegEnumKeyExW(hk, i, Some(PWSTR(buf.as_mut_ptr())), &mut len, None, None, None, None) };
+                if r == ERROR_NO_MORE_ITEMS || r.is_err() {
+                    break;
+                }
+                out.push(String::from_utf16_lossy(&buf[..len as usize]));
+            }
+            unsafe {
+                let _ = RegCloseKey(hk);
+            }
+            out
         }
 
         fn set_text(&self, hive: Hive, key: &str, name: &str, text: &str) -> Result<(), String> {
@@ -225,6 +246,21 @@ pub mod fake {
 
         fn get(&self, hive: Hive, key: &str, name: &str) -> Option<Value> {
             self.values.borrow().get(&k(hive, key, name)).map(|(_, v)| v.clone())
+        }
+
+        fn subkeys(&self, hive: Hive, key: &str) -> Vec<String> {
+            // A key exists in the fake as far as some value lives at or under it, so its children
+            // are the first path parts below it (in lower case, as the fake keeps keys).
+            let (h, prefix) = (hive == Hive::Hklm, format!("{}\\", key.to_lowercase()));
+            let mut out: Vec<String> = Vec::new();
+            for (a, b, _) in self.values.borrow().keys() {
+                let Some(rest) = b.strip_prefix(&prefix).filter(|_| *a == h) else { continue };
+                let name = rest.split('\\').next().unwrap_or_default();
+                if !out.iter().any(|o| o == name) {
+                    out.push(name.to_string());
+                }
+            }
+            out
         }
 
         fn set_text(&self, hive: Hive, key: &str, name: &str, text: &str) -> Result<(), String> {

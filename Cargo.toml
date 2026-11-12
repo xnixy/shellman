@@ -18,6 +18,8 @@ shellman-icons = { path = "crates/icons" }
 shellman-ui = { path = "crates/ui" }
 # The `implement` and `interface` macros (COM callbacks, IPolicyConfig) name this crate directly.
 windows-core = "0.61"
+# The async types the Store package calls return (their progress handler is named here).
+windows-future = "0.2"
 # Embeds each app's icon as its exe's Win32 icon resource (see each app's build.rs).
 winresource = "0.1"
 windows = { version = "0.61", features = [
@@ -67,6 +69,9 @@ windows = { version = "0.61", features = [
     "Devices_Radios",
     "Foundation",
     "Foundation_Collections",
+    "ApplicationModel",
+    "ApplicationModel_Core",
+    "Management_Deployment",
     "Media_Audio",
     "Media_Devices",
     "Media_Control",

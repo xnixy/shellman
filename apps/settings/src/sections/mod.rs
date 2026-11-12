@@ -1,6 +1,7 @@
 //! The pages of the window, one file each.
 
 mod about;
+mod apps;
 mod appearance;
 mod bar;
 mod display;
@@ -12,6 +13,7 @@ mod sound_mixer;
 mod sound_rows;
 mod startup;
 
+pub use apps::AppsView;
 pub use display::DisplayView;
 pub use sound::SoundView;
 pub use startup::StartupView;
@@ -23,6 +25,7 @@ pub enum Section {
     Appearance,
     Sound,
     Display,
+    Apps,
     Startup,
     Dock,
     TopBar,
@@ -31,10 +34,11 @@ pub enum Section {
 }
 
 impl Section {
-    pub const ALL: [Section; 8] = [
+    pub const ALL: [Section; 9] = [
         Section::Appearance,
         Section::Sound,
         Section::Display,
+        Section::Apps,
         Section::Startup,
         Section::Dock,
         Section::TopBar,
@@ -47,6 +51,7 @@ impl Section {
             Section::Appearance => "Appearance",
             Section::Sound => "Sound",
             Section::Display => "Display",
+            Section::Apps => "Apps",
             Section::Startup => "Startup apps",
             Section::Dock => "Dock",
             Section::TopBar => "Top bar",
@@ -60,6 +65,7 @@ impl Section {
             Section::Appearance => '\u{E790}',
             Section::Sound => glyph::VOLUME,
             Section::Display => glyph::DESKTOP,
+            Section::Apps => '\u{E71D}',
             Section::Startup => '\u{E7E8}',
             Section::Dock => glyph::APP,
             Section::TopBar => glyph::DESKTOP,
@@ -73,6 +79,7 @@ impl Section {
             Section::Appearance => appearance::show(ui, state),
             Section::Sound => sound::show(ui, state),
             Section::Display => display::show(ui, state),
+            Section::Apps => apps::show(ui, state),
             Section::Startup => startup::show(ui, state),
             Section::Dock => dock::show(ui, state),
             Section::TopBar => bar::show(ui, state),
@@ -89,6 +96,7 @@ impl Section {
             Section::Appearance => "appearance",
             Section::Sound => "sound",
             Section::Display => "display",
+            Section::Apps => "apps",
             Section::Startup => "startup",
             Section::Dock => "dock",
             Section::TopBar => "top-bar",
