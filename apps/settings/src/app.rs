@@ -187,6 +187,9 @@ impl SettingsApp {
                             if self.section != Section::Sound {
                                 self.st.sound.stop();
                             }
+                            if self.section != Section::Display {
+                                self.st.display.stop();
+                            }
                             ui.add_space(24.0);
                         });
                     });
