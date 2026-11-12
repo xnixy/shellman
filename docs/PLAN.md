@@ -52,7 +52,9 @@ Rule: **the top bar is the system, the dock is apps.** Both are windows of one p
   The clock wakes once a minute on the boundary, plus on time changes and resume.
 
 **Dock**: bottom centre, a floating glass pill.
-- Size: 40 pt icons in 52 pt cells, 56 pt tall, radius 16. Reserved space; autohide is a setting.
+- Size: 40 pt icons in 52 pt cells, 56 pt tall. Reserved space; autohide is a setting.
+- Corners: Windows' own 8 pt window radius. DWM paints glass over the whole window and ignores
+  window regions (measured), so a larger radius would mean giving up real blur.
 - Order: Files, pinned apps, divider, running unpinned apps, divider, Recycle Bin.
 - Running dots (up to three for several windows); an accent bar marks the app in front;
   attention pulses at most three times.
@@ -79,8 +81,7 @@ Rule: **the top bar is the system, the dock is apps.** Both are windows of one p
   elevated apps.
 
 **Order of work**
-1. Prototype the dock's rounded glass. Windows draws backdrops as rectangles, so this is the
-   biggest visual risk.
-2. Dock with running and pinned apps, next to Explorer.
+1. ~~Prototype the dock's rounded glass~~ done: system 8 pt corners, real blur.
+2. Dock: running apps and clicks done; next pinned apps, previews, reserved space.
 3. Top bar: launcher button, active app, clock, status.
 4. With Explorer stopped: tray, work area, Win keys.
