@@ -4,20 +4,32 @@ Turns the Firefox window into the shellman "Islands" look with only `userChrome.
 and a few prefs: floating glass pills and rounded islands, the Windows backdrop visible between them,
 no window frame. No extension, nothing in the Firefox install directory.
 
+Optionally (`install.ps1 -Scripts`, see [Scripts](#scripts-optional)) a few small chrome scripts add what CSS
+cannot: the live shellman look (accent and glass follow `appearance.json` without a restart), more and smaller
+islands (navigation / address / actions / window-buttons pills, a separate tab list, New Tab pill and tool
+pill), and glass that stays glass while the window is not focused.
+
 Checked on **Firefox 160.0** (Windows 11, release build, default theme, "Nova" UI, sidebar revamp on).
 
 ## What you get
 
-- Top: a pill with sidebar toggle, back/forward/reload, the URL bar (a soft inner pill, accent ring when
-  focused), extension and menu buttons. With vertical tabs the window buttons sit at the right end of that
-  pill; with horizontal tabs they get their own small pill beside the tab pill.
+- Top, CSS only: one pill with all toolbar items (the URL bar a soft inner pill, accent ring when focused) and
+  the menu button, and the window buttons (min / max / close) as a pill of their own, like Files and Settings.
+  With the scripts the toolbar becomes separate pills: navigation (back / forward / reload / home), the address
+  bar alone (the widest), the other actions with the menu, and the window buttons. Runs follow the toolbar as you
+  customise it: each run of navigation buttons, the address bar, and each run of other buttons is a pill; a
+  flexible space or space you place splits a pill.
 - Tabs, both layouts styled (vertical is the default):
   - Vertical (`sidebar.verticalTabs`): the tab rail is an island. Collapsed it is an icon-rail pill like the
     Settings rail, expanded it is a wider island with titles. Selected tab = accent fill. Pinned tabs, the
     new-tab button and the tool buttons at the bottom share the style. Works with the sidebar on the left
     or the right (see below).
   - Horizontal: a pill of tab chips above the toolbar pill, selected chip = accent fill.
-- The page is its own island (22 px radius, hairline border, clipped corners), 10-12 px from everything.
+  With the scripts, vertical tabs are split further: pinned tabs (when any), the tab list, a small "New Tab"
+  pill and the tool pill (bookmarks, history, synced tabs, passwords, settings) are separate islands, expanded
+  or collapsed, sidebar left or right.
+- The page is its own island (22 px radius, hairline border, clipped corners), 12 px from everything.
+- The find bar is a floating pill at the bottom of the page island; the bookmarks toolbar a slim pill.
   F11 and page/video fullscreen are edge to edge: no gap, no radius.
 - Menus, context menus, panels (app menu, downloads, extensions), the URL bar dropdown: rounded dark glass,
   hairline border, accent selection.
@@ -48,9 +60,71 @@ exits, and the scripts do not edit `prefs.js`; to fully revert, reset these in `
 `browser.tabs.allow_transparent_browser`, `sidebar.verticalTabs`,
 `toolkit.legacyUserProfileCustomizations.stylesheets`.
 
+## Scripts (optional)
+
+What they add, all in `chrome/shellman-scripts/` (installed into `<profile>\chrome\shellman-scripts\`):
+
+- `shellman-live.sys.mjs`: the **live look**. Reads `%APPDATA%\shellman\appearance.json` (accent `"System"`,
+  `{"Preset":n}` or `{"Custom":[r,g,b]}`, and `glass` 0..1) and applies it to every Firefox window, popup and
+  Firefox page at once, computing `--shellman-accent`, `--shellman-on-accent`, `--shellman-island-fill` and
+  `--shellman-island-opacity` the same way shellman's theme does (light and dark values; Firefox's light/dark
+  still follows Windows). It re-applies when the file changes, and for `"System"` when Windows' colours change.
+  No file: the CSS defaults stay. The path can be changed with the pref `shellman.appearance.path`.
+  *Watching costs:* one worker thread asleep in `WaitForMultipleObjects` on a folder change notification
+  (`FindFirstChangeNotificationW` on the folder holding the file). It wakes only when that folder changes (then
+  reads one small file, debounced 150 ms) and once every 10 s as a safety tick that does no I/O (so the thread
+  can always be stopped). If the folder does not exist or the notification fails, it falls back to a 3 s timer
+  that only stats the file. Firefox exits normally (the thread is signalled to stop at quit).
+- `shellman-pills.sys.mjs`: labels toolbar items so the CSS can paint separate pills, and adopts a tiny style
+  sheet into the sidebar's shadow DOM for the tool pill. It moves nothing, so Customize, overflow and toolbar
+  menus keep working; labels are recomputed when the toolbar changes. In Customize mode the CSS-only layout shows.
+- `shellman-window.sys.mjs`: keeps the glass when the window is **not focused**. Windows draws the system
+  backdrop (Acrylic, Mica and Mica Alt alike) as a flat opaque colour behind an inactive window; that is DWM's
+  doing, not Firefox's (every chrome background is already transparent, so CSS cannot change it). When the window
+  loses focus the script sends it `WM_NCACTIVATE(TRUE)` once, which keeps DWM's backdrop live. Focus, keyboard and
+  Firefox's own activation handling are unchanged.
+- `shellman-watch.worker.js`: the watcher thread used by the live look.
+
+How they are loaded: Firefox's *autoconfig* runs `config.js` from the Firefox install folder at startup. Ours
+(`autoconfig/config.js`) only maps `resource://shellman-islands/` to `<profile>\chrome\shellman-scripts\` and imports
+the three named modules from there; it does not scan for `*.uc.js` or load anything else. `config-prefs.js` (in
+`<Firefox>\defaults\pref\`) turns autoconfig on, and sets `general.config.sandbox_enabled=false`: the default
+sandbox only allows `pref()` calls, so without that the loader could not reach the profile or import modules.
+
+```powershell
+# Close Firefox first. The Firefox folder is under Program Files: run from an elevated PowerShell.
+.\install.ps1 -DefaultProfile -Scripts -FirefoxDir "C:\Program Files\Mozilla Firefox"
+.\uninstall.ps1 -DefaultProfile        # also removes the scripts and both autoconfig files
+```
+
+`-Scripts` needs `-FirefoxDir` given explicitly. If that folder is not writable the script stops with a message
+(it never asks for elevation itself) before changing anything. An existing `config.js` / `config-prefs.js` that is
+not shellman's is not replaced unless you pass `-Force`; it is then backed up into the profile's backup folder and
+put back on uninstall. Uninstall removes the two files only if they are still exactly the ones installed (SHA-256
+in `state.json`). Without `-Scripts` the install is CSS-only exactly as before.
+
+**Security trade-off, in plain words.** With the loader installed, Firefox runs our script files with full browser
+privileges (the same as Firefox's own code: files, network, other processes through Windows APIs). Anyone or
+anything that can write into `<profile>\chrome\shellman-scripts\` could therefore run code inside your browser. That
+folder sits inside your profile, which already holds your cookies, saved passwords and extensions, so it is the same
+trust boundary as the profile itself, but it is a real new way in and worth knowing. The loader affects every
+profile of that Firefox installation only if the profile has a `chrome\shellman-scripts\` folder; other profiles
+are untouched. The two files in the Firefox folder can only be written with administrator rights.
+
+**Firefox updates.** The profile files survive updates. The two autoconfig files in the install folder usually
+survive normal updates too, but a reinstall, a repair or an update that rewrites the folder can remove them: then
+Firefox simply runs without scripts (CSS theme as usual); run `install.ps1 -Scripts ...` again. Firefox internals
+the scripts rely on (`#nav-bar`, `sidebar-main` and its shadow DOM, `browser-delayed-startup-finished`) may change
+in later versions; on any error the scripts log `[shellman] ...` to the Browser Console (Ctrl+Shift+J) and step back,
+leaving the CSS-only layout.
+
+**Turning it off.** `uninstall.ps1`, or just delete `config.js` from the Firefox folder (or the profile's
+`chrome\shellman-scripts\` folder) and restart Firefox.
+
 ## Options
 
-- **Accent / glass:** edit `chrome/shellman-look.css` only (shellman regenerates this file).
+- **Accent / glass:** with the scripts, follow shellman's own setting automatically. Without them, edit
+  `chrome/shellman-look.css` only.
   `--shellman-accent`, `--shellman-on-accent`, `--shellman-island-fill`, `--shellman-island-opacity`.
   Defaults: accent preset 5 (`#0067c0`), glass 1.0 (opacity 0.43, shellman's own clearest tint).
   Everything else derives from those four.
@@ -71,8 +145,15 @@ material. `toolkit.legacyUserProfileCustomizations.stylesheets` is required for 
 ## Known limits
 
 - The gaps between islands show the Windows **acrylic backdrop of the whole window** (blurred and tinted by
-  Windows), not the raw sharp wallpaper the shellman islands show. Firefox cannot make a per-pixel transparent
-  top level window through CSS. Mica instead of Acrylic is calmer but not live.
+  Windows), not the raw sharp wallpaper the shellman islands show. Tried with scripts (ctypes on the window):
+  cutting the gaps out with a window region (`SetWindowRgn`, rounded rectangles from the islands' positions)
+  does cut them, but DWM still paints the system backdrop over the whole window rectangle, so the gaps stay
+  blurred. Turning the backdrop off (`DWMWA_SYSTEMBACKDROP_TYPE` = none) plus the region gives truly sharp gaps,
+  but then the islands have no blur at all (the wallpaper shows sharp through the tint), the window shadow is
+  gone and the region corners are not anti-aliased (visible stair steps at 150 %). The undocumented
+  `SetWindowCompositionAttribute` blur ignores the region and paints the whole rectangle (black on this build).
+  shellman itself gets per-island blur from Windows.UI.Composition visuals in a second window, which a browser
+  script cannot reasonably build, so this stays as it is.
 - `backdrop-filter` on the pills only blurs Firefox's own content; the real blur is Windows'.
 - Pages are opaque; the island fill only shows behind transparent pages and Firefox's own pages.
 - The focus ring inside the bookmarks/history panel still uses Firefox's lilac in places (the panel is a
@@ -83,3 +164,8 @@ material. `toolkit.legacyUserProfileCustomizations.stylesheets` is required for 
   vertical-tabs rail (`#sidebar-container`, `sidebar-main`), the urlbar dropdown, popup variables.
 - Things CSS cannot do: change Firefox's tab/rail icon set, round the OS window shadow, or theme third-party
   extension popups and other websites' pages.
+- Without the scripts the window turns into a flat opaque slab while it is not focused (Windows' inactive
+  backdrop, see Scripts). The CSS keeps Firefox's own inactive colours transparent, but cannot change that.
+- CSS only cannot split the toolbar into several pills (there is no element per group), nor style the sidebar's
+  tool row (shadow DOM); those need the scripts. The urlbar dropdown, the overflow menu and the panels are not
+  split into pieces.

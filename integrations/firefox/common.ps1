@@ -56,3 +56,33 @@ function Remove-ManagedBlock([string]$Text) {
     $pattern = '(?s)' + [regex]::Escape($script:BeginMark) + '.*?' + [regex]::Escape($script:EndMark) + '[ \t]*\r?\n?'
     return [regex]::Replace($Text, $pattern, '')
 }
+
+# ---- Scripts (opt-in, install.ps1 -Scripts) ----
+$script:ScriptsDir = 'shellman-scripts'
+$script:ScriptFiles = @('shellman-live.sys.mjs', 'shellman-pills.sys.mjs', 'shellman-window.sys.mjs', 'shellman-watch.worker.js')
+# Firefox install folder -> our file, relative paths.
+$script:AutoconfigFiles = [ordered]@{ 'config.js' = 'config.js'; 'defaults\pref\config-prefs.js' = 'config-prefs.js' }
+$script:AutoconfigMark = 'shellman Islands loader'
+
+# Validates the Firefox install folder given with -FirefoxDir.
+function Resolve-FirefoxDir([string]$Dir) {
+    if (-not $Dir) { throw '-Scripts needs -FirefoxDir <folder that holds firefox.exe>, e.g. -FirefoxDir "C:\Program Files\Mozilla Firefox".' }
+    if (-not (Test-Path -LiteralPath (Join-Path $Dir 'firefox.exe') -PathType Leaf)) { throw "No firefox.exe in $Dir" }
+    if (-not (Test-Path -LiteralPath (Join-Path $Dir 'defaults\pref') -PathType Container)) { throw "No defaults\pref folder in $Dir; is this a Firefox install folder?" }
+    return (Resolve-Path -LiteralPath $Dir).Path.TrimEnd('\')
+}
+
+# Fails with a clear message (never elevates) when the folder is not writable, e.g. Program Files without admin.
+function Assert-Writable([string]$Dir) {
+    foreach ($d in @($Dir, (Join-Path $Dir 'defaults\pref'))) {
+        $probe = Join-Path $d ('.shellman-write-test-' + [guid]::NewGuid().ToString('N'))
+        try { [IO.File]::WriteAllText($probe, ''); Remove-Item -LiteralPath $probe -Force }
+        catch {
+            $admin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+            $hint = if ($admin) { '' } else { ' This folder needs administrator rights: run this script again from an elevated PowerShell ("Run as administrator").' }
+            throw "Cannot write to $d.$hint"
+        }
+    }
+}
+
+function Get-Sha256([string]$Path) { (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash }

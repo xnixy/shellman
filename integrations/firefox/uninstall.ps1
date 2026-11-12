@@ -6,6 +6,9 @@
   Deletes the five theme files, removes the marked block from user.js, puts back any chrome\ files
   or user.js that the install had overwritten/created from the backup, and removes the backup folder.
   Prefs Firefox already copied into prefs.js on exit are not edited: see README ("Uninstalling").
+  If install.ps1 -Scripts was used, also deletes chrome\shellman-scripts\ and the two autoconfig files from the
+  Firefox folder it recorded (only if they are still exactly the files it installed), and puts back any
+  autoconfig files they replaced. That folder usually needs an elevated PowerShell; the script checks first.
 #>
 [CmdletBinding()]
 param(
@@ -26,6 +29,28 @@ $stateFile = Join-Path $backupRoot 'state.json'
 if (-not (Test-Path -LiteralPath $stateFile)) { Write-Host 'Nothing to uninstall (no shellman Islands state in this profile).'; return }
 $state = Get-Content -LiteralPath $stateFile -Raw | ConvertFrom-Json
 $backupDir = Join-Path $backupRoot $state.backup
+
+# 0. scripts: checked first, so a missing admin right leaves everything installed and consistent
+if ($state.PSObject.Properties['firefoxDir'] -and $state.firefoxDir) {
+    $ffDir = $state.firefoxDir
+    if (Test-Path -LiteralPath $ffDir) {
+        Assert-Writable $ffDir
+        foreach ($a in $state.autoconfig) {
+            $dst = Join-Path $ffDir $a.path
+            if (Test-Path -LiteralPath $dst) {
+                if ((Get-Sha256 $dst) -eq $a.sha256) { Remove-Item -LiteralPath $dst -Force }
+                else { Write-Warning "$dst changed since install; left in place." }
+            }
+            $old = Join-Path $backupDir ('autoconfig\' + $a.path)
+            if ($a.backedUp -and (Test-Path -LiteralPath $old) -and -not (Test-Path -LiteralPath $dst)) { Copy-Item -LiteralPath $old -Destination $dst -Force }
+        }
+    } else {
+        Write-Warning "Firefox folder $ffDir no longer exists; nothing to remove there."
+    }
+    $sd = Join-Path $chromeDir $script:ScriptsDir
+    foreach ($f in $state.scripts) { $p = Join-Path $sd $f; if (Test-Path -LiteralPath $p) { Remove-Item -LiteralPath $p -Force } }
+    if ((Test-Path -LiteralPath $sd) -and -not (Get-ChildItem -LiteralPath $sd -Force)) { Remove-Item -LiteralPath $sd -Force }
+}
 
 # 1. our files out, then whatever chrome\ files we overwrote back in
 foreach ($f in $state.files) {
