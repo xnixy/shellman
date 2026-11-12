@@ -1,6 +1,6 @@
 //! The top bar: a strip of glass along the top edge. The launcher mark and the app in front sit
 //! on the left; the clock, status and the tray on the right. Tray icons join the right side once
-//! shellman owns the tray, on the primary monitor's bar only, so they keep stable places.
+//! shellman owns the tray, on every monitor's bar (or the primary's only, by setting).
 //!
 //! Every monitor has a top bar window; they all draw this one `TopBar` (`bars.rs` owns the
 //! windows and their places).
@@ -12,7 +12,7 @@ mod left;
 mod right;
 
 
-use crate::tray::{demo, view::TrayTextures, Tray, TrayIcon};
+use crate::tray::{demo, view::{Place, TrayTextures}, Tray, TrayIcon};
 use shellman_core::settings::bar::BarSettings;
 use shellman_core::system::{clock, status};
 use shellman_core::winlist::AppWindow;
@@ -53,9 +53,9 @@ impl TopBar {
         self.settings = None;
     }
 
-    /// One frame of one top bar window. `with_tray` is true for the primary monitor's bar.
-    pub fn frame(&mut self, ctx: &egui::Context, front: Option<&AppWindow>, glass: bool, with_tray: bool) {
-        self.draw(ctx, front, glass, with_tray);
+    /// One frame of one top bar window, on `place`'s monitor.
+    pub fn frame(&mut self, ctx: &egui::Context, front: Option<&AppWindow>, glass: bool, place: &Place) {
+        self.draw(ctx, front, glass, place);
         ctx.request_repaint_after(clock::until_next_minute());
     }
 
@@ -72,7 +72,7 @@ impl TopBar {
         &self.status.as_ref().unwrap().1
     }
 
-    fn draw(&mut self, ctx: &egui::Context, front: Option<&AppWindow>, glass: bool, with_tray: bool) {
+    fn draw(&mut self, ctx: &egui::Context, front: Option<&AppWindow>, glass: bool, place: &Place) {
         theme::set_light(crate::app::light(ctx));
         let c = colors();
         // Over composed glass (the dock's material, under the window) only a scrim is filled
@@ -89,7 +89,7 @@ impl TopBar {
             .show(ctx, |ui| {
                 let bar = ui.max_rect();
                 paint_edge(ui, bar, &c);
-                let limit = self.right_side(ui, bar, with_tray);
+                let limit = self.right_side(ui, bar, place);
                 left::draw(ui, bar, front, limit - 14.0);
             });
     }

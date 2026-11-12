@@ -72,7 +72,7 @@ fn main() -> eframe::Result {
                 None
             } else {
                 let wake = wake.clone();
-                tray::Tray::start(move || wake.bars())
+                tray::Tray::start(move || wake.tray())
             };
             let mode = match (test, tray.is_some()) {
                 (true, _) => Mode::Off,

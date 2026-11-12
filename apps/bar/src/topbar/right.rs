@@ -1,7 +1,7 @@
 //! The top bar's right side, from the edge inward: the clock, the status icons, the tray.
 
 use super::{highlight, TopBar};
-use crate::tray::view;
+use crate::tray::{self, view::{self, Place}};
 use shellman_core::system::{clock, status};
 use shellman_ui::theme::{colors, icon_font, semibold_font};
 
@@ -26,7 +26,7 @@ fn text_width(ui: &egui::Ui, text: &str, font: egui::FontId) -> f32 {
 
 impl TopBar {
     /// Clock, status and tray, from the right edge. Returns where they begin.
-    pub(super) fn right_side(&mut self, ui: &mut egui::Ui, bar: egui::Rect, with_tray: bool) -> f32 {
+    pub(super) fn right_side(&mut self, ui: &mut egui::Ui, bar: egui::Rect, place: &Place) -> f32 {
         let c = colors();
         let settings = *self.settings.get_or_insert_with(BarSettings::load);
         let mid = bar.center().y;
@@ -93,9 +93,9 @@ impl TopBar {
             }
         }
 
-        // Tray, on the primary monitor's bar only, divided from the status by a faint line.
+        // Tray, on every monitor's bar (or the primary's), divided from the status by a faint line.
         let mut begin = group.left();
-        if with_tray {
+        if place.primary || settings.tray == TrayMonitors::All {
             let icons = match &self.tray {
                 Some(tray) => tray.icons(),
                 None => self.demo.clone(),
@@ -103,11 +103,14 @@ impl TopBar {
             if !icons.is_empty() {
                 let sep_x = group.left() - GROUP_GAP / 2.0;
                 ui.painter().vline(sep_x, egui::Rangef::new(mid - 6.0, mid + 6.0), egui::Stroke::new(1.0_f32, c.separator));
-                begin = view::draw(ui, &icons, &mut self.tray_textures, bar, group.left() - GROUP_GAP);
+                begin = view::draw(ui, &icons, &mut self.tray_textures, bar, group.left() - GROUP_GAP, place);
             }
+        } else {
+            // Not drawn here any more: apps must not be sent to this bar's old places.
+            tray::forget_device(place.device);
         }
         begin
     }
 }
 
-use shellman_core::settings::bar::BarSettings;
+use shellman_core::settings::bar::{BarSettings, TrayMonitors};

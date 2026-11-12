@@ -12,8 +12,9 @@ use crate::monitors::{self, layout};
 use crate::shape::surface;
 use crate::wake::Wake;
 use crate::workarea::HiddenMinimized;
+use crate::tray::view::Place;
 use crate::{dock, host, preview, stress, topbar};
-use shellman_core::settings::bar::BarSettings;
+use shellman_core::settings::bar::{BarSettings, TrayMonitors};
 use shellman_ui::appearance::Appearance;
 use shellman_ui::{font_atlas, theme};
 use std::sync::{Arc, Mutex};
@@ -39,7 +40,8 @@ impl Shared {
         let front = self.dock.front_window().cloned();
         let hwnd = self.bars.top_hwnd(device).unwrap_or(0);
         surface::set_style(hwnd, bars::top_style());
-        self.top.frame(ctx, front.as_ref(), surface::composed(hwnd), primary);
+        let origin = (hwnd != 0).then(|| bars::client_origin(hwnd)).flatten();
+        self.top.frame(ctx, front.as_ref(), surface::composed(hwnd), &Place { device, primary, origin });
     }
 
     /// Lay the open preview panel out for its app's current windows.
@@ -181,6 +183,10 @@ impl eframe::App for Host {
             ids.push(preview::id());
         }
         self.wake.set(ids);
+        let tray_tops = shared.bars.views().filter(|(v, _, primary)| {
+            v.kind == Kind::Top && (*primary || self.settings.tray == TrayMonitors::All)
+        });
+        self.wake.set_tray(tray_tops.map(|(v, _, _)| v.id).collect());
         self.declare(ctx, &shared.bars, preview_open);
         // New windows exist only after this frame; look again on the next one.
         let dock_style = shared.dock.style();
