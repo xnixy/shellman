@@ -10,7 +10,8 @@ use shellman_core::fsops::Op;
 
 impl super::FileMan {
     pub(super) fn keyboard(&mut self, ctx: &egui::Context, actions: &mut Vec<Action>) {
-        if self.dialog.is_some() {
+        // An open menu has the keyboard: its arrows, Enter and Escape are its own.
+        if self.dialog.is_some() || self.menu.is_open() {
             return;
         }
         let typing = ctx.wants_keyboard_input();
@@ -60,7 +61,7 @@ impl super::FileMan {
                 actions.push(Action::NewFolder);
             }
             if key(Modifiers::SHIFT, Key::F10) {
-                actions.push(Action::ShellMenu { extended: false });
+                actions.push(Action::MenuKey);
             }
             if key(Modifiers::ALT, Key::Enter) {
                 actions.push(Action::Properties);

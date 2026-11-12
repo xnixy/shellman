@@ -9,6 +9,7 @@ mod interact;
 mod keys;
 mod layout;
 mod list;
+mod menu;
 mod pc;
 mod rows;
 mod sidebar;
@@ -93,6 +94,11 @@ pub(crate) struct FileMan {
     bin_dirs: Vec<PathBuf>,
     /// Whether the window had focus last frame, to re-list the bin when it comes back.
     had_focus: bool,
+    /// The right-click menu, with the shell's entries it reads ahead.
+    menu: menu::ContextMenu,
+    /// The selection's fingerprint when the menu target to read ahead was last worked out.
+    menu_sig: Option<(u64, u64, usize, Option<usize>)>,
+    menu_settle_target: Option<shellman_core::shell_menu::Target>,
 }
 
 impl FileMan {
@@ -125,6 +131,7 @@ impl FileMan {
         if let Some(dir) = shellman_ui::appearance::file().and_then(|f| f.parent().map(Path::to_path_buf)) {
             look_watch.set_dirs(vec![dir]);
         }
+        let menu = menu::ContextMenu::new(&ctx, hwnd);
         let mut app = Self {
             watcher: shellman_core::watch::Watcher::new(ctx.clone()),
             watched: Vec::new(),
@@ -155,6 +162,9 @@ impl FileMan {
             grid_cols: 1,
             bin_dirs: Vec::new(),
             had_focus: true,
+            menu,
+            menu_sig: None,
+            menu_settle_target: None,
         };
         for loc in locs {
             app.push_tab(loc);
@@ -353,6 +363,35 @@ impl FileMan {
         }
     }
 
+    /// Draw the right-click menu and run what was picked; read ahead the menu for a selection
+    /// that has settled.
+    fn context_menu(&mut self, ctx: &egui::Context) {
+        let mut picked = Vec::new();
+        if let Some(notice) = self.menu.show(ctx, &mut picked) {
+            self.toast(notice);
+        }
+        for a in picked {
+            self.apply(a);
+        }
+        let tab = &self.tabs[self.active];
+        // A cheap fingerprint of the selection, so the target is only built when it changes.
+        let sig = (tab.id, tab.gen, tab.selected.len(), tab.cursor);
+        if self.menu_sig != Some(sig) {
+            self.menu_sig = Some(sig);
+            self.menu_settle_target = if tab.loc == Loc::Bin || tab.selected.len() > 64 {
+                None
+            } else {
+                let row = tab.cursor.filter(|&c| tab.selected.contains(&tab.entry(c).path));
+                let row = row.or_else(|| tab.selection().first().and_then(|e| tab.row_of(&e.path)));
+                self.menu_target(row)
+            };
+        }
+        let now = ctx.input(|i| i.time);
+        if let Some(wait) = self.menu.settle(self.menu_settle_target.clone(), now) {
+            ctx.request_repaint_after(std::time::Duration::from_secs_f64(wait));
+        }
+    }
+
     fn take_dropped_files(&mut self, ctx: &egui::Context) {
         let dropped: Vec<PathBuf> = ctx.input(|i| {
             i.raw
@@ -415,6 +454,8 @@ impl eframe::App for FileMan {
         for a in actions {
             self.apply(a);
         }
+        // After the actions, so a menu opened by this frame's right click is drawn in this frame.
+        self.context_menu(ctx);
 
         let title = format!("{} - Files", self.tabs[self.active].loc.title());
         if title != self.title {

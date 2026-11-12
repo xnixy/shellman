@@ -1,7 +1,6 @@
 //! Win32 and DWM window frame: frosted glass, no caption, resize edges, and caption buttons.
 
 use crate::theme;
-use std::sync::OnceLock;
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Dwm::{
     DwmDefWindowProc, DwmExtendFrameIntoClientArea, DwmGetWindowAttribute, DwmSetWindowAttribute,
@@ -18,19 +17,6 @@ use windows::Win32::UI::WindowsAndMessaging::{
     SWP_NOZORDER, WM_NCACTIVATE, WM_NCCALCSIZE, WM_NCHITTEST, WS_CAPTION, WS_MAXIMIZEBOX,
     WS_MINIMIZEBOX, WS_SYSMENU, WS_THICKFRAME,
 };
-
-/// An app's own handler for window messages, tried before the frame's.
-type MessageHook = fn(u32, WPARAM, LPARAM) -> Option<LRESULT>;
-
-static MESSAGE_HOOK: OnceLock<MessageHook> = OnceLock::new();
-
-/// Register a handler that sees every message of subclassed windows before `frame_proc` does;
-/// returning `Some` consumes the message. It exists so an app can route messages (the shell
-/// context menu's owner-draw ones, say) without this crate depending on the code that handles
-/// them. Call it before `remove_caption`; only the first registration counts.
-pub fn set_message_hook(hook: MessageHook) {
-    let _ = MESSAGE_HOOK.set(hook);
-}
 
 fn set_dwm_u32(hwnd: HWND, attribute: DWMWINDOWATTRIBUTE, value: u32) {
     unsafe {
@@ -153,12 +139,6 @@ unsafe extern "system" fn frame_proc(
     _id: usize,
     glass: usize,
 ) -> LRESULT {
-    if let Some(result) = MESSAGE_HOOK
-        .get()
-        .and_then(|hook| hook(msg, wparam, lparam))
-    {
-        return result;
-    }
     if glass != 0 {
         let mut handled = LRESULT(0);
         if DwmDefWindowProc(hwnd, msg, wparam, lparam, &mut handled).as_bool() {

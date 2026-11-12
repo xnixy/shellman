@@ -25,7 +25,6 @@ const PREVIEW: f32 = 80.0;
 impl super::FileMan {
     pub(super) fn file_grid(&mut self, ui: &mut Ui, actions: &mut Vec<Action>) {
         let c = colors();
-        let has_clip = self.clipboard.is_some();
         let cut: &[std::path::PathBuf] = match &self.clipboard {
             Some((Op::Move, paths)) => paths,
             _ => &[],
@@ -39,11 +38,12 @@ impl super::FileMan {
             return;
         }
         ui.add_space(6.0);
-        interact::folder_backdrop(ui, tab, has_clip, actions);
+        interact::folder_backdrop(ui, tab, actions);
         if interact::empty_state(ui, tab) {
             return;
         }
 
+        let bin = tab.loc == Loc::Bin;
         let width = ui.available_width();
         let cols = (((width + GAP) / (TILE_W + GAP)) as usize).max(1);
         let tile_w = (width + GAP) / cols as f32 - GAP;
@@ -153,8 +153,7 @@ impl super::FileMan {
                     }
 
                     ev.record(ui, &resp, r, actions);
-                    let (is_dir, loc) = (e.is_dir, Loc::Dir(e.path.clone()));
-                    interact::item_menu(ui, &resp, actions, is_dir, &loc);
+                    interact::item_menu(ui, &resp, actions, r, bin);
                 }
             }
         });

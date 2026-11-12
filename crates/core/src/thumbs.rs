@@ -247,7 +247,7 @@ fn crop_to_opaque(img: ColorImage) -> ColorImage {
 
 /// Copy a 32-bit bitmap out as RGBA. Shell bitmaps are premultiplied BGRA, and photo previews
 /// often leave alpha at zero, which means opaque.
-unsafe fn to_color_image(hbmp: HBITMAP) -> Option<ColorImage> {
+pub(crate) unsafe fn to_color_image(hbmp: HBITMAP) -> Option<ColorImage> {
     let mut bm = BITMAP::default();
     if GetObjectW(
         HGDIOBJ(hbmp.0),

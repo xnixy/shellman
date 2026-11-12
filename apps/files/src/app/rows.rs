@@ -1,65 +1,11 @@
-//! Pieces of a file row: its icon and its right-click menu.
+//! Pieces of a file row: its icon. (Its right-click menu is in `menu`.)
 
-use super::actions::Action;
-use super::tab::Loc;
 use egui::{Align2, Color32, CornerRadius, Rect, TextureId, Ui, Vec2};
-use shellman_core::fsops::{Entry, Op};
+use shellman_core::fsops::Entry;
 use shellman_core::thumbs;
 use shellman_ui::theme::{self, glyph, icon_font};
 use shellman_ui::widgets::folder_icon;
-use shellman_ui::widgets::menu_item;
 use std::path::Path;
-
-/// The right-click menu of a file row.
-pub(super) fn row_menu(ui: &mut Ui, actions: &mut Vec<Action>, is_dir: bool, loc: &Loc) {
-    if *loc == Loc::Bin {
-        return super::bin::item_menu(ui, actions);
-    }
-    if menu_item(ui, glyph::OPEN_EXTERNAL, "Open", "Enter") {
-        actions.push(Action::OpenSelected);
-        ui.close_menu();
-    }
-    if is_dir && menu_item(ui, glyph::ADD, "Open in new tab", "") {
-        actions.push(Action::NewTab(loc.clone()));
-        ui.close_menu();
-    }
-    ui.separator();
-    if menu_item(ui, glyph::CUT, "Cut", "Ctrl+X") {
-        actions.push(Action::Clip(Op::Move));
-        ui.close_menu();
-    }
-    if menu_item(ui, glyph::COPY, "Copy", "Ctrl+C") {
-        actions.push(Action::Clip(Op::Copy));
-        ui.close_menu();
-    }
-    if menu_item(ui, glyph::COPY, "Copy path", "Ctrl+Shift+C") {
-        actions.push(Action::CopyPath);
-        ui.close_menu();
-    }
-    ui.separator();
-    if menu_item(ui, glyph::RENAME, "Rename", "F2") {
-        actions.push(Action::Rename);
-        ui.close_menu();
-    }
-    if menu_item(ui, glyph::DELETE, "Move to Recycle Bin", "Del") {
-        actions.push(Action::Recycle);
-        ui.close_menu();
-    }
-    ui.separator();
-    more_options(ui, actions);
-}
-
-/// The last entries of every menu: Properties, and the full Windows menu.
-pub(super) fn more_options(ui: &mut Ui, actions: &mut Vec<Action>) {
-    if menu_item(ui, glyph::INFO, "Properties", "Alt+Enter") {
-        actions.push(Action::Properties);
-        ui.close_menu();
-    }
-    if menu_item(ui, glyph::MORE, "Show more options", "Shift+F10") {
-        actions.push(Action::ShellMenu { extended: false });
-        ui.close_menu();
-    }
-}
 
 /// A glyph and color for a file, by its type.
 pub(super) fn file_icon(e: &Entry, c: &theme::Colors) -> (char, Color32) {
