@@ -604,19 +604,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "fileman"
-version = "0.1.0"
-dependencies = [
- "dirs",
- "eframe",
- "egui",
- "raw-window-handle",
- "serde",
- "serde_json",
- "windows",
-]
-
-[[package]]
 name = "find-msvc-tools"
 version = "0.1.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1858,6 +1845,41 @@ dependencies = [
  "serde",
  "serde_core",
  "zmij",
+]
+
+[[package]]
+name = "shellman-core"
+version = "0.1.0"
+dependencies = [
+ "dirs",
+ "egui",
+ "serde",
+ "serde_json",
+ "windows",
+]
+
+[[package]]
+name = "shellman-files"
+version = "0.1.0"
+dependencies = [
+ "dirs",
+ "eframe",
+ "egui",
+ "raw-window-handle",
+ "serde",
+ "serde_json",
+ "shellman-core",
+ "shellman-ui",
+ "windows",
+]
+
+[[package]]
+name = "shellman-ui"
+version = "0.1.0"
+dependencies = [
+ "egui",
+ "serde",
+ "windows",
 ]
 
 [[package]]

@@ -1,0 +1,18 @@
+[package]
+name = "shellman-files"
+version = "0.1.0"
+edition.workspace = true
+description = "A file manager in Blurman's frosted style, with an accent color you pick"
+license.workspace = true
+publish = false
+
+[dependencies]
+dirs.workspace = true
+eframe.workspace = true
+egui.workspace = true
+raw-window-handle.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+shellman-core.workspace = true
+shellman-ui.workspace = true
+windows.workspace = true

@@ -1,0 +1,16 @@
+[package]
+name = "shellman-core"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+name = "shellman_core"
+
+[dependencies]
+dirs.workspace = true
+egui.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+windows.workspace = true
