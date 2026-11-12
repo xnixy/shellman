@@ -177,7 +177,7 @@ unsafe fn friendly_name(dev: &IMMDevice) -> Option<String> {
 // declared so it lands in the right place in the table, with their real argument counts.
 
 #[allow(non_snake_case)]
-mod policy {
+pub(crate) mod policy {
     use windows::core::{interface, IUnknown, IUnknown_Vtbl, HRESULT, PCWSTR};
     use windows::Win32::Media::Audio::ERole;
 
@@ -201,11 +201,29 @@ mod policy {
     pub unsafe fn set_default(policy: &IPolicyConfig, id: PCWSTR, role: ERole) -> HRESULT {
         policy.SetDefaultEndpoint(id, role)
     }
+
+    // The format calls, for `sound_format`; `format` receives a CoTaskMem WAVEFORMATEX.
+    pub unsafe fn get_device_format(policy: &IPolicyConfig, id: PCWSTR, default: i32, format: *mut *mut core::ffi::c_void) -> HRESULT {
+        policy.GetDeviceFormat(id, default, format)
+    }
+
+    pub unsafe fn get_mix_format(policy: &IPolicyConfig, id: PCWSTR, format: *mut *mut core::ffi::c_void) -> HRESULT {
+        policy.GetMixFormat(id, format)
+    }
+
+    pub unsafe fn set_device_format(
+        policy: &IPolicyConfig,
+        id: PCWSTR,
+        endpoint: *mut core::ffi::c_void,
+        mix: *mut core::ffi::c_void,
+    ) -> HRESULT {
+        policy.SetDeviceFormat(id, endpoint, mix)
+    }
 }
 use policy::IPolicyConfig;
 
 /// CPolicyConfigClient, the object behind `IPolicyConfig`.
-const POLICY_CONFIG_CLIENT: GUID = GUID::from_u128(0x870af99c_171d_4f9e_af0d_e63df40c2bc9);
+pub(crate) const POLICY_CONFIG_CLIENT: GUID = GUID::from_u128(0x870af99c_171d_4f9e_af0d_e63df40c2bc9);
 
 /// The roles a device is the default for. Sound settings sets all three at once, so apps that
 /// ask for the "communications" device follow the choice too.
@@ -213,6 +231,11 @@ pub const ROLES: [ERole; 3] = [eConsole, eMultimedia, eCommunications];
 
 /// Make the output `id` the default for every role. False when Windows refused.
 pub fn set_default_output(id: &str) -> bool {
+    set_default(id, &ROLES)
+}
+
+/// Make the device `id` (an output or a microphone) the default for just `roles`.
+pub fn set_default(id: &str, roles: &[ERole]) -> bool {
     init_com();
     let wide: Vec<u16> = id.encode_utf16().chain(Some(0)).collect();
     // SAFETY: the interface is created by its own class; `wide` outlives the calls.
@@ -221,7 +244,7 @@ pub fn set_default_output(id: &str) -> bool {
         else {
             return false;
         };
-        ROLES
+        roles
             .iter()
             .all(|&role| policy::set_default(&policy, PCWSTR(wide.as_ptr()), role).is_ok())
     }
