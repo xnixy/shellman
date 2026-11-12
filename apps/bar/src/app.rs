@@ -165,15 +165,19 @@ impl eframe::App for Host {
         if layout_needed || sizes != shared.bars.sizes() {
             let slots = layout::plan(&monitors::all(), self.settings.docks, &sizes);
             shared.bars.update(slots, sizes);
-            // The preview panel is woken with the bars, for when its app's windows change.
-            let mut ids = shared.bars.ids();
-            ids.push(preview::id());
-            self.wake.set(ids);
         }
         if host::take_requery() {
             shared.bars.requery();
         }
         let preview_open = shared.preview.tick(Instant::now());
+        // The preview panel is woken with the bars, for when its app's windows change, but only
+        // while it is open: a repaint asked for a viewport nobody declares makes egui open a
+        // blank default window for it ("egui window"), which then spins the event loop.
+        let mut ids = shared.bars.ids();
+        if preview_open {
+            ids.push(preview::id());
+        }
+        self.wake.set(ids);
         self.declare(ctx, &shared.bars, preview_open);
         let glass = shared.glass;
         // New windows exist only after this frame; look again on the next one.
