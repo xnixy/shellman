@@ -1,9 +1,11 @@
-//! The top bar's right side, from the edge inward: the clock, the status icons, the tray.
+//! The top bar's right island, from its right end inward: the status icons (which open the
+//! control centre), then the tray.
 
 use super::{highlight, TopBar};
 use crate::tray::{self, view::{self, Place}};
-use shellman_core::system::{clock, status};
-use shellman_ui::theme::{colors, icon_font, semibold_font};
+use shellman_core::settings::bar::{BarSettings, TrayMonitors};
+use shellman_core::system::status;
+use shellman_ui::theme::{colors, icon_font};
 
 const VOLUME: char = '\u{E767}';
 const MUTED: char = '\u{E74F}';
@@ -11,38 +13,25 @@ const GLOBE: char = '\u{E774}';
 const LOCAL_NET: char = '\u{E839}';
 const BATTERY: char = '\u{E83F}';
 
-/// From the right edge to the clock, and between the three groups.
-const EDGE: f32 = 14.0;
-const GROUP_GAP: f32 = 14.0;
+/// From the island's ends to the highlights inside them, and between the status and the tray.
+const END: f32 = 6.0;
+const GROUP_GAP: f32 = 12.0;
 /// Status icons: size, space between them, and the padding inside the hover highlight.
-const ICON: f32 = 15.0;
+const ICON: f32 = 16.0;
 const ICON_GAP: f32 = 12.0;
-const PAD: f32 = 6.0;
-const STATUS_H: f32 = 24.0;
+const PAD: f32 = 10.0;
+const STATUS_H: f32 = 30.0;
 
 fn text_width(ui: &egui::Ui, text: &str, font: egui::FontId) -> f32 {
     ui.fonts(|f| f.layout_no_wrap(text.to_owned(), font, egui::Color32::WHITE)).size().x
 }
 
 impl TopBar {
-    /// Clock, status and tray, from the right edge. Returns where they begin.
-    pub(super) fn right_side(&mut self, ui: &mut egui::Ui, bar: egui::Rect, place: &Place) -> f32 {
+    /// Status and tray in `row`, the island ending at `right`. Returns the island.
+    pub(super) fn right_side(&mut self, ui: &mut egui::Ui, row: egui::Rect, right: f32, place: &Place) -> egui::Rect {
         let c = colors();
         let settings = *self.settings.get_or_insert_with(BarSettings::load);
-        let mid = bar.center().y;
-
-        // Clock: the time in the text colour, the date muted beside it. Segoe UI's digits are
-        // all one width, so the clock does not jitter as it ticks.
-        let (date, time) = clock::now_text(settings.clock.hour_cycle.pattern());
-        let (time_font, date_font) = (semibold_font(13.0), egui::FontId::proportional(13.0));
-        let time_w = text_width(ui, &time, time_font.clone());
-        let mut left = bar.right() - EDGE - time_w;
-        ui.painter().text(egui::pos2(bar.right() - EDGE, mid), egui::Align2::RIGHT_CENTER, &time, time_font, c.text);
-        if settings.clock.show_date {
-            let x = left - 8.0;
-            ui.painter().text(egui::pos2(x, mid), egui::Align2::RIGHT_CENTER, &date, date_font.clone(), c.muted);
-            left = x - text_width(ui, &date, date_font);
-        }
+        let mid = row.center().y;
 
         // Status: network, volume, battery, with one soft highlight around the group.
         let st = self.status();
@@ -59,23 +48,23 @@ impl TopBar {
         if let Some(b) = &st.battery {
             items.push((BATTERY, Some(format!("{}%", b.percent))));
         }
-        let small = egui::FontId::proportional(12.0);
+        let small = egui::FontId::proportional(13.0);
         let widths: Vec<f32> = items
             .iter()
-            .map(|(_, t)| ICON + t.as_ref().map_or(0.0, |t| 4.0 + text_width(ui, t, small.clone())))
+            .map(|(_, t)| ICON + t.as_ref().map_or(0.0, |t| 5.0 + text_width(ui, t, small.clone())))
             .collect();
         let inner = widths.iter().sum::<f32>() + ICON_GAP * (items.len() - 1) as f32;
-        let group = egui::Rect::from_center_size(
-            egui::pos2(left - GROUP_GAP - (inner + 2.0 * PAD) / 2.0, mid),
-            egui::vec2(inner + 2.0 * PAD, STATUS_H),
+        let group = egui::Rect::from_min_max(
+            egui::pos2(right - END - inner - 2.0 * PAD, mid - STATUS_H / 2.0),
+            egui::pos2(right - END, mid + STATUS_H / 2.0),
         );
         let resp = ui.interact(group, egui::Id::new("status"), egui::Sense::click());
-        highlight(ui, group, &resp, 8);
+        highlight(ui, group, &resp, (STATUS_H / 2.0) as u8);
         let mut x = group.left() + PAD;
         for ((glyph, text), w) in items.iter().zip(&widths) {
             ui.painter().text(egui::pos2(x + ICON / 2.0, mid), egui::Align2::CENTER_CENTER, *glyph, icon_font(ICON), c.text);
             if let Some(t) = text {
-                ui.painter().text(egui::pos2(x + ICON + 4.0, mid), egui::Align2::LEFT_CENTER, t, small.clone(), c.muted);
+                ui.painter().text(egui::pos2(x + ICON + 5.0, mid), egui::Align2::LEFT_CENTER, t, small.clone(), c.muted);
             }
             x += w + ICON_GAP;
         }
@@ -102,15 +91,13 @@ impl TopBar {
             };
             if !icons.is_empty() {
                 let sep_x = group.left() - GROUP_GAP / 2.0;
-                ui.painter().vline(sep_x, egui::Rangef::new(mid - 6.0, mid + 6.0), egui::Stroke::new(1.0_f32, c.separator));
-                begin = view::draw(ui, &icons, &mut self.tray_textures, bar, group.left() - GROUP_GAP, place);
+                ui.painter().vline(sep_x, egui::Rangef::new(mid - 7.0, mid + 7.0), egui::Stroke::new(1.0_f32, c.separator));
+                begin = view::draw(ui, &icons, &mut self.tray_textures, row, group.left() - GROUP_GAP, place);
             }
         } else {
             // Not drawn here any more: apps must not be sent to this bar's old places.
             tray::forget_device(place.device);
         }
-        begin
+        egui::Rect::from_x_y_ranges(begin - END..=right, row.y_range())
     }
 }
-
-use shellman_core::settings::bar::{BarSettings, TrayMonitors};

@@ -2,7 +2,7 @@
 //! monitor list, so it is tested without windows.
 //!
 //! Bar sizes are in points; a monitor at 150% has 1.5 pixels per point. Each bar is sized with
-//! its own monitor's scale, so a top bar is 32 pt tall on every monitor whatever the mix.
+//! its own monitor's scale, so a top bar is as many points tall on every monitor whatever the mix.
 //!
 //! Space is always measured from the monitor's edges (or the place Explorer grants), never from
 //! the work area: the work area already has the bars' own space taken out, and measuring from it
@@ -44,7 +44,8 @@ pub fn px(points: f32, scale: f32) -> i32 {
     (points * scale).round() as i32
 }
 
-/// The top bar: the monitor's full width, flush with its top edge.
+/// The top bar's window: the monitor's full width, flush with its top edge (its islands float
+/// inside it, see `topbar::layout`).
 pub fn top_rect(monitor: RECT, scale: f32, sizes: &Sizes) -> RECT {
     RECT { bottom: monitor.top + px(sizes.top, scale), ..monitor }
 }

@@ -38,10 +38,16 @@ impl Shared {
         theme::set_light(light(ctx));
         self.dock.catch_up(ctx);
         let front = self.dock.front_window().cloned();
+        let icon = front.as_ref().and_then(|_| self.dock.front_icon(ctx, 16.0 * ctx.pixels_per_point()));
         let hwnd = self.bars.top_hwnd(device).unwrap_or(0);
         surface::set_style(hwnd, bars::top_style());
         let origin = (hwnd != 0).then(|| bars::client_origin(hwnd)).flatten();
-        self.top.frame(ctx, front.as_ref(), surface::composed(hwnd), &Place { device, primary, origin });
+        let front = front.as_ref().map(|window| topbar::Front { window, icon });
+        let place = Place { device, primary, origin };
+        let islands = self.top.frame(ctx, front, surface::composed(hwnd), &place);
+        // The whole window stays the bar's: a click between the islands lands on it and does
+        // nothing (the space is reserved anyway).
+        surface::set_islands(hwnd, &islands, ctx.pixels_per_point(), false, None);
     }
 
     /// Lay the open preview panel out for its app's current windows.

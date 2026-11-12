@@ -1,13 +1,14 @@
-//! Drawing the tray icons in the top bar, right to left from where the status icons begin.
+//! Drawing the tray icons in the top bar's right island, right to left from where the status
+//! icons begin.
 
 use super::{click::anchor_of, Click, TrayIcon};
 use crate::topbar::highlight;
 use std::collections::HashMap;
 
-/// Icons sit on this pitch; each has a rounded highlight of the same size on hover.
-const PITCH: f32 = 26.0;
+/// Icons sit on this pitch; each has a round highlight of the same size on hover.
+const PITCH: f32 = 30.0;
 const ICON: f32 = 16.0;
-const RADIUS: u8 = 6;
+const RADIUS: u8 = 15;
 
 /// Textures for the icons, re-uploaded only when an icon's picture changes.
 #[derive(Default)]

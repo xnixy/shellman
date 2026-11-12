@@ -1,5 +1,6 @@
-//! The dock: the Launcher, Files, pinned apps, running apps and the Recycle Bin, on a floating
-//! shelf of glass (`shellman_ui::glass`) with large rounded corners, real blur and a soft shadow.
+//! The dock: the Launcher, Files, pinned apps and running apps on a floating island of glass
+//! (`shellman_ui::glass`) with large rounded corners, real blur and a soft shadow, and the Recycle
+//! Bin on a small island of its own just to the right.
 //!
 //! One model, several views: there is one `Dock` (window list, pins, icon cache) and a dock window
 //! per monitor drawing it, so every dock shows the same apps in the same order. A click on any of
@@ -18,7 +19,7 @@ use crate::shape::surface;
 use crate::wake::Wake;
 use items::{Item, Section};
 use metrics::Metrics;
-use shellman_ui::glass::{self, Style};
+use shellman_ui::glass::{self, Island, Style};
 use shellman_core::settings::dock::{DockSettings as Pins, Pin};
 use shellman_core::thumbs::Thumbs;
 use shellman_core::winlist::{self, AppWindow, WindowList, WindowWatcher};
@@ -312,6 +313,14 @@ impl Dock {
         self.windows.iter().find(|w| w.hwnd == front)
     }
 
+    /// The icon of the app in front, as its dock icon shows it, sharp at `px` pixels (for the
+    /// top bar). None while the shell has not given it yet, or when no dock icon has the window.
+    pub fn front_icon(&mut self, ctx: &egui::Context, px: f32) -> Option<(egui::TextureId, egui::Vec2)> {
+        let front = self.front?;
+        let item = self.items.iter().find(|i| i.windows.contains(&front))?.clone();
+        draw::texture(ctx, &item, px, &mut self.thumbs)
+    }
+
     /// Catch up with the window watcher and finished icons. Any bar's frame calls this first,
     /// so whichever window repaints first brings the shared model up to date for all of them.
     pub fn catch_up(&mut self, ctx: &egui::Context) {
@@ -338,31 +347,36 @@ impl Dock {
         surface::set_style(hwnd, style);
         let scale = ctx.pixels_per_point();
         let (xs, width) = metrics::layout(&self.items, &m);
-        // The glass eases to its new width as the icons slide (see `draw`).
+        // The apps island eases to its new width as the icons slide (see `draw`), and the bin's
+        // island follows its right edge.
         let shown = ctx.animate_value_with_time(egui::Id::new(("dock width", salt)), width, draw::MOVE);
-        let rect = metrics::glass_rect(client_size(hwnd), shown, &m, scale);
-        let glass = egui::Rect::from_min_max(
-            egui::pos2(rect.left as f32, rect.top as f32) / scale,
-            egui::pos2(rect.right as f32, rect.bottom as f32) / scale,
-        );
+        let (w, h) = client_size(hwnd);
+        let window = egui::vec2(w as f32, h as f32) / scale;
+        let has_bin = self.items.iter().any(|i| i.section == Section::Bin);
+        let (glass, bin) = metrics::islands(window, shown, has_bin, &m);
+        let islands: Vec<Island> = std::iter::once(glass).chain(bin).map(|r| Island::new(r, m.radius)).collect();
         let composed = surface::composed(hwnd);
         let events = egui::CentralPanel::default()
             .frame(egui::Frame::new())
             .show(ctx, |ui| {
+                // Room under the icons for the islands' own fill, when it is painted here.
+                let under = ui.painter().add(egui::Shape::Noop);
+                let scene = draw::Scene { items: &self.items, front: self.front, metrics: m, xs: &xs, width, glass, bin, salt, tint: style.tint };
+                let events = draw::paint(ui, &scene, &mut self.thumbs);
                 if !composed {
-                    // No composed glass: the surface is painted here, without blur or shadow.
-                    let f = glass::content_frame(false, &style);
-                    ui.painter().rect(glass, f.corner_radius, f.fill, f.stroke, egui::StrokeKind::Inside);
+                    // No composed glass: the islands are painted here, without blur or shadow.
+                    ui.painter().set(under, egui::Shape::Vec(glass::islands::solid_shapes(&islands, &style)));
                 }
-                let scene = draw::Scene { items: &self.items, front: self.front, metrics: m, xs: &xs, width, glass, salt, tint: style.tint };
-                draw::paint(ui, &scene, &mut self.thumbs)
+                events
             })
             .inner;
-        // The glass, and the label while it shows, are all of the window that is drawn and
+        // The islands, and the label while it shows, are all of the window that is drawn and
         // clicked; the rest lets the desktop through.
         let label = events.label.map(|l| metrics::label_region(l, scale));
-        surface::set_shape(hwnd, Some(rect), label);
-        let inside = ctx.pointer_hover_pos().is_some_and(|p| glass.contains(p));
+        surface::set_islands(hwnd, &islands, scale, true, label);
+        let inside = ctx
+            .pointer_hover_pos()
+            .is_some_and(|p| glass.contains(p) || bin.is_some_and(|b| b.contains(p)));
         self.act(&events, hwnd, inside, glass.top())
     }
 }
