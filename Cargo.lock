@@ -1886,6 +1886,7 @@ name = "shellman-desktop"
 version = "0.1.0"
 dependencies = [
  "windows",
+ "winresource",
 ]
 
 [[package]]
@@ -1928,6 +1929,7 @@ dependencies = [
  "shellman-core",
  "shellman-ui",
  "windows",
+ "winresource",
 ]
 
 [[package]]

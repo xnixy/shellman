@@ -2,7 +2,7 @@
 //!
 //!     cargo run --manifest-path tools/icongen/Cargo.toml
 //!
-//! Writes `assets/icons/{shellman,files,settings}.ico`, `files-64.rgba` (the window icon Files
+//! Writes `assets/icons/{shellman,files,settings}.ico`, `files-64.rgba` and `settings-64.rgba` (the window icons the apps
 //! hands to eframe) and `preview.png` (every icon on dark and light, for a quick look).
 
 mod art;
@@ -23,6 +23,7 @@ fn main() {
         fs::write(dir.join(format!("{name}.ico")), ico::write(&images)).unwrap();
     }
     fs::write(dir.join("files-64.rgba"), art::render(Icon::Files, 64)).unwrap();
+    fs::write(dir.join("settings-64.rgba"), art::render(Icon::Settings, 64)).unwrap();
     write_preview(&dir.join("preview.png"));
 }
 
