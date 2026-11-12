@@ -6,6 +6,7 @@ use super::live::{self, Mailbox, Wake};
 use super::sound_dev::{Device, Flow};
 use super::sound_format::FormatSpec;
 use super::sound_sessions::AppSession;
+use super::sound_spatial::Spatial;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc::{channel, Sender};
 use std::sync::Arc;
@@ -21,6 +22,11 @@ pub struct Detail {
     pub supported: Vec<FormatSpec>,
     /// Whether the last format change can be taken back.
     pub can_undo: bool,
+    /// Spatial sound (outputs); None when Windows would not say.
+    pub spatial: Option<Spatial>,
+    /// Why the last spatial change or test tone did not happen, for this device.
+    pub spatial_error: Option<String>,
+    pub tone_error: Option<String>,
 }
 
 /// Outputs or inputs, with the chosen device.
@@ -87,6 +93,11 @@ pub(crate) enum Cmd {
     Format(String, FormatSpec),
     UndoFormat(String),
     Tone(String),
+    /// The test tone could not start (false) or played (true) on this device.
+    ToneDone(String, bool),
+    /// Select this spatial format (empty for off).
+    Spatial(String, String),
+    SpatialDone(String, Result<(), String>),
     /// Start or stop the input level meter.
     Meter(Option<String>),
     SessionVolume(String, f32),
@@ -148,6 +159,9 @@ impl SoundPage {
     /// Put the format back to what it was before the last change on `id`.
     pub fn undo_format(&self, id: &str) {
         self.send(Cmd::UndoFormat(id.to_owned()));
+    }
+    pub fn set_spatial(&self, id: &str, subtype: &str) {
+        self.send(Cmd::Spatial(id.to_owned(), subtype.to_owned()));
     }
     pub fn play_tone(&self, id: &str) {
         self.send(Cmd::Tone(id.to_owned()));

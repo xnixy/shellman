@@ -139,6 +139,9 @@ fn details(ui: &mut egui::Ui, h: &SoundPage, flow: Flow, dev: &Device, detail: &
         if ui.button("Play a test sound").on_hover_text("A short, quiet tone on this device").clicked() {
             h.play_tone(&dev.id);
         }
+        if let Some(e) = &detail.tone_error {
+            ui.label(theme::muted(e).size(12.0));
+        }
         if let Some(mut b) = detail.balance {
             ui.add_space(10.0);
             page::label(ui, "Balance");
@@ -156,19 +159,38 @@ fn details(ui: &mut egui::Ui, h: &SoundPage, flow: Flow, dev: &Device, detail: &
     }
     format_picker(ui, h, dev, detail);
     if output {
-        // Windows keeps the spatial format (Windows Sonic, Dolby Atmos, DTS) behind its own
-        // dialog: no public call reads or sets it, and the one that reads what a device could
-        // do answered differently between two runs on the same device. So it is not guessed.
-        ui.add_space(10.0);
-        page::label(ui, "Spatial sound");
-        ui.label(
-            theme::muted("Windows offers no way for other programs to read or change the spatial format.")
-                .size(12.0),
-        );
-        ui.add_space(6.0);
-        if ui.button("Open the device's properties").clicked() {
-            sound_dev::open_classic(0);
+        spatial_picker(ui, h, dev, detail);
+    }
+}
+
+/// Spatial sound: Off plus what the device takes right now, the active one selected. The page
+/// follows Windows' own change event, so a choice shows once Windows has taken it.
+fn spatial_picker(ui: &mut egui::Ui, h: &SoundPage, dev: &Device, detail: &Detail) {
+    ui.add_space(10.0);
+    page::label(ui, "Spatial sound");
+    let Some(sp) = detail.spatial.as_ref().filter(|s| s.supported) else {
+        let why = if detail.spatial.is_some() {
+            "This device does not offer spatial sound."
+        } else {
+            "Windows does not report this device's spatial sound."
+        };
+        ui.label(theme::muted(why).size(12.0));
+        return;
+    };
+    let off = sp.is_off();
+    egui::ComboBox::from_id_salt(("spatial", &dev.id)).width(300.0).selected_text(sp.active_name()).show_ui(ui, |ui| {
+        if ui.selectable_label(off, "Off").clicked() && !off {
+            h.set_spatial(&dev.id, "");
         }
+        for (id, name) in &sp.formats {
+            let on = id.eq_ignore_ascii_case(&sp.active);
+            if ui.selectable_label(on, name).clicked() && !on {
+                h.set_spatial(&dev.id, id);
+            }
+        }
+    });
+    if let Some(e) = &detail.spatial_error {
+        ui.label(theme::muted(e).size(12.0));
     }
 }
 
