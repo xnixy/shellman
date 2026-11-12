@@ -40,7 +40,7 @@ pub fn group(modes: &[Mode], preferred: Option<(u32, u32)>) -> Vec<Group> {
     for g in &mut groups {
         g.rates.sort_unstable_by(|a, b| b.cmp(a));
     }
-    groups.sort_by(|a, b| (b.w as u64 * b.h as u64, b.w).cmp(&(a.w as u64 * a.h as u64, a.w)));
+    groups.sort_by_key(|g| std::cmp::Reverse((g.w as u64 * g.h as u64, g.w)));
     let pick = preferred
         .and_then(|(w, h)| groups.iter().position(|g| g.w == w && g.h == h))
         .or(if groups.is_empty() { None } else { Some(0) });

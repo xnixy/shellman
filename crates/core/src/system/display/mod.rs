@@ -110,4 +110,48 @@ mod tests {
         }
         std::fs::write(file, text).unwrap();
     }
+
+    /// Shows the identify overlay once and waits for it to go. By hand only.
+    #[test]
+    #[ignore]
+    fn identify_for_a_moment() {
+        let (monitors, _, _) = os_read::monitors().expect("a configuration");
+        identify::show(monitors.iter().map(|m| (m.rect, m.number)).collect());
+        std::thread::sleep(Duration::from_secs(6));
+    }
+
+    /// The one real apply, by hand: the LAST monitor's refresh rate to another rate at the same
+    /// resolution, then back through the page's own revert, checking both readings. Set
+    /// SHELLMAN_DISPLAY_REAL_APPLY=1 to allow it.
+    #[test]
+    #[ignore]
+    fn real_apply_and_revert_of_a_refresh_rate() {
+        if std::env::var_os("SHELLMAN_DISPLAY_REAL_APPLY").is_none() {
+            return;
+        }
+        let p = DisplayPage::start(Arc::new(|| {}));
+        let first = first_page(&p).expect("a reading");
+        let m = first.monitors.last().unwrap().clone();
+        let g = m.groups.iter().find(|g| g.w as i32 == m.rect.w && g.h as i32 == m.rect.h).unwrap();
+        let Some(other) = g.rates.iter().copied().find(|r| *r != m.hz) else { return };
+        let mut staged: Vec<_> = first.monitors.iter().map(page::Change::of).collect();
+        staged.last_mut().unwrap().hz = other;
+        let primary = first.monitors.iter().find(|x| x.primary).unwrap().id.clone();
+        p.apply(staged, &primary);
+        let until = Instant::now() + Duration::from_secs(10);
+        let mut pending = None;
+        while Instant::now() < until && pending.is_none() {
+            pending = first_page(&p).filter(|pg| pg.pending.is_some() || pg.notice.is_some());
+            if let Some(pg) = &pending {
+                println!("after apply: {} Hz (was {}), pending {}, notice {:?}", pg.monitors.last().unwrap().hz, m.hz, pg.pending.is_some(), pg.notice);
+            }
+        }
+        std::thread::sleep(Duration::from_secs(1));
+        p.revert();
+        std::thread::sleep(Duration::from_secs(3));
+        p.refresh();
+        let back = first_page(&p).expect("a reading");
+        println!("after revert: {} Hz, others {:?}", back.monitors.last().unwrap().hz, back.monitors.iter().map(|x| (x.hz, x.rect)).collect::<Vec<_>>());
+        assert_eq!(back.monitors, first.monitors);
+    }
 }

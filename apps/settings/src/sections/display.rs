@@ -245,10 +245,9 @@ fn monitor_section(ui: &mut egui::Ui, v: &mut DisplayView, m: &Monitor) {
     if let Some(screen) = v.screens.iter().find(|s| s.id == m.id) {
         page::label(ui, "Brightness");
         let id = egui::Id::new(("display-brightness", &m.id));
-        if let Some(level) = level_slider(ui, id, screen.percent as f32 / 100.0, false, 0.0) {
-            if let Some(b) = &v.brightness {
-                b.set(&m.id, (level * 100.0).round() as u8);
-            }
+        let level = ui.horizontal(|ui| level_slider(ui, id, screen.percent as f32 / 100.0, false, 0.0)).inner;
+        if let (Some(level), Some(b)) = (level, &v.brightness) {
+            b.set(&m.id, (level * 100.0).round() as u8);
         }
         ui.add_space(10.0);
     }

@@ -175,12 +175,14 @@ pub fn set_scale(snap: &Snapshot, id: &str, percent: u32) -> Result<(), String> 
 /// HDR on or off: DISPLAYCONFIG_SET_ADVANCED_COLOR_STATE, bit 0 is "enable".
 pub fn set_hdr(snap: &Snapshot, id: &str, on: bool) -> Result<(), String> {
     let p = os_read::path_of(snap, id).ok_or("That display is gone.")?;
-    let mut s = DISPLAYCONFIG_SET_ADVANCED_COLOR_STATE::default();
-    s.header = DISPLAYCONFIG_DEVICE_INFO_HEADER {
-        r#type: DISPLAYCONFIG_DEVICE_INFO_SET_ADVANCED_COLOR_STATE,
-        size: size_of::<DISPLAYCONFIG_SET_ADVANCED_COLOR_STATE>() as u32,
-        adapterId: p.targetInfo.adapterId,
-        id: p.targetInfo.id,
+    let mut s = DISPLAYCONFIG_SET_ADVANCED_COLOR_STATE {
+        header: DISPLAYCONFIG_DEVICE_INFO_HEADER {
+            r#type: DISPLAYCONFIG_DEVICE_INFO_SET_ADVANCED_COLOR_STATE,
+            size: size_of::<DISPLAYCONFIG_SET_ADVANCED_COLOR_STATE>() as u32,
+            adapterId: p.targetInfo.adapterId,
+            id: p.targetInfo.id,
+        },
+        ..Default::default()
     };
     s.Anonymous.value = on as u32;
     // SAFETY: the packet carries its own size.
