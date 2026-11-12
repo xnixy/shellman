@@ -52,7 +52,9 @@ pub fn show(hwnd: isize, pinned: Option<bool>, windows: usize) -> Choice {
         );
         let _ = PostMessageW(Some(hwnd), WM_NULL, WPARAM(0), LPARAM(0));
         let _ = DestroyMenu(menu);
-        if !before.is_invalid() && before != hwnd {
+        // Only if nothing took the foreground meanwhile: a click on another window to dismiss the
+        // menu activates that window, which must stay in front.
+        if !before.is_invalid() && before != hwnd && GetForegroundWindow() == hwnd {
             let _ = SetForegroundWindow(before);
         }
         match picked.0 as usize {

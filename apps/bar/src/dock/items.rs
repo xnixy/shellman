@@ -84,7 +84,7 @@ pub fn build(pins: &[Pin], files: &Pin, windows: &[AppWindow], prev_running: &[S
             files_item.windows.push(w.hwnd);
         } else if let Some(item) = pinned.iter_mut().find(|i| i.app_id.eq_ignore_ascii_case(&w.app_id)) {
             item.windows.push(w.hwnd);
-        } else if let Some(item) = running.iter_mut().find(|i| i.app_id == w.app_id) {
+        } else if let Some(item) = running.iter_mut().find(|i| i.app_id.eq_ignore_ascii_case(&w.app_id)) {
             item.windows.push(w.hwnd);
         } else {
             let mut item = Item::new(Section::Running, &w.app_id, w.exe.clone());
@@ -93,7 +93,7 @@ pub fn build(pins: &[Pin], files: &Pin, windows: &[AppWindow], prev_running: &[S
         }
     }
     // Stable sort: known apps by their old place, new ones after them in window order.
-    running.sort_by_key(|i| prev_running.iter().position(|p| *p == i.app_id).unwrap_or(usize::MAX));
+    running.sort_by_key(|i| prev_running.iter().position(|p| p.eq_ignore_ascii_case(&i.app_id)).unwrap_or(usize::MAX));
     let mut out = vec![files_item];
     out.extend(pinned);
     out.extend(running);
@@ -175,12 +175,13 @@ mod tests {
         let items = build(
             &[],
             &files,
-            &[win(1, "c:\\a.exe"), win(2, "c:\\new.exe"), win(3, "c:\\b.exe")],
+            &[win(1, "c:\\a.exe"), win(2, "c:\\new.exe"), win(3, "c:\\B.exe"), win(4, "C:\\NEW.exe")],
             &prev,
         );
         let order: Vec<&str> =
             items.iter().filter(|i| i.section == Section::Running).map(|i| i.app_id.as_str()).collect();
-        assert_eq!(order, vec!["c:\\b.exe", "c:\\a.exe", "c:\\new.exe"]);
+        // Differences in case never split an app into two icons.
+        assert_eq!(order, vec!["c:\\B.exe", "c:\\a.exe", "c:\\new.exe"]);
     }
 
     #[test]
