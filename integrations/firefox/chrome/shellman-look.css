@@ -1,0 +1,28 @@
+/* shellman-look.css
+ *
+ * The ONLY file shellman needs to regenerate when the user changes their look.
+ * Everything else (shellman-islands.css, shellman-popups.css) derives from these.
+ *
+ * --shellman-accent         accent fill: selected tab chip, focus ring, selection, primary buttons.
+ *                           Default is shellman accent preset 5 (Blue, rgb(0 103 192)).
+ * --shellman-on-accent      text/icon colour that sits on the accent.
+ * --shellman-island-fill    the tint laid over the backdrop inside every island (base colour).
+ * --shellman-island-opacity how much of that tint covers the backdrop, 0..1.
+ *                           0.43 is the shellman glass setting 1.0 ("clearest"): the same
+ *                           110/255 alpha shellman's own islands use. Raise it for a more solid look.
+ */
+
+:root {
+  --shellman-accent: #0067c0;
+  --shellman-on-accent: #ffffff;
+  --shellman-island-opacity: 0.43;
+  /* dark: shellman's neutral grey 10 with 6% of the accent mixed in */
+  --shellman-island-fill: #0a1015;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    /* light: grey 238 with 6% accent */
+    --shellman-island-fill: #e0e6eb;
+  }
+}

@@ -1,0 +1,36 @@
+/* shellman Islands: Firefox's own pages only. Websites are never restyled.
+ * about:home / about:newtab get a transparent background so the page island shows the glass;
+ * about:preferences and friends are left alone on purpose (readable first). */
+@import url("shellman-look.css");
+
+@-moz-document url-prefix("about:home"), url-prefix("about:newtab"), url("about:blank") {
+  :root,
+  body,
+  .outer-wrapper {
+    background: transparent !important;
+    background-color: transparent !important;
+  }
+  :root {
+    --newtab-background-color: transparent;
+    --newtab-background-color-secondary: color-mix(in srgb, var(--shellman-island-fill) 60%, transparent);
+    --newtab-primary-action-background: var(--shellman-accent);
+    --in-content-primary-button-background: var(--shellman-accent);
+    --in-content-primary-button-text-color: var(--shellman-on-accent);
+    --in-content-accent-color: var(--shellman-accent);
+    --focus-outline-color: var(--shellman-accent);
+  }
+}
+
+/* The bookmarks / history / synced-tabs panel is a chrome page inside the sidebar island:
+ * let the island show through and use the accent for focus. */
+@-moz-document url-prefix("chrome://browser/content/sidebar/"), url-prefix("chrome://browser/content/firefoxview/") {
+  :root {
+    --focus-outline-color: var(--shellman-accent);
+    --color-accent-primary: var(--shellman-accent);
+    --color-accent-primary-hover: color-mix(in srgb, var(--shellman-accent) 88%, white);
+    --color-accent-primary-active: color-mix(in srgb, var(--shellman-accent) 78%, black);
+    --button-background-color-primary: var(--shellman-accent);
+    --button-text-color-primary: var(--shellman-on-accent);
+    --border-color-interactive-focus: var(--shellman-accent);
+  }
+}

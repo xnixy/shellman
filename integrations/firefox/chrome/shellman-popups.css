@@ -1,0 +1,114 @@
+/* shellman-popups.css: menus, panels, context menus and the URL bar dropdown as dark glass islands.
+ * Needs widget.windows.mica.popups so Windows draws the backdrop behind them. */
+
+:is(menupopup, panel) {
+  --panel-background-color: color-mix(in srgb, var(--shellman-island-fill) calc(var(--shellman-island-opacity) * 100% + 40%), transparent);
+  --panel-text-color: var(--sm-text);
+  --panel-border-color: var(--sm-hair);
+  --panel-border-radius: 18px;
+  --panel-padding: 6px;
+  --panel-box-shadow-margin: 0px;
+  --panel-box-shadow: 0 12px 32px #00000066;
+  --arrowpanel-background: var(--panel-background-color);
+  --arrowpanel-color: var(--sm-text);
+  --arrowpanel-border-color: var(--sm-hair);
+  --arrowpanel-border-radius: 22px;
+  --arrowpanel-padding: 10px;
+  --panel-menuitem-border-radius: 12px;
+  --menuitem-border-radius: 12px;
+  --panel-separator-color: var(--sm-hair-soft);
+  --panel-banner-item-background-color: var(--sm-soft);
+  --panel-banner-item-hover-bgcolor: var(--sm-soft-hover);
+  --button-background-color-primary: var(--shellman-accent);
+  --button-text-color-primary: var(--shellman-on-accent);
+  --button-background-color-primary-hover: color-mix(in srgb, var(--shellman-accent) 88%, white);
+  --focus-outline-color: var(--shellman-accent);
+}
+
+/* menu items: accent selection */
+menupopup menuitem,
+menupopup menu,
+.subviewbutton,
+.panel-subview-body toolbarbutton {
+  border-radius: 12px !important;
+}
+
+menupopup :is(menu, menuitem)[_moz-menuactive]:not([disabled="true"]),
+.subviewbutton:not([disabled]):is(:hover, [_moz-menuactive], :focus-visible),
+panelview toolbarbutton:not([disabled]):is(:hover, :focus-visible) {
+  background-color: var(--shellman-accent) !important;
+  color: var(--shellman-on-accent) !important;
+  --menuitem-hover-background-color: var(--shellman-accent);
+  --panel-item-hover-bgcolor: var(--shellman-accent);
+  --panel-item-hover-color: var(--shellman-on-accent);
+}
+
+menupopup :is(menu, menuitem)[_moz-menuactive]:not([disabled="true"]) :is(.menu-iconic-icon, .menu-icon, .menu-accel, .menu-text, label),
+.subviewbutton:not([disabled]):is(:hover, [_moz-menuactive]) :is(label, .toolbarbutton-icon, .toolbarbutton-text, .menu-accel) {
+  color: var(--shellman-on-accent) !important;
+  fill: currentColor;
+  -moz-context-properties: fill, fill-opacity;
+}
+
+menuseparator,
+toolbarseparator {
+  border-color: var(--sm-hair-soft) !important;
+  margin-inline: 8px !important;
+}
+
+/* ---- URL bar dropdown: it grows out of the pill into a rounded island ---- */
+
+#urlbar[breakout][breakout-extend] > #urlbar-background {
+  background: color-mix(in srgb, var(--shellman-island-fill) 90%, transparent) !important;
+  border: 1px solid var(--sm-hair) !important;
+  border-radius: var(--sm-radius) !important;
+  box-shadow: 0 18px 44px #00000066, 0 0 0 3px var(--sm-accent-ring) !important;
+  backdrop-filter: blur(24px) saturate(1.4);
+}
+
+#urlbar[breakout][breakout-extend][open] > #urlbar-background {
+  border-color: var(--shellman-accent) !important;
+}
+
+.urlbarView {
+  --urlbarview-border-radius: 14px;
+  --urlbarview-background-color-selected: var(--shellman-accent);
+  --urlbarview-result-button-selected-background-color: var(--shellman-on-accent);
+  color: var(--sm-text);
+}
+
+.urlbarView-row {
+  border-radius: 14px !important;
+}
+
+.urlbarView-row[selected],
+.urlbarView-row[selected]:hover {
+  background: var(--shellman-accent) !important;
+  color: var(--shellman-on-accent) !important;
+}
+
+.urlbarView-row[selected] :is(.urlbarView-title, .urlbarView-url, .urlbarView-action, .urlbarView-title-separator, .urlbarView-secondary) {
+  color: var(--shellman-on-accent) !important;
+}
+
+.urlbarView-row:not([selected]):hover {
+  background: var(--sm-soft-hover) !important;
+}
+
+.search-one-offs .searchbar-engine-one-off-item {
+  border-radius: 999px !important;
+}
+
+.search-one-offs .searchbar-engine-one-off-item[selected] {
+  background: var(--shellman-accent) !important;
+}
+
+/* ---- Tooltips ---- */
+
+tooltip {
+  appearance: none !important;
+  background: color-mix(in srgb, var(--shellman-island-fill) 92%, transparent) !important;
+  color: var(--sm-text) !important;
+  border: 1px solid var(--sm-hair) !important;
+  border-radius: 10px !important;
+}
