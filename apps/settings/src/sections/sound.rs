@@ -53,25 +53,25 @@ pub fn show(ui: &mut egui::Ui, st: &mut State) {
     let Some(handle) = handle.as_ref() else { return };
     if !*loaded {
         // The page is open at once; the worker fills it in as soon as Windows has answered.
-        ui.label(theme::muted("Reading the audio devices..."));
+        page::group(ui, "", |ui| {
+            ui.label(theme::muted("Reading the audio devices..."));
+        });
         return;
     }
     // The meter runs only while the microphone is on screen and the window is in use.
     let watching = ui.ctx().input(|i| i.focused);
-    device_section(ui, handle, Flow::Output, &page.output, None, false);
-    page::gap(ui);
-    device_section(ui, handle, Flow::Input, &page.input, Some(&mut *meter), watching);
-    page::gap(ui);
-    sound_mixer::show(ui, handle, &page.sessions, &mut st.thumbs);
-    page::gap(ui);
-    if let Some(why) = &page.notice {
-        ui.add_space(6.0);
-        ui.label(theme::muted(why).size(12.0));
-    }
-    page::gap(ui);
-    if link_row(ui, "More sound settings").clicked() {
-        sound_dev::open_classic(0);
-    }
+    page::group(ui, "", |ui| device_section(ui, handle, Flow::Output, &page.output, None, false));
+    page::group(ui, "", |ui| device_section(ui, handle, Flow::Input, &page.input, Some(&mut *meter), watching));
+    page::group(ui, "", |ui| sound_mixer::show(ui, handle, &page.sessions, &mut st.thumbs));
+    page::group(ui, "", |ui| {
+        if let Some(why) = &page.notice {
+            ui.label(theme::muted(why).size(12.0));
+            ui.add_space(8.0);
+        }
+        if link_row(ui, "More sound settings").clicked() {
+            sound_dev::open_classic(0);
+        }
+    });
 }
 
 /// `meter` is the microphone section's alone: the output section has none, and two sections

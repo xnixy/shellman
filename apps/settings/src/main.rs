@@ -11,8 +11,8 @@ mod state;
 
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use shellman_ui::appearance::Appearance;
+use shellman_ui::glass::{GlassPanel, Style};
 use shellman_ui::{theme, window};
-use windows::Win32::Foundation::HWND;
 
 fn main() -> eframe::Result {
     // `--page sound` opens on that page; a window already open is brought to it.
@@ -27,8 +27,8 @@ fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("shellman Settings")
-            .with_inner_size([880.0, 620.0])
-            .with_min_inner_size([640.0, 420.0])
+            .with_inner_size([880.0, 640.0])
+            .with_min_inner_size([700.0, 540.0])
             .with_transparent(true)
             .with_decorations(false),
         // Without this Windows picks the spot, and it cascades the window down under the dock.
@@ -49,16 +49,18 @@ fn main() -> eframe::Result {
             look.apply(&cc.egui_ctx);
             theme::apply(&cc.egui_ctx);
             let mut hwnd = 0isize;
-            let mut glass = false;
+            let mut panel = None;
             if let Ok(handle) = cc.window_handle() {
                 if let RawWindowHandle::Win32(win32) = handle.as_raw() {
                     hwnd = win32.hwnd.get();
-                    glass = window::frost_window(HWND(hwnd as *mut _));
-                    window::remove_caption(HWND(hwnd as *mut _), glass);
+                    // No frame of Windows' own; the glass pieces are laid out by the app.
+                    window::frameless(hwnd);
+                    panel = Some(GlassPanel::attach(hwnd, Style::from_theme(page::GROUP_RADIUS)));
                 }
             }
             first.serve(hwnd, cc.egui_ctx.clone());
-            Ok(Box::new(app::SettingsApp::new(&cc.egui_ctx, look, hwnd, glass, first, page)))
+            let panel = panel.ok_or("the window has no handle")?;
+            Ok(Box::new(app::SettingsApp::new(&cc.egui_ctx, look, panel, first, page)))
         }),
     )
 }

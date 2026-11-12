@@ -10,7 +10,6 @@ use shellman_core::settings::shell::ShellSettings;
 use shellman_core::system::app_name;
 use shellman_core::thumbs::Thumbs;
 use shellman_ui::appearance::Appearance;
-use shellman_ui::window;
 
 pub struct State {
     pub look: Appearance,
@@ -31,13 +30,12 @@ pub struct State {
     pub apps: AppsView,
     /// The Startup apps page's live state; started when the page is shown.
     pub startup: StartupView,
-    pub hwnd: isize,
     /// Whether the window has real acrylic; without it the glass slider has nothing to do.
     pub glass: bool,
 }
 
 impl State {
-    pub fn new(ctx: &egui::Context, look: Appearance, hwnd: isize, glass: bool) -> Self {
+    pub fn new(ctx: &egui::Context, look: Appearance, glass: bool) -> Self {
         let mut state = Self {
             look,
             dock: DockSettings::load(),
@@ -51,7 +49,6 @@ impl State {
             display: DisplayView::default(),
             apps: AppsView::default(),
             startup: StartupView::default(),
-            hwnd,
             glass,
         };
         state.rebuild_names();
@@ -73,10 +70,9 @@ impl State {
         dock::icon_source(&pin.app_id, pin.exe.as_deref())
     }
 
-    /// Make this window wear the look, and repaint its frame to match.
+    /// Make this window wear the look.
     pub fn apply_look(&self, ctx: &egui::Context) {
         self.look.apply(ctx);
-        window::paint_frame(self.hwnd);
     }
 
     pub fn save_look(&self) {

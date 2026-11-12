@@ -59,27 +59,32 @@ pub fn show(ui: &mut egui::Ui, st: &mut State) {
     let StartupView { handle, page, loaded, pending } = &mut st.startup;
     let Some(handle) = handle.as_ref() else { return };
     if !*loaded {
-        ui.label(theme::muted("Reading the startup apps..."));
+        page::group(ui, "", |ui| {
+            ui.label(theme::muted("Reading the startup apps..."));
+        });
         return;
     }
-    if page.rows.is_empty() {
-        ui.label(theme::muted("No app is set to start when you sign in."));
-    }
-    ui.spacing_mut().item_spacing.y = 4.0;
-    for r in &page.rows {
-        let key = r.key();
-        let mut on = pending.get(&key).copied().unwrap_or(r.item.enabled);
-        if row(ui, r, &mut on, &mut st.thumbs) {
-            pending.insert(key, on);
-            handle.set_enabled(&r.item, on);
+    page::group(ui, "Starts when you sign in", |ui| {
+        if page.rows.is_empty() {
+            ui.label(theme::muted("No app is set to start when you sign in."));
         }
-    }
-    if let Some(why) = &page.notice {
-        ui.add_space(8.0);
-        ui.label(theme::muted(why).size(12.0));
-    }
-    page::gap(ui);
-    ui.label(theme::muted("Startup tasks of Store apps are not listed here.").size(12.0));
+        ui.spacing_mut().item_spacing.y = 4.0;
+        for r in &page.rows {
+            let key = r.key();
+            let mut on = pending.get(&key).copied().unwrap_or(r.item.enabled);
+            if row(ui, r, &mut on, &mut st.thumbs) {
+                pending.insert(key, on);
+                handle.set_enabled(&r.item, on);
+            }
+        }
+        if let Some(why) = &page.notice {
+            ui.add_space(8.0);
+            ui.label(theme::muted(why).size(12.0));
+        }
+    });
+    page::group(ui, "", |ui| {
+        ui.label(theme::muted("Startup tasks of Store apps are not listed here.").size(12.0));
+    });
 }
 
 /// One item: icon, name over command, and the switch. True when the switch was pressed.

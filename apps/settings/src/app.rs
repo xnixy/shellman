@@ -1,31 +1,36 @@
-//! The window: a sidebar of sections on the left, the chosen page on a sheet on the right. The
-//! top of both is the title bar, so the glass runs unbroken to the window's edge.
+//! The window: islands of glass with the desktop showing between them. A pill rail of sections
+//! at the left, a title pill on top, and the page below it as one island per group, scrolling
+//! under the title pill.
 
 use crate::instance::Instance;
+use crate::page;
 use crate::sections::Section;
 use crate::state::State;
-use egui::{Align, CornerRadius, Layout, Sense, Stroke, Vec2};
-use shellman_ui::nav::{nav_row, sidebar_title};
-use shellman_ui::theme::{self, colors, glyph, AccentChoice};
-use shellman_ui::widgets::{caption_button, window_drag};
+use egui::{pos2, vec2, Align2, Rect, Sense, UiBuilder};
+use shellman_ui::chips::{self, Chip};
+use shellman_ui::glass::islands::{self, Island};
+use shellman_ui::glass::{GlassPanel, Style};
+use shellman_ui::theme::{self, colors, icon_font, semibold_font, AccentChoice};
 use std::time::Duration;
 
-const SIDEBAR_W: f32 = 200.0;
-/// Height of the title bar when Windows draws no caption buttons to measure.
-const CAPTION_H: f32 = 40.0;
-/// The page's content is kept to a readable width, however wide the window.
-const PAGE_W: f32 = 560.0;
+/// Space between the window's edge and the islands, and between islands.
+const MARGIN: f32 = 12.0;
+const RAIL_W: f32 = 56.0;
+const RAIL_ICON: f32 = 34.0;
+const TITLE_H: f32 = 46.0;
+const BUTTON_H: f32 = 30.0;
+/// The page's column is kept to a readable width, however wide the window.
+const COLUMN_MAX: f32 = 760.0;
 /// How long to wait before reading the files again if our own saves were still going.
 const RELOAD_RETRY: Duration = Duration::from_millis(100);
 
 pub struct SettingsApp {
     st: State,
     section: Section,
+    panel: GlassPanel,
     /// Wakes the window when something in the settings folder changes.
     watcher: shellman_core::watch::Watcher,
     reload_due: bool,
-    /// Size of the Windows caption buttons in points, when Windows draws them over the glass.
-    caption: Option<Vec2>,
     /// Keeps the single-instance mutex for as long as the process runs.
     _instance: Instance,
 }
@@ -34,8 +39,7 @@ impl SettingsApp {
     pub fn new(
         ctx: &egui::Context,
         look: shellman_ui::appearance::Appearance,
-        hwnd: isize,
-        glass: bool,
+        panel: GlassPanel,
         instance: Instance,
         page: Option<Section>,
     ) -> Self {
@@ -44,12 +48,13 @@ impl SettingsApp {
             // The folder may not exist yet; saving makes it, and the first run saves the look.
             watcher.set_dirs(vec![dir]);
         }
+        let glass = panel.composed();
         Self {
-            st: State::new(ctx, look, hwnd, glass),
+            st: State::new(ctx, look, glass),
             section: page.unwrap_or(Section::Appearance),
+            panel,
             watcher,
             reload_due: false,
-            caption: None,
             _instance: instance,
         }
     }
@@ -57,12 +62,9 @@ impl SettingsApp {
     /// Follow the Windows app mode, and the Windows accent while that is the choice. Checked as
     /// frames come, not on a timer.
     fn track_system(&self, ctx: &egui::Context) {
-        let mut repaint_frame = theme::set_light(ctx.theme() == egui::Theme::Light);
+        theme::set_light(ctx.theme() == egui::Theme::Light);
         if self.st.look.accent == AccentChoice::System {
-            repaint_frame |= theme::set_accent(ctx, AccentChoice::System.resolve());
-        }
-        if repaint_frame {
-            shellman_ui::window::paint_frame(self.st.hwnd);
+            theme::set_accent(ctx, AccentChoice::System.resolve());
         }
     }
 
@@ -91,126 +93,128 @@ impl SettingsApp {
     }
 
     fn layout(&mut self, ctx: &egui::Context) {
-        let ppp = ctx.pixels_per_point();
-        self.caption = if self.st.glass {
-            shellman_ui::window::caption_buttons_size(self.st.hwnd)
-                .map(|(w, h)| Vec2::new(w as f32 / ppp, h as f32 / ppp))
-        } else {
-            None
-        };
-        let caption_h = self.caption.map_or(CAPTION_H, |s| s.y.clamp(32.0, 48.0));
-        let c = colors();
-        // One even tint over the whole window; nothing else paints a band of its own.
-        ctx.layer_painter(egui::LayerId::background()).rect_filled(
-            ctx.screen_rect(),
-            CornerRadius::ZERO,
-            if self.st.glass { c.shell } else { c.bg },
-        );
-        egui::SidePanel::left("sidebar")
-            .frame(egui::Frame::new().inner_margin(egui::Margin { left: 10, right: 8, top: 0, bottom: 10 }))
-            .exact_width(SIDEBAR_W)
-            .resizable(false)
-            .show_separator_line(false)
-            .show(ctx, |ui| {
-                sidebar_title(ui, caption_h, "Settings");
-                ui.add_space(2.0);
-                ui.spacing_mut().item_spacing.y = 2.0;
-                for section in Section::ALL {
-                    if nav_row(ui, section.glyph(), section.label(), self.section == section).clicked() {
-                        self.section = section;
-                    }
-                }
-            });
-        egui::CentralPanel::default()
-            .frame(egui::Frame::new().inner_margin(egui::Margin { left: 0, right: 10, top: 0, bottom: 10 }))
-            .show(ctx, |ui| {
-                egui::TopBottomPanel::top("title")
-                    .frame(egui::Frame::new())
-                    .show_separator_line(false)
-                    .exact_height(caption_h)
-                    .show_inside(ui, |ui| self.title_bar(ui, caption_h));
-                self.sheet(ui);
-            });
-    }
+        self.panel.set_style(Style::from_theme(page::GROUP_RADIUS));
+        let mut list: Vec<Island> = Vec::new();
+        egui::CentralPanel::default().frame(egui::Frame::new()).show(ctx, |ui| {
+            let screen = ctx.screen_rect();
+            let under = ui.painter().add(egui::Shape::Noop);
+            islands::drag_gaps(ui, screen);
 
-    /// The strip along the top: it drags the window, and holds the caption buttons when Windows
-    /// does not draw them.
-    fn title_bar(&self, ui: &mut egui::Ui, height: f32) {
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            ui.spacing_mut().item_spacing.x = 0.0;
-            if self.caption.is_none() {
-                let maximized = ui.input(|i| i.viewport().maximized.unwrap_or(false));
-                if caption_button(ui, glyph::CHROME_CLOSE, true, height).clicked() {
-                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
-                }
-                let g = if maximized { glyph::RESTORE } else { glyph::MAXIMIZE };
-                if caption_button(ui, g, false, height).clicked() {
-                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
-                }
-                if caption_button(ui, glyph::MINIMIZE, false, height).clicked() {
-                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Minimized(true));
-                }
+            // The title pill and the page share one column; the rail stands left of it.
+            let left = screen.left() + MARGIN + RAIL_W + MARGIN;
+            let room = screen.right() - MARGIN - left;
+            let buttons_w = BUTTON_H * 3.0;
+            let width = room.min(COLUMN_MAX);
+            // Wider than the column, the window buttons sit at the window's corner instead.
+            let apart = room > width + MARGIN + buttons_w + 16.0;
+            let title = Rect::from_min_size(pos2(left, screen.top() + MARGIN), vec2(width, TITLE_H));
+            let content_top = title.bottom() + MARGIN;
+
+            list.push(Island::pill(title));
+            self.title(ui, title, !apart);
+            if apart {
+                let corner = Rect::from_min_size(
+                    pos2(screen.right() - MARGIN - buttons_w - 16.0, title.top()),
+                    vec2(buttons_w + 16.0, TITLE_H),
+                );
+                list.push(Island::pill(corner));
+                chips::window_buttons(ui, Rect::from_center_size(corner.center(), vec2(buttons_w, BUTTON_H)));
             }
-            let (_, drag) = ui.allocate_exact_size(
-                Vec2::new(ui.available_width(), height),
-                Sense::click_and_drag(),
-            );
-            window_drag(ui, &drag);
+            self.rail(ui, &mut list, screen, content_top);
+
+            let area = Rect::from_min_max(pos2(left, content_top), pos2(left + width, screen.bottom() - MARGIN));
+            self.page(ui, area, &mut list);
+
+            if !self.panel.composed() {
+                ui.painter().set(under, egui::Shape::Vec(islands::solid_shapes(&list, &self.panel.style())));
+            }
         });
+        self.panel.set_islands(&list, ctx.pixels_per_point());
     }
 
-    /// The page, on the lighter sheet, scrolling when it is taller than the window.
-    fn sheet(&mut self, ui: &mut egui::Ui) {
+    /// The pill on top: "Settings / <page>", and the window buttons when `buttons` is set.
+    fn title(&self, ui: &mut egui::Ui, rect: Rect, buttons: bool) {
         let c = colors();
-        egui::Frame::new()
-            .fill(c.sheet)
-            .stroke(Stroke::new(1.0_f32, c.hairline))
-            .corner_radius(CornerRadius::same(12))
-            .inner_margin(egui::Margin::same(8))
-            // Over glass the sheet is see-through, and a shadow under it would darken its inside.
-            .shadow(egui::Shadow {
-                offset: [0, 2],
-                blur: 16,
-                spread: 0,
-                color: if self.st.glass { egui::Color32::TRANSPARENT } else { c.shadow },
-            })
-            .show(ui, |ui| {
-                let size = ui.available_size();
-                ui.set_min_size(size);
-                egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.add_space(16.0);
-                        ui.vertical(|ui| {
-                            ui.set_max_width(PAGE_W.min(ui.available_width() - 24.0));
-                            self.section.show(ui, &mut self.st);
-                            // The sound worker runs only while its page is shown.
-                            if self.section != Section::Sound {
-                                self.st.sound.stop();
-                            }
-                            if self.section != Section::Display {
-                                self.st.display.stop();
-                            }
-                            if self.section != Section::Apps {
-                                self.st.apps.stop();
-                            }
-                            if self.section != Section::Startup {
-                                self.st.startup.stop();
-                            }
-                            ui.add_space(24.0);
-                        });
-                    });
-                });
+        let y = rect.center().y;
+        let name = ui.painter().text(pos2(rect.left() + 22.0, y), Align2::LEFT_CENTER, "Settings", semibold_font(15.0), c.text);
+        let slash = ui.painter().text(pos2(name.right() + 10.0, y), Align2::LEFT_CENTER, "/", egui::FontId::proportional(15.0), c.muted);
+        let label = self.section.label();
+        let w = chips::chip_width(ui, label, false, Chip::Accent);
+        let chip = Rect::from_center_size(pos2(slash.right() + 10.0 + w / 2.0, y), vec2(w, chips::CHIP_H));
+        chips::chip(ui, chip, egui::Id::new("title-chip"), label, None, Chip::Accent);
+        if buttons {
+            chips::window_buttons(ui, Rect::from_min_max(pos2(rect.right() - 10.0 - BUTTON_H * 3.0, y - BUTTON_H / 2.0), pos2(rect.right() - 10.0, y + BUTTON_H / 2.0)));
+        }
+    }
+
+    /// The pill of sections: one icon each, the current one filled with the accent.
+    fn rail(&mut self, ui: &mut egui::Ui, list: &mut Vec<Island>, screen: Rect, top: f32) {
+        let c = colors();
+        let n = Section::ALL.len() as f32;
+        let wanted = 28.0 + n * RAIL_ICON + (n - 1.0) * 4.0;
+        let height = wanted.min(screen.bottom() - MARGIN - top);
+        let rail = Rect::from_min_size(pos2(screen.left() + MARGIN, top), vec2(RAIL_W, height));
+        list.push(Island::pill(rail));
+        let (soft, hover, _) = chips::soft_colors(c.light);
+        let mut y = rail.top() + 14.0;
+        for section in Section::ALL {
+            let cell = Rect::from_min_size(pos2(rail.center().x - RAIL_ICON / 2.0, y), vec2(RAIL_ICON, RAIL_ICON));
+            y += RAIL_ICON + 4.0;
+            if cell.bottom() > rail.bottom() {
+                break;
+            }
+            let resp = ui.interact(cell, egui::Id::new(("rail", section.slug())), Sense::click());
+            let current = self.section == section;
+            let (fill, fg) = if current {
+                (c.accent_fill, c.on_accent)
+            } else if resp.hovered() {
+                (hover, c.text)
+            } else {
+                (soft.gamma_multiply(0.0), c.muted)
+            };
+            ui.painter().rect_filled(cell, 12.0, fill);
+            ui.painter().text(cell.center(), Align2::CENTER_CENTER, section.glyph(), icon_font(16.0), fg);
+            if resp.on_hover_text(section.label()).clicked() {
+                self.section = section;
+            }
+        }
+    }
+
+    /// The page, scrolling under the title pill: its groups become islands, clipped to `area`.
+    fn page(&mut self, ui: &mut egui::Ui, area: Rect, list: &mut Vec<Island>) {
+        page::begin_frame();
+        ui.scope_builder(UiBuilder::new().max_rect(area), |ui| {
+            ui.spacing_mut().scroll = egui::style::ScrollStyle::floating();
+            // Dragging the gaps between islands moves the window, so the area must not take it.
+            egui::ScrollArea::vertical().auto_shrink([false, false]).drag_to_scroll(false).show(ui, |ui| {
+                // A page that declares no groups goes on one island as a whole.
+                if self.section.grouped() {
+                    self.section.show(ui, &mut self.st);
+                } else {
+                    page::group(ui, "", |ui| self.section.show(ui, &mut self.st));
+                }
+                // The workers run only while their page is shown.
+                if self.section != Section::Sound {
+                    self.st.sound.stop();
+                }
+                if self.section != Section::Display {
+                    self.st.display.stop();
+                }
+                if self.section != Section::Startup {
+                    self.st.startup.stop();
+                }
+                if self.section != Section::Apps {
+                    self.st.apps.stop();
+                }
             });
+        });
+        list.extend(page::take_groups().into_iter().map(|r| Island::new(r, page::GROUP_RADIUS)));
     }
 }
 
 impl eframe::App for SettingsApp {
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
-        if self.st.glass {
-            [0.0, 0.0, 0.0, 0.0]
-        } else {
-            colors().bg.to_normalized_gamma_f32()
-        }
+        [0.0; 4]
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {

@@ -117,27 +117,30 @@ pub fn show(ui: &mut egui::Ui, st: &mut State) {
     let v = &mut st.display;
     let Some(h) = v.handle.clone() else { return };
     if !v.loaded {
-        ui.label(theme::muted("Reading the displays..."));
+        page::group(ui, "", |ui| {
+            ui.label(theme::muted("Reading the displays..."));
+        });
         return;
     }
     if v.page.monitors.is_empty() {
-        ui.label(theme::muted("Windows reports no active display."));
+        page::group(ui, "", |ui| {
+            ui.label(theme::muted("Windows reports no active display."));
+        });
         return;
     }
     if let Some(deadline) = v.page.pending {
-        confirm(ui, &h, deadline);
-        page::gap(ui);
+        page::group(ui, "", |ui| confirm(ui, &h, deadline));
     }
     let duplicated = v.page.topology == Some(Topology::Duplicate);
-    arrangement(ui, v, duplicated);
-    page::gap(ui);
+    page::group(ui, "", |ui| arrangement(ui, v, duplicated));
     if let Some(m) = v.page.monitors.iter().find(|m| m.id == v.selected).cloned() {
-        monitor_section(ui, v, &m);
-        page::gap(ui);
+        page::group(ui, "", |ui| monitor_section(ui, v, &m));
     }
-    apply_row(ui, v);
-    page::gap(ui);
-    links(ui);
+    page::group(ui, "", |ui| {
+        apply_row(ui, v);
+        page::gap(ui);
+        links(ui);
+    });
 }
 
 /// "Keep these display settings?" with the seconds left. The worker reverts by itself at the end;

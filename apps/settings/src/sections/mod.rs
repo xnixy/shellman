@@ -90,6 +90,22 @@ impl Section {
 }
 
 impl Section {
+    /// Whether the page lays itself out in `page::group`s. Any other page is put on one island
+    /// by the window, so a new page needs no groups to look right.
+    pub fn grouped(self) -> bool {
+        matches!(
+            self,
+            Section::Appearance
+                | Section::Sound
+                | Section::Display
+                | Section::Startup
+                | Section::Dock
+                | Section::TopBar
+                | Section::Launcher
+                | Section::About
+        )
+    }
+
     /// The name a `--page` argument and the single-instance events use.
     pub fn slug(self) -> &'static str {
         match self {
