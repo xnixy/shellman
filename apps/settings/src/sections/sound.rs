@@ -62,8 +62,13 @@ pub fn show(ui: &mut egui::Ui, st: &mut State) {
     // The meter runs only while the microphone is on screen and the window is in use.
     let watching = ui.ctx().input(|i| i.focused);
     page::group(ui, "", |ui| device_section(ui, handle, Flow::Output, &page.output, None, false));
-    page::group(ui, "", |ui| device_section(ui, handle, Flow::Input, &page.input, Some(&mut *meter), watching));
-    page::group(ui, "", |ui| sound_mixer::show(ui, handle, &page.sessions, &mut st.thumbs));
+    // The microphone and the mixer are small: side by side when the window is wide.
+    page::pair(
+        ui,
+        &mut st.thumbs,
+        ("", &mut |ui, _| device_section(ui, handle, Flow::Input, &page.input, Some(&mut *meter), watching)),
+        ("", &mut |ui, thumbs| sound_mixer::show(ui, handle, &page.sessions, thumbs)),
+    );
     page::group(ui, "", |ui| {
         if let Some(why) = &page.notice {
             ui.label(theme::muted(why).size(12.0));
@@ -175,10 +180,11 @@ fn details(ui: &mut egui::Ui, h: &SoundPage, flow: Flow, dev: &Device, detail: &
             page::label(ui, "Balance");
             ui.horizontal(|ui| {
                 ui.label(theme::muted("Left").size(11.5));
-                ui.spacing_mut().slider_width = 240.0;
-                let resp = ui.add(egui::Slider::new(&mut b, -1.0..=1.0).show_value(false));
+                let width = (ui.available_width() - 56.0).clamp(120.0, 300.0);
+                let out = shellman_ui::slider::thin(ui, egui::Id::new(("balance", &dev.id)), (b + 1.0) / 2.0, Some(width), true);
                 ui.label(theme::muted("Right").size(11.5));
-                if resp.changed() {
+                if let Some(v) = out.value {
+                    b = v * 2.0 - 1.0;
                     // A little play around the middle, so even is easy to land on.
                     h.set_balance(&dev.id, if b.abs() < 0.04 { 0.0 } else { b });
                 }

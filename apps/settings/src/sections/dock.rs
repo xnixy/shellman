@@ -23,20 +23,29 @@ enum Edit {
 pub fn show(ui: &mut egui::Ui, st: &mut State) {
     page::heading(ui, "Dock", "The icons at the bottom of the screen.");
 
-    page::group(ui, "Icon size", |ui| {
-        let options = IconSize::ALL.map(|s| (s, s.label()));
-        if page::segmented(ui, &mut st.dock.icon_size, &options) {
-            st.save_dock();
-        }
-    });
-
-    page::group(ui, "Show the dock on", |ui| {
-        // Kept with the bar's settings, since it decides which bar windows each monitor gets.
-        let options = Docks::ALL.map(|d| (d, d.label()));
-        if page::segmented(ui, &mut st.bar.docks, &options) {
-            st.save_bar();
-        }
-    });
+    page::pair(
+        ui,
+        st,
+        (
+            "Icon size",
+            &mut |ui, st| {
+                let options = IconSize::ALL.map(|s| (s, s.label()));
+                if page::segmented(ui, &mut st.dock.icon_size, &options) {
+                    st.save_dock();
+                }
+            },
+        ),
+        (
+            "Show the dock on",
+            &mut |ui, st| {
+                // Kept with the bar's settings, since it decides which bar windows each monitor gets.
+                let options = Docks::ALL.map(|d| (d, d.label()));
+                if page::segmented(ui, &mut st.bar.docks, &options) {
+                    st.save_bar();
+                }
+            },
+        ),
+    );
 
     page::group(ui, "Pinned apps", |ui| pinned(ui, st));
 }

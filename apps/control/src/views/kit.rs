@@ -1,8 +1,8 @@
-//! The control centre's building blocks: tiles, round glyph chips, thick sliders and round
+//! The control centre's building blocks: tiles, round glyph chips, thin sliders and round
 //! buttons. Borderless, in the text colour at low strength, with the accent for things that
 //! are on.
 
-use egui::{Align2, Color32, CornerRadius, FontId, Pos2, Rect, Response, Sense, Ui, Vec2};
+use egui::{Align2, Color32, FontId, Pos2, Rect, Response, Sense, Ui, Vec2};
 use shellman_ui::theme::{self, colors, icon_font, with_alpha, Colors};
 
 /// Spacing, in points.
@@ -11,7 +11,6 @@ pub const TILE_RADIUS: u8 = 18;
 pub const TILE_INSET: f32 = 12.0;
 pub const CHIP: f32 = 30.0;
 pub const GLYPH: f32 = 16.0;
-pub const SLIDER: f32 = 22.0;
 
 pub fn label_font() -> FontId {
     FontId::proportional(13.0)
@@ -97,48 +96,23 @@ pub struct SliderOut {
     pub dragging: bool,
 }
 
-/// A thick rounded track with `glyph` in its left end and the fill in the text colour; no
-/// knob. `value` is 0..=1.
+/// Width of the glyph that sits before a slider's track.
+const SLIDER_GLYPH_W: f32 = 26.0;
+
+/// A glyph (it can be clicked) and the shared thin slider after it. `value` is 0..=1.
 pub fn slider(ui: &mut Ui, id: egui::Id, value: f32, glyph: char) -> SliderOut {
     let c = colors();
-    let width = ui.available_width();
-    let (rect, _) = ui.allocate_exact_size(Vec2::new(width, SLIDER), Sense::hover());
-    let resp = ui.interact(rect, id, Sense::click_and_drag());
-    let origin = ui.input(|i| i.pointer.press_origin());
-    let from_glyph = origin.is_some_and(|p| p.x < rect.left() + SLIDER && rect.contains(p));
-    let mut out = SliderOut::default();
-    if resp.clicked() && from_glyph {
-        out.glyph_clicked = true;
-    } else if resp.is_pointer_button_down_on() && !from_glyph {
-        if let Some(p) = resp.interact_pointer_pos() {
-            out.value = Some(value_at(p.x, rect.left(), rect.width(), SLIDER));
-        }
-        out.dragging = true;
-    }
-    let shown = out.value.unwrap_or(value);
-    let radius = CornerRadius::same((SLIDER / 2.0) as u8);
-    ui.painter().rect_filled(rect, radius, well(false));
-    let fill = Rect::from_min_size(rect.min, Vec2::new(fill_width(shown, rect.width(), SLIDER), SLIDER));
-    ui.painter().rect_filled(fill, radius, with_alpha(c.text, 217));
-    let at = Pos2::new(rect.left() + SLIDER / 2.0, rect.center().y);
-    let fg = if from_glyph && resp.hovered() { with_alpha(c.bg, 200) } else { c.bg };
-    ui.painter().text(at, Align2::CENTER_CENTER, glyph, icon_font(12.0), fg);
-    if resp.hovered() {
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), shellman_ui::slider::HEIGHT), Sense::hover());
+    let icon = Rect::from_min_size(rect.min, Vec2::new(SLIDER_GLYPH_W, rect.height()));
+    let glyph_resp = ui.interact(icon, id.with("glyph"), Sense::click());
+    let fg = if glyph_resp.hovered() { c.text } else { c.muted };
+    ui.painter().text(icon.center(), Align2::CENTER_CENTER, glyph, icon_font(15.0), fg);
+    if glyph_resp.hovered() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }
-    out
-}
-
-/// How wide the fill is for `value`: never narrower than the round end that holds the glyph.
-pub fn fill_width(value: f32, width: f32, height: f32) -> f32 {
-    height + value.clamp(0.0, 1.0) * (width - height).max(0.0)
-}
-
-/// The value under a pointer at `x`, the inverse of `fill_width` at the fill's right edge less
-/// half the round end, so the pointer sits in the middle of the fill's end.
-pub fn value_at(x: f32, left: f32, width: f32, height: f32) -> f32 {
-    let span = (width - height).max(1.0);
-    ((x - left - height / 2.0) / span).clamp(0.0, 1.0)
+    let track = Rect::from_min_max(Pos2::new(icon.right() + 6.0, rect.top()), rect.max);
+    let out = shellman_ui::slider::thin_in(ui, track, id, value, true);
+    SliderOut { value: out.value, glyph_clicked: glyph_resp.clicked(), dragging: out.dragging() }
 }
 
 /// A round, borderless button with a glyph, `size` points across.
@@ -186,21 +160,6 @@ fn luminance(c: Color32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn slider_fill_and_pointer_agree() {
-        let (left, w, h) = (10.0, 300.0, 22.0);
-        assert_eq!(fill_width(0.0, w, h), h);
-        assert_eq!(fill_width(1.0, w, h), w);
-        assert_eq!(fill_width(2.0, w, h), w);
-        for v in [0.0, 0.25, 0.5, 1.0] {
-            // The pointer at the middle of the fill's round end reads back the same value.
-            let x = left + fill_width(v, w, h) - h / 2.0;
-            assert!((value_at(x, left, w, h) - v).abs() < 1e-4);
-        }
-        assert_eq!(value_at(-100.0, left, w, h), 0.0);
-        assert_eq!(value_at(1000.0, left, w, h), 1.0);
-    }
 
     #[test]
     fn black_and_white_accents_fall_back_to_text() {

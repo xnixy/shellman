@@ -61,6 +61,8 @@ pub struct Shared {
     monitor: Mutex<Option<Monitor>>,
     /// The content's height in points, as last laid out (f32 bits).
     height: AtomicU32,
+    /// Frames still to lay out before the panel is let out from behind the cloak.
+    reveal: AtomicU32,
     /// When a click outside last closed the panel.
     closed_by_click: Mutex<Option<Instant>>,
 }
@@ -84,6 +86,11 @@ impl Shared {
         f32::from_bits(self.height.load(Ordering::Relaxed))
     }
 }
+
+/// How many frames a showing waits behind the cloak: the first ones are laid out for a size and
+/// style the window has not settled on, and Windows would show them (a caption bar, a panel at
+/// the wrong height) for an instant.
+const REVEAL_AFTER: u32 = 3;
 
 /// A monitor's rectangle `(left, top, right, bottom)` in pixels, and its scale.
 type Monitor = ((i32, i32, i32, i32), f32);
@@ -165,6 +172,7 @@ impl Instance {
 /// Put the panel out of sight. Called by the window itself.
 pub fn hide(hwnd: isize, shared: &Shared) {
     shared.showing.store(false, Ordering::Release);
+    shared.reveal.store(0, Ordering::Release);
     park(hwnd);
 }
 
@@ -216,8 +224,10 @@ fn show(hwnd: HWND, shared: &Shared) {
         let (mut dpi_x, mut dpi_y) = (96, 96);
         let _ = GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &mut dpi_x, &mut dpi_y);
         let scale = dpi_x as f32 / 96.0;
-        let m = info.rcMonitor;
-        let rect = (m.left, m.top, m.right, m.bottom);
+        // The panel hangs from the monitor's top, and stops at the work area's bottom, so it
+        // never runs under the dock.
+        let (m, work) = (info.rcMonitor, info.rcWork);
+        let rect = (m.left, m.top, m.right, work.bottom.min(m.bottom));
         if let Ok(mut slot) = shared.monitor.lock() {
             *slot = Some((rect, scale));
         }
@@ -227,7 +237,8 @@ fn show(hwnd: HWND, shared: &Shared) {
         strip_frame(hwnd);
         tool_window(hwnd);
         let _ = SetWindowPos(hwnd, Some(HWND_TOPMOST), r.x, r.y, r.w, r.h, SWP_SHOWWINDOW | SWP_FRAMECHANGED);
-        glass::cloak(hwnd.0 as isize, false);
+        // Still cloaked: `fit` lets it out once a few frames have been laid out at its size.
+        shared.reveal.store(REVEAL_AFTER, Ordering::Release);
         shared.showing.store(true, Ordering::Release);
         outside::set_rect(r.x, r.y, r.w, r.h);
         take_foreground(hwnd);
@@ -237,7 +248,7 @@ fn show(hwnd: HWND, shared: &Shared) {
 /// Keep the window where it belongs for content `height` points tall: called on every frame,
 /// it corrects a height change, and Windows resizing the window when it lands on a monitor with
 /// another scale.
-pub fn fit(hwnd: isize, shared: &Shared, height: f32) {
+pub fn fit(hwnd: isize, shared: &Shared, height: f32, ctx: &egui::Context) {
     shared.height.store(height.to_bits(), Ordering::Relaxed);
     let Some((rect, scale)) = shared.monitor.lock().ok().and_then(|m| *m) else {
         return;
@@ -270,6 +281,15 @@ pub fn fit(hwnd: isize, shared: &Shared, height: f32) {
         }
     }
     outside::set_rect(want.x, want.y, want.w, want.h);
+    // Let the panel out once it has settled; until then keep the frames coming.
+    let waiting = shared.reveal.load(Ordering::Acquire);
+    if waiting > 0 {
+        shared.reveal.store(waiting - 1, Ordering::Release);
+        if waiting == 1 {
+            glass::cloak(hwnd.0 as isize, false);
+        }
+        ctx.request_repaint();
+    }
 }
 
 /// Windows lets a process take the foreground only in narrow cases, chiefly when it sent the

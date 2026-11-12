@@ -23,7 +23,7 @@ const REFRESH_AFTER: Duration = Duration::from_secs(30);
 const ISLAND_MARGIN: f32 = 20.0;
 const PILL_H: f32 = 58.0;
 const PILL_PAD: f32 = 24.0;
-const GAP: f32 = 14.0;
+const GAP: f32 = 12.0;
 const ISLAND_RADIUS: f32 = 22.0;
 const LIST_PAD: f32 = 10.0;
 /// Room above the rows (and the last row's room below), and above the grid's first label.

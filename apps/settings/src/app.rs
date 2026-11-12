@@ -4,13 +4,15 @@
 
 use crate::instance::Instance;
 use crate::page;
+use crate::search::{self, Hit};
 use crate::sections::Section;
 use crate::state::State;
+use crate::tip;
 use egui::{pos2, vec2, Align2, Rect, Sense, UiBuilder};
 use shellman_ui::chips::{self, Chip};
 use shellman_ui::glass::islands::{self, Island};
 use shellman_ui::glass::{GlassPanel, Style};
-use shellman_ui::theme::{self, colors, icon_font, semibold_font, AccentChoice};
+use shellman_ui::theme::{self, colors, glyph, icon_font, semibold_font, AccentChoice};
 use std::time::Duration;
 
 /// Space between the window's edge and the islands, and between islands.
@@ -20,13 +22,18 @@ const RAIL_ICON: f32 = 34.0;
 const TITLE_H: f32 = 46.0;
 const BUTTON_H: f32 = 30.0;
 /// The page's column is kept to a readable width, however wide the window.
-const COLUMN_MAX: f32 = 760.0;
+const COLUMN_MAX: f32 = 860.0;
+/// The search field in the title pill.
+const SEARCH_W: f32 = 210.0;
+const SEARCH_ID: &str = "settings-search";
 /// How long to wait before reading the files again if our own saves were still going.
 const RELOAD_RETRY: Duration = Duration::from_millis(100);
 
 pub struct SettingsApp {
     st: State,
     section: Section,
+    /// What is typed in the title pill's search field.
+    query: String,
     panel: GlassPanel,
     /// Wakes the window when something in the settings folder changes.
     watcher: shellman_core::watch::Watcher,
@@ -52,6 +59,7 @@ impl SettingsApp {
         Self {
             st: State::new(ctx, look, glass),
             section: page.unwrap_or(Section::Appearance),
+            query: String::new(),
             panel,
             watcher,
             reload_due: false,
@@ -132,8 +140,9 @@ impl SettingsApp {
         self.panel.set_islands(&list, ctx.pixels_per_point());
     }
 
-    /// The pill on top: "Settings / <page>", and the window buttons when `buttons` is set.
-    fn title(&self, ui: &mut egui::Ui, rect: Rect, buttons: bool) {
+    /// The pill on top: "Settings / <page>", the search field, and the window buttons when
+    /// `buttons` is set.
+    fn title(&mut self, ui: &mut egui::Ui, rect: Rect, buttons: bool) {
         let c = colors();
         let y = rect.center().y;
         let name = ui.painter().text(pos2(rect.left() + 22.0, y), Align2::LEFT_CENTER, "Settings", semibold_font(15.0), c.text);
@@ -142,13 +151,62 @@ impl SettingsApp {
         let w = chips::chip_width(ui, label, false, Chip::Accent);
         let chip = Rect::from_center_size(pos2(slash.right() + 10.0 + w / 2.0, y), vec2(w, chips::CHIP_H));
         chips::chip(ui, chip, egui::Id::new("title-chip"), label, None, Chip::Accent);
+        let mut right = rect.right() - 12.0;
         if buttons {
             chips::window_buttons(ui, Rect::from_min_max(pos2(rect.right() - 10.0 - BUTTON_H * 3.0, y - BUTTON_H / 2.0), pos2(rect.right() - 10.0, y + BUTTON_H / 2.0)));
+            right -= BUTTON_H * 3.0 + 4.0;
         }
+        // The field takes what the name leaves, up to its width.
+        let room = right - (chip.right() + 16.0);
+        if room > 90.0 {
+            let field = Rect::from_min_max(pos2(right - room.min(SEARCH_W), y - chips::CHIP_H / 2.0 - 1.0), pos2(right, y + chips::CHIP_H / 2.0 + 1.0));
+            self.search_field(ui, field);
+        }
+    }
+
+    /// The search box: a soft pill with a glass glyph. Enter goes to the best match, Esc clears.
+    fn search_field(&mut self, ui: &mut egui::Ui, field: Rect) {
+        let c = colors();
+        let id = egui::Id::new(SEARCH_ID);
+        let (soft, hover, line) = chips::soft_colors(c.light);
+        let focused = ui.memory(|m| m.has_focus(id));
+        let fill = if focused || ui.rect_contains_pointer(field) { hover } else { soft };
+        ui.painter().rect(field, field.height() / 2.0, fill, line, egui::StrokeKind::Inside);
+        ui.painter().text(pos2(field.left() + 16.0, field.center().y), Align2::CENTER_CENTER, glyph::SEARCH, icon_font(13.0), c.muted);
+        let edit_rect = Rect::from_min_max(pos2(field.left() + 30.0, field.top()), pos2(field.right() - 12.0, field.bottom()));
+        let edit = egui::TextEdit::singleline(&mut self.query)
+            .id(id)
+            .font(egui::FontId::proportional(13.0))
+            .frame(false)
+            .margin(egui::Margin::ZERO)
+            .vertical_align(egui::Align::Center)
+            .hint_text(egui::RichText::new("Search settings").color(c.muted))
+            .desired_width(edit_rect.width());
+        let resp = ui.put(edit_rect, edit);
+        let enter = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+        if enter {
+            if let Some(hit) = search::find(&self.query).first() {
+                self.go(*hit);
+            }
+        }
+        if (focused || !self.query.is_empty()) && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
+            self.query.clear();
+            ui.memory_mut(|m| m.surrender_focus(id));
+        }
+        if ui.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::F)) {
+            ui.memory_mut(|m| m.request_focus(id));
+        }
+    }
+
+    /// Open the page a search result leads to, and leave the search.
+    fn go(&mut self, hit: Hit) {
+        self.section = hit.section;
+        self.query.clear();
     }
 
     /// The pill of sections: one icon each, the current one filled with the accent.
     fn rail(&mut self, ui: &mut egui::Ui, list: &mut Vec<Island>, screen: Rect, top: f32) {
+        let mut named: Option<(Rect, &str)> = None;
         let c = colors();
         let n = Section::ALL.len() as f32;
         let wanted = 28.0 + n * RAIL_ICON + (n - 1.0) * 4.0;
@@ -174,19 +232,35 @@ impl SettingsApp {
             };
             ui.painter().rect_filled(cell, 12.0, fill);
             ui.painter().text(cell.center(), Align2::CENTER_CENTER, section.glyph(), icon_font(16.0), fg);
-            if resp.on_hover_text(section.label()).clicked() {
-                self.section = section;
+            if tip::ready(ui.ctx(), egui::Id::new(("rail-tip", section.slug())), resp.hovered()) {
+                named = Some((cell, section.label()));
             }
+            if resp.clicked() {
+                self.section = section;
+                self.query.clear();
+            }
+        }
+        // The name of the icon the pointer rests on, as a pill beside the rail.
+        if let Some((cell, label)) = named {
+            let solid = (!self.panel.composed()).then(|| self.panel.style());
+            // Beside the rail (not the icon), level with the icon.
+            let beside = Rect::from_min_max(pos2(rail.right() - 1.0, cell.top()), pos2(rail.right(), cell.bottom()));
+            tip::show(ui, beside, label, screen, list, solid.as_ref());
         }
     }
 
     /// The page, scrolling under the title pill: its groups become islands, clipped to `area`.
     fn page(&mut self, ui: &mut egui::Ui, area: Rect, list: &mut Vec<Island>) {
         page::begin_frame();
+        let searching = !self.query.trim().is_empty();
         ui.scope_builder(UiBuilder::new().max_rect(area), |ui| {
             ui.spacing_mut().scroll = egui::style::ScrollStyle::floating();
             // Dragging the gaps between islands moves the window, so the area must not take it.
             egui::ScrollArea::vertical().auto_shrink([false, false]).drag_to_scroll(false).show(ui, |ui| {
+                if searching {
+                    self.results(ui);
+                    return;
+                }
                 // A page that declares no groups goes on one island as a whole.
                 if self.section.grouped() {
                     self.section.show(ui, &mut self.st);
@@ -210,6 +284,49 @@ impl SettingsApp {
         });
         list.extend(page::take_groups().into_iter().map(|r| Island::new(r, page::GROUP_RADIUS)));
     }
+}
+
+impl SettingsApp {
+    /// The search's answer, in place of the page: one row for each place the query leads, the
+    /// best one lifted out in the accent (Enter takes it).
+    fn results(&mut self, ui: &mut egui::Ui) {
+        let hits = search::find(&self.query);
+        let mut chosen = None;
+        page::group(ui, "Search results", |ui| {
+            if hits.is_empty() {
+                ui.label(shellman_ui::theme::muted("Nothing in Settings matches that."));
+            }
+            ui.spacing_mut().item_spacing.y = 4.0;
+            for (i, hit) in hits.iter().enumerate() {
+                if result_row(ui, hit, i == 0).clicked() {
+                    chosen = Some(*hit);
+                }
+            }
+        });
+        if let Some(hit) = chosen {
+            self.go(hit);
+        }
+    }
+}
+
+/// One search result: where it leads, with "Enter" on the best one.
+fn result_row(ui: &mut egui::Ui, hit: &Hit, best: bool) -> egui::Response {
+    let c = colors();
+    let (row, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 44.0), Sense::click());
+    let fill = if best {
+        c.accent_fill
+    } else if resp.hovered() {
+        c.control_hover
+    } else {
+        c.control
+    };
+    ui.painter().rect_filled(row, 14.0, fill);
+    let ink = if best { c.on_accent } else { c.text };
+    ui.painter().text(pos2(row.left() + 18.0, row.center().y), Align2::LEFT_CENTER, hit.label(), egui::FontId::proportional(14.0), ink);
+    if best {
+        ui.painter().text(pos2(row.right() - 16.0, row.center().y), Align2::RIGHT_CENTER, "Enter", egui::FontId::proportional(12.0), ink.gamma_multiply(0.85));
+    }
+    resp.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
 impl eframe::App for SettingsApp {

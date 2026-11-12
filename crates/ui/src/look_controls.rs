@@ -75,11 +75,13 @@ pub fn glass_slider(ui: &mut Ui, glass: &mut f32, enabled: bool) -> egui::Respon
     let c = colors();
     ui.horizontal(|ui| {
         ui.label(RichText::new("Solid").size(11.5).color(c.muted));
-        ui.spacing_mut().slider_width = 240.0;
-        let slider = egui::Slider::new(glass, 0.0..=1.0)
-            .show_value(false)
-            .trailing_fill(true);
-        let mut resp = ui.add_enabled(enabled, slider);
+        let width = (ui.available_width() - 48.0).clamp(120.0, 320.0);
+        let out = crate::slider::thin(ui, Id::new("glass-slider"), *glass, Some(width), enabled);
+        let mut resp = out.response.clone();
+        if let Some(v) = out.value {
+            *glass = v;
+            resp.mark_changed();
+        }
         ui.label(RichText::new("Clear").size(11.5).color(c.muted));
         if !enabled {
             resp = resp.on_disabled_hover_text("Needs Windows 11");

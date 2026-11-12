@@ -11,6 +11,7 @@ use shellman_ui::theme::{self, colors, glyph, icon_font};
 use shellman_ui::widgets::draw_text;
 
 const ICON: f32 = 26.0;
+/// The most room an app name gets; in a narrow island it gets less, to leave the slider some.
 const NAME_W: f32 = 150.0;
 
 pub fn show(ui: &mut egui::Ui, handle: &SoundPage, sessions: &[AppSession], thumbs: &mut Thumbs) {
@@ -43,9 +44,10 @@ fn row(ui: &mut egui::Ui, handle: &SoundPage, s: &AppSession, thumbs: &mut Thumb
         }
     }
 
+    let name_w = (rect.width() * 0.3).clamp(80.0, NAME_W);
     let name = egui::Rect::from_min_max(
         egui::pos2(icon.right() + 10.0, rect.top()),
-        egui::pos2(icon.right() + 10.0 + NAME_W, rect.bottom()),
+        egui::pos2(icon.right() + 10.0 + name_w, rect.bottom()),
     );
     // An app that is not playing right now is dimmer than one that is.
     let color = if s.active { c.text } else { c.muted };

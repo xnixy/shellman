@@ -148,13 +148,22 @@ impl Control {
         theme::set_light(force_light || ctx.theme() == egui::Theme::Light);
         let mut asked = Asked::None;
         let mut islands = Vec::new();
+        let mut content_h = 0.0;
         let screen = ctx.screen_rect();
         // The panel is its islands: no surface of its own, the glass between them is the desktop.
         egui::CentralPanel::default().frame(egui::Frame::NONE).show(ctx, |ui| {
             ui.spacing_mut().item_spacing = egui::vec2(0.0, island::SPACING);
             // Without composed glass the islands paint their own solid fills, under all this.
             let under = ui.painter().add(egui::Shape::Noop);
-            asked = self.modules(ui, &mut islands);
+            // Taller than the screen can hold, the islands scroll rather than run off its end.
+            ui.spacing_mut().scroll = egui::style::ScrollStyle::floating();
+            let out = egui::ScrollArea::vertical()
+                .auto_shrink([false, true])
+                .max_height(screen.height())
+                .drag_to_scroll(false)
+                .show(ui, |ui| self.modules(ui, &mut islands));
+            asked = out.inner;
+            content_h = out.content_size.y;
             if !self.glass {
                 let style = glass::Style::from_theme(island::RADIUS);
                 ui.painter().set(under, egui::Shape::Vec(glass::islands::solid_shapes(&islands, &style)));
@@ -168,9 +177,8 @@ impl Control {
             return islands;
         }
         // The window is the union of the islands, hanging from its top.
-        let height = islands.iter().map(|i| i.rect.bottom()).fold(0.0, f32::max) - screen.top();
         if showing {
-            summon::fit(self.hwnd, &self.shared, height);
+            summon::fit(self.hwnd, &self.shared, content_h, ctx);
         }
         self.act(asked);
         islands
