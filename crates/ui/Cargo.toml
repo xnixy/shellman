@@ -13,4 +13,15 @@ shellman-core.workspace = true
 shellman-icons.workspace = true
 egui.workspace = true
 serde.workspace = true
-windows.workspace = true
+windows = { workspace = true, features = [
+    # Floating glass (`glass`): a composition tree with the host backdrop, on a DispatcherQueue.
+    "Foundation_Numerics",
+    "System",
+    "UI_Composition",
+    "UI_Composition_Desktop",
+    "UI_ViewManagement",
+    "Win32_System_WinRT",
+    "Win32_System_WinRT_Composition",
+] }
+# The vector types composition takes; `windows` uses them without re-exporting them.
+windows-numerics = "0.2"

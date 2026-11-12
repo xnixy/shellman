@@ -2,6 +2,7 @@
 
 pub mod app_icon;
 pub mod appearance;
+pub mod glass;
 pub mod look_controls;
 pub mod nav;
 pub mod theme;

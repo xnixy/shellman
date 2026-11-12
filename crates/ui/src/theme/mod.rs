@@ -224,7 +224,8 @@ static GLASS: AtomicU32 = AtomicU32::new(DEFAULT_GLASS.to_bits());
 /// The glass amount a fresh install starts with.
 pub const DEFAULT_GLASS: f32 = 0.72;
 
-fn glass() -> f32 {
+/// How much of the backdrop shows through, from 0 (solid) to 1 (nearly clear).
+pub fn glass() -> f32 {
     f32::from_bits(GLASS.load(Ordering::Relaxed))
 }
 
