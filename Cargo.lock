@@ -1872,6 +1872,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "shellman-desktop"
+version = "0.1.0"
+dependencies = [
+ "windows",
+]
+
+[[package]]
 name = "shellman-files"
 version = "0.1.0"
 dependencies = [

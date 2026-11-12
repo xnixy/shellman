@@ -1,0 +1,188 @@
+//! What one wallpaper window shows, and how it paints it.
+//!
+//! A surface is a background colour plus at most one ready-made bitmap. Painting is a fill and a
+//! blit, nothing else, so there is no work between repaints. The window procedure lives here too:
+//! it keeps the window at the very bottom and never lets it take focus.
+
+use crate::fit::Area;
+use std::cell::RefCell;
+use std::collections::HashMap;
+use windows::core::w;
+use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, RECT, WPARAM};
+use windows::Win32::Graphics::Gdi::{
+    BeginPaint, BitBlt, CreateCompatibleDC, CreateSolidBrush, DeleteDC, DeleteObject, EndPaint, FillRect,
+    HGDIOBJ, PAINTSTRUCT, SRCCOPY, SelectObject,
+};
+use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows::Win32::UI::WindowsAndMessaging::{
+    CreateWindowExW, DefWindowProcW, GetClientRect, LoadCursorW, PostMessageW, RegisterClassW, SetWindowPos, ShowWindow,
+    HWND_BOTTOM, IDC_ARROW, SWP_NOACTIVATE, SWP_NOZORDER, SW_SHOWNOACTIVATE, WINDOWPOS, WM_DPICHANGED, WM_ERASEBKGND,
+    WM_MOUSEACTIVATE, WM_NCDESTROY, WM_PAINT, WM_WINDOWPOSCHANGING, WNDCLASSW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+    WS_POPUP,
+};
+
+/// The bar's fullscreen check skips windows of this class, so keep the name exactly.
+const CLASS: windows::core::PCWSTR = w!("ShellmanDesktop");
+
+/// Sent to the controller window when a desktop window is told its DPI changed.
+pub const WM_REFRESH_DISPLAY: u32 = 0x8000 + 2;
+
+/// A decoded picture ready to blit: a GDI bitmap of exactly `dst`'s size.
+pub struct Image {
+    /// An `HBITMAP` (a DIB section), kept as a number so it can cross threads.
+    pub bitmap: isize,
+    pub dst: Area,
+    pub tile: bool,
+}
+
+pub struct Surface {
+    /// A COLORREF.
+    pub color: u32,
+    pub image: Option<Image>,
+}
+
+impl Surface {
+    fn free(&self) {
+        if let Some(image) = &self.image {
+            unsafe {
+                let _ = DeleteObject(HGDIOBJ(image.bitmap as *mut _));
+            }
+        }
+    }
+
+    /// Release the bitmap of a surface that was never shown.
+    pub fn discard(self) {
+        self.free();
+    }
+}
+
+thread_local! {
+    /// The surface of each window, by handle. Only the UI thread touches this.
+    static SURFACES: RefCell<HashMap<isize, Surface>> = RefCell::new(HashMap::new());
+}
+
+/// Register the window class (once).
+pub fn register() {
+    unsafe {
+        let class = WNDCLASSW {
+            lpfnWndProc: Some(proc),
+            hInstance: GetModuleHandleW(None).unwrap_or_default().into(),
+            lpszClassName: CLASS,
+            hCursor: LoadCursorW(None, IDC_ARROW).unwrap_or_default(),
+            ..Default::default()
+        };
+        RegisterClassW(&class);
+    }
+}
+
+/// A wallpaper window covering `area`, at the bottom of the z-order, shown without activation.
+pub fn create(area: Area) -> Option<HWND> {
+    unsafe {
+        let hwnd = CreateWindowExW(
+            WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+            CLASS,
+            w!("shellman desktop"),
+            WS_POPUP,
+            area.x,
+            area.y,
+            area.w,
+            area.h,
+            None,
+            None,
+            GetModuleHandleW(None).ok().map(Into::into),
+            None,
+        )
+        .ok()?;
+        let _ = SetWindowPos(hwnd, Some(HWND_BOTTOM), area.x, area.y, area.w, area.h, SWP_NOACTIVATE);
+        let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+        Some(hwnd)
+    }
+}
+
+/// Show `surface` in `hwnd`, replacing (and freeing) the previous one.
+pub fn set(hwnd: HWND, surface: Surface) {
+    let old = SURFACES.with(|s| s.borrow_mut().insert(hwnd.0 as isize, surface));
+    if let Some(old) = old {
+        old.free();
+    }
+    unsafe {
+        let _ = windows::Win32::Graphics::Gdi::InvalidateRect(Some(hwnd), None, false);
+    }
+}
+
+unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    match msg {
+        // The whole window is drawn in WM_PAINT; erasing first would flicker.
+        WM_ERASEBKGND => LRESULT(1),
+        WM_PAINT => {
+            paint(hwnd);
+            LRESULT(0)
+        }
+        // Never take focus from the window in front: MA_NOACTIVATE.
+        WM_MOUSEACTIVATE => LRESULT(3),
+        // Whoever moves or restacks this window, it stays at the very bottom.
+        WM_WINDOWPOSCHANGING => {
+            let pos = &mut *(lparam.0 as *mut WINDOWPOS);
+            pos.hwndInsertAfter = HWND_BOTTOM;
+            pos.flags &= !SWP_NOZORDER;
+            DefWindowProcW(hwnd, msg, wparam, lparam)
+        }
+        WM_DPICHANGED => {
+            // The controller owns monitor layout; hand it the news.
+            if let Some(ctl) = crate::app::controller() {
+                let _ = PostMessageW(Some(ctl), WM_REFRESH_DISPLAY, WPARAM(0), LPARAM(0));
+            }
+            LRESULT(0)
+        }
+        WM_NCDESTROY => {
+            if let Some(gone) = SURFACES.with(|s| s.borrow_mut().remove(&(hwnd.0 as isize))) {
+                gone.free();
+            }
+            DefWindowProcW(hwnd, msg, wparam, lparam)
+        }
+        _ => DefWindowProcW(hwnd, msg, wparam, lparam),
+    }
+}
+
+unsafe fn paint(hwnd: HWND) {
+    let mut ps = PAINTSTRUCT::default();
+    let hdc = BeginPaint(hwnd, &mut ps);
+    let mut client = RECT::default();
+    let _ = GetClientRect(hwnd, &mut client);
+    SURFACES.with(|s| {
+        let surfaces = s.borrow();
+        let color = surfaces.get(&(hwnd.0 as isize)).map_or(0, |s| s.color);
+        let image = surfaces.get(&(hwnd.0 as isize)).and_then(|s| s.image.as_ref());
+        let covers = image.is_some_and(|i| i.dst.w >= client.right && i.dst.h >= client.bottom);
+        if !covers {
+            let brush = CreateSolidBrush(COLORREF(color));
+            FillRect(hdc, &client, brush);
+            let _ = DeleteObject(HGDIOBJ(brush.0));
+        }
+        if let Some(image) = image {
+            blit(hdc, image, &client);
+        }
+    });
+    let _ = EndPaint(hwnd, &ps);
+}
+
+unsafe fn blit(hdc: windows::Win32::Graphics::Gdi::HDC, image: &Image, client: &RECT) {
+    let mem = CreateCompatibleDC(Some(hdc));
+    let old = SelectObject(mem, HGDIOBJ(image.bitmap as *mut _));
+    let d = image.dst;
+    if image.tile {
+        let mut y = 0;
+        while y < client.bottom {
+            let mut x = 0;
+            while x < client.right {
+                let _ = BitBlt(hdc, x, y, d.w, d.h, Some(mem), 0, 0, SRCCOPY);
+                x += d.w;
+            }
+            y += d.h;
+        }
+    } else {
+        let _ = BitBlt(hdc, d.x, d.y, d.w, d.h, Some(mem), 0, 0, SRCCOPY);
+    }
+    SelectObject(mem, old);
+    let _ = DeleteDC(mem);
+}
