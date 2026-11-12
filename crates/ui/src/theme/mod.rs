@@ -99,12 +99,37 @@ fn luminance(c: Color32) -> f32 {
     0.2126 * ch(c.r()) + 0.7152 * ch(c.g()) + 0.0722 * ch(c.b())
 }
 
+/// WCAG contrast ratio between two colors, 1 to 21.
+pub fn contrast(a: Color32, b: Color32) -> f32 {
+    let (la, lb) = (luminance(a), luminance(b));
+    (la.max(lb) + 0.05) / (la.min(lb) + 0.05)
+}
+
+/// Least contrast an accent fill needs against the surface it sits on.
+pub const FILL_CONTRAST: f32 = 1.6;
+/// Least contrast accent-coloured text or a glyph needs.
+pub const TEXT_CONTRAST: f32 = 3.0;
+
+/// `color` when it stands out from `surface` by at least `min`; otherwise `fallback` (the text
+/// colour), so a black accent on dark or a white one on light never makes a state vanish.
+pub fn legible(color: Color32, surface: Color32, fallback: Color32, min: f32) -> Color32 {
+    if contrast(color, surface) >= min {
+        color
+    } else {
+        fallback
+    }
+}
+
 /// Every color that differs between dark and light, or depends on the accent.
 #[allow(dead_code)]
 #[derive(Clone, Copy)]
 pub struct Colors {
     pub light: bool,
+    /// The accent as picked. Neutrals are tinted with it and the app icons are drawn from it.
     pub accent: Color32,
+    /// The accent where it fills something or marks a state (selection, toggles, primary buttons,
+    /// markers): the accent itself, or the text colour when it would hardly show on the page.
+    pub accent_fill: Color32,
     /// Text drawn on a solid accent fill.
     pub on_accent: Color32,
     /// The accent, adjusted to read as text or a glyph on the page.
@@ -148,32 +173,40 @@ pub struct Colors {
 
 impl Colors {
     pub fn new(light: bool, accent: Color32) -> Self {
-        let on_accent = if luminance(accent) > 0.4 {
-            Color32::from_rgb(20, 16, 20)
-        } else {
-            Color32::WHITE
-        };
         // Neutral greys with a little of the accent mixed in.
         let tint = |grey: u8, amount: f32| mix(Color32::from_gray(grey), accent, amount);
         // How much of the window's acrylic shows through: 0 solid, 1 nearly clear.
         let g = glass();
         let see =
             |solid: u8, clear: u8| (solid as f32 + (clear as f32 - solid as f32) * g).round() as u8;
+        let (bg, text, text_base) = if light {
+            (tint(242, 0.05), tint(28, 0.06), mix(accent, Color32::BLACK, 0.25))
+        } else {
+            (tint(16, 0.06), tint(240, 0.03), mix(accent, Color32::WHITE, 0.4))
+        };
+        let accent_fill = legible(accent, bg, text, FILL_CONTRAST);
+        // The text colour is far brighter than a dim accent, so its wash is fainter.
+        let fell_back = accent_fill != accent;
+        let accent_text = legible(text_base, bg, text, TEXT_CONTRAST);
+        let on_accent = if luminance(accent_fill) > 0.4 {
+            Color32::from_rgb(20, 16, 20)
+        } else {
+            Color32::WHITE
+        };
         if light {
-            let bg = tint(242, 0.05);
-            let text = tint(28, 0.06);
             Self {
                 light,
                 accent,
+                accent_fill,
                 on_accent,
-                accent_text: mix(accent, Color32::BLACK, 0.25),
+                accent_text,
                 bg,
                 popup: tint(252, 0.02),
                 text,
                 muted: tint(110, 0.08),
                 warn: Color32::from_rgb(160, 96, 0),
                 row_hover: Color32::from_black_alpha(14),
-                row_selected: with_alpha(accent, 48),
+                row_selected: with_alpha(accent_fill, if fell_back { 10 } else { 48 }),
                 hairline: Color32::from_black_alpha(16),
                 well: Color32::from_black_alpha(12),
                 track: tint(188, 0.06),
@@ -197,19 +230,19 @@ impl Colors {
                 separator: with_alpha(text, 26),
             }
         } else {
-            let text = tint(240, 0.03);
             Self {
                 light,
                 accent,
+                accent_fill,
                 on_accent,
-                accent_text: mix(accent, Color32::WHITE, 0.4),
-                bg: tint(16, 0.06),
+                accent_text,
+                bg,
                 popup: tint(34, 0.08),
                 text,
                 muted: tint(150, 0.08),
                 warn: Color32::from_rgb(230, 186, 120),
                 row_hover: Color32::from_rgba_unmultiplied(255, 255, 255, 14),
-                row_selected: with_alpha(accent, 64),
+                row_selected: with_alpha(accent_fill, if fell_back { 8 } else { 64 }),
                 hairline: Color32::from_rgba_unmultiplied(255, 255, 255, 16),
                 well: Color32::from_rgba_unmultiplied(255, 255, 255, 12),
                 track: tint(66, 0.1),
@@ -303,7 +336,46 @@ mod tests {
 
     #[test]
     fn bright_accent_gets_dark_text() {
-        let on = Colors::new(true, Color32::from_rgb(255, 220, 80)).on_accent;
+        let on = Colors::new(false, Color32::from_rgb(255, 220, 80)).on_accent;
         assert!(luminance(on) < 0.1);
+    }
+
+    #[test]
+    fn black_accent_on_dark_and_white_on_light_fall_back_to_text() {
+        for (light, accent) in [(false, Color32::BLACK), (true, Color32::WHITE)] {
+            let c = Colors::new(light, accent);
+            assert_eq!(c.accent_fill, c.text);
+            assert!(contrast(c.accent_fill, c.bg) >= FILL_CONTRAST);
+            assert!(contrast(c.accent_text, c.bg) >= TEXT_CONTRAST);
+            assert!(contrast(c.on_accent, c.accent_fill) >= 3.0);
+            assert_eq!(c.accent, accent, "the picked accent stays for tints and icons");
+            assert!(c.row_selected.a() > 0);
+        }
+    }
+
+    #[test]
+    fn accents_with_contrast_are_unchanged() {
+        for light in [false, true] {
+            for (_, p) in PRESETS {
+                let a = rgb(p);
+                let c = Colors::new(light, a);
+                assert_eq!(c.accent_fill, a, "{p:?} light={light}");
+                let base = if light {
+                    mix(a, Color32::BLACK, 0.25)
+                } else {
+                    mix(a, Color32::WHITE, 0.4)
+                };
+                assert_eq!(c.accent_text, base, "{p:?} light={light}");
+            }
+        }
+    }
+
+    #[test]
+    fn mid_grey_stands_out_either_way() {
+        let g = Color32::from_gray(128);
+        for light in [false, true] {
+            let c = Colors::new(light, g);
+            assert_eq!(c.accent_fill, g);
+        }
     }
 }

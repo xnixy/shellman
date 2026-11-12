@@ -169,9 +169,11 @@ pub(super) fn folder_backdrop(
             actions.push(Action::CopyPath);
             ui.close_menu();
         }
-        if menu_item(ui, glyph::OPEN_EXTERNAL, "Open in Explorer", "") {
-            actions.push(Action::ExplorerHere);
-            ui.close_menu();
+        if let Some(dir) = tab.loc.dir() {
+            if menu_item(ui, glyph::ADD, "Open in new tab", "") {
+                actions.push(Action::NewTab(super::tab::Loc::Dir(dir.to_path_buf())));
+                ui.close_menu();
+            }
         }
         ui.separator();
         super::rows::more_options(ui, actions);

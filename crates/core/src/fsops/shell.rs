@@ -1,4 +1,4 @@
-//! Shell operations: open, reveal in Explorer, and recycle/copy/move through the Windows shell.
+//! Shell operations: open, and recycle/copy/move through the Windows shell.
 
 use std::os::windows::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
@@ -13,17 +13,6 @@ pub fn open(path: &Path) {
     unsafe {
         ShellExecuteW(None, &HSTRING::from("open"), &p, None, None, SW_SHOWNORMAL);
     }
-}
-
-/// Show the item selected in the real Explorer.
-pub fn reveal_in_explorer(path: &Path) {
-    let _ = std::process::Command::new("explorer.exe")
-        .arg(format!("/select,{}", path.display()))
-        .spawn();
-}
-
-pub fn open_in_explorer(dir: &Path) {
-    let _ = std::process::Command::new("explorer.exe").arg(dir).spawn();
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

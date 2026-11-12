@@ -28,6 +28,32 @@ pub enum Picked {
     Done,
     /// "Rename": shellman renames in place, since the shell's rename needs Explorer's own view.
     Rename,
+    /// "Open" on folders: shellman opens them itself, since the shell would hand them to Explorer.
+    OpenFolders,
+    /// "Open in new window" (or tab) on folders: shellman opens them in new tabs.
+    OpenFoldersInTabs,
+}
+
+/// The picks shellman handles itself: rename, and the folder open verbs.
+fn own_verb(verb: Option<&str>, folders_only: bool) -> Option<Picked> {
+    if verb == Some("rename") {
+        Some(Picked::Rename)
+    } else {
+        intercept(verb, folders_only)
+    }
+}
+
+/// What shellman takes over when `verb` is picked on `folders_only` targets. Verbs on files, and
+/// on a mix, go to Windows unchanged.
+fn intercept(verb: Option<&str>, folders_only: bool) -> Option<Picked> {
+    if !folders_only {
+        return None;
+    }
+    match verb? {
+        "open" | "explore" => Some(Picked::OpenFolders),
+        "opennewwindow" | "opennewtab" | "opennewprocess" => Some(Picked::OpenFoldersInTabs),
+        _ => None,
+    }
 }
 
 thread_local! {
@@ -51,13 +77,19 @@ pub fn show(hwnd: isize, folder: &Path, items: &[PathBuf], extended: bool) -> Pi
         let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
     }
     let hwnd = HWND(hwnd as *mut _);
+    // The folder itself stands in for the items when the background menu is up.
+    let folders_only = if items.is_empty() {
+        folder.is_dir()
+    } else {
+        items.iter().all(|p| p.is_dir())
+    };
     let menu = if items.is_empty() {
         background_menu(hwnd, folder)
     } else {
         items_menu(hwnd, items)
     };
     match menu {
-        Some(cm) => run(hwnd, &cm, extended),
+        Some(cm) => run(hwnd, &cm, extended, folders_only),
         None => Picked::Nothing,
     }
 }
@@ -128,7 +160,7 @@ fn background_menu(hwnd: HWND, folder: &Path) -> Option<IContextMenu> {
     }
 }
 
-fn run(hwnd: HWND, cm: &IContextMenu, extended: bool) -> Picked {
+fn run(hwnd: HWND, cm: &IContextMenu, extended: bool, folders_only: bool) -> Picked {
     unsafe {
         let Ok(hmenu) = CreatePopupMenu() else {
             return Picked::Nothing;
@@ -159,8 +191,8 @@ fn run(hwnd: HWND, cm: &IContextMenu, extended: bool) -> Picked {
         OPEN.with(|open| *open.borrow_mut() = None);
         let picked = if cmd < FIRST_ID {
             Picked::Nothing
-        } else if verb(cm, cmd - FIRST_ID).as_deref() == Some("rename") {
-            Picked::Rename
+        } else if let Some(own) = own_verb(verb(cm, cmd - FIRST_ID).as_deref(), folders_only) {
+            own
         } else {
             let info = CMINVOKECOMMANDINFO {
                 cbSize: size_of::<CMINVOKECOMMANDINFO>() as u32,
@@ -240,5 +272,23 @@ mod tests {
                 let _ = DestroyMenu(hmenu);
             }
         }
+    }
+
+    #[test]
+    fn folder_open_verbs_are_taken_over() {
+        assert!(matches!(own_verb(Some("open"), true), Some(Picked::OpenFolders)));
+        assert!(matches!(own_verb(Some("explore"), true), Some(Picked::OpenFolders)));
+        assert!(matches!(own_verb(Some("opennewwindow"), true), Some(Picked::OpenFoldersInTabs)));
+        assert!(matches!(own_verb(Some("opennewtab"), true), Some(Picked::OpenFoldersInTabs)));
+        assert!(matches!(own_verb(Some("rename"), false), Some(Picked::Rename)));
+    }
+
+    #[test]
+    fn file_verbs_and_other_folder_verbs_are_left_alone() {
+        assert!(own_verb(Some("open"), false).is_none());
+        assert!(own_verb(Some("opennewwindow"), false).is_none());
+        assert!(own_verb(Some("properties"), true).is_none());
+        assert!(own_verb(Some("copy"), true).is_none());
+        assert!(own_verb(None, true).is_none());
     }
 }

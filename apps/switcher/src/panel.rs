@@ -52,7 +52,7 @@ pub fn draw(ctx: &egui::Context, view: &View, icons: &mut Thumbs) -> Option<usiz
             let tile_radius = egui::CornerRadius::same(TILE_RADIUS);
             if i == view.sel {
                 ui.painter().rect_filled(outer, tile_radius, c.control_hover);
-                ui.painter().rect_stroke(outer, tile_radius, egui::Stroke::new(2.0_f32, c.accent), egui::StrokeKind::Inside);
+                ui.painter().rect_stroke(outer, tile_radius, egui::Stroke::new(2.0_f32, c.accent_fill), egui::StrokeKind::Inside);
             } else if resp.hovered() {
                 ui.painter().rect_filled(outer, tile_radius, c.control);
             }

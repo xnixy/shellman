@@ -149,7 +149,7 @@ pub fn switch(ui: &mut Ui, on: &mut bool, label: &str) -> egui::Response {
     p.rect_filled(
         track,
         CornerRadius::same(10),
-        theme::mix(c.track, c.accent, t),
+        theme::mix(c.track, c.accent_fill, t),
     );
     let knob_x = track.left() + 10.0 + 16.0 * t;
     p.circle_filled(

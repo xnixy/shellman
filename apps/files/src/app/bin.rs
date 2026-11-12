@@ -43,8 +43,6 @@ pub(super) fn blocked(action: &Action) -> bool {
             | Action::Clip(_)
             | Action::Paste
             | Action::NewFolder
-            | Action::Reveal
-            | Action::ExplorerHere
             | Action::ShellMenu { .. }
             | Action::Properties
     )
@@ -189,6 +187,25 @@ impl FileMan {
         }
     }
 
+    /// Go to the folder the first selected item was deleted from and select the item's name there.
+    /// The item itself is in the bin, so that folder may not have it; the folder must exist.
+    pub(super) fn bin_show_original(&mut self) {
+        let tab = &self.tabs[self.active];
+        let original = tab
+            .selection()
+            .first()
+            .and_then(|e| tab.bin.get(&e.path))
+            .map(|i| i.original.clone());
+        let Some(original) = original else { return };
+        match original.parent() {
+            Some(parent) if parent.is_dir() => {
+                self.apply(Action::Navigate(Loc::Dir(parent.to_path_buf())));
+                self.tabs[self.active].select_after_load = Some((original, false));
+            }
+            _ => self.toast("That folder no longer exists"),
+        }
+    }
+
     /// The original locations of the selection, one per line, for the clipboard.
     pub(super) fn bin_copy_paths(&mut self) {
         let tab = &self.tabs[self.active];
@@ -253,6 +270,10 @@ pub(super) fn item_menu(ui: &mut Ui, actions: &mut Vec<Action>) {
     ui.separator();
     if menu_item(ui, glyph::DELETE, "Delete permanently", "Del") {
         actions.push(Action::BinDelete);
+        ui.close_menu();
+    }
+    if menu_item(ui, glyph::FOLDER, "Show in original folder", "") {
+        actions.push(Action::BinShowOriginal);
         ui.close_menu();
     }
     if menu_item(ui, glyph::COPY, "Copy original path", "Ctrl+Shift+C") {

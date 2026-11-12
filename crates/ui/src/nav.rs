@@ -17,7 +17,7 @@ pub fn nav_row(ui: &mut Ui, g: char, label: &str, active: bool) -> egui::Respons
             egui::pos2(rect.left() + 4.0 + 1.5, rect.center().y),
             Vec2::new(3.0, 16.0),
         );
-        p.rect_filled(bar, CornerRadius::same(2), c.accent);
+        p.rect_filled(bar, CornerRadius::same(2), c.accent_fill);
     } else if resp.hovered() {
         p.rect_filled(rect, CornerRadius::same(8), theme::with_alpha(c.text, 10));
     }
@@ -60,7 +60,7 @@ pub fn sidebar_title(ui: &mut Ui, height: f32, name: &str) {
     );
     crate::widgets::window_drag(ui, &drag);
     ui.painter()
-        .circle_filled(egui::pos2(bar.left() + 14.0, bar.center().y), 3.5, c.accent);
+        .circle_filled(egui::pos2(bar.left() + 14.0, bar.center().y), 3.5, c.accent_fill);
     ui.painter().text(
         egui::pos2(bar.left() + 26.0, bar.center().y),
         Align2::LEFT_CENTER,

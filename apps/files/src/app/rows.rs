@@ -23,10 +23,6 @@ pub(super) fn row_menu(ui: &mut Ui, actions: &mut Vec<Action>, is_dir: bool, loc
         actions.push(Action::NewTab(loc.clone()));
         ui.close_menu();
     }
-    if menu_item(ui, glyph::FOLDER, "Show in Explorer", "") {
-        actions.push(Action::Reveal);
-        ui.close_menu();
-    }
     ui.separator();
     if menu_item(ui, glyph::CUT, "Cut", "Ctrl+X") {
         actions.push(Action::Clip(Op::Move));

@@ -53,7 +53,7 @@ pub fn segmented<T: Copy + PartialEq>(ui: &mut Ui, current: &mut T, options: &[(
         let resp = ui.interact(seg, ui.id().with(("segment", *text)), Sense::click());
         let selected = *value == *current;
         if selected {
-            ui.painter().rect_filled(seg, CornerRadius::same(8), c.accent);
+            ui.painter().rect_filled(seg, CornerRadius::same(8), c.accent_fill);
         } else if resp.hovered() {
             ui.painter()
                 .rect_filled(seg, CornerRadius::same(8), theme::with_alpha(c.text, 14));

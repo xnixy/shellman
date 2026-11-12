@@ -12,7 +12,7 @@ pub(crate) mod time;
 pub use drives::{drives, Drive};
 pub use listing::{list_dir, Entry};
 pub use names::{check_name, natural_cmp, unique_child};
-pub use shell::{open, open_in_explorer, reveal_in_explorer, shell_op, Op};
+pub use shell::{open, shell_op, Op};
 
 pub fn format_size(bytes: u64) -> String {
     const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
