@@ -150,7 +150,9 @@ impl Control {
             .show(ctx, |ui| {
                 paint_surface(ui, ctx.screen_rect(), self.glass);
                 ui.spacing_mut().item_spacing = egui::vec2(kit::GAP, kit::GAP);
-                // Scrolls only on a screen too short for the whole panel.
+                // Scrolls only on a screen too short for the whole panel, with a bar that floats
+                // over the tiles rather than narrowing them.
+                ui.spacing_mut().scroll = egui::style::ScrollStyle::floating();
                 let out = egui::ScrollArea::vertical().auto_shrink([false, true]).show(ui, |ui| {
                     ui.spacing_mut().item_spacing = egui::vec2(kit::GAP, kit::GAP);
                     self.modules(ui)
