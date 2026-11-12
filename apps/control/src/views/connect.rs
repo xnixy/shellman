@@ -2,13 +2,19 @@
 //! tiles two to a row. The chip turns a radio on or off; the rest of the tile (or a right click)
 //! opens the matching Settings page.
 
-use super::kit::{self, chip, clipped_text, label_font, small_font, CHIP, GAP, TILE_INSET, TILE_RADIUS};
-use egui::{Align2, CornerRadius, Pos2, Rect, Sense, Ui, Vec2};
+use super::kit::{self, clipped_text, label_font, small_font, CHIP, GAP, TILE_INSET, TILE_RADIUS};
+use egui::{Align2, Color32, CornerRadius, Pos2, Rect, Sense, Ui, Vec2};
 use shellman_core::system::radios::{Connectivity, Kind, Switch};
 use shellman_core::system::status::Network;
-use shellman_ui::theme::{colors, glyph, icon_font, with_alpha};
+use shellman_ui::chips::soft_colors;
+use shellman_ui::theme::{self, colors, glyph, icon_font, with_alpha};
 
-const TILE_HEIGHT: f32 = 58.0;
+const TILE_HEIGHT: f32 = 66.0;
+
+/// Whether there is any tile to show.
+pub fn has_tiles(n: &Connectivity) -> bool {
+    !tiles(n).is_empty()
+}
 
 /// What a tile's chip does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -130,15 +136,32 @@ fn tile(ui: &mut Ui, rect: Rect, t: &Tile, links: bool) -> Option<Asked> {
     let chip_rect = Rect::from_center_size(chip_center, Vec2::splat(CHIP));
     let chip_resp = ui.interact(chip_rect, id.with("chip"), Sense::click());
     let chip_hover = chip_resp.hovered() && t.toggle.is_some();
-    ui.painter().rect_filled(rect, CornerRadius::same(TILE_RADIUS), kit::tile_fill(links && body.hovered() && !chip_resp.hovered()));
-    chip(ui, chip_center, t.glyph, t.on, chip_hover);
+    // On: the accent fills the tile. Off: a soft tile with a hairline.
+    let (on_fill, on_fg) = kit::on_colors(&c);
+    let (soft, soft_hover, line) = soft_colors(c.light);
+    let body_hover = links && body.hovered() && !chip_resp.hovered();
+    let (fill, stroke, ink, detail) = if t.on {
+        let fill = if body_hover { theme::mix(on_fill, Color32::WHITE, 0.08) } else { on_fill };
+        (fill, egui::Stroke::NONE, on_fg, with_alpha(on_fg, 215))
+    } else {
+        (if body_hover { soft_hover } else { soft }, line, c.text, c.muted)
+    };
+    ui.painter().rect(rect, CornerRadius::same(TILE_RADIUS), fill, stroke, egui::StrokeKind::Inside);
+    // The chip is a round well in the tile: a veil of the ink colour, stronger when hovered.
+    let veil = with_alpha(ink, match (t.on, chip_hover) {
+        (_, true) => 70,
+        (true, false) => 40,
+        (false, false) => 22,
+    });
+    ui.painter().circle_filled(chip_center, CHIP / 2.0, veil);
+    ui.painter().text(chip_center, Align2::CENTER_CENTER, t.glyph, icon_font(kit::GLYPH), ink);
     let text_left = chip_rect.right() + 10.0;
     let text_width = rect.right() - 26.0 - text_left;
-    clipped_text(ui, Pos2::new(text_left, rect.center().y - 1.0), Align2::LEFT_BOTTOM, t.title, label_font(), c.text, text_width);
-    clipped_text(ui, Pos2::new(text_left, rect.center().y + 1.0), Align2::LEFT_TOP, &t.detail, small_font(), c.muted, text_width);
+    clipped_text(ui, Pos2::new(text_left, rect.center().y - 1.0), Align2::LEFT_BOTTOM, t.title, label_font(), ink, text_width);
+    clipped_text(ui, Pos2::new(text_left, rect.center().y + 1.0), Align2::LEFT_TOP, &t.detail, small_font(), detail, text_width);
     if links {
         let chevron = Pos2::new(rect.right() - 16.0, rect.center().y);
-        ui.painter().text(chevron, Align2::CENTER_CENTER, glyph::CHEVRON, icon_font(10.0), with_alpha(c.muted, 160));
+        ui.painter().text(chevron, Align2::CENTER_CENTER, glyph::CHEVRON, icon_font(10.0), with_alpha(detail, 170));
     }
     if chip_resp.clicked() {
         return t.toggle.map(Asked::Toggle);

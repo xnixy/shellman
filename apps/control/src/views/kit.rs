@@ -6,9 +6,8 @@ use egui::{Align2, Color32, CornerRadius, FontId, Pos2, Rect, Response, Sense, U
 use shellman_ui::theme::{self, colors, icon_font, with_alpha, Colors};
 
 /// Spacing, in points.
-pub const PAD: f32 = 14.0;
 pub const GAP: f32 = 10.0;
-pub const TILE_RADIUS: u8 = 16;
+pub const TILE_RADIUS: u8 = 18;
 pub const TILE_INSET: f32 = 12.0;
 pub const CHIP: f32 = 30.0;
 pub const GLYPH: f32 = 16.0;
@@ -56,17 +55,14 @@ pub fn well(hovered: bool) -> Color32 {
     }
 }
 
-/// A full-width tile holding `add`, padded on every side.
+/// A full-width block holding `add`. It has no fill or padding of its own: it sits in an island
+/// (see `island`), which is the surface.
 pub fn tile<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
-    egui::Frame::new()
-        .fill(tile_fill(false))
-        .corner_radius(CornerRadius::same(TILE_RADIUS))
-        .inner_margin(egui::Margin::same(TILE_INSET as i8))
-        .show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            add(ui)
-        })
-        .inner
+    ui.scope(|ui| {
+        ui.set_width(ui.available_width());
+        add(ui)
+    })
+    .inner
 }
 
 /// The fill and glyph colour of something that is on. The accent, unless it would hardly stand
