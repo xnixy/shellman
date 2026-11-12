@@ -2,24 +2,26 @@
 //! window events (shown, hidden, destroyed, renamed, minimized, cloaked, brought to front) and
 //! raises a flag and wakes the UI.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::thread::JoinHandle;
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::Accessibility::{SetWinEventHook, UnhookWinEvent, HWINEVENTHOOK};
 use windows::Win32::UI::WindowsAndMessaging::{
-    DispatchMessageW, GetAncestor, GetForegroundWindow, GetMessageW, PostThreadMessageW, TranslateMessage, GA_ROOT, MSG,
-    WINEVENT_OUTOFCONTEXT, WINEVENT_SKIPOWNPROCESS, WM_QUIT,
+    DispatchMessageW, GetAncestor, GetForegroundWindow, GetMessageW, GetWindowThreadProcessId, PostThreadMessageW,
+    TranslateMessage, GA_ROOT, MSG, WINEVENT_OUTOFCONTEXT, WINEVENT_SKIPOWNPROCESS, WM_APP, WM_QUIT,
 };
 
-// The event ranges listened to. Narrow on purpose: location changes fire constantly and are
-// not needed.
+// The event ranges listened to. Narrow on purpose: location changes fire constantly (every cursor
+// and caret move), so they are not in this list. A separate hook hears them from the front
+// window's thread only (see `follow_foreground`).
 const EVENT_SYSTEM_FOREGROUND: u32 = 0x0003;
 const EVENT_SYSTEM_MINIMIZESTART: u32 = 0x0016;
 const EVENT_SYSTEM_MINIMIZEEND: u32 = 0x0017;
 const EVENT_OBJECT_DESTROY: u32 = 0x8001;
 const EVENT_OBJECT_HIDE: u32 = 0x8003;
+const EVENT_OBJECT_LOCATIONCHANGE: u32 = 0x800B;
 const EVENT_OBJECT_NAMECHANGE: u32 = 0x800C;
 const EVENT_OBJECT_CLOAKED: u32 = 0x8017;
 const EVENT_OBJECT_UNCLOAKED: u32 = 0x8018;
@@ -38,6 +40,14 @@ static DIRTY: AtomicBool = AtomicBool::new(true);
 /// terminal or a progress title can change many times a second) and only the front one is shown,
 /// so a rename never needs the whole list rebuilt.
 static FRONT_RENAMED: AtomicBool = AtomicBool::new(false);
+type Hook = OnceLock<Mutex<Option<Box<dyn Fn() + Send>>>>;
+
+/// Called when the window in front moves or resizes, for example into or out of fullscreen. Kept
+/// apart from `WAKE` because these events are frequent and nothing in the window list changes.
+static MOVED: Hook = OnceLock::new();
+/// The location hook on the front window's thread, if one is installed. Only the watcher thread
+/// touches it.
+static MOVE_HOOK: AtomicIsize = AtomicIsize::new(0);
 static WAKE: OnceLock<Mutex<Option<Box<dyn Fn() + Send>>>> = OnceLock::new();
 
 pub struct WindowWatcher {
@@ -64,6 +74,17 @@ impl WindowWatcher {
         DIRTY.swap(false, Ordering::AcqRel)
     }
 
+    /// Call `f` (from the watcher thread) whenever the window in front moves or resizes. It
+    /// must be quick and must not block: it runs inside the event callback.
+    /// Nothing is listened to for this until someone calls it.
+    pub fn on_front_moved(&self, f: impl Fn() + Send + 'static) {
+        *MOVED.get_or_init(|| Mutex::new(None)).lock().unwrap() = Some(Box::new(f));
+        // The watcher thread hooks the window in front now; later it follows each change.
+        unsafe {
+            let _ = PostThreadMessageW(self.thread_id, WM_APP, WPARAM(0), LPARAM(0));
+        }
+    }
+
     /// True once after the window in front changed its title.
     pub fn take_front_renamed(&self) -> bool {
         FRONT_RENAMED.swap(false, Ordering::AcqRel)
@@ -78,8 +99,8 @@ impl Drop for WindowWatcher {
         if let Some(t) = self.thread.take() {
             let _ = t.join();
         }
-        if let Some(w) = WAKE.get() {
-            *w.lock().unwrap() = None;
+        for hook in [WAKE.get(), MOVED.get()].into_iter().flatten() {
+            *hook.lock().unwrap() = None;
         }
     }
 }
@@ -97,6 +118,10 @@ fn run(ready: std::sync::mpsc::Sender<u32>) {
     let mut msg = MSG::default();
     while unsafe { GetMessageW(&mut msg, None, 0, 0) }.as_bool() {
         unsafe {
+            if msg.hwnd.is_invalid() && msg.message == WM_APP {
+                follow_foreground(GetForegroundWindow());
+                continue;
+            }
             let _ = TranslateMessage(&msg);
             DispatchMessageW(&msg);
         }
@@ -104,6 +129,50 @@ fn run(ready: std::sync::mpsc::Sender<u32>) {
     for h in hooks {
         unsafe {
             let _ = UnhookWinEvent(h);
+        }
+    }
+    unhook_moves();
+}
+
+/// Hear location changes from the thread of the window in front, and nobody else's: the hook is
+/// replaced each time the foreground changes. A system-wide location hook would be woken for
+/// every cursor and caret move. Does nothing until someone asked for `on_front_moved`.
+unsafe fn follow_foreground(front: HWND) {
+    let wanted = MOVED.get().is_some_and(|m| m.lock().unwrap().is_some());
+    unhook_moves();
+    if !wanted || front.is_invalid() {
+        return;
+    }
+    let thread = GetWindowThreadProcessId(front, None);
+    if thread != 0 {
+        let hook = SetWinEventHook(
+            EVENT_OBJECT_LOCATIONCHANGE,
+            EVENT_OBJECT_LOCATIONCHANGE,
+            None,
+            Some(on_event),
+            0,
+            thread,
+            WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS,
+        );
+        MOVE_HOOK.store(hook.0 as isize, Ordering::Release);
+        // A window that took its final place before the hook existed was missed: ask once more.
+        notify_moved();
+    }
+}
+
+fn notify_moved() {
+    if let Some(m) = MOVED.get() {
+        if let Some(moved) = m.lock().unwrap().as_ref() {
+            moved();
+        }
+    }
+}
+
+fn unhook_moves() {
+    let old = MOVE_HOOK.swap(0, Ordering::AcqRel);
+    if old != 0 {
+        unsafe {
+            let _ = UnhookWinEvent(HWINEVENTHOOK(old as *mut _));
         }
     }
 }
@@ -124,6 +193,17 @@ unsafe extern "system" fn on_event(
         return;
     }
     if event != EVENT_SYSTEM_FOREGROUND && GetAncestor(hwnd, GA_ROOT) != hwnd {
+        return;
+    }
+    if event == EVENT_SYSTEM_FOREGROUND {
+        follow_foreground(hwnd);
+    }
+    if event == EVENT_OBJECT_LOCATIONCHANGE {
+        // Windows that are not in front are none of the bars' business.
+        let front = GetForegroundWindow();
+        if !front.is_invalid() && GetAncestor(front, GA_ROOT) == hwnd {
+            notify_moved();
+        }
         return;
     }
     if event == EVENT_OBJECT_NAMECHANGE {

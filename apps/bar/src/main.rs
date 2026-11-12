@@ -3,6 +3,7 @@
 
 mod appbar;
 mod dock;
+mod fullscreen;
 mod place;
 mod shape;
 mod topbar;
@@ -48,6 +49,7 @@ fn main() -> eframe::Result {
                     dock_hwnd = hwnd;
                     glass = window::frost_window(windows::Win32::Foundation::HWND(hwnd as *mut _));
                     shape::never_activate(hwnd);
+                    fullscreen::start(hwnd);
                 }
             }
             Ok(Box::new(Bar {
@@ -88,5 +90,8 @@ impl eframe::App for Bar {
         }
         self.dock.frame(ctx);
         self.top.show(ctx, self.dock.front_window(), self.glass);
+        if let Some(top) = self.top.hwnd() {
+            fullscreen::set_top(top);
+        }
     }
 }

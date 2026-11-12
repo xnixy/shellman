@@ -51,6 +51,11 @@ struct Status {
 }
 
 impl TopBar {
+    /// The bar's window, once it exists.
+    pub fn hwnd(&self) -> Option<isize> {
+        self.hwnd
+    }
+
     /// Show the bar as a second window of the bar process, across the top of the primary screen.
     pub fn show(&mut self, parent: &egui::Context, front: Option<&AppWindow>, glass: bool) {
         let ppp = parent.pixels_per_point();

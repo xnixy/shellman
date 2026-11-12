@@ -66,6 +66,10 @@ unsafe extern "system" fn dock_proc(
     const MA_NOACTIVATE: isize = 3;
     match msg {
         WM_MOUSEACTIVATE => LRESULT(MA_NOACTIVATE),
+        crate::fullscreen::WM_CHECK => {
+            crate::fullscreen::check();
+            LRESULT(0)
+        }
         WM_STYLECHANGING if wparam.0 as i32 == GWL_EXSTYLE.0 => {
             let change = &mut *(lparam.0 as *mut STYLESTRUCT);
             change.styleNew = fix_ex_style(change.styleNew);

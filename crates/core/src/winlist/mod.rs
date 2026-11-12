@@ -3,6 +3,7 @@
 //!
 //! The rules match what Explorer's taskbar shows, so the same windows appear in the same places.
 
+pub mod fullscreen;
 mod identity;
 mod watch;
 

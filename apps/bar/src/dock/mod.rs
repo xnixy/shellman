@@ -5,7 +5,7 @@ mod items;
 mod menu;
 mod pins;
 
-use crate::place;
+use crate::{fullscreen, place};
 use items::{Item, Section};
 use pins::{Pin, Pins};
 use shellman_core::thumbs::Thumbs;
@@ -46,11 +46,17 @@ pub struct Dock {
 impl Dock {
     pub fn new(ctx: egui::Context, glass: bool, hwnd: isize) -> Self {
         let wake = ctx.clone();
+        let watcher = WindowWatcher::start(move || {
+            wake.request_repaint();
+            // A hidden window gets no repaints, so a fullscreen app ending is noticed by message.
+            fullscreen::request_check();
+        });
+        watcher.on_front_moved(fullscreen::request_check);
         let mut dock = Self {
             glass,
             hwnd,
             list: WindowList::default(),
-            watcher: WindowWatcher::start(move || wake.request_repaint()),
+            watcher,
             thumbs: Thumbs::new(ctx),
             pins: Pins::load(),
             files: items::files_pin(),
