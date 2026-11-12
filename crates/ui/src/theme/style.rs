@@ -60,16 +60,16 @@ fn shell_visuals(c: &Colors) -> egui::Visuals {
         Color32::from_rgba_unmultiplied(255, 255, 255, 30),
         Color32::from_black_alpha(26),
     );
-    hovered.bg_fill = mix(c.track, c.accent, 0.25);
+    hovered.bg_fill = mix(c.track, c.accent_fill, 0.25);
     let mut active = hovered;
-    active.bg_fill = c.accent;
-    active.weak_bg_fill = c.accent;
+    active.bg_fill = c.accent_fill;
+    active.weak_bg_fill = c.accent_fill;
     active.fg_stroke.color = c.on_accent;
     visuals.widgets.inactive = idle;
     visuals.widgets.hovered = hovered;
     visuals.widgets.active = active;
     visuals.widgets.open = hovered;
-    visuals.selection.bg_fill = pick(c.accent, mix(c.accent, Color32::WHITE, 0.45));
+    visuals.selection.bg_fill = pick(c.accent_fill, mix(c.accent_fill, Color32::WHITE, 0.45));
     visuals.selection.stroke = Stroke::new(1.0_f32, c.accent_text);
     visuals.hyperlink_color = c.accent_text;
     visuals.text_cursor.stroke.color = c.accent_text;
@@ -95,7 +95,7 @@ pub fn muted(text: impl Into<String>) -> RichText {
 pub fn primary_button(text: &str) -> egui::Button<'static> {
     let c = colors();
     egui::Button::new(RichText::new(text).strong().color(c.on_accent))
-        .fill(c.accent)
+        .fill(c.accent_fill)
         .stroke(Stroke::NONE)
         .corner_radius(CornerRadius::same(8))
         .min_size(Vec2::new(88.0, 30.0))

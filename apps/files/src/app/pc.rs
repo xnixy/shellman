@@ -90,7 +90,7 @@ fn drive_card(ui: &Ui, rect: Rect, d: &Drive) {
     );
     let mut fill = bar;
     fill.set_width(bar.width() * used);
-    let col = if used > 0.9 { c.danger } else { c.accent };
+    let col = if used > 0.9 { c.danger } else { c.accent_fill };
     let p = ui.painter();
     p.rect_filled(bar, CornerRadius::same(2), c.track);
     p.rect_filled(fill, CornerRadius::same(2), col);

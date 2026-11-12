@@ -105,7 +105,7 @@ impl super::FileMan {
             ui.painter().rect_stroke(
                 rect,
                 CornerRadius::same(16),
-                Stroke::new(1.0_f32, theme::with_alpha(c.accent, 170)),
+                Stroke::new(1.0_f32, theme::with_alpha(c.accent_fill, 170)),
                 egui::StrokeKind::Inside,
             );
         }

@@ -129,7 +129,7 @@ impl super::FileMan {
                         p.rect_stroke(
                             row_rect,
                             CornerRadius::same(9),
-                            Stroke::new(1.0_f32, theme::with_alpha(c.accent, 150)),
+                            Stroke::new(1.0_f32, theme::with_alpha(c.accent_fill, 150)),
                             egui::StrokeKind::Inside,
                         );
                     }
