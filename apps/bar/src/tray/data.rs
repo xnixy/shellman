@@ -58,6 +58,7 @@ pub fn parse(bytes: &[u8]) -> Option<Notify> {
         return None;
     }
     let message = u32_at(bytes, 4)?;
+    let flags = u32_at(bytes.get(8..)?, 12)?;
     let nid = bytes.get(8..)?;
     let size = u32_at(nid, 0)? as usize;
     // The first version of the structure had a 64-character tip; later ones 128.
@@ -67,19 +68,54 @@ pub fn parse(bytes: &[u8]) -> Option<Notify> {
         message,
         hwnd: u32_at(nid, 4)? as i32 as isize,
         uid: u32_at(nid, 8)?,
-        flags: u32_at(nid, 12)?,
+        flags,
         callback: u32_at(nid, 16)?,
         icon: u32_at(nid, 20)? as i32 as isize,
         tip: text_at(nid, 24, tip_chars),
         state: if has(284) { u32_at(nid, 280)? } else { 0 },
         state_mask: if has(288) { u32_at(nid, 284)? } else { 0 },
         version: if has(804) { u32_at(nid, 800)? } else { 0 },
-        guid: if has(952) {
+        // Only meaningful (and only used for keying) when the app set NIF_GUID.
+        guid: if has(952) && flags & NIF_GUID != 0 {
             Some(nid.get(936..952)?.try_into().ok()?)
         } else {
             None
         },
     })
+}
+
+/// `Shell_NotifyIconGetRect`: which icon, and whether the position or the size is wanted.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RectRequest {
+    /// 1 = top-left corner, 2 = width and height.
+    pub message: u32,
+    pub hwnd: isize,
+    pub uid: u32,
+    pub guid: [u8; 16],
+}
+
+/// Read the payload of a `WM_COPYDATA` with `dwData == 3`: magic, message, size, padding, a
+/// 32-bit window handle, the icon ID and the icon's GUID (all 32-bit little-endian fields).
+pub fn parse_rect_request(bytes: &[u8]) -> Option<RectRequest> {
+    if u32_at(bytes, 0)? != SIGNATURE {
+        return None;
+    }
+    Some(RectRequest {
+        message: u32_at(bytes, 4)?,
+        hwnd: u32_at(bytes, 16)? as i32 as isize,
+        uid: u32_at(bytes, 20)?,
+        guid: bytes.get(24..40).and_then(|g| g.try_into().ok()).unwrap_or([0; 16]),
+    })
+}
+
+/// The answer: two values packed as `MAKELONG`, each a signed 16-bit number, so a monitor left
+/// of or above the primary still reads back right. `rect` is left, top, right, bottom.
+pub fn rect_answer(message: u32, rect: [i32; 4]) -> isize {
+    let (a, b) = match message {
+        1 => (rect[0], rect[1]),
+        _ => (rect[2] - rect[0], rect[3] - rect[1]),
+    };
+    ((a as u16 as u32) | ((b as u16 as u32) << 16)) as isize
 }
 
 #[cfg(test)]
@@ -111,7 +147,40 @@ mod tests {
         assert_eq!(n.icon, -256, "handles are sign-extended from 32 bits");
         assert_eq!(n.tip, "Discord");
         assert_eq!(n.version, 4);
-        assert!(n.guid.is_some());
+        assert_eq!(n.guid, None, "NIF_GUID is not set, so there is no GUID");
+        let mut b = request(956, "x");
+        b[8 + 12..8 + 16].copy_from_slice(&(NIF_GUID | NIF_MESSAGE).to_le_bytes());
+        b[8 + 936] = 9;
+        assert_eq!(parse(&b).unwrap().guid.unwrap()[0], 9);
+    }
+
+    fn rect_request(message: u32) -> Vec<u8> {
+        let mut b = vec![0u8; 40];
+        b[0..4].copy_from_slice(&SIGNATURE.to_le_bytes());
+        b[4..8].copy_from_slice(&message.to_le_bytes());
+        b[8..12].copy_from_slice(&40u32.to_le_bytes());
+        b[16..20].copy_from_slice(&0xFFFF_FF00u32.to_le_bytes());
+        b[20..24].copy_from_slice(&7u32.to_le_bytes());
+        b[24] = 3;
+        b
+    }
+
+    #[test]
+    fn reads_a_rect_request() {
+        let r = parse_rect_request(&rect_request(2)).unwrap();
+        assert_eq!((r.message, r.hwnd, r.uid, r.guid[0]), (2, -256, 7, 3));
+        assert_eq!(parse_rect_request(&[0u8; 40]), None);
+        assert_eq!(parse_rect_request(&rect_request(1)[..12]), None);
+    }
+
+    #[test]
+    fn rect_answers_pack_position_and_size() {
+        let r = [3000, 4, 3026, 30];
+        assert_eq!(rect_answer(1, r), 3000 | (4 << 16));
+        assert_eq!(rect_answer(2, r), 26 | (26 << 16));
+        let left = rect_answer(1, [-1920, -10, -1894, 16]);
+        assert_eq!(left as u32 as u16 as i16, -1920);
+        assert_eq!((left as u32 >> 16) as u16 as i16, -10);
     }
 
     #[test]

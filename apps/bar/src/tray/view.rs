@@ -25,6 +25,7 @@ pub fn draw(ui: &mut egui::Ui, icons: &[TrayIcon], tex: &mut TrayTextures, bar: 
         let cell = egui::Rect::from_center_size(egui::pos2(x + PITCH / 2.0, bar.center().y), egui::Vec2::splat(PITCH));
         let resp = ui.interact(cell, egui::Id::new(("tray", icon.hwnd, icon.uid)), egui::Sense::click());
         highlight(ui, cell, &resp, RADIUS);
+        record_rect(ui.ctx(), icon, cell);
         if let Some(image) = &icon.image {
             let key = (icon.hwnd, icon.uid);
             let stale = tex.by_icon.get(&key).is_none_or(|(rev, _)| *rev != icon.rev);
@@ -46,4 +47,15 @@ pub fn draw(ui: &mut egui::Ui, icons: &[TrayIcon], tex: &mut TrayTextures, bar: 
         }
     }
     x
+}
+
+/// Tell the tray host where `cell` is on screen, in physical pixels, so apps that ask where
+/// their icon is (`Shell_NotifyIconGetRect`) get an answer.
+fn record_rect(ctx: &egui::Context, icon: &TrayIcon, cell: egui::Rect) {
+    let Some(origin) = ctx.input(|i| i.viewport().inner_rect) else { return };
+    let ppp = ctx.pixels_per_point();
+    let min = (origin.min + cell.min.to_vec2()) * ppp;
+    let max = (origin.min + cell.max.to_vec2()) * ppp;
+    let px = |v: f32| v.round() as i32;
+    super::set_rect(icon.hwnd, icon.uid, [px(min.x), px(min.y), px(max.x), px(max.y)]);
 }
