@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use windows::Win32::Foundation::HWND;
 
 fn main() -> eframe::Result {
-    let mut settings = settings::load_settings();
+    let settings = settings::load_settings();
     // A folder passed on the command line opens in its own tab.
     let arg = std::env::args_os()
         .nth(1)
@@ -33,13 +33,8 @@ fn main() -> eframe::Result {
             window::set_message_hook(shellman_core::shell_menu::forward);
             theme::install_fonts(&cc.egui_ctx);
             theme::set_light(cc.egui_ctx.theme() == egui::Theme::Light);
-            // The shared look; the first run carries over what Files had saved itself.
-            let look = shellman_ui::appearance::Appearance::load_or(shellman_ui::appearance::Appearance {
-                accent: settings.accent,
-                glass: settings.glass,
-            });
-            settings.accent = look.accent;
-            settings.glass = look.glass;
+            // The shared look, which the settings app edits; Files only follows it.
+            let look = shellman_ui::appearance::Appearance::load_or(Default::default());
             look.apply(&cc.egui_ctx);
             theme::apply(&cc.egui_ctx);
             let mut hwnd = 0isize;
@@ -54,6 +49,7 @@ fn main() -> eframe::Result {
             Ok(Box::new(app::FileMan::new(
                 cc.egui_ctx.clone(),
                 settings,
+                look,
                 arg,
                 hwnd,
                 glass,

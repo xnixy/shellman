@@ -27,6 +27,9 @@ impl super::FileMan {
             if key(Modifiers::CTRL, Key::F) {
                 self.focus_search = true;
             }
+            if key(Modifiers::CTRL, Key::H) {
+                actions.push(Action::ToggleHidden);
+            }
             if key(Modifiers::CTRL, Key::T) {
                 actions.push(Action::NewTab(self.tabs[self.active].loc.clone()));
             }

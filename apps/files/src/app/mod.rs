@@ -60,6 +60,9 @@ pub(crate) struct FileMan {
     editing_path: Option<String>,
     focus_path: bool,
     focus_search: bool,
+    /// The shared look, which the settings app edits; Files only follows it.
+    look: shellman_ui::appearance::Appearance,
+    look_watch: shellman_core::watch::Watcher,
     last_accent_check: f64,
     toast: Option<(String, f64)>,
     save_pending: bool,
@@ -79,6 +82,7 @@ impl FileMan {
     pub(crate) fn new(
         ctx: egui::Context,
         settings: crate::settings::Settings,
+        look: shellman_ui::appearance::Appearance,
         arg: Option<PathBuf>,
         hwnd: isize,
         glass: bool,
@@ -97,6 +101,11 @@ impl FileMan {
             locs.push(dirs::home_dir().map_or(Loc::Pc, Loc::Dir));
         }
         let thumbs = Thumbs::new(ctx.clone());
+        // Follow the look live: the settings app saves it when you change the accent or glass.
+        let look_watch = shellman_core::watch::Watcher::new(ctx.clone());
+        if let Some(dir) = shellman_ui::appearance::file().and_then(|f| f.parent().map(Path::to_path_buf)) {
+            look_watch.set_dirs(vec![dir]);
+        }
         let mut app = Self {
             watcher: shellman_core::watch::Watcher::new(ctx.clone()),
             watched: Vec::new(),
@@ -116,6 +125,8 @@ impl FileMan {
             editing_path: None,
             focus_path: false,
             focus_search: false,
+            look,
+            look_watch,
             last_accent_check: 0.0,
             toast: None,
             save_pending: false,
@@ -271,37 +282,30 @@ impl FileMan {
         }
     }
 
-    /// Follow the Windows app mode, and the Windows accent while that is the choice.
+    /// Follow the shared look when its file changes, the Windows app mode, and the Windows
+    /// accent while that is the choice.
     fn track_system(&mut self, ctx: &egui::Context) {
-        let mut repaint_frame = theme::set_light(ctx.theme() == egui::Theme::Light);
+        let mut repaint_frame = false;
+        if !self.look_watch.poll().is_empty() {
+            let look = shellman_ui::appearance::Appearance::load_or(self.look);
+            if look != self.look {
+                self.look = look;
+                look.apply(ctx);
+                repaint_frame = true;
+            }
+        }
+        repaint_frame |= theme::set_light(ctx.theme() == egui::Theme::Light);
         let now = ctx.input(|i| i.time);
-        if self.settings.accent == AccentChoice::System && now - self.last_accent_check > 2.0 {
+        if self.look.accent == AccentChoice::System && now - self.last_accent_check > 2.0 {
             self.last_accent_check = now;
             repaint_frame |= theme::set_accent(ctx, AccentChoice::System.resolve());
         }
         if repaint_frame {
             shellman_ui::window::paint_frame(self.hwnd);
         }
-        if self.settings.accent == AccentChoice::System {
+        if self.look.accent == AccentChoice::System {
             ctx.request_repaint_after(std::time::Duration::from_secs(2));
         }
-    }
-
-    fn set_accent(&mut self, choice: AccentChoice) {
-        self.settings.accent = choice;
-        theme::set_accent(&self.ctx, choice.resolve());
-        shellman_ui::window::paint_frame(self.hwnd);
-        self.save_pending = true;
-        self.share_look();
-    }
-
-    /// Save the look for the other shellman apps (the bars follow it live).
-    pub(super) fn share_look(&self) {
-        shellman_ui::appearance::Appearance {
-            accent: self.settings.accent,
-            glass: self.settings.glass,
-        }
-        .save();
     }
 
     fn take_dropped_files(&mut self, ctx: &egui::Context) {

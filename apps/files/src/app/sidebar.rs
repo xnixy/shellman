@@ -1,8 +1,8 @@
-//! The sidebar: places and settings.
+//! The sidebar: places and drives.
 
 use super::actions::Action;
 use super::tab::Loc;
-use egui::{Align, Layout, Ui};
+use egui::Ui;
 use shellman_ui::nav::{nav_row, section_label, sidebar_title};
 use shellman_ui::theme::glyph;
 use std::path::PathBuf;
@@ -55,10 +55,5 @@ impl super::FileMan {
                 actions.push(Action::NewTab(loc));
             }
         }
-        ui.with_layout(Layout::bottom_up(Align::Min), |ui| {
-            if nav_row(ui, glyph::SETTINGS, "Appearance", false).clicked() {
-                actions.push(Action::Settings);
-            }
-        });
     }
 }

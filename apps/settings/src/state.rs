@@ -1,0 +1,114 @@
+//! What the window edits: every settings file, held in memory, with the way to save each one.
+//! Edits apply by saving the same files the other apps watch.
+
+use crate::saver::Saver;
+use shellman_core::settings::bar::BarSettings;
+use shellman_core::settings::dock::{self, DockSettings};
+use shellman_core::settings::launcher::LauncherSettings;
+use shellman_core::system::app_name;
+use shellman_core::thumbs::Thumbs;
+use shellman_ui::appearance::Appearance;
+use shellman_ui::window;
+
+pub struct State {
+    pub look: Appearance,
+    pub dock: DockSettings,
+    /// What each pin is called, in the pins' order. Looking a name up touches the shell, so it is
+    /// done when the pins change, not on every frame.
+    pub dock_names: Vec<String>,
+    pub bar: BarSettings,
+    pub launcher: LauncherSettings,
+    pub saver: Saver,
+    pub thumbs: Thumbs,
+    pub hwnd: isize,
+    /// Whether the window has real acrylic; without it the glass slider has nothing to do.
+    pub glass: bool,
+}
+
+impl State {
+    pub fn new(ctx: &egui::Context, look: Appearance, hwnd: isize, glass: bool) -> Self {
+        let mut state = Self {
+            look,
+            dock: DockSettings::load(),
+            dock_names: Vec::new(),
+            bar: BarSettings::load(),
+            launcher: LauncherSettings::load(),
+            saver: Saver::new(),
+            thumbs: Thumbs::new(ctx.clone()),
+            hwnd,
+            glass,
+        };
+        state.rebuild_names();
+        state
+    }
+
+    pub fn rebuild_names(&mut self) {
+        self.dock_names = self
+            .dock
+            .pins
+            .iter()
+            .map(|p| app_name::display_name(&p.app_id, p.exe.as_deref()))
+            .collect();
+    }
+
+    /// The icon to show for a pin, if it has a source.
+    pub fn pin_icon(&self, index: usize) -> Option<std::path::PathBuf> {
+        let pin = self.dock.pins.get(index)?;
+        dock::icon_source(&pin.app_id, pin.exe.as_deref())
+    }
+
+    /// Make this window wear the look, and repaint its frame to match.
+    pub fn apply_look(&self, ctx: &egui::Context) {
+        self.look.apply(ctx);
+        window::paint_frame(self.hwnd);
+    }
+
+    pub fn save_look(&self) {
+        let look = self.look;
+        self.saver.run(move || look.save());
+    }
+
+    pub fn save_dock(&self) {
+        let dock = self.dock.clone();
+        self.saver.run(move || dock.save());
+    }
+
+    pub fn save_bar(&self) {
+        let bar = self.bar;
+        self.saver.run(move || bar.save());
+    }
+
+    pub fn save_launcher(&self) {
+        let launcher = self.launcher.clone();
+        self.saver.run(move || launcher.save());
+    }
+
+    /// Read every file again, after something else changed one (the dock pinning an app, say).
+    /// True when anything differs.
+    pub fn reload(&mut self, ctx: &egui::Context) -> bool {
+        let mut changed = false;
+        let look: Appearance = shellman_core::config::load("appearance");
+        if look != self.look {
+            self.look = look;
+            self.apply_look(ctx);
+            changed = true;
+        }
+        let dock = DockSettings::load();
+        if dock != self.dock {
+            self.dock = dock;
+            self.rebuild_names();
+            changed = true;
+        }
+        let bar = BarSettings::load();
+        if bar != self.bar {
+            self.bar = bar;
+            changed = true;
+        }
+        let launcher = LauncherSettings::load();
+        if launcher != self.launcher {
+            self.launcher = launcher;
+            changed = true;
+        }
+        changed
+    }
+}
