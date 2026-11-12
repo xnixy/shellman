@@ -227,10 +227,13 @@ fn show(hwnd: HWND, shared: &Shared) {
         let (mut dpi_x, mut dpi_y) = (96, 96);
         let _ = GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &mut dpi_x, &mut dpi_y);
         let scale = dpi_x as f32 / 96.0;
-        // The panel hangs from the monitor's top, and stops at the work area's bottom, so it
-        // never runs under the dock.
+        // The panel hangs just under the top bar, which reserves its space (islands and the gap
+        // below them) out of the work area, and stops at the work area's bottom, so it never
+        // covers the tray island or runs under the dock. On a monitor without a top bar it keeps
+        // a gap from the screen's edge.
         let (m, work) = (info.rcMonitor, info.rcWork);
-        let rect = (m.left, m.top, m.right, work.bottom.min(m.bottom));
+        let top = if work.top > m.top { work.top } else { m.top + (place::GAP * scale).round() as i32 };
+        let rect = (m.left, top, m.right, work.bottom.min(m.bottom));
         if let Ok(mut slot) = shared.monitor.lock() {
             *slot = Some((rect, scale));
         }
