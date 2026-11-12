@@ -1,9 +1,12 @@
-//! The window: tabs and a toolbar across the top, places on the left, the folder in the middle.
+//! The window, as islands of glass with the desktop between them: tabs and the window buttons
+//! across the top, the bar with the path under them, the places as a rail on the left, the
+//! folder in the middle, and the selection in a pill along the bottom (see `plan`).
 
 mod actions;
+mod band;
 mod bin;
+mod controls;
 mod dialogs;
-mod footer;
 mod grid;
 mod interact;
 mod keys;
@@ -13,27 +16,25 @@ mod menu;
 mod pc;
 mod pins;
 mod places;
+mod plan;
+mod rail;
 mod rows;
-mod sidebar;
 mod tab;
 mod tab_bar;
 mod toolbar;
 
 use actions::{Dialog, Rename};
-use egui::Vec2;
 use shellman_core::fsops::{self, Drive, Entry, Op};
 use shellman_core::recycle_bin::{BinItem, BinState};
 use shellman_core::thumbs::Thumbs;
-use shellman_ui::theme::{self, colors, AccentChoice};
+use shellman_ui::theme::{self, AccentChoice};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use tab::{Loc, Tab};
 
 const ROW_H: f32 = 32.0;
-const FOOTER_H: f32 = 26.0;
-const SIDEBAR_W: f32 = 200.0;
-/// Height of the tab strip, which is also the title bar.
-const CAPTION_H: f32 = 40.0;
+/// The corner radius of the islands that are not pills (the list's), and of the item cards.
+pub(crate) const RADIUS: f32 = 22.0;
 
 enum Msg {
     Loaded {
@@ -63,7 +64,8 @@ pub(crate) struct FileMan {
     ctx: egui::Context,
     settings: crate::settings::Settings,
     hwnd: isize,
-    glass: bool,
+    /// The glass under the islands; None when the window could not be found.
+    panel: Option<shellman_ui::glass::GlassPanel>,
     tabs: Vec<Tab>,
     active: usize,
     next_id: u64,
@@ -83,15 +85,15 @@ pub(crate) struct FileMan {
     toast: Option<(String, f64)>,
     save_pending: bool,
     title: String,
-    /// Size of the Windows caption buttons in points, when Windows draws them over the glass.
-    caption: Option<Vec2>,
     /// Re-lists tabs when their folder changes on disk.
     watcher: shellman_core::watch::Watcher,
     /// The folders last handed to the watcher, so it is told only when they change.
     watched: Vec<PathBuf>,
     thumbs: Thumbs,
-    /// Columns in the grid as last drawn, for moving the cursor up and down a line.
+    /// Columns in the grid as last drawn, and the height of one line of cards, for moving the
+    /// cursor up and down a line and a page.
     grid_cols: usize,
+    grid_line_h: f32,
     /// The Recycle Bin's folders, followed while a tab shows the bin.
     bin_dirs: Vec<PathBuf>,
     /// Whether the window had focus last frame, to re-list the bin when it comes back.
@@ -114,7 +116,7 @@ impl FileMan {
         look: shellman_ui::appearance::Appearance,
         start: crate::args::Start,
         hwnd: isize,
-        glass: bool,
+        panel: Option<shellman_ui::glass::GlassPanel>,
     ) -> Self {
         let (tx, rx) = channel();
         let mut locs: Vec<Loc> = settings
@@ -134,7 +136,9 @@ impl FileMan {
         let thumbs = Thumbs::new(ctx.clone());
         // Follow the look live: the settings app saves it when you change the accent or glass.
         let look_watch = shellman_core::watch::Watcher::quick(ctx.clone());
-        if let Some(dir) = shellman_ui::appearance::file().and_then(|f| f.parent().map(Path::to_path_buf)) {
+        if let Some(dir) =
+            shellman_ui::appearance::file().and_then(|f| f.parent().map(Path::to_path_buf))
+        {
             look_watch.set_dirs(vec![dir]);
         }
         let menu = menu::ContextMenu::new(&ctx, hwnd);
@@ -145,7 +149,7 @@ impl FileMan {
             ctx,
             settings,
             hwnd,
-            glass,
+            panel,
             tabs: Vec::new(),
             active: 0,
             next_id: 1,
@@ -164,9 +168,9 @@ impl FileMan {
             toast: None,
             save_pending: false,
             title: String::new(),
-            caption: None,
             thumbs,
             grid_cols: 1,
+            grid_line_h: 200.0,
             bin_dirs: Vec::new(),
             had_focus: true,
             menu,
@@ -284,7 +288,12 @@ impl FileMan {
                         }
                     }
                 }
-                Msg::Bin { tab, gen, dirs, result } => {
+                Msg::Bin {
+                    tab,
+                    gen,
+                    dirs,
+                    result,
+                } => {
                     self.bin_dirs = dirs;
                     self.bin_loaded(tab, gen, result);
                 }
@@ -322,7 +331,12 @@ impl FileMan {
         }
         // The bin's own folders, so a delete from anywhere shows up in an open bin tab.
         if self.tabs.iter().any(|t| t.loc == Loc::Bin) {
-            let extra: Vec<PathBuf> = self.bin_dirs.iter().filter(|d| !dirs.contains(d)).cloned().collect();
+            let extra: Vec<PathBuf> = self
+                .bin_dirs
+                .iter()
+                .filter(|d| !dirs.contains(d))
+                .cloned()
+                .collect();
             dirs.extend(extra);
         }
         if dirs != self.watched {
@@ -349,23 +363,22 @@ impl FileMan {
     /// Follow the shared look when its file changes, the Windows app mode, and the Windows
     /// accent while that is the choice.
     fn track_system(&mut self, ctx: &egui::Context) {
-        let mut repaint_frame = false;
+        // The glass reads its look from the theme every frame (see `layout`), so nothing here
+        // needs to tell it.
         if !self.look_watch.poll().is_empty() {
             let look = shellman_ui::appearance::Appearance::load_or(self.look);
             if look != self.look {
                 self.look = look;
                 look.apply(ctx);
-                repaint_frame = true;
             }
         }
-        repaint_frame |= theme::set_light(std::env::var_os("SHELLMAN_FORCE_LIGHT").is_some() || ctx.theme() == egui::Theme::Light);
+        theme::set_light(
+            std::env::var_os("SHELLMAN_FORCE_LIGHT").is_some() || ctx.theme() == egui::Theme::Light,
+        );
         let now = ctx.input(|i| i.time);
         if self.look.accent == AccentChoice::System && now - self.last_accent_check > 2.0 {
             self.last_accent_check = now;
-            repaint_frame |= theme::set_accent(ctx, AccentChoice::System.resolve());
-        }
-        if repaint_frame {
-            shellman_ui::window::paint_frame(self.hwnd);
+            theme::set_accent(ctx, AccentChoice::System.resolve());
         }
         if self.look.accent == AccentChoice::System {
             ctx.request_repaint_after(std::time::Duration::from_secs(2));
@@ -390,7 +403,9 @@ impl FileMan {
             self.menu_settle_target = if tab.loc == Loc::Bin || tab.selected.len() > 64 {
                 None
             } else {
-                let row = tab.cursor.filter(|&c| tab.selected.contains(&tab.entry(c).path));
+                let row = tab
+                    .cursor
+                    .filter(|&c| tab.selected.contains(&tab.entry(c).path));
                 let row = row.or_else(|| tab.selection().first().and_then(|e| tab.row_of(&e.path)));
                 self.menu_target(row)
             };
@@ -427,12 +442,9 @@ impl eframe::App for FileMan {
         }
     }
 
+    /// Clear: the desktop shows between the islands.
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
-        if self.glass {
-            [0.0, 0.0, 0.0, 0.0]
-        } else {
-            colors().bg.to_normalized_gamma_f32()
-        }
+        [0.0, 0.0, 0.0, 0.0]
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {

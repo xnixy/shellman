@@ -387,8 +387,11 @@ fn main() {
                     let islands = [
                         Island::pill(Rect::from_min_max(pos2(110.0, 20.0), pos2(w - 20.0, 80.0))),
                         Island::pill(Rect::from_min_max(pos2(20.0, 100.0), pos2(90.0, h - 120.0))),
-                        Island::new(Rect::from_min_max(pos2(110.0, 100.0), pos2(w - 20.0, h - 20.0)), radius as f32)
-                            .faint(0.5),
+                        Island::new(
+                            Rect::from_min_max(pos2(110.0, 100.0), pos2(w - 20.0, h - 20.0)),
+                            radius as f32,
+                        )
+                        .faint(0.5),
                     ];
                     panel.set_islands(&islands, 1.0);
                 }
