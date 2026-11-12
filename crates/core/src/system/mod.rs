@@ -22,7 +22,6 @@ pub mod sound_dev;
 pub mod sound_format;
 pub mod sound_page;
 pub mod sound_sessions;
-pub mod sound_spatial;
 mod sound_worker;
 pub mod status;
 pub mod wifi;

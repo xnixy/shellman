@@ -4,6 +4,7 @@
 //! one on the manager for new sessions, one on each session for its volume, its state and its end.
 
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use windows::core::{implement, Interface, Result, BOOL, PCWSTR};
 use windows::Win32::Foundation::{CloseHandle, MAX_PATH};
@@ -52,16 +53,21 @@ pub struct Sessions {
     new_sessions: IAudioSessionNotification,
     events: IAudioSessionEvents,
     held: Vec<Held>,
+    /// Set when a session came or went, so the next reading enumerates again. Registering on a
+    /// session makes Windows call back at once, so enumerating on every reading would never end.
+    dirty: Arc<AtomicBool>,
     poke: Poke,
 }
 
 impl Sessions {
     pub fn new(poke: Poke) -> Self {
+        let dirty = Arc::new(AtomicBool::new(false));
         Self {
             manager: None,
-            new_sessions: Created { poke: poke.clone() }.into(),
-            events: Changed { poke: poke.clone() }.into(),
+            new_sessions: Created { poke: poke.clone(), dirty: dirty.clone() }.into(),
+            events: Changed { poke: poke.clone(), dirty: dirty.clone() }.into(),
             held: Vec::new(),
+            dirty,
             poke,
         }
     }
@@ -113,7 +119,9 @@ impl Sessions {
 
     /// The sessions as they are, after a notification.
     pub fn read(&mut self) -> Vec<AppSession> {
-        self.reread();
+        if self.dirty.swap(false, Ordering::SeqCst) {
+            self.reread();
+        }
         let mut out: Vec<AppSession> = self.held.iter().filter_map(describe).collect();
         order(&mut out);
         out
@@ -202,10 +210,12 @@ fn exe_of(pid: u32) -> Option<PathBuf> {
 #[implement(IAudioSessionNotification)]
 struct Created {
     poke: Poke,
+    dirty: Arc<AtomicBool>,
 }
 
 impl IAudioSessionNotification_Impl for Created_Impl {
     fn OnSessionCreated(&self, _new: windows::core::Ref<'_, IAudioSessionControl>) -> Result<()> {
+        self.dirty.store(true, Ordering::SeqCst);
         (self.poke)();
         Ok(())
     }
@@ -215,6 +225,7 @@ impl IAudioSessionNotification_Impl for Created_Impl {
 #[implement(IAudioSessionEvents)]
 struct Changed {
     poke: Poke,
+    dirty: Arc<AtomicBool>,
 }
 
 impl IAudioSessionEvents_Impl for Changed_Impl {
@@ -240,6 +251,7 @@ impl IAudioSessionEvents_Impl for Changed_Impl {
         Ok(())
     }
     fn OnSessionDisconnected(&self, _why: AudioSessionDisconnectReason) -> Result<()> {
+        self.dirty.store(true, Ordering::SeqCst);
         (self.poke)();
         Ok(())
     }

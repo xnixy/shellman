@@ -287,7 +287,7 @@ unsafe fn play(client: &IAudioClient, mix: *mut WAVEFORMATEX, rate: u32, channel
     }
     let Ok(frames) = client.GetBufferSize() else { return false };
     let Ok(render) = client.GetService::<IAudioRenderClient>() else { return false };
-    let samples = tone(rate, channels, 440.0, 400, 0.08);
+    let samples = tone(rate, channels, 440.0, 400, 0.06);
     let total = samples.len() / channels;
     let mut sent = 0;
     if client.Start().is_err() {
@@ -316,6 +316,25 @@ unsafe fn play(client: &IAudioClient, mix: *mut WAVEFORMATEX, rate: u32, channel
 mod tests {
     use super::*;
 
+    /// A tone on the default output, with the result; by hand only.
+    #[test]
+    #[ignore]
+    fn tone_on_the_default_output() {
+        crate::system::live::init_mta();
+        let en = crate::system::audio::enumerator().unwrap();
+        // The default first, then the others until one plays (each plays at most once).
+        let mut all = list(&en, Flow::Output);
+        all.sort_by_key(|d| !d.default);
+        for d in all {
+            let dev = open(&en, &d.id).unwrap();
+            let ok = play_tone(&dev);
+            println!("played on {}: {ok}", d.name);
+            if ok {
+                break;
+            }
+        }
+    }
+
     #[test]
     fn form_factors_pick_the_kind() {
         assert_eq!(Kind::from_form_factor(1, Flow::Output), Kind::Speakers);
@@ -339,7 +358,7 @@ mod tests {
 
     #[test]
     fn the_tone_is_short_quiet_and_fades() {
-        let t = tone(48_000, 2, 440.0, 400, 0.08);
+        let t = tone(48_000, 2, 440.0, 400, 0.06);
         assert_eq!(t.len(), 48_000 * 400 / 1000 * 2);
         assert!(t.iter().all(|s| s.abs() <= 0.08 + 1e-6));
         assert!(t[0].abs() < 1e-3 && t[t.len() - 1].abs() < 0.01, "fades in and out");

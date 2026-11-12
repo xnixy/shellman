@@ -6,7 +6,6 @@ use super::live::{self, Mailbox, Wake};
 use super::sound_dev::{Device, Flow};
 use super::sound_format::FormatSpec;
 use super::sound_sessions::AppSession;
-use super::sound_spatial::Spatial;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc::{channel, Sender};
 use std::sync::Arc;
@@ -22,8 +21,6 @@ pub struct Detail {
     pub supported: Vec<FormatSpec>,
     /// Whether the last format change can be taken back.
     pub can_undo: bool,
-    /// Outputs only.
-    pub spatial: Spatial,
 }
 
 /// Outputs or inputs, with the chosen device.
@@ -220,5 +217,137 @@ mod live_tests {
             std::thread::sleep(Duration::from_millis(20));
         }
         panic!("no reading");
+    }
+}
+
+#[cfg(test)]
+mod hands_on {
+    use super::*;
+    use crate::system::sound_dev::Flow;
+    use crate::system::sound_format;
+    use std::time::{Duration, Instant};
+
+    fn wait(page: &SoundPage, ok: impl Fn(&Page) -> bool) -> Option<Page> {
+        let until = Instant::now() + Duration::from_secs(4);
+        while Instant::now() < until {
+            if let Some(p) = page.take().filter(|p| ok(p)) {
+                return Some(p);
+            }
+            std::thread::sleep(Duration::from_millis(15));
+        }
+        None
+    }
+
+    /// Moves real things a little and puts each back: the microphone's volume by two points, one
+    /// app session's volume by two points, then (only if nothing is playing) the default output's
+    /// format to a PCM one and back. By hand only: `--ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn nudge_and_restore() {
+        let page = SoundPage::start(Arc::new(|| {}));
+        let first = wait(&page, |_| true).expect("a reading");
+        // Microphone volume.
+        let mic = first.input.selected_device().unwrap().clone();
+        let to = if mic.volume > 0.5 { mic.volume - 0.02 } else { mic.volume + 0.02 };
+        page.set_volume(&mic.id, to);
+        let moved = wait(&page, |p| p.input.selected_device().is_some_and(|d| (d.volume - to).abs() < 0.005));
+        page.set_volume(&mic.id, mic.volume);
+        let back = wait(&page, |p| p.input.selected_device().is_some_and(|d| (d.volume - mic.volume).abs() < 0.005));
+        println!("mic volume {} -> {to}: moved {}, back {}", mic.volume, moved.is_some(), back.is_some());
+        // One session.
+        if let Some(s) = first.sessions.iter().find(|s| !s.system) {
+            let to = if s.volume > 0.5 { s.volume - 0.02 } else { s.volume + 0.02 };
+            page.set_session_volume(&s.key, to);
+            let moved = wait(&page, |p| p.sessions.iter().any(|x| x.key == s.key && (x.volume - to).abs() < 0.005));
+            page.set_session_volume(&s.key, s.volume);
+            let back = wait(&page, |p| p.sessions.iter().any(|x| x.key == s.key && (x.volume - s.volume).abs() < 0.005));
+            println!("session {} {} -> {to}: moved {}, back {}", s.name, s.volume, moved.is_some(), back.is_some());
+        }
+        // Meter: runs, reads, stops.
+        page.meter(Some(&mic.id));
+        std::thread::sleep(Duration::from_millis(400));
+        println!("meter peak {}", page.peak());
+        page.meter(None);
+        // Format.
+        let out = first.output.selected_device().unwrap().clone();
+        if first.sessions.iter().any(|s| s.active) {
+            println!("format: skipped, a session is playing");
+            return;
+        }
+        let was = first.output.detail.as_ref().unwrap().clone();
+        let raw = sound_format::device_format(&out.id).unwrap();
+        let alt = was.supported.iter().find(|f| Some(**f) != was.format && f.channels == 2 && f.bits == 16 && f.rate == 48_000).copied();
+        let Some(alt) = alt else {
+            println!("format: no alternative to try");
+            return;
+        };
+        page.set_format(&out.id, alt);
+        let changed = wait(&page, |p| p.output.detail.as_ref().is_some_and(|d| d.format == Some(alt)));
+        println!("format -> {}: read back {}, can undo {}", alt.full_label(), changed.is_some(), changed.as_ref().is_some_and(|p| p.output.detail.as_ref().unwrap().can_undo));
+        page.undo_format(&out.id);
+        let restored = wait(&page, |p| p.output.detail.as_ref().is_some_and(|d| d.format == was.format));
+        let same = sound_format::device_format(&out.id).map(|r| r.spec()) == Some(raw.spec());
+        println!("format restored: {} (same as before: {same})", restored.is_some());
+        assert!(restored.is_some() && same);
+    }
+
+    /// Makes another output the default for calls only, then puts it back; by hand only. The
+    /// device apps play to is not touched.
+    #[test]
+    #[ignore]
+    fn calls_role_and_back() {
+        let page = SoundPage::start(Arc::new(|| {}));
+        let first = wait(&page, |_| true).expect("a reading");
+        let was = first.output.devices.iter().find(|d| d.default_comm).unwrap().clone();
+        let other = first.output.devices.iter().find(|d| !d.default_comm).unwrap().clone();
+        page.set_default(&other.id, Flow::Output, Role::Calls);
+        let moved = wait(&page, |p| p.output.devices.iter().any(|d| d.id == other.id && d.default_comm));
+        page.set_default(&was.id, Flow::Output, Role::Calls);
+        let back = wait(&page, |p| p.output.devices.iter().any(|d| d.id == was.id && d.default_comm));
+        let still = back.as_ref().is_some_and(|p| p.output.devices.iter().any(|d| d.id == was.id && d.default));
+        println!("calls role to {}: {}, back: {}, console default kept: {still}", other.name, moved.is_some(), back.is_some());
+        assert!(moved.is_some() && back.is_some() && still);
+    }
+
+    /// One short tone on the default output; by hand only.
+    #[test]
+    #[ignore]
+    fn one_tone() {
+        let page = SoundPage::start(Arc::new(|| {}));
+        let first = wait(&page, |_| true).expect("a reading");
+        // The default output here is a monitor that may not take a stream; prefer one that does.
+        let out = first.output.devices.iter().find(|d| d.name.contains("Realtek")).or(first.output.selected_device()).unwrap().clone();
+        page.meter(Some(&out.id));
+        page.play_tone(&out.id);
+        let mut top = 0.0f32;
+        for _ in 0..24 {
+            std::thread::sleep(Duration::from_millis(50));
+            top = top.max(page.peak());
+        }
+        page.meter(None);
+        println!("tone sent to {}; the output's peak while it played: {top}", out.name);
+    }
+}
+
+#[cfg(test)]
+mod idle {
+    use super::*;
+    use std::sync::atomic::AtomicUsize;
+    use std::time::Duration;
+
+    /// How often the worker wakes the UI while nothing happens; by hand only.
+    #[test]
+    #[ignore]
+    fn wakes_while_idle() {
+        let wakes = Arc::new(AtomicUsize::new(0));
+        let w = wakes.clone();
+        let page = SoundPage::start(Arc::new(move || {
+            w.fetch_add(1, Ordering::Relaxed);
+        }));
+        std::thread::sleep(Duration::from_secs(2));
+        let settled = wakes.load(Ordering::Relaxed);
+        std::thread::sleep(Duration::from_secs(3));
+        println!("wakes: {settled} in the first 2 s, {} in the next 3 s", wakes.load(Ordering::Relaxed) - settled);
+        drop(page);
     }
 }

@@ -58,12 +58,9 @@ pub fn show(ui: &mut egui::Ui, st: &mut State) {
     }
     // The meter runs only while the microphone is on screen and the window is in use.
     let watching = ui.ctx().input(|i| i.focused);
-    device_section(ui, handle, Flow::Output, &page.output, meter, false);
+    device_section(ui, handle, Flow::Output, &page.output, None, false);
     page::gap(ui);
-    device_section(ui, handle, Flow::Input, &page.input, meter, watching);
-    if !watching && meter.take().is_some() {
-        handle.meter(None);
-    }
+    device_section(ui, handle, Flow::Input, &page.input, Some(&mut *meter), watching);
     page::gap(ui);
     sound_mixer::show(ui, handle, &page.sessions, &mut st.thumbs);
     page::gap(ui);
@@ -72,7 +69,9 @@ pub fn show(ui: &mut egui::Ui, st: &mut State) {
     }
 }
 
-fn device_section(ui: &mut egui::Ui, h: &SoundPage, flow: Flow, section: &Section, meter: &mut Option<String>, watching: bool) {
+/// `meter` is the microphone section's alone: the output section has none, and two sections
+/// both steering it would start and stop it every frame.
+fn device_section(ui: &mut egui::Ui, h: &SoundPage, flow: Flow, section: &Section, meter: Option<&mut Option<String>>, watching: bool) {
     let output = flow == Flow::Output;
     page::label(ui, if output { "Output" } else { "Input" });
     if section.devices.is_empty() {
@@ -92,13 +91,14 @@ fn device_section(ui: &mut egui::Ui, h: &SoundPage, flow: Flow, section: &Sectio
     if let Some(detail) = &section.detail {
         details(ui, h, flow, dev, detail);
     }
+    let Some(meter) = meter else { return };
     // The meter follows the chosen microphone, and stops with it.
-    let want = (!output && watching).then(|| dev.id.clone());
+    let want = watching.then(|| dev.id.clone());
     if *meter != want {
         h.meter(want.as_deref());
         *meter = want;
     }
-    if !output && meter.is_some() {
+    if meter.is_some() {
         page::gap(ui);
         page::label(ui, "Input level");
         meter_bar(ui, h.peak());
@@ -156,11 +156,13 @@ fn details(ui: &mut egui::Ui, h: &SoundPage, flow: Flow, dev: &Device, detail: &
     }
     format_picker(ui, h, dev, detail);
     if output {
+        // Windows keeps the spatial format (Windows Sonic, Dolby Atmos, DTS) behind its own
+        // dialog: no public call reads or sets it, and the one that reads what a device could
+        // do answered differently between two runs on the same device. So it is not guessed.
         ui.add_space(10.0);
         page::label(ui, "Spatial sound");
-        ui.label(theme::muted(detail.spatial.label()));
         ui.label(
-            theme::muted("Which spatial format is on cannot be read or changed from outside Windows' own dialog.")
+            theme::muted("Windows offers no way for other programs to read or change the spatial format.")
                 .size(12.0),
         );
         ui.add_space(6.0);

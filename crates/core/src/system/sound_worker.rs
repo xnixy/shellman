@@ -9,7 +9,6 @@ use super::sound_dev::{self as dev, Flow};
 use super::sound_format::{self as format, FormatSpec};
 use super::sound_page::{resolve_selected, Cmd, Detail, Page, Role, Section};
 use super::sound_sessions::{Poke, Sessions};
-use super::sound_spatial;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
@@ -50,8 +49,6 @@ struct Worker {
     chosen: HashMap<Flow, String>,
     /// What was probed for the chosen device, so a reading does not probe again.
     probed: HashMap<Flow, (String, FormatSpec, Vec<FormatSpec>)>,
-    /// Spatial support does not change while a device stays; asked once per device.
-    spatial: HashMap<String, sound_spatial::Spatial>,
     /// The format a device had before the page last changed it, exactly as Windows held it: the
     /// device format and the mix format. Lets any change be taken back, even from a format the
     /// page cannot build (an encoded stream).
@@ -80,7 +77,6 @@ pub(crate) fn run(rx: Receiver<Cmd>, to_self: Sender<Cmd>, out: Arc<Mailbox<Page
         en,
         chosen: HashMap::new(),
         probed: HashMap::new(),
-        spatial: HashMap::new(),
         undo: HashMap::new(),
         sessions: Sessions::new(poke),
         meter: None,
@@ -114,8 +110,10 @@ pub(crate) fn run(rx: Receiver<Cmd>, to_self: Sender<Cmd>, out: Arc<Mailbox<Page
         }
         if let Some(m) = &w.meter {
             let now = dev::peak(m);
-            // Wake for a visible change, and once when the sound stops; not for silence.
-            if (now - last_peak).abs() > 0.01 || (now == 0.0 && last_peak != 0.0) {
+            // Wake only when the bar would move by a visible step (the page draws the square
+            // root of the level), so the noise floor of a quiet microphone costs no frames.
+            let step = |p: f32| (p.sqrt() * 60.0).round();
+            if step(now) != step(last_peak) {
                 level.store(now.to_bits(), Ordering::Relaxed);
                 last_peak = now;
                 wake();
@@ -138,7 +136,6 @@ impl Worker {
     /// Listen to every active device's volume and to the default output's sessions.
     fn reattach(&mut self) {
         self.detach();
-        self.spatial.clear();
         for flow in [Flow::Output, Flow::Input] {
             for d in dev::list(&self.en, flow) {
                 let Some(ep) = dev::open(&self.en, &d.id).and_then(|x| dev::endpoint(&x)) else { continue };
@@ -266,11 +263,6 @@ impl Worker {
             format: current,
             can_undo: self.undo.contains_key(id),
             supported,
-            spatial: if output {
-                *self.spatial.entry(id.to_owned()).or_insert_with(|| sound_spatial::read(&d))
-            } else {
-                sound_spatial::Spatial::Unknown
-            },
         })
     }
 }

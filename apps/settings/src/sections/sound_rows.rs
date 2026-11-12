@@ -43,7 +43,11 @@ pub fn device_row(ui: &mut Ui, d: &Device, selected: bool) -> Response {
         (false, true) => "Default for calls",
         (false, false) => "",
     };
-    let tag_w = if tag.is_empty() { 0.0 } else { 150.0 };
+    let tag_w = if tag.is_empty() {
+        0.0
+    } else {
+        ui.fonts(|f| f.layout_no_wrap(tag.to_owned(), FontId::proportional(12.0), c.text)).size().x + 12.0
+    };
     let name = egui::Rect::from_min_max(
         egui::pos2(row.left() + 48.0, row.top()),
         egui::pos2(row.right() - tag_w - 12.0, row.bottom()),

@@ -38,6 +38,10 @@ fn main() -> eframe::Result {
         options,
         Box::new(move |cc| {
             theme::install_fonts(&cc.egui_ctx);
+            // SHELLMAN_FORCE_LIGHT: look at the light look without changing Windows' setting.
+            if std::env::var_os("SHELLMAN_FORCE_LIGHT").is_some() {
+                cc.egui_ctx.set_theme(egui::ThemePreference::Light);
+            }
             theme::set_light(cc.egui_ctx.theme() == egui::Theme::Light);
             let look = Appearance::load_or(Appearance::default());
             look.apply(&cc.egui_ctx);
