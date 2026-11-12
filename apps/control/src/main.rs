@@ -22,7 +22,7 @@ use windows::Win32::Foundation::HWND;
 
 fn main() -> eframe::Result {
     let background = std::env::args().any(|a| a == "--background");
-    let instance = match summon::claim() {
+    let instance = match summon::claim(background) {
         summon::Claim::Signalled => return Ok(()),
         summon::Claim::Resident(instance) => instance,
     };

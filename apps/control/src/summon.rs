@@ -100,7 +100,7 @@ fn names(instance: Option<&str>) -> (String, String) {
 /// Become the resident process, or signal the one that is. Both sides create the event before
 /// the mutex, so whichever order two starts interleave in, the one that loses the mutex finds
 /// the event.
-pub fn claim() -> Claim {
+pub fn claim(background: bool) -> Claim {
     let instance = std::env::var(INSTANCE_VAR).ok();
     let (event_name, mutex_name) = names(instance.as_deref());
     unsafe {
@@ -111,8 +111,12 @@ pub fn claim() -> Claim {
         let mutex = CreateMutexW(None, false, &HSTRING::from(mutex_name));
         if mutex.is_ok() && GetLastError() == ERROR_ALREADY_EXISTS {
             // The resident process may take the foreground for the window it is about to show.
-            let _ = AllowSetForegroundWindow(ASFW_ANY);
-            let _ = SetEvent(event);
+            // A `--background` start only asks for a resident to exist: it is there, so no
+            // signal (which would pop the panel open).
+            if !background {
+                let _ = AllowSetForegroundWindow(ASFW_ANY);
+                let _ = SetEvent(event);
+            }
             return Claim::Signalled;
         }
         Claim::Resident(Instance { event, _mutex: mutex.unwrap_or_default() })
