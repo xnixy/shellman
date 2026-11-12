@@ -61,6 +61,10 @@ Rule: **the top bar is the system, the dock is apps.** Both are windows of one p
 - No magnification, which would repaint on every mouse move; a short hover lift instead.
 - Holding Win shows 1-9 on icons. Dropping a file on an icon opens it with that app.
 - Slots for progress and overlay badges; Files reports its copy progress directly.
+- Tray icons always stay in the top bar, in stable places; they are never folded into the dock,
+  because many Windows apps close to the tray and their icon would hop between bars. When a tray
+  app that also has a dock icon shows something new (an unread count, an alert), its dock icon
+  mirrors it as a badge.
 
 **Behaviour**
 - Bars never take focus (`WS_EX_NOACTIVATE`), so "minimize if in front" sees the real
