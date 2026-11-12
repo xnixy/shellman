@@ -1,7 +1,8 @@
 //! The top bar: three floating islands of glass along the top edge, the desktop showing between
-//! them. On the left, the launcher mark and the app in front; in the middle, the date and time;
-//! on the right, the tray and the status icons. Tray icons join the right island once shellman
-//! owns the tray, on every monitor's bar (or the primary's only, by setting).
+//! them. On the left, the launcher mark and the app in front; in the middle, the date and time
+//! with the count of unseen notifications (a click there opens them); on the right, the tray and
+//! the status icons. Tray icons join the right island once shellman owns the tray, on every
+//! monitor's bar (or the primary's only, by setting).
 //!
 //! Every monitor has a top bar window; they all draw this one `TopBar` (`bars.rs` owns the
 //! windows and their places). The window spans the monitor and is all reserved space; between the
@@ -40,6 +41,10 @@ pub struct TopBar {
     tray_textures: TrayTextures,
     /// Read on first use, and again whenever the settings folder changes.
     settings: Option<BarSettings>,
+    /// The notifications badge in the clock's island, as the notifications say.
+    pub badge: crate::notify::Badge,
+    /// The clock (which opens the notifications) was clicked since the last look.
+    badge_clicked: bool,
 }
 
 struct Status {
@@ -59,6 +64,11 @@ impl TopBar {
     /// `test` is the `--no-shell` bar: it has no tray, so it shows a few stand-in icons.
     pub fn new(tray: Option<Tray>, test: bool) -> Self {
         Self { tray, demo: if test { demo::icons() } else { Vec::new() }, ..Default::default() }
+    }
+
+    /// True once after the clock's island (the notifications) was clicked.
+    pub fn take_badge_click(&mut self) -> bool {
+        std::mem::take(&mut self.badge_clicked)
     }
 
     /// Read the bar's settings again, when something saved them (the settings app).
@@ -101,7 +111,8 @@ impl TopBar {
                 let under = ui.painter().add(egui::Shape::Noop);
                 let right = self.right_side(ui, row, bar.right() - layout::SIDE, place);
                 let settings = *self.settings.get_or_insert_with(BarSettings::load);
-                let centre = clock::draw(ui, bar, row, right.left(), &settings);
+                let (centre, clicked) = clock::draw(ui, bar, row, right.left(), &settings, self.badge);
+                self.badge_clicked |= clicked;
                 let left = left::draw(ui, bar, row, front, centre.left() - layout::SPACE);
                 let list: Vec<Island> = [left, centre, right].into_iter().map(Island::pill).collect();
                 if !composed {
@@ -127,7 +138,7 @@ impl TopBar {
 /// colour; transparent when the tint already hides that much (up to a glass of about 0.65). At
 /// that cover the muted text keeps 3:1 over a white window in dark mode. Light mode needs none:
 /// its material never shows darker than a light grey.
-fn scrim(tint: egui::Color32) -> egui::Color32 {
+pub(crate) fn scrim(tint: egui::Color32) -> egui::Color32 {
     const COVER: f32 = 0.55;
     let a = tint.a() as f32 / 255.0;
     let extra = (1.0 - (1.0 - COVER) / (1.0 - a).max(0.001)).max(0.0);

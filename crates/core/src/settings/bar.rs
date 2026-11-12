@@ -1,5 +1,5 @@
-//! The bar's settings, saved in `%APPDATA%\shellman\bar.json`: the top bar's clock, and which
-//! monitors get a dock.
+//! The bar's settings, saved in `%APPDATA%\shellman\bar.json`: the top bar's clock, which
+//! monitors get a dock, and whether notifications pop up.
 
 use serde::{Deserialize, Serialize};
 
@@ -57,6 +57,8 @@ pub struct BarSettings {
     pub clock: ClockSettings,
     pub docks: Docks,
     pub tray: TrayMonitors,
+    /// Do not disturb: notifications are counted and listed, but do not pop up.
+    pub do_not_disturb: bool,
 }
 
 /// Which monitors get a dock. Every monitor always gets a top bar.
@@ -148,6 +150,13 @@ mod tests {
         assert_eq!(read("{}"), TrayMonitors::All);
         assert_eq!(read(r#"{ "tray": "primary" }"#), TrayMonitors::Primary);
         assert_eq!(read(r#"{ "tray": "all" }"#), TrayMonitors::All);
+    }
+
+    #[test]
+    fn do_not_disturb_is_off_unless_saved_on() {
+        let read = |json: &str| serde_json::from_str::<BarSettings>(json).unwrap().do_not_disturb;
+        assert!(!read("{}"));
+        assert!(read(r#"{ "do_not_disturb": true }"#));
     }
 
     #[test]

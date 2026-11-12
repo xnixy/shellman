@@ -233,6 +233,11 @@ impl Dock {
         item.windows.iter().filter_map(|h| self.windows.iter().find(|w| w.hwnd == *h).cloned()).collect()
     }
 
+    /// Each app's front-most window, by app id (the notifications bring an app forward with it).
+    pub fn front_windows(&self) -> Vec<(String, isize)> {
+        self.items.iter().filter_map(|i| Some((i.app_id.clone(), *i.windows.first()?))).collect()
+    }
+
     /// An app's icon, once the shell has it.
     pub fn icon(&mut self, ctx: &egui::Context, source: &std::path::Path) -> Option<(egui::TextureId, egui::Vec2)> {
         shellman_ui::app_icon::get(ctx, source, true, &mut self.thumbs)

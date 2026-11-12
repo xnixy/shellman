@@ -77,6 +77,12 @@ windows = { version = "0.61", features = [
     "Media_Control",
     "Storage_Streams",
     "UI_Shell",
+    # Notifications: reading the platform's toasts, and activating their apps.
+    "Data_Xml_Dom",
+    "UI_Notifications",
+    "UI_Notifications_Management",
+    "Win32_UI_Notifications",
+    "Win32_System_EventLog",
 ] }
 
 [profile.release]
