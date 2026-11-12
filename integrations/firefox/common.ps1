@@ -59,7 +59,10 @@ function Remove-ManagedBlock([string]$Text) {
 
 # ---- Scripts (opt-in, install.ps1 -Scripts) ----
 $script:ScriptsDir = 'shellman-scripts'
-$script:ScriptFiles = @('shellman-live.sys.mjs', 'shellman-pills.sys.mjs', 'shellman-window.sys.mjs', 'shellman-watch.worker.js')
+$script:ScriptFiles = @('shellman-live.sys.mjs', 'shellman-pills.sys.mjs', 'shellman-window.sys.mjs', 'shellman-glass.sys.mjs', 'shellman-watch.worker.js')
+# Real gaps (optional): shellman's glass as a DLL the glass script loads; built by
+# `cargo build --release -p shellman-firefox-glass`, installed only with -GlassDll.
+$script:GlassDllName = 'shellman_glass.dll'
 # Firefox install folder -> our file, relative paths.
 $script:AutoconfigFiles = [ordered]@{ 'config.js' = 'config.js'; 'defaults\pref\config-prefs.js' = 'config-prefs.js' }
 $script:AutoconfigMark = 'shellman Islands loader'

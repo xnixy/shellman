@@ -634,6 +634,26 @@ findbar {
   box-shadow: 0 0 0 3px var(--sm-accent-ring) !important;
 }
 
+/* ---- Real gaps (scripts + shellman_glass.dll, :root[shellman-glass]) ----
+ * shellman-glass.sys.mjs turns Windows' backdrop off and puts shellman's own glass under each island
+ * (blur, tint, rim and shadow, drawn by the DLL). The islands' own fill, hairline and shadow would
+ * double it, so they step back; hover, selection and focus colours stay. The page keeps its clip. */
+:root[shellman-glass] {
+  --sm-fill: transparent;
+  --sm-hair: transparent;
+  --sm-shadow: none;
+}
+:root[shellman-glass] #tabbrowser-tabbox {
+  background: transparent !important;
+}
+:root[shellman-glass][shellman-pills] [shellman-pill] {
+  box-shadow: none;
+}
+/* Notification bars get an island of their own (see the script); round them to match. */
+:root[shellman-glass] notification-message.infobar {
+  border-radius: var(--sm-radius);
+}
+
 /* ---- Fullscreen (F11 and page fullscreen/video): edge to edge, no gaps, no radius ---- */
 
 :root[inFullscreen] #browser,

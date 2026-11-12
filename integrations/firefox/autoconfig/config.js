@@ -7,7 +7,7 @@
 // carries on normally and the CSS theme still applies. Messages go to the Browser Console as "[shellman] ...".
 try {
   (function () {
-    const MODULES = ["shellman-live.sys.mjs", "shellman-pills.sys.mjs", "shellman-window.sys.mjs"];
+    const MODULES = ["shellman-live.sys.mjs", "shellman-pills.sys.mjs", "shellman-window.sys.mjs", "shellman-glass.sys.mjs"];
     const log = (msg) => {
       try { Services.console.logStringMessage("[shellman] " + msg); } catch (_) {}
     };

@@ -6,7 +6,8 @@
   Deletes the five theme files, removes the marked block from user.js, puts back any chrome\ files
   or user.js that the install had overwritten/created from the backup, and removes the backup folder.
   Prefs Firefox already copied into prefs.js on exit are not edited: see README ("Uninstalling").
-  If install.ps1 -Scripts was used, also deletes chrome\shellman-scripts\ and the two autoconfig files from the
+  If install.ps1 -Scripts was used, also deletes chrome\shellman-scripts\ (with shellman_glass.dll, if -GlassDll
+  installed it; Firefox must be closed, it keeps the DLL loaded) and the two autoconfig files from the
   Firefox folder it recorded (only if they are still exactly the files it installed), and puts back any
   autoconfig files they replaced. That folder usually needs an elevated PowerShell; the script checks first.
 #>

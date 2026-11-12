@@ -1931,6 +1931,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "shellman-firefox-glass"
+version = "0.1.0"
+dependencies = [
+ "egui",
+ "shellman-ui",
+ "windows",
+]
+
+[[package]]
 name = "shellman-icons"
 version = "0.1.0"
 

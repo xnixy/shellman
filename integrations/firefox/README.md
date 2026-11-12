@@ -83,11 +83,13 @@ What they add, all in `chrome/shellman-scripts/` (installed into `<profile>\chro
   doing, not Firefox's (every chrome background is already transparent, so CSS cannot change it). When the window
   loses focus the script sends it `WM_NCACTIVATE(TRUE)` once, which keeps DWM's backdrop live. Focus, keyboard and
   Firefox's own activation handling are unchanged.
+- `shellman-glass.sys.mjs`: real see-through gaps with shellman's own glass, only when `shellman_glass.dll` is
+  installed too (`-GlassDll`); see [Real gaps](#real-gaps-optional-a-dll). Without the DLL it does nothing.
 - `shellman-watch.worker.js`: the watcher thread used by the live look.
 
 How they are loaded: Firefox's *autoconfig* runs `config.js` from the Firefox install folder at startup. Ours
 (`autoconfig/config.js`) only maps `resource://shellman-islands/` to `<profile>\chrome\shellman-scripts\` and imports
-the three named modules from there; it does not scan for `*.uc.js` or load anything else. `config-prefs.js` (in
+the four named modules from there; it does not scan for `*.uc.js` or load anything else. `config-prefs.js` (in
 `<Firefox>\defaults\pref\`) turns autoconfig on, and sets `general.config.sandbox_enabled=false`: the default
 sandbox only allows `pref()` calls, so without that the loader could not reach the profile or import modules.
 
@@ -121,6 +123,59 @@ leaving the CSS-only layout.
 **Turning it off.** `uninstall.ps1`, or just delete `config.js` from the Firefox folder (or the profile's
 `chrome\shellman-scripts\` folder) and restart Firefox.
 
+## Real gaps (optional, a DLL)
+
+With the scripts alone the gaps between the islands show Windows' Acrylic, blurred, because Windows paints its
+backdrop over the whole window rectangle. `shellman_glass.dll` gives Firefox shellman's own glass instead: the
+gaps are truly empty (whatever is behind the window shows through, sharp, as between shellman's own islands)
+and each island blurs only what is behind it, with shellman's tint, rim and shadow and smooth corners at any
+radius.
+
+```powershell
+cargo build --release -p shellman-firefox-glass          # from the repository root
+.\install.ps1 -DefaultProfile -Scripts -FirefoxDir "C:\Program Files\Mozilla Firefox" -GlassDll ..\..\target\release\shellman_glass.dll
+```
+
+How it works. `chrome/shellman-scripts/shellman-glass.sys.mjs` loads the DLL (from the profile's
+`chrome\shellman-scripts\`) with js-ctypes and, for each browser window, on Firefox's main thread:
+
+- turns the window's system backdrop off (`DWMWA_SYSTEMBACKDROP_TYPE` none) and Windows' frame rendering off
+  (`DWMWA_NCRENDERING_POLICY` disabled). Measured on Firefox 160 / Windows 11 26300: only with both does every
+  pixel Firefox leaves transparent show what is behind the window. With the backdrop off but frame rendering on,
+  the area outside Firefox's frame margins is black, and Firefox recomputes those margins on every layout. The
+  thin resize border at the sides and bottom is painted clear and still resizes the window;
+- attaches shellman's `GlassPanel` (`crates/ui/src/glass`, the same code Files and Settings use) to the window:
+  a companion window of the same thread right under it, with one composition visual per island (blurred
+  backdrop, tint, rim, shadow). A window subclass moves, sizes, hides and stacks it in the same window message
+  that moved the browser window, so there is no second process and no polling;
+- measures the islands (toolbar pills, window buttons, tab strip or rail islands, bookmarks toolbar,
+  notification bars, sidebar panel, page) in device pixels and sends them when the layout changes (resize and
+  mutation observers, window events), at most once per frame and only when they changed. Look changes
+  (`appearance.json`, light/dark) restyle the glass.
+
+`:root[shellman-glass]` is set once the DLL is attached; the CSS then hands the islands' fill, hairline and
+shadow to the DLL. **Fallback:** no DLL, a DLL of another ABI version, Windows unable to compose (or
+`shellman.glass.enabled` = `false`, read when a window opens): nothing is changed and the Acrylic look stays.
+Every DLL entry point catches panics and reports failure instead of unwinding into Firefox.
+
+What was measured (300 % monitor, a busy test background):
+- Moving the window (moved from another process every 8 ms, 4 px a step, the row through a pill sampled ~240
+  times a second): glass and window were in step in 95 % of samples, one step (one frame) apart in 5 %.
+  Resizing from the left edge: mostly in step; the page lags for a frame or two the way it does anyway.
+- CPU: no polling and no timers while nothing changes (idle: 62 ms of CPU in 10 s for the whole of Firefox);
+  moving the window cost no measurable extra CPU (641 ms with, 734 ms without, 4 s of
+  moving, Firefox's main process).
+
+Limits:
+- A native DLL runs inside Firefox (the same trust boundary as the scripts, see above, but compiled code). It is
+  loaded once and never unloaded while Firefox runs; uninstall with Firefox closed.
+- The window has no Windows border or rectangular shadow (the islands have their own shadows), and its corners
+  are the islands'. Clicks in the gaps go to Firefox (they drag the window, as in shellman's own apps).
+- Maximised windows keep the gaps (sharp desktop between the islands); in F11 the visible toolbars and rail stay
+  glass; page/video fullscreen covers everything with the page.
+- Popups (menus, panels, the URL bar dropdown) keep Windows' Acrylic; they are separate windows.
+- Customize mode was not checked with the DLL (the islands follow whatever toolbar items are visible).
+
 ## Options
 
 - **Accent / glass:** with the scripts, follow shellman's own setting automatically. Without them, edit
@@ -152,8 +207,8 @@ material. `toolkit.legacyUserProfileCustomizations.stylesheets` is required for 
   but then the islands have no blur at all (the wallpaper shows sharp through the tint), the window shadow is
   gone and the region corners are not anti-aliased (visible stair steps at 150 %). The undocumented
   `SetWindowCompositionAttribute` blur ignores the region and paints the whole rectangle (black on this build).
-  shellman itself gets per-island blur from Windows.UI.Composition visuals in a second window, which a browser
-  script cannot reasonably build, so this stays as it is.
+  shellman itself gets per-island blur from Windows.UI.Composition visuals in a second window; the optional
+  `shellman_glass.dll` does exactly that for Firefox (see [Real gaps](#real-gaps-optional-a-dll)).
 - `backdrop-filter` on the pills only blurs Firefox's own content; the real blur is Windows'.
 - Pages are opaque; the island fill only shows behind transparent pages and Firefox's own pages.
 - The focus ring inside the bookmarks/history panel still uses Firefox's lilac in places (the panel is a
