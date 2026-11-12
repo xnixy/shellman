@@ -214,31 +214,39 @@ impl Preview {
         true
     }
 
+    /// Take the app's windows as they are now and lay the panel out for them. The host calls this
+    /// when the window is first found: it is created hidden and gets no frames until it is shown,
+    /// so it cannot lay itself out.
+    pub fn update(&mut self, mut windows: Vec<AppWindow>) {
+        windows.truncate(MAX_WINDOWS);
+        if windows.is_empty() {
+            // The app's last window is gone.
+            let (was_open, epoch) = (self.machine.is_open(), self.machine.epoch());
+            self.machine.dismiss(None);
+            self.changed(was_open, epoch, Instant::now());
+            return;
+        }
+        let same = self.windows.len() == windows.len()
+            && self.windows.iter().zip(&windows).all(|(a, b)| a.hwnd == b.hwnd && a.minimized == b.minimized);
+        self.dirty |= !same;
+        self.windows = windows;
+        self.settle();
+    }
+
     /// In the panel's frame: take the app's windows as they are now, and draw. `icons` loads app
     /// icons. Returns what was clicked.
     pub fn frame(
         &mut self,
         ctx: &egui::Context,
-        mut windows: Vec<AppWindow>,
+        windows: Vec<AppWindow>,
         glass: bool,
         icons: draw::Icons,
     ) -> Option<Action> {
         let now = Instant::now();
         let (was_open, epoch) = (self.machine.is_open(), self.machine.epoch());
         self.machine.panel_pointer(now, ctx.pointer_hover_pos().is_some());
-        windows.truncate(MAX_WINDOWS);
-        if windows.is_empty() {
-            // The app's last window is gone.
-            self.machine.dismiss(None);
-            self.changed(was_open, epoch, now);
-            return None;
-        }
         self.changed(was_open, epoch, now);
-        let same = self.windows.len() == windows.len()
-            && self.windows.iter().zip(&windows).all(|(a, b)| a.hwnd == b.hwnd && a.minimized == b.minimized);
-        self.dirty |= !same;
-        self.windows = windows;
-        self.settle();
+        self.update(windows);
         let (Some(anchor), Some(_)) = (self.machine.anchor(), self.hwnd) else { return None };
         if self.layout.tiles.len() != self.windows.len() {
             return None;

@@ -34,6 +34,13 @@ impl Shared {
         self.top.frame(ctx, front.as_ref(), self.glass, primary);
     }
 
+    /// Lay the open preview panel out for its app's current windows.
+    fn update_preview(&mut self) {
+        if let Some(app) = self.preview.app_id() {
+            self.preview.update(self.dock.windows_of(&app));
+        }
+    }
+
     /// A frame of the preview panel: the hovered app's windows, drawn, and what was clicked.
     fn preview_frame(&mut self, ctx: &egui::Context) {
         theme::set_light(ctx.theme() == egui::Theme::Light);
@@ -164,6 +171,7 @@ impl eframe::App for Host {
         // New windows exist only after this frame; look again on the next one.
         let bars_ready = shared.bars.adopt(glass);
         let preview_ready = shared.preview.adopt(glass);
+        shared.update_preview();
         if !(bars_ready && preview_ready) {
             ctx.request_repaint();
         }
