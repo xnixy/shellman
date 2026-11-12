@@ -1700,10 +1700,8 @@ fn caption_button(ui: &mut Ui, g: char, close: bool) -> egui::Response {
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(46.0, CAPTION_H), Sense::click());
     let (fill, fg) = match (resp.hovered(), close) {
         (true, true) => (Color32::from_rgb(196, 43, 28), Color32::WHITE),
-        (true, false) => (theme::mix(c.sidebar_solid, c.text, 0.1), c.text),
-        // Solid, not glass: a visual style can leave its own caption buttons drawn in the frame
-        // behind ours, and they would show through.
-        _ => (c.sidebar_solid, c.text),
+        (true, false) => (c.row_hover, c.text),
+        _ => (Color32::TRANSPARENT, c.text),
     };
     ui.painter().rect_filled(rect, CornerRadius::ZERO, fill);
     ui.painter().text(rect.center(), Align2::CENTER_CENTER, g, icon_font(10.0), fg);
