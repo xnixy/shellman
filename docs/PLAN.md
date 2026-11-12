@@ -181,7 +181,11 @@ working" (About page, `shell.json`, default on) turns it off; `SHELLMAN_APP_HOST
 for tests. Its log is `%LOCALAPPDATA%\shellman\app-host.log`.
 
 The bar puts its work areas back when they change under it: an Explorer that runs even briefly
-sets every monitor's for its own taskbar.
+sets every monitor's for its own taskbar, and again whenever they change while it runs. So the
+bar waits: a work-area change or `TaskbarCreated` starts a timer; after 400 ms of quiet, if no
+`explorer.exe` owns a `Shell_TrayWnd` (by process: the bar owns one too), its work areas are put
+back, otherwise it looks again every second. At most five rounds in 30 s, then a minute's pause.
+`SHELLMAN_WORKAREA_LOG=<file>` traces it.
 
 If the exe is missing or does not take the shell window, nothing else changes: modern apps stay
 unavailable and the Control Center hides its Settings links, except where a Control Panel applet
@@ -192,14 +196,14 @@ opens without Explorer (Bluetooth: `bthprops.cpl`; Sound: `mmsys.cpl`; also `mai
 Not yet tried with the host running: toasts, the touch keyboard, snap layouts, sleep and resume,
 display changes, long uptime.
 
-### A host of shellman's own (tried; not working yet)
+### A host of shellman's own (tried; cannot work)
 
-Goal: replace ShellAppRuntime with a small shellman process doing only the part that brings up
-the immersive shell (no startup apps, no logon tasks, no Start prelaunch, no Win key to Start),
-with ShellAppRuntime as the fallback. Its own process, never a thread of bar or desktop: twinui
-ends its process on a failed start (below), and that must not take shellman down.
+Goal was to replace ShellAppRuntime with a small shellman process doing only the part that brings
+up the immersive shell, with ShellAppRuntime as the fallback. It cannot be done: Windows reserves
+what the immersive shell needs to Windows' own signed binaries. The experiment is kept off the main
+line, on branch `apphost-experiment` (`apps/apphost`).
 
-What ShellAppRuntime 10.0.26100.9818 does for it (read from the exe; twinui.pcshell 9278):
+What ShellAppRuntime 10.0.26100.9818 does for it (read from the exe; twinui.pcshell 9974):
 
 - STA main thread: `CoInitializeEx(APARTMENTTHREADED | DISABLE_OLE1DDE)`; `IGlobalOptions`
   exception handling DONOT_HANDLE_ANY and RO settings 0x218.
@@ -209,14 +213,13 @@ What ShellAppRuntime 10.0.26100.9818 does for it (read from the exe; twinui.pcsh
 - Legacy init: AUMID `Microsoft.Windows.Explorer`, BAM ioctl, `EnableMouseInPointer(0)`, shell32
   #899(3), #188(1) when configured, `CoInitializeEx` again, shell32 #904(1, 1).
   `SetProcessShutdownParameters(3, NORETRY)`; `OleInitialize` when configured.
-- Creates an object (IID {6597eb02-ceb7-4c90-a0a6-e3176d67e179}) kept for the shell's lifetime;
-  not identified. Then "Progman" / "Program Manager", `WS_EX_TOOLWINDOW`, `WS_POPUP |
-  WS_CLIPCHILDREN`, the virtual screen (its WM_CREATE claims `SetShellWindow`); then the taskman
-  window (WM_CREATE: ARW_HIDE minimized metrics, `SetTaskmanWindow`, `RegisterShellHookWindow`;
-  each SHELLHOOK message goes to `CLSID_ImmersiveShell` {c2f03a33-...} local server ->
-  `IServiceProvider::QueryService({4624bd39-5fc3-44a8-a809-163a836e9031},
-  {914d9b3a-5e53-4e14-bbba-46062acb35a4})` slot 5 (wParam, lParam), except code 0x32;
-  HSHELL_APPCOMMAND also to its audio component).
+- Creates an object (IID {6597eb02-ceb7-4c90-a0a6-e3176d67e179}) kept for the shell's lifetime.
+  Then "Progman" / "Program Manager", `WS_EX_TOOLWINDOW`, `WS_POPUP | WS_CLIPCHILDREN`, the virtual
+  screen (its WM_CREATE claims `SetShellWindow`); then the taskman window (WM_CREATE: ARW_HIDE
+  minimized metrics, `SetTaskmanWindow`, `RegisterShellHookWindow`; each SHELLHOOK message goes to
+  `CLSID_ImmersiveShell` {c2f03a33-...} local server -> `IServiceProvider::QueryService(
+  {4624bd39-5fc3-44a8-a809-163a836e9031}, {914d9b3a-5e53-4e14-bbba-46062acb35a4})` slot 5
+  (wParam, lParam), except code 0x32; HSHELL_APPCOMMAND also to its audio component).
 - shell32 #938(), then `CoCreateInstance({c71c41f1-ddad-42dc-a8fc-f5bfc61df957}, INPROC,
   {1c56b3e4-e6ea-4ced-8a74-73b72c6bd435})` (twinui.pcshell's builder), slot 3 ->
   `IImmersiveShellController` {d6948331-eaf5-4365-86ac-d8d1d03b4600}, slot 3 `Start()`.
@@ -224,27 +227,38 @@ What ShellAppRuntime 10.0.26100.9818 does for it (read from the exe; twinui.pcsh
   `RegisterApplicationRestart`, `ShellReadyEvent`, then a message loop until WM_QUIT; slot 4
   `Stop()` on the way out.
 
-Result on 10.0.26300, one run of `shellman-apphost` (branch `apphost-experiment`) with all of the
-above except the unidentified object, OLE, BAM and #188: every step up to and including the
-builder, controller, shell window, taskman and shell hook succeeded; `Start` then raised
-`IMSC_E_SHELL_COMPONENT_STARTUP_FAILURE` (0x80270233, "an immersive shell component failed to
-start correctly") inside twinui.pcshell and the process died. Winlogon started Explorer (seen
-within 8 s), as when ShellAppRuntime is killed: the trigger looks like the shell window's owner
-ending abnormally, whatever the process. So a failed `Start` costs an Explorer that the
-supervisor must stop, plus Explorer's work areas and a moved tray.
+Why it fails (10.0.26300, verified):
 
-Not yet known: which component fails. Suspects, in order: the unidentified object created before
-the shell window (it may proffer a service a component needs), `OleInitialize`, the window
-creation order (ShellAppRuntime makes the shell window from a helper object with its own class
-registration), a check on the host's identity. Finding it means more `Start` attempts, and each
-failure brings Explorer back; it was stopped here (machine in use). Next steps: catch the
-exception with a vectored handler to log the failing component's stack before exiting; check
-whether giving up the shell window (`SetShellWindow(0)`) before exiting keeps Winlogon quiet;
-then try the variants (no shell hook, no taskman, cloaked or 0-sized Progman, no shell32
-ordinals) one by one.
+- `shellman-apphost` gets through the builder, the controller, the shell window, the task window
+  and the shell hook. `Start` then fails fast with `IMSC_E_SHELL_COMPONENT_STARTUP_FAILURE`
+  (0x80270233), with or without the shell hook, task window, full-size Progman, AUMID and shell32
+  ordinals (two runs: with all of them, and with none; the record below is from the first).
+- Before failing fast twinui records the failure under
+  `HKCU\Software\Microsoft\Windows\CurrentVersion\ImmersiveShell\Startup` (`PreviousFailure_*`;
+  the next Explorer clears it within a second): `pcshell\twinui\appmanager\lib\appmanager.cpp`,
+  line 5032, `0x80070005` (access denied). That line creates the application manager's
+  `ApplicationManager_ImmersiveShellWindow`, with `CreateWindowInBand(.., band 12)`
+  (ZBID_IMMERSIVE_BACKGROUND).
+- win32k refuses every band but the default, the desktop and band 16 to an ordinary process
+  (`shellman-apphost --band-test`: ERROR_ACCESS_DENIED for bands 2 to 14 and 17). The binaries
+  that may use them carry an `.imrsiv` PE section and are Windows-signed (explorer.exe,
+  ShellAppRuntime.exe and about fifty other System32 executables). With an `.imrsiv` section of
+  its own but no Windows signature the host is refused all the same. So the gate is "a
+  Windows-signed image marked immersive": the end of this road. Getting past it would mean
+  running inside one of those binaries or defeating the signature check, neither of which a
+  shell should do.
+- None of the other differences from ShellAppRuntime (OLE, the {6597eb02} object, the start-menu
+  cache, logon tasks) matter: the failure is the first band window, before any of them would.
 
-Until then the supervisor keeps running ShellAppRuntime, unchanged.
+What a failed `Start` costs, for whoever tries a host again: twinui fails fast
+(`RaiseFailFastException`, no context), and kernelbase ends the process through a hard error
+without running vectored handlers or the unhandled-exception filter, so the host cannot give up
+the shell window first; Winlogon then starts Explorer within 0.3 s. twinui fails fast only the
+first time a given failure happens (it compares with the recorded one) and skips the component on
+a repeat, unless a debugger is attached; since the next Explorer clears the record, every attempt
+fails fast.
 
+Decision: the supervisor keeps running ShellAppRuntime, unchanged.
 ## Icons
 
 - shellman's own apps are drawn in the user's accent wherever shellman shows them: dock,
