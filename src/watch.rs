@@ -17,7 +17,9 @@ use windows::Win32::Storage::FileSystem::{
     FILE_NOTIFY_CHANGE_ATTRIBUTES, FILE_NOTIFY_CHANGE_DIR_NAME, FILE_NOTIFY_CHANGE_FILE_NAME,
     FILE_NOTIFY_CHANGE_LAST_WRITE, FILE_NOTIFY_CHANGE_SIZE,
 };
-use windows::Win32::System::Threading::{CreateEventW, ResetEvent, SetEvent, WaitForMultipleObjects, INFINITE};
+use windows::Win32::System::Threading::{
+    CreateEventW, ResetEvent, SetEvent, WaitForMultipleObjects, INFINITE,
+};
 
 /// How long a folder must stay quiet before it is reported, so a big copy re-lists a few times
 /// rather than once per file.
@@ -58,14 +60,17 @@ impl Watcher {
         });
         // Manual reset: it stays signaled until the thread has seen it, so a `set_dirs` that lands
         // while the thread is busy is not lost.
-        let wake = Wake(
-            unsafe { CreateEventW(None, true, false, None) }.map_or(0, |h| h.0 as isize),
-        );
+        let wake =
+            Wake(unsafe { CreateEventW(None, true, false, None) }.map_or(0, |h| h.0 as isize));
         let thread = (wake.0 != 0).then(|| {
             let shared = shared.clone();
             std::thread::spawn(move || run(&shared, wake, &ctx))
         });
-        Self { shared, wake, thread }
+        Self {
+            shared,
+            wake,
+            thread,
+        }
     }
 
     /// Replace the set of watched folders.
@@ -114,7 +119,8 @@ fn open_all(dirs: &[PathBuf]) -> Vec<(PathBuf, HANDLE)> {
             break;
         }
         let wide: Vec<u16> = dir.as_os_str().encode_wide_nul();
-        if let Ok(h) = unsafe { FindFirstChangeNotificationW(PCWSTR(wide.as_ptr()), false, filter) } {
+        if let Ok(h) = unsafe { FindFirstChangeNotificationW(PCWSTR(wide.as_ptr()), false, filter) }
+        {
             out.push((dir.clone(), h));
         }
     }

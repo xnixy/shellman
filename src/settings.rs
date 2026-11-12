@@ -11,6 +11,17 @@ pub struct Settings {
     pub show_hidden: bool,
     /// Folders open in tabs when the window last closed.
     pub tabs: Vec<PathBuf>,
+    pub view: ViewMode,
+}
+
+/// How a folder's items are shown.
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, Debug)]
+pub enum ViewMode {
+    /// Rows with columns: name, date, type, size.
+    #[default]
+    List,
+    /// Tiles with large previews.
+    Grid,
 }
 
 fn settings_path() -> Option<PathBuf> {
@@ -20,7 +31,8 @@ fn settings_path() -> Option<PathBuf> {
 pub fn load_settings() -> Settings {
     settings_path()
         .and_then(|p| std::fs::read(p).ok())
-        .and_then(|b| serde_json::from_slice(&b).ok())
+        // Editors on Windows may save with a byte-order mark, which JSON parsers reject.
+        .and_then(|b| serde_json::from_slice(b.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(&b)).ok())
         .unwrap_or_default()
 }
 

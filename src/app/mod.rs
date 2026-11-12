@@ -3,7 +3,10 @@
 mod actions;
 mod dialogs;
 mod footer;
+mod grid;
+mod interact;
 mod keys;
+mod layout;
 mod list;
 mod pc;
 mod rows;
@@ -17,7 +20,7 @@ use crate::fsops::{self, Drive, Entry, Op};
 use crate::theme::{self, colors, AccentChoice};
 use crate::thumbs::Thumbs;
 use actions::{Dialog, Rename};
-use egui::{Align, CornerRadius, Layout, Stroke, Vec2};
+use egui::Vec2;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use tab::{Loc, Tab};
@@ -69,6 +72,8 @@ pub(crate) struct FileMan {
     /// The folders last handed to the watcher, so it is told only when they change.
     watched: Vec<PathBuf>,
     thumbs: Thumbs,
+    /// Columns in the grid as last drawn, for moving the cursor up and down a line.
+    grid_cols: usize,
 }
 
 impl FileMan {
@@ -118,6 +123,7 @@ impl FileMan {
             title: String::new(),
             caption: None,
             thumbs,
+            grid_cols: 1,
         };
         for loc in locs {
             app.push_tab(loc);
@@ -200,7 +206,7 @@ impl FileMan {
                     t.loading = false;
                     match result {
                         Ok(entries) => {
-                            t.entries = entries;
+                            t.set_entries(entries);
                             t.rebuild_view(show_hidden);
                         }
                         Err(e) => {
@@ -330,85 +336,7 @@ impl eframe::App for FileMan {
         self.keyboard(ctx, &mut actions);
         self.take_dropped_files(ctx);
 
-        let ppp = ctx.pixels_per_point();
-        self.caption = if self.glass {
-            crate::window::caption_buttons_size(self.hwnd)
-                .map(|(w, h)| Vec2::new(w as f32 / ppp, h as f32 / ppp))
-        } else {
-            None
-        };
-        let caption_h = self.caption.map_or(CAPTION_H, |s| s.y.clamp(32.0, 48.0)) + 6.0;
-        let c = colors();
-        // One even tint over the whole window; nothing else paints a band of its own.
-        ctx.layer_painter(egui::LayerId::background()).rect_filled(
-            ctx.screen_rect(),
-            CornerRadius::ZERO,
-            if self.glass { c.shell } else { c.bg },
-        );
-        egui::SidePanel::left("sidebar")
-            .frame(egui::Frame::new().inner_margin(egui::Margin {
-                left: 10,
-                right: 8,
-                top: 0,
-                bottom: 10,
-            }))
-            .exact_width(SIDEBAR_W)
-            .resizable(false)
-            .show_separator_line(false)
-            .show(ctx, |ui| self.sidebar(ui, caption_h, &mut actions));
-        egui::CentralPanel::default()
-            .frame(egui::Frame::new().inner_margin(egui::Margin {
-                left: 0,
-                right: 10,
-                top: 0,
-                bottom: 10,
-            }))
-            .show(ctx, |ui| {
-                egui::TopBottomPanel::top("tabs")
-                    .frame(egui::Frame::new())
-                    .show_separator_line(false)
-                    .exact_height(caption_h)
-                    .show_inside(ui, |ui| self.tab_strip(ui, &mut actions));
-                egui::TopBottomPanel::top("toolbar")
-                    .frame(egui::Frame::new().inner_margin(egui::Margin {
-                        left: 0,
-                        right: 0,
-                        top: 2,
-                        bottom: 10,
-                    }))
-                    .show_separator_line(false)
-                    .show_inside(ui, |ui| self.toolbar(ui, &mut actions));
-                egui::Frame::new()
-                    .fill(c.sheet)
-                    .stroke(Stroke::new(1.0_f32, c.hairline))
-                    .corner_radius(CornerRadius::same(14))
-                    .inner_margin(egui::Margin {
-                        left: 8,
-                        right: 8,
-                        top: 6,
-                        bottom: 0,
-                    })
-                    .shadow(egui::Shadow {
-                        offset: [0, 6],
-                        blur: 24,
-                        spread: 0,
-                        color: c.shadow,
-                    })
-                    .show(ui, |ui| {
-                        let size = ui.available_size();
-                        ui.set_min_size(size);
-                        let body = Vec2::new(size.x, (size.y - FOOTER_H).max(0.0));
-                        ui.allocate_ui_with_layout(body, Layout::top_down(Align::Min), |ui| {
-                            ui.set_min_size(body);
-                            if self.tabs[self.active].loc == Loc::Pc {
-                                self.pc_page(ui, &mut actions);
-                            } else {
-                                self.file_list(ui, &mut actions);
-                            }
-                        });
-                        self.footer(ui);
-                    });
-            });
+        self.layout(ctx, &mut actions);
         self.dialogs(ctx);
 
         for a in actions {

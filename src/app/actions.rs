@@ -26,6 +26,7 @@ pub(super) enum Action {
     ExplorerHere,
     SelectAll,
     Settings,
+    SetView(crate::settings::ViewMode),
 }
 
 pub(super) struct Rename {
@@ -216,6 +217,11 @@ impl super::FileMan {
                     .collect();
             }
             Action::Settings => self.dialog = Some(Dialog::Settings),
+            Action::SetView(view) => {
+                self.settings.view = view;
+                self.tabs[self.active].scroll_to_cursor = true;
+                self.save_pending = true;
+            }
         }
         let _ = show_hidden;
     }

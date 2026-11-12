@@ -16,7 +16,10 @@ use windows::Win32::Foundation::HWND;
 fn main() -> eframe::Result {
     let settings = settings::load_settings();
     // A folder passed on the command line opens in its own tab.
-    let arg = std::env::args_os().nth(1).map(PathBuf::from).filter(|p| p.is_dir());
+    let arg = std::env::args_os()
+        .nth(1)
+        .map(PathBuf::from)
+        .filter(|p| p.is_dir());
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("Fileman")

@@ -32,9 +32,8 @@ impl super::FileMan {
                 }
             };
             if !tab.selected.is_empty() {
-                let sel = tab.selection();
-                let bytes: u64 = sel.iter().filter(|e| !e.is_dir).map(|e| e.size).sum();
-                text += &format!("   ·   {} selected", sel.len());
+                let (count, bytes) = tab.selection_stats();
+                text += &format!("   ·   {count} selected");
                 if bytes > 0 {
                     text += &format!("  ({})", fsops::format_size(bytes));
                 }

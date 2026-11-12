@@ -21,8 +21,10 @@ use windows::Win32::UI::Shell::{
     IShellItemImageFactory, SHCreateItemFromParsingName, SIIGBF_BIGGERSIZEOK, SIIGBF_RESIZETOFIT,
 };
 
-/// Size asked of the shell, in pixels. Enough for a 24 point tile at 250% scale.
-const PX: i32 = 64;
+/// Sizes asked of the shell, in pixels: a list row's 24 point tile and a grid tile's 88 point
+/// preview, each enough at 250% scale.
+const SMALL_PX: i32 = 64;
+const LARGE_PX: i32 = 224;
 const WORKERS: usize = 2;
 /// Past this many, the cache is cleared rather than grown.
 const MAX_CACHED: usize = 4000;
@@ -34,12 +36,14 @@ enum Slot {
     Missing,
 }
 
-type Queue = Arc<(Mutex<Vec<PathBuf>>, Condvar)>;
+/// A file and whether its large image is wanted.
+type Key = (PathBuf, bool);
+type Queue = Arc<(Mutex<Vec<Key>>, Condvar)>;
 
 pub struct Thumbs {
-    cache: HashMap<PathBuf, Slot>,
+    cache: HashMap<Key, Slot>,
     queue: Queue,
-    rx: Receiver<(PathBuf, Option<ColorImage>)>,
+    rx: Receiver<(Key, Option<ColorImage>)>,
 }
 
 /// Files whose shell image says more than a glyph would: previews, and programs' own icons.
@@ -50,9 +54,30 @@ pub fn wants_thumb(name: &str) -> bool {
         .unwrap_or_default();
     matches!(
         ext.as_str(),
-        "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "heic" | "avif" | "tif" | "tiff"
-            | "ico" | "mp4" | "mkv" | "mov" | "avi" | "webm" | "wmv" | "m4v" | "exe" | "lnk"
-            | "url" | "msi" | "appref-ms" | "pdf"
+        "png"
+            | "jpg"
+            | "jpeg"
+            | "gif"
+            | "webp"
+            | "bmp"
+            | "heic"
+            | "avif"
+            | "tif"
+            | "tiff"
+            | "ico"
+            | "mp4"
+            | "mkv"
+            | "mov"
+            | "avi"
+            | "webm"
+            | "wmv"
+            | "m4v"
+            | "exe"
+            | "lnk"
+            | "url"
+            | "msi"
+            | "appref-ms"
+            | "pdf"
     )
 }
 
@@ -71,18 +96,20 @@ impl Thumbs {
         }
     }
 
-    /// The image for a file if it is ready. Otherwise asks for it, once.
-    pub fn get(&mut self, path: &Path) -> Option<&TextureHandle> {
-        if !self.cache.contains_key(path) {
+    /// The image for a file if it is ready, small for a row or large for a tile. Otherwise asks
+    /// for it, once.
+    pub fn get(&mut self, path: &Path, large: bool) -> Option<&TextureHandle> {
+        let key = (path.to_path_buf(), large);
+        if !self.cache.contains_key(&key) {
             if self.cache.len() >= MAX_CACHED {
                 self.cache.retain(|_, s| matches!(s, Slot::Pending));
             }
-            self.cache.insert(path.to_path_buf(), Slot::Pending);
+            self.cache.insert(key.clone(), Slot::Pending);
             let (lock, cv) = &*self.queue;
-            lock.lock().unwrap().push(path.to_path_buf());
+            lock.lock().unwrap().push(key.clone());
             cv.notify_one();
         }
-        match self.cache.get(path) {
+        match self.cache.get(&key) {
             Some(Slot::Ready(t)) => Some(t),
             _ => None,
         }
@@ -90,25 +117,25 @@ impl Thumbs {
 
     /// Turn finished images into textures.
     pub fn poll(&mut self, ctx: &egui::Context) {
-        while let Ok((path, image)) = self.rx.try_recv() {
+        while let Ok((key, image)) = self.rx.try_recv() {
             let slot = match image {
                 Some(img) => {
-                    let name = format!("thumb:{}", path.display());
+                    let name = format!("thumb:{}:{}", key.1, key.0.display());
                     Slot::Ready(ctx.load_texture(name, img, TextureOptions::LINEAR))
                 }
                 None => Slot::Missing,
             };
-            self.cache.insert(path, slot);
+            self.cache.insert(key, slot);
         }
     }
 
     /// Drop requests nobody is waiting for any more, after leaving a folder.
     pub fn cancel_pending(&mut self) {
         let (lock, _) = &*self.queue;
-        let dropped: Vec<PathBuf> = std::mem::take(&mut *lock.lock().unwrap());
-        for p in dropped {
-            if matches!(self.cache.get(&p), Some(Slot::Pending)) {
-                self.cache.remove(&p);
+        let dropped: Vec<Key> = std::mem::take(&mut *lock.lock().unwrap());
+        for key in dropped {
+            if matches!(self.cache.get(&key), Some(Slot::Pending)) {
+                self.cache.remove(&key);
             }
         }
     }
@@ -116,17 +143,17 @@ impl Thumbs {
     /// Forget images for files in `dir`, so changed files are asked for again.
     pub fn invalidate_dir(&mut self, dir: &Path) {
         self.cache
-            .retain(|p, s| matches!(s, Slot::Pending) || p.parent() != Some(dir));
+            .retain(|(p, _), s| matches!(s, Slot::Pending) || p.parent() != Some(dir));
     }
 }
 
-fn worker(queue: Queue, tx: Sender<(PathBuf, Option<ColorImage>)>, ctx: egui::Context) {
+fn worker(queue: Queue, tx: Sender<(Key, Option<ColorImage>)>, ctx: egui::Context) {
     // Shell thumbnail providers expect a single-threaded apartment.
     unsafe {
         let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
     }
     loop {
-        let path = {
+        let key = {
             let (lock, cv) = &*queue;
             let mut q = lock.lock().unwrap();
             loop {
@@ -136,8 +163,9 @@ fn worker(queue: Queue, tx: Sender<(PathBuf, Option<ColorImage>)>, ctx: egui::Co
                 q = cv.wait(q).unwrap();
             }
         };
-        let image = shell_image(&path, PX);
-        if tx.send((path, image)).is_err() {
+        let px = if key.1 { LARGE_PX } else { SMALL_PX };
+        let image = shell_image(&key.0, px);
+        if tx.send((key, image)).is_err() {
             return;
         }
         ctx.request_repaint();
@@ -150,7 +178,10 @@ fn shell_image(path: &Path, px: i32) -> Option<ColorImage> {
         let factory: IShellItemImageFactory =
             SHCreateItemFromParsingName(&HSTRING::from(path.as_os_str()), None).ok()?;
         let hbmp = factory
-            .GetImage(SIZE { cx: px, cy: px }, SIIGBF_RESIZETOFIT | SIIGBF_BIGGERSIZEOK)
+            .GetImage(
+                SIZE { cx: px, cy: px },
+                SIIGBF_RESIZETOFIT | SIIGBF_BIGGERSIZEOK,
+            )
             .ok()?;
         let image = to_color_image(hbmp);
         let _ = DeleteObject(HGDIOBJ(hbmp.0));
@@ -162,7 +193,12 @@ fn shell_image(path: &Path, px: i32) -> Option<ColorImage> {
 /// often leave alpha at zero, which means opaque.
 unsafe fn to_color_image(hbmp: HBITMAP) -> Option<ColorImage> {
     let mut bm = BITMAP::default();
-    if GetObjectW(HGDIOBJ(hbmp.0), size_of::<BITMAP>() as i32, Some((&raw mut bm).cast())) == 0 {
+    if GetObjectW(
+        HGDIOBJ(hbmp.0),
+        size_of::<BITMAP>() as i32,
+        Some((&raw mut bm).cast()),
+    ) == 0
+    {
         return None;
     }
     let (w, h) = (bm.bmWidth, bm.bmHeight.abs());
@@ -204,7 +240,10 @@ unsafe fn to_color_image(hbmp: HBITMAP) -> Option<ColorImage> {
             p[3] = 255;
         }
     }
-    Some(ColorImage::from_rgba_premultiplied([w as usize, h as usize], &buf))
+    Some(ColorImage::from_rgba_premultiplied(
+        [w as usize, h as usize],
+        &buf,
+    ))
 }
 
 #[cfg(test)]

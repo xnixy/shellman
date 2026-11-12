@@ -4,6 +4,7 @@ use super::actions::Action;
 use super::tab::Loc;
 use super::widgets::{round_button, select_all};
 use crate::fsops::{self, Drive};
+use crate::settings::ViewMode;
 use crate::theme::{self, colors, glyph, icon, icon_font};
 use egui::{
     Align, Align2, Color32, CornerRadius, Id, Key, Layout, Rect, RichText, Sense, Stroke, Ui, Vec2,
@@ -33,15 +34,48 @@ impl super::FileMan {
                 actions.push(Action::Refresh);
             }
             ui.add_space(8.0);
-            let search_w = 250.0;
-            let path_w = (ui.available_width() - search_w - 10.0).max(120.0);
+            let (search_w, toggle_w) = (250.0, 76.0);
+            let path_w = (ui.available_width() - search_w - toggle_w - 20.0).max(120.0);
             let (rect, _) = ui.allocate_exact_size(Vec2::new(path_w, 34.0), Sense::hover());
             self.path_bar(ui, rect, actions);
+            ui.add_space(10.0);
+            let (trect, _) = ui.allocate_exact_size(Vec2::new(toggle_w, 34.0), Sense::hover());
+            self.view_toggle(ui, trect, actions);
             ui.add_space(10.0);
             let (srect, _) =
                 ui.allocate_exact_size(Vec2::new(ui.available_width(), 34.0), Sense::hover());
             self.search_box(ui, srect);
         });
+    }
+
+    /// List or grid, as a pill with two halves; the current one is lit.
+    fn view_toggle(&self, ui: &mut Ui, rect: Rect, actions: &mut Vec<Action>) {
+        let c = colors();
+        ui.painter().rect_filled(rect, CornerRadius::same(17), c.control);
+        let halves = [
+            (ViewMode::List, glyph::VIEW_LIST, "List (Ctrl+1)"),
+            (ViewMode::Grid, glyph::VIEW_GRID, "Icons (Ctrl+2)"),
+        ];
+        let half_w = rect.width() / 2.0;
+        for (i, (mode, g, tip)) in halves.into_iter().enumerate() {
+            let r = Rect::from_min_size(
+                rect.min + Vec2::new(i as f32 * half_w, 0.0),
+                Vec2::new(half_w, rect.height()),
+            )
+            .shrink(3.0);
+            let resp = ui.interact(r, Id::new(("view", i)), Sense::click()).on_hover_text(tip);
+            let current = self.settings.view == mode;
+            if current {
+                ui.painter().rect_filled(r, CornerRadius::same(14), c.control_active);
+            } else if resp.hovered() {
+                ui.painter().rect_filled(r, CornerRadius::same(14), c.control_hover);
+            }
+            let color = if current { c.accent_text } else { c.muted };
+            ui.painter().text(r.center(), Align2::CENTER_CENTER, g, icon_font(13.0), color);
+            if resp.clicked() && !current {
+                actions.push(Action::SetView(mode));
+            }
+        }
     }
 
     fn search_box(&mut self, ui: &mut Ui, rect: Rect) {

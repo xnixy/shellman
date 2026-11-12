@@ -1,7 +1,9 @@
 //! Keyboard shortcuts.
 
 use super::actions::Action;
+use super::grid::GRID_LINE_H;
 use super::ROW_H;
+use crate::settings::ViewMode;
 use crate::fsops::Op;
 use egui::{Key, Modifiers, PointerButton};
 
@@ -53,6 +55,12 @@ impl super::FileMan {
             if key(Modifiers::CTRL | Modifiers::SHIFT, Key::N) {
                 actions.push(Action::NewFolder);
             }
+            if key(Modifiers::CTRL, Key::Num1) {
+                actions.push(Action::SetView(ViewMode::List));
+            }
+            if key(Modifiers::CTRL, Key::Num2) {
+                actions.push(Action::SetView(ViewMode::Grid));
+            }
             if typing {
                 return;
             }
@@ -83,13 +91,20 @@ impl super::FileMan {
             if key(Modifiers::CTRL | Modifiers::SHIFT, Key::C) {
                 actions.push(Action::CopyPath);
             }
-            // Arrow keys, Home and End move the cursor; Shift extends the selection.
+            // Arrow keys, Home and End move the cursor; Shift extends the selection. In the grid,
+            // Up and Down move a whole line and Left and Right one tile.
+            let grid = self.settings.view == ViewMode::Grid;
+            let (line, line_h) = if grid {
+                (self.grid_cols.max(1), GRID_LINE_H)
+            } else {
+                (1, ROW_H)
+            };
             let tab = &mut self.tabs[self.active];
             let n = tab.view.len();
             if n == 0 {
                 return;
             }
-            let page = ((tab.list_height / ROW_H) as usize).max(1);
+            let page = ((tab.list_height / line_h) as usize).max(1) * line;
             let cur = tab.cursor;
             let mut target = None;
             for shift in [false, true] {
@@ -99,8 +114,12 @@ impl super::FileMan {
                     Modifiers::NONE
                 };
                 let t = if i.consume_key(m, Key::ArrowDown) {
-                    Some(cur.map_or(0, |c| (c + 1).min(n - 1)))
+                    Some(cur.map_or(0, |c| (c + line).min(n - 1)))
                 } else if i.consume_key(m, Key::ArrowUp) {
+                    Some(cur.map_or(0, |c| c.saturating_sub(line)))
+                } else if grid && i.consume_key(m, Key::ArrowRight) {
+                    Some(cur.map_or(0, |c| (c + 1).min(n - 1)))
+                } else if grid && i.consume_key(m, Key::ArrowLeft) {
                     Some(cur.map_or(0, |c| c.saturating_sub(1)))
                 } else if i.consume_key(m, Key::PageDown) {
                     Some(cur.map_or(0, |c| (c + page).min(n - 1)))
