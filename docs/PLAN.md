@@ -177,7 +177,7 @@ host died, by userinit), re-announces the tray (`TaskbarCreated`) and starts the
 failures in ten minutes and it gives up. A clean stop is left alone. shellman never claims the
 shell window itself. On shellman's exit the host is left running: harmless, and ending it any
 other way than WM_QUIT would bring Explorer back. "Keep Settings, Calculator and the Store
-working" (About page, `shell.json`, default on) turns it off; `SHELLMAN_APP_HOST=off|on` overrides
+working" (About page, `shell.json`, default off) turns it off; `SHELLMAN_APP_HOST=off|on` overrides
 for tests. Its log is `%LOCALAPPDATA%\shellman\app-host.log`.
 
 The bar puts its work areas back when they change under it: an Explorer that runs even briefly

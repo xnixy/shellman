@@ -8,13 +8,15 @@ pub const NAME: &str = "shell";
 #[serde(default)]
 pub struct ShellSettings {
     /// Run Windows' own host for modern apps (ShellAppRuntime) while shellman is the shell, so
-    /// Settings, Calculator, the Store and `ms-settings:` links open. See `app_host`.
+    /// Settings, Calculator, the Store and `ms-settings:` links open. See `app_host`. Off unless
+    /// the user asks for it: it is Microsoft's process, and it runs startup apps and Windows' own
+    /// Start menu host.
     pub modern_apps: bool,
 }
 
 impl Default for ShellSettings {
     fn default() -> Self {
-        Self { modern_apps: true }
+        Self { modern_apps: false }
     }
 }
 
@@ -33,9 +35,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn modern_apps_default_on() {
-        assert!(ShellSettings::default().modern_apps);
-        assert!(serde_json::from_str::<ShellSettings>("{}").unwrap().modern_apps);
-        assert!(!serde_json::from_str::<ShellSettings>(r#"{ "modern_apps": false }"#).unwrap().modern_apps);
+    fn modern_apps_default_off() {
+        assert!(!ShellSettings::default().modern_apps);
+        assert!(!serde_json::from_str::<ShellSettings>("{}").unwrap().modern_apps);
+        assert!(serde_json::from_str::<ShellSettings>(r#"{ "modern_apps": true }"#).unwrap().modern_apps);
     }
 }
