@@ -8,6 +8,7 @@ mod data;
 pub mod demo;
 mod host;
 mod icon;
+mod log;
 pub mod view;
 
 pub use click::Click;
