@@ -302,4 +302,30 @@ mod tests {
         std::thread::sleep(Duration::from_secs(3));
         println!("{:?}", watch.take());
     }
+
+    /// Nudges the first answering screen down two points and back; run by hand with `--ignored`.
+    #[test]
+    #[ignore]
+    fn nudge_a_screen_and_put_it_back() {
+        let watch = BrightnessWatch::start(Arc::new(|| {}));
+        std::thread::sleep(Duration::from_secs(2));
+        let Some(screen) = watch.take().and_then(|s| s.into_iter().next()) else {
+            println!("no screen answers");
+            return;
+        };
+        let was = screen.percent;
+        watch.set(&screen.id, was.saturating_sub(2));
+        std::thread::sleep(Duration::from_millis(600));
+        let read = || {
+            let again = BrightnessWatch::start(Arc::new(|| {}));
+            std::thread::sleep(Duration::from_secs(2));
+            again.take().and_then(|s| s.into_iter().find(|s| s.id == screen.id)).map(|s| s.percent)
+        };
+        let lowered = read();
+        watch.set(&screen.id, was);
+        std::thread::sleep(Duration::from_millis(600));
+        let now = read();
+        println!("{} was {was}, lowered {lowered:?}, now {now:?}", screen.name);
+        assert_eq!(now, Some(was));
+    }
 }

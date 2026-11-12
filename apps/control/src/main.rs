@@ -10,6 +10,7 @@ mod app;
 mod outside;
 mod place;
 mod power_menu;
+mod settings_page;
 mod summon;
 mod views;
 

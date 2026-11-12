@@ -7,7 +7,7 @@
 use crate::power_menu::PowerMenu;
 use crate::summon::{self, Shared};
 use crate::views::{connect, display::DisplayView, footer, kit, media::MediaView, sound::SoundView};
-use crate::outside;
+use crate::{outside, settings_page};
 use shellman_core::system::audio_watch::SoundWatch;
 use shellman_core::system::brightness::BrightnessWatch;
 use shellman_core::system::live::Wake;
@@ -188,10 +188,8 @@ impl Control {
                     }
                 }
             }
-            Asked::Connect(connect::Asked::Open(uri)) => {
-                self.hide();
-                open_uri(uri);
-            }
+            // The panel stays: Settings closes it by taking the focus, if it opens at all.
+            Asked::Connect(connect::Asked::Open(uri)) => settings_page::open(uri),
             Asked::Footer(footer::Asked::Settings) => {
                 self.hide();
                 shellman_core::sibling::start("settings");
@@ -221,20 +219,6 @@ fn paint_surface(ui: &egui::Ui, rect: egui::Rect, glass: bool) {
     } else {
         ui.painter().rect_filled(rect, 0.0, c.bg);
     }
-}
-
-/// Open a Settings page (`ms-settings:` URI) off the UI thread.
-fn open_uri(uri: &'static str) {
-    std::thread::spawn(move || {
-        use windows::core::HSTRING;
-        use windows::Win32::System::Com::{CoInitializeEx, COINIT_APARTMENTTHREADED};
-        use windows::Win32::UI::Shell::ShellExecuteW;
-        use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
-        unsafe {
-            let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
-            ShellExecuteW(None, &HSTRING::from("open"), &HSTRING::from(uri), None, None, SW_SHOWNORMAL);
-        }
-    });
 }
 
 /// Lock, sleep and the rest, once the panel is gone, so it is not the last thing on screen.

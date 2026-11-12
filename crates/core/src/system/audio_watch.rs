@@ -202,3 +202,80 @@ impl IMMNotificationClient_Impl for Devices_Impl {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    /// Wait for a reading that passes `ok`.
+    fn wait_for(watch: &SoundWatch, ok: impl Fn(&Sound) -> bool) -> Option<Sound> {
+        let until = Instant::now() + Duration::from_secs(3);
+        while Instant::now() < until {
+            if let Some(s) = watch.take().filter(|s| ok(s)) {
+                return Some(s);
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        None
+    }
+
+    fn nudged(level: f32) -> f32 {
+        if level > 0.5 {
+            level - 0.02
+        } else {
+            level + 0.02
+        }
+    }
+
+    /// Nudges the real volume by two points and puts it back; run by hand with `--ignored`.
+    #[test]
+    #[ignore]
+    fn nudge_the_volume_and_put_it_back() {
+        let watch = SoundWatch::start(Arc::new(|| {}));
+        let was = wait_for(&watch, |s| s.volume.is_some()).unwrap().volume.unwrap().level;
+        let to = nudged(was);
+        watch.set_volume(to);
+        let moved = wait_for(&watch, |s| s.volume.is_some_and(|v| (v.level - to).abs() < 0.005));
+        watch.set_volume(was);
+        let back = wait_for(&watch, |s| s.volume.is_some_and(|v| (v.level - was).abs() < 0.005));
+        println!("volume {was} -> {to}: moved {}, back {}", moved.is_some(), back.is_some());
+        assert!(moved.is_some() && back.is_some());
+    }
+
+    /// A change made elsewhere (here: the one-shot call the top bar uses) reaches the watch
+    /// through Windows' callback, with no command of its own; run by hand with `--ignored`.
+    #[test]
+    #[ignore]
+    fn hears_changes_made_elsewhere() {
+        let watch = SoundWatch::start(Arc::new(|| {}));
+        let was = wait_for(&watch, |s| s.volume.is_some()).unwrap().volume.unwrap().level;
+        let to = nudged(was);
+        audio::set_volume(to);
+        let heard = wait_for(&watch, |s| s.volume.is_some_and(|v| (v.level - to).abs() < 0.005));
+        audio::set_volume(was);
+        let back = wait_for(&watch, |s| s.volume.is_some_and(|v| (v.level - was).abs() < 0.005));
+        println!("heard {}, back {}", heard.is_some(), back.is_some());
+        assert!(heard.is_some() && back.is_some());
+    }
+
+    /// Makes another output the default, then the old one again within a second; by hand only.
+    #[test]
+    #[ignore]
+    fn switch_the_default_output_and_back() {
+        let watch = SoundWatch::start(Arc::new(|| {}));
+        let s = wait_for(&watch, |s| s.default_output.is_some()).unwrap();
+        let was = s.default_output.clone().unwrap();
+        let Some(other) = s.outputs.iter().find(|o| o.id != was).cloned() else {
+            println!("only one output");
+            return;
+        };
+        let t = Instant::now();
+        watch.set_default_output(other.id.clone());
+        let switched = wait_for(&watch, |s| s.default_output.as_deref() == Some(other.id.as_str()));
+        watch.set_default_output(was.clone());
+        let back = wait_for(&watch, |s| s.default_output.as_deref() == Some(was.as_str()));
+        println!("to {:?}: {}, back: {} in {:?}", other.name, switched.is_some(), back.is_some(), t.elapsed());
+        assert!(switched.is_some() && back.is_some());
+    }
+}
