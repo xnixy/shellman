@@ -15,13 +15,17 @@ mod switcher;
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use shellman_ui::appearance::{self, Appearance};
 use shellman_ui::{theme, window};
-use windows::core::w;
+use windows::core::HSTRING;
 use windows::Win32::Foundation::{GetLastError, ERROR_ALREADY_EXISTS};
 use windows::Win32::System::Threading::CreateMutexW;
 
 fn main() -> eframe::Result {
     // One switcher per session: a second would only fight the first for the keys.
-    let _single = unsafe { CreateMutexW(None, false, w!("Local\\shellman-switcher")) };
+    // SHELLMAN_INSTANCE names a test copy, which then has its own mutex (and see `demo`).
+    let instance = std::env::var("SHELLMAN_INSTANCE").ok().filter(|s| !s.is_empty());
+    let suffix = instance.as_deref().map(|i| format!("-{i}")).unwrap_or_default();
+    let mutex = HSTRING::from(format!("Local\\shellman-switcher{suffix}"));
+    let _single = unsafe { CreateMutexW(None, false, &mutex) };
     if unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
         return Ok(());
     }
@@ -63,7 +67,7 @@ fn main() -> eframe::Result {
             }
             let (tx, rx) = std::sync::mpsc::channel();
             let wake = cc.egui_ctx.clone();
-            let hooked = keys::start(move |key| {
+            let sink = std::sync::Arc::new(move |key| {
                 let _ = tx.send(key);
                 // A hidden window is never painted, so asking for a frame is not enough to open.
                 // Other keys only matter once it is open, and so awake.
@@ -72,6 +76,15 @@ fn main() -> eframe::Result {
                 }
                 wake.request_repaint();
             });
+            // A test copy (SHELLMAN_INSTANCE) installs no keyboard hook, which would fight the
+            // real switcher's for Alt+Tab; it opens and closes itself on a timer instead.
+            let hooked = if instance.is_some() {
+                switcher::DEMO.store(true, std::sync::atomic::Ordering::Relaxed);
+                demo(sink);
+                true
+            } else {
+                keys::start(move |key| sink(key))
+            };
             if !hooked {
                 return Err("Windows refused the keyboard hook".into());
             }
@@ -105,4 +118,19 @@ impl eframe::App for App {
         }
         self.switcher.frame(ctx);
     }
+}
+
+/// Stand-in for the keyboard in a test copy: twice, a few seconds apart, as if Alt+Tab were
+/// pressed twice and then Esc; after that the process is left idle to be measured.
+fn demo(sink: std::sync::Arc<impl Fn(keys::Key) + Send + Sync + 'static>) {
+    std::thread::spawn(move || {
+        for _ in 0..2 {
+            std::thread::sleep(std::time::Duration::from_secs(4));
+            sink(keys::Key::Next);
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            sink(keys::Key::Next);
+            std::thread::sleep(std::time::Duration::from_millis(600));
+            sink(keys::Key::Cancel);
+        }
+    });
 }

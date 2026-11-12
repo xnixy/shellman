@@ -80,6 +80,14 @@ fn main() -> eframe::Result {
                 (false, false) => Mode::Explorer,
             };
             let minimized = (mode == Mode::Shell).then(workarea::HiddenMinimized::start);
+            if mode == Mode::Shell {
+                // The launcher and control centre live on as resident processes, hidden. A
+                // `--background` start while one runs already does nothing.
+                std::thread::spawn(|| {
+                    shellman_core::sibling::start_with("launcher", &["--background"]);
+                    shellman_core::sibling::start_with("control", &["--background"]);
+                });
+            }
             let shared = app::Shared {
                 dock: dock::Dock::new(cc.egui_ctx.clone(), glass, wake.clone()),
                 top: topbar::TopBar::new(tray, test),

@@ -7,7 +7,7 @@
 use crate::power_menu::PowerMenu;
 use crate::summon::{self, Shared};
 use crate::views::{connect, display::DisplayView, footer, kit, media::MediaView, sound::SoundView};
-use crate::{outside, settings_page};
+use crate::{outside, place, settings_page};
 use shellman_core::system::audio_watch::SoundWatch;
 use shellman_core::system::brightness::BrightnessWatch;
 use shellman_core::system::live::Wake;
@@ -15,7 +15,8 @@ use shellman_core::system::media::MediaWatch;
 use shellman_core::system::power::{self, Action};
 use shellman_core::system::radios::{Connectivity, ConnectivityWatch};
 use shellman_core::system::status::{self, Battery};
-use shellman_ui::theme::{self, colors};
+use shellman_ui::glass;
+use shellman_ui::theme;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -32,7 +33,7 @@ struct Live {
 
 pub struct Control {
     hwnd: isize,
-    /// Whether the window has real acrylic; without it the panel is painted opaque.
+    /// Whether the glass is composed (blur and shadow); without it the panel paints its own surface.
     glass: bool,
     shared: Arc<Shared>,
     wake: Wake,
@@ -43,6 +44,8 @@ pub struct Control {
     media: MediaView,
     battery: Option<Battery>,
     power: PowerMenu,
+    /// Whether the tiles may open Settings pages: asked at every showing (see `settings_page`).
+    links: bool,
     /// The showing this window last saw, whether it has had focus since, and when it appeared.
     seen_shown: u32,
     had_focus: bool,
@@ -63,14 +66,11 @@ impl Control {
             media: MediaView::default(),
             battery: None,
             power: PowerMenu::default(),
+            links: false,
             seen_shown: 0,
             had_focus: false,
             shown_at: Instant::now(),
         }
-    }
-
-    pub fn hwnd(&self) -> isize {
-        self.hwnd
     }
 
     /// The panel just appeared: start listening.
@@ -80,6 +80,7 @@ impl Control {
         // One wake-up to check that focus arrived; no repeating timer.
         ctx.request_repaint_after(FOCUS_RETRY + Duration::from_millis(10));
         self.battery = status::battery();
+        self.links = settings_page::available();
         self.live = Some(Live {
             sound: SoundWatch::start(self.wake.clone()),
             connectivity: ConnectivityWatch::start(self.wake.clone()),
@@ -142,13 +143,17 @@ impl Control {
             self.display.take(&live.brightness);
             self.media.take(&live.media);
         }
-        theme::set_light(ctx.theme() == egui::Theme::Light);
+        // SHELLMAN_FORCE_LIGHT: look at the light palette without changing Windows' setting.
+        let force_light = std::env::var_os("SHELLMAN_FORCE_LIGHT").is_some();
+        theme::set_light(force_light || ctx.theme() == egui::Theme::Light);
         let mut asked = Asked::None;
         let mut height = 0.0;
+        // Over the glass, no fill; without it, a rounded surface painted by the frame.
+        let surface = glass::content_frame(self.glass, &glass::Style::from_theme(place::RADIUS))
+            .inner_margin(egui::Margin::same(kit::PAD as i8));
         egui::CentralPanel::default()
-            .frame(egui::Frame::new().inner_margin(egui::Margin::same(kit::PAD as i8)))
+            .frame(surface)
             .show(ctx, |ui| {
-                paint_surface(ui, ctx.screen_rect(), self.glass);
                 ui.spacing_mut().item_spacing = egui::vec2(kit::GAP, kit::GAP);
                 // Scrolls only on a screen too short for the whole panel, with a bar that floats
                 // over the tiles rather than narrowing them.
@@ -169,7 +174,7 @@ impl Control {
     fn modules(&mut self, ui: &mut egui::Ui) -> Asked {
         let live = self.live.as_ref();
         let mut asked = Asked::None;
-        if let Some(a) = connect::show(ui, &self.net) {
+        if let Some(a) = connect::show(ui, &self.net, self.links) {
             asked = Asked::Connect(a);
         }
         self.sound.show(ui, live.map(|l| &l.sound));
@@ -214,19 +219,6 @@ enum Asked {
     None,
     Connect(connect::Asked),
     Footer(footer::Asked),
-}
-
-/// The panel's background, the one place it is painted: the window is DWM acrylic (or opaque
-/// without it), tinted like the launcher. The rounded real-blur surface from `shellman_ui` will
-/// replace this function's body.
-fn paint_surface(ui: &egui::Ui, rect: egui::Rect, glass: bool) {
-    let c = colors();
-    if glass {
-        ui.painter().rect_filled(rect, 0.0, c.shell);
-        ui.painter().rect_filled(rect, 0.0, c.sheet);
-    } else {
-        ui.painter().rect_filled(rect, 0.0, c.bg);
-    }
 }
 
 /// Lock, sleep and the rest, once the panel is gone, so it is not the last thing on screen.

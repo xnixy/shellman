@@ -3,6 +3,8 @@
 
 /// The panel's width, in points.
 pub const WIDTH: f32 = 360.0;
+/// The panel's corner radius, in points.
+pub const RADIUS: f32 = 22.0;
 /// The top bar's height, and the gap the panel keeps from it and from the screen's right edge.
 const BAR: f32 = 32.0;
 const GAP: f32 = 8.0;

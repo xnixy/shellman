@@ -8,12 +8,12 @@
 //! test copy can run beside the real one.
 
 use crate::{outside, place};
+use shellman_ui::glass;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use windows::core::HSTRING;
 use windows::Win32::Foundation::{GetLastError, ERROR_ALREADY_EXISTS, HANDLE, HWND, POINT, RECT};
-use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_CLOAK};
 use windows::Win32::Graphics::Gdi::{
     GetMonitorInfoW, MonitorFromPoint, RedrawWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST, RDW_INTERNALPAINT,
 };
@@ -24,9 +24,9 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     AllowSetForegroundWindow, GetCursorPos, GetForegroundWindow, GetWindowLongPtrW, GetWindowRect,
-    SetForegroundWindow, SetWindowLongPtrW, SetWindowPos, ShowWindow, ASFW_ANY, GWL_STYLE,
+    SetForegroundWindow, SetWindowLongPtrW, SetWindowPos, ShowWindow, ASFW_ANY, GWL_EXSTYLE, GWL_STYLE,
     HWND_TOPMOST, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOZORDER, SWP_SHOWWINDOW, SW_HIDE,
-    SW_SHOWNOACTIVATE, WS_CAPTION, WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_SYSMENU, WS_THICKFRAME,
+    SW_SHOWNOACTIVATE, WS_CAPTION, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW, WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_SYSMENU, WS_THICKFRAME,
 };
 
 /// The environment variable that names a separate instance, for testing.
@@ -100,7 +100,7 @@ fn names(instance: Option<&str>) -> (String, String) {
 /// Become the resident process, or signal the one that is. Both sides create the event before
 /// the mutex, so whichever order two starts interleave in, the one that loses the mutex finds
 /// the event.
-pub fn claim() -> Claim {
+pub fn claim(background: bool) -> Claim {
     let instance = std::env::var(INSTANCE_VAR).ok();
     let (event_name, mutex_name) = names(instance.as_deref());
     unsafe {
@@ -111,8 +111,12 @@ pub fn claim() -> Claim {
         let mutex = CreateMutexW(None, false, &HSTRING::from(mutex_name));
         if mutex.is_ok() && GetLastError() == ERROR_ALREADY_EXISTS {
             // The resident process may take the foreground for the window it is about to show.
-            let _ = AllowSetForegroundWindow(ASFW_ANY);
-            let _ = SetEvent(event);
+            // A `--background` start only asks for a resident to exist: it is there, so no
+            // signal (which would pop the panel open).
+            if !background {
+                let _ = AllowSetForegroundWindow(ASFW_ANY);
+                let _ = SetEvent(event);
+            }
             return Claim::Signalled;
         }
         Claim::Resident(Instance { event, _mutex: mutex.unwrap_or_default() })
@@ -164,27 +168,38 @@ pub fn hide(hwnd: isize, shared: &Shared) {
     park(hwnd);
 }
 
+/// Set the window up as resident and out of sight: cloaked, and a tool window, so it is never
+/// listed as a running app. Called once, before the window library first shows it.
+pub fn prepare(hwnd: isize) {
+    glass::cloak(hwnd, true);
+    tool_window(HWND(hwnd as *mut _));
+}
+
 /// Out of sight, yet never truly hidden. Windows sends a hidden window no paint messages, and
 /// the window library then retries a frame it was asked for (by the last click, say) without
-/// pause, a core spinning for as long as the panel is hidden. So the window is hidden (which
-/// hands the focus back to the window below), then turned on again cloaked: the compositor
-/// leaves it out and clicks pass it by, but it still paints, so pending frames finish and the
-/// UI goes idle.
+/// pause, a core spinning for as long as the panel is hidden. So the window is cloaked (with its
+/// glass), and hidden and shown again without activation, which hands the focus back to the
+/// window below: it still paints, so pending frames finish and the UI goes idle.
 pub fn park(hwnd: isize) {
+    glass::cloak(hwnd, true);
     let hwnd = HWND(hwnd as *mut _);
     unsafe {
         let _ = ShowWindow(hwnd, SW_HIDE);
-        cloak(hwnd, true);
         let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
         // A frame asked for while hidden was dropped; ask again.
         let _ = RedrawWindow(Some(hwnd), None, None, RDW_INTERNALPAINT);
     }
 }
 
-fn cloak(hwnd: HWND, on: bool) {
-    let value = u32::from(on);
+/// A tool window, never an app window: the dock and the window list leave it out. (The window
+/// library's "no taskbar button" only removes the button.)
+fn tool_window(hwnd: HWND) {
     unsafe {
-        let _ = DwmSetWindowAttribute(hwnd, DWMWA_CLOAK, (&raw const value).cast(), 4);
+        let ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32;
+        let tool = (ex & !WS_EX_APPWINDOW.0) | WS_EX_TOOLWINDOW.0;
+        if tool != ex {
+            SetWindowLongPtrW(hwnd, GWL_EXSTYLE, tool as isize);
+        }
     }
 }
 
@@ -207,9 +222,12 @@ fn show(hwnd: HWND, shared: &Shared) {
             *slot = Some((rect, scale));
         }
         let r = place::panel_rect(rect, scale, shared.height());
+        // Placed while still cloaked, so it is never seen where it was or at a passing size.
+        glass::cloak(hwnd.0 as isize, true);
         strip_frame(hwnd);
+        tool_window(hwnd);
         let _ = SetWindowPos(hwnd, Some(HWND_TOPMOST), r.x, r.y, r.w, r.h, SWP_SHOWWINDOW | SWP_FRAMECHANGED);
-        cloak(hwnd, false);
+        glass::cloak(hwnd.0 as isize, false);
         shared.showing.store(true, Ordering::Release);
         outside::set_rect(r.x, r.y, r.w, r.h);
         take_foreground(hwnd);

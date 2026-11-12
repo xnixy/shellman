@@ -7,7 +7,7 @@ use crate::power_menu::{self, PowerMenu, CHOICES};
 use egui::{Align2, CornerRadius, Pos2, Rect, Sense, Ui, Vec2};
 use shellman_core::system::power::Action;
 use shellman_core::system::status::Battery;
-use shellman_ui::theme::{colors, glyph, with_alpha};
+use shellman_ui::theme::{colors, glyph};
 use std::time::Instant;
 
 const BUTTON: f32 = 38.0;
@@ -84,7 +84,7 @@ fn choices(ui: &mut Ui, menu: &mut PowerMenu) -> Option<Action> {
         let armed = menu.armed() == Some(action);
         let fill = match (armed, resp.hovered()) {
             (true, _) => c.danger,
-            (false, true) => with_alpha(c.text, 40),
+            (false, true) => kit::well(true),
             (false, false) => kit::tile_fill(false),
         };
         let fg = if armed { egui::Color32::WHITE } else { c.text };

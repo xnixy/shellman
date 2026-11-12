@@ -79,16 +79,16 @@ impl TopBar {
             }
             x += w + ICON_GAP;
         }
-        // Scroll for volume, click to mute.
+        // Click opens the control centre (running its exe toggles the resident one); scroll
+        // changes the volume.
+        if resp.clicked() {
+            shellman_core::sibling::start("control");
+        }
         if let Some((level, _)) = vol {
             let resp = resp.on_hover_text(format!("Volume {:.0}%", level * 100.0));
             let scroll = ui.input(|i| i.raw_scroll_delta.y);
             if resp.hovered() && scroll != 0.0 {
                 status::set_volume(level + scroll.signum() * 0.02);
-                self.status = None;
-            }
-            if resp.clicked() {
-                status::toggle_mute();
                 self.status = None;
             }
         }

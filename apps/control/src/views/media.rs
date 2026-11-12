@@ -41,7 +41,7 @@ impl MediaView {
                         .paint_at(ui, art);
                 }
                 None => {
-                    ui.painter().rect_filled(art, CornerRadius::same(10), with_alpha(c.text, 26));
+                    ui.painter().rect_filled(art, CornerRadius::same(10), kit::well(false));
                     ui.painter().text(art.center(), Align2::CENTER_CENTER, glyph::MUSIC, icon_font(20.0), c.muted);
                 }
             }
@@ -58,7 +58,7 @@ impl MediaView {
                 x -= size + 2.0;
                 let resp = ui.interact(r, egui::Id::new(("media", g)), if enabled { Sense::click() } else { Sense::hover() });
                 if enabled && resp.hovered() {
-                    ui.painter().circle_filled(r.center(), size / 2.0, with_alpha(c.text, 26));
+                    ui.painter().circle_filled(r.center(), size / 2.0, kit::well(false));
                 }
                 let fg = if enabled { c.text } else { with_alpha(c.muted, 110) };
                 ui.painter().text(r.center(), Align2::CENTER_CENTER, g, icon_font(14.0), fg);
