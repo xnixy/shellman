@@ -1,6 +1,8 @@
-//! The rail: a narrow pill down the left with the places as icons (their names show on hover),
-//! then the pinned folders, the apps' places, and This PC with the drives. The current place is
-//! lit with the accent. Its empty part moves the window, and its menu brings hidden places back.
+//! The rail: a narrow pill down the left with the places as icons (their names show beside them
+//! on hover, see `label`), then the pinned folders, the tags in use as coloured dots, the apps'
+//! places, and This PC with the drives. The current place is lit with the accent. Its empty
+//! part moves the window, and its menu brings hidden places back. When the icons do not all fit,
+//! the rail scrolls with the wheel, and a small chevron says there is more.
 
 use super::actions::Action;
 use super::tab::Loc;
@@ -10,8 +12,8 @@ use shellman_ui::theme::{self, colors, glyph, icon_font};
 use shellman_ui::widgets::window_drag;
 use std::path::PathBuf;
 
-/// Above the first icon and below the last.
-const PAD: f32 = 8.0;
+/// Above the first icon and below the last (the design's 14 px).
+const PAD: f32 = 12.0;
 /// One icon's square, and the room it takes in the rail.
 const ICON: f32 = 40.0;
 const STEP: f32 = 44.0;
@@ -40,6 +42,16 @@ pub(super) fn wanted_height(groups: &[usize]) -> f32 {
     let shown: Vec<usize> = groups.iter().copied().filter(|&n| n > 0).collect();
     let icons: usize = shown.iter().sum();
     PAD * 2.0 + icons as f32 * STEP + shown.len().saturating_sub(1) as f32 * SEPARATOR
+}
+
+/// Which ends of a scrolled list have more beyond them: (above, below).
+pub(super) fn more(offset: f32, content: f32, view: f32) -> (bool, bool) {
+    (offset > 0.5, offset + view < content - 0.5)
+}
+
+/// The name of an icon, beside it, once the pointer rests on it (see `shellman_ui::hover`).
+pub(super) fn label(ui: &Ui, resp: &egui::Response, text: &str) {
+    shellman_ui::hover::label(ui, resp, text);
 }
 
 /// One icon of the rail, taking the next step down: lit when `active`, faded when `dim`. The
@@ -71,9 +83,9 @@ pub(super) fn item(
     resp
 }
 
-/// An item with a glyph for its icon.
+/// An item with a glyph for its icon, named beside it on hover.
 fn glyph_item(ui: &mut Ui, g: char, name: &str, active: bool) -> egui::Response {
-    item(ui, name, active, false, |p, square, fg| {
+    let resp = item(ui, name, active, false, |p, square, fg| {
         p.text(
             square.center(),
             Align2::CENTER_CENTER,
@@ -81,8 +93,9 @@ fn glyph_item(ui: &mut Ui, g: char, name: &str, active: bool) -> egui::Response 
             icon_font(15.0),
             fg,
         );
-    })
-    .on_hover_text(name)
+    });
+    label(ui, &resp, name);
+    resp
 }
 
 fn separator(ui: &mut Ui) {
@@ -90,7 +103,7 @@ fn separator(ui: &mut Ui) {
     let (r, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), SEPARATOR), Sense::hover());
     let line = Rect::from_center_size(r.center(), Vec2::new(20.0, 1.0));
     ui.painter()
-        .rect_filled(line, 0, theme::with_alpha(c.text, 36));
+        .rect_filled(line, 0, theme::with_alpha(c.text, 30));
 }
 
 impl super::FileMan {
@@ -100,6 +113,7 @@ impl super::FileMan {
         let groups = [
             places.len() + usize::from(self.pick.is_none()),
             self.settings.pins.len(),
+            self.rail_tag_count(),
             self.shown_apps().len(),
             1 + self.drives.len(),
         ];
@@ -113,9 +127,11 @@ impl super::FileMan {
         let inner = pill.shrink2(Vec2::new(0.0, PAD));
         let mut child = ui.new_child(UiBuilder::new().id_salt("rail").max_rect(inner));
         child.set_clip_rect(inner);
-        ScrollArea::vertical()
+        let out = ScrollArea::vertical()
             .id_salt("rail-scroll")
             .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+            // The wheel scrolls it; a press on an icon is always the icon's.
+            .drag_to_scroll(false)
             .auto_shrink([false, false])
             .show(&mut child, |ui| {
                 ui.spacing_mut().item_spacing = Vec2::ZERO;
@@ -149,8 +165,10 @@ impl super::FileMan {
                 group(ui, groups[1]);
                 self.rail_pins(ui, &current, actions);
                 group(ui, groups[2]);
-                self.rail_apps(ui, &current, actions);
+                self.rail_tags(ui, &current, actions);
                 group(ui, groups[3]);
+                self.rail_apps(ui, &current, actions);
+                group(ui, groups[4]);
                 if glyph_item(ui, glyph::PC, "This PC", current == Loc::Pc).clicked() {
                     actions.push(Action::Navigate(Loc::Pc));
                 }
@@ -165,6 +183,23 @@ impl super::FileMan {
                     }
                 }
             });
+        // More above or below: a small chevron at that end.
+        let (above, below) = more(out.state.offset.y, out.content_size.y, out.inner_rect.height());
+        let c = colors();
+        for (show, y, g) in [
+            (above, pill.top() + PAD / 2.0 + 1.0, glyph::SORT_UP),
+            (below, pill.bottom() - PAD / 2.0 - 1.0, glyph::SORT_DOWN),
+        ] {
+            if show {
+                ui.painter().text(
+                    egui::pos2(pill.center().x, y),
+                    Align2::CENTER_CENTER,
+                    g,
+                    icon_font(8.0),
+                    c.muted,
+                );
+            }
+        }
         pill
     }
 }
@@ -181,8 +216,16 @@ mod tests {
             PAD * 2.0 + 11.0 * STEP + SEPARATOR
         );
         assert_eq!(
-            wanted_height(&[8, 2, 1, 3]),
-            PAD * 2.0 + 14.0 * STEP + 3.0 * SEPARATOR
+            wanted_height(&[8, 2, 1, 3, 2]),
+            PAD * 2.0 + 16.0 * STEP + 4.0 * SEPARATOR
         );
+    }
+
+    #[test]
+    fn the_rail_says_when_there_is_more() {
+        assert_eq!(more(0.0, 300.0, 300.0), (false, false));
+        assert_eq!(more(0.0, 500.0, 300.0), (false, true));
+        assert_eq!(more(200.0, 500.0, 300.0), (true, false));
+        assert_eq!(more(100.0, 500.0, 300.0), (true, true));
     }
 }

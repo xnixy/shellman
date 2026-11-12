@@ -40,6 +40,8 @@ pub(crate) struct Picker {
     /// The selection's fingerprint when the field last followed it.
     sel_sig: Option<(u64, u64, usize, Option<usize>)>,
     last_poll: f64,
+    /// Whether the details island shows; hidden in a picker until asked for.
+    pub(super) details: bool,
 }
 
 impl Picker {
@@ -65,6 +67,7 @@ impl Picker {
             focus_name: req.mode == Mode::Save,
             sel_sig: None,
             last_poll: 0.0,
+            details: false,
             session,
         };
         (picker, folder.map_or(Loc::Pc, Loc::Dir))

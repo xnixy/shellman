@@ -400,6 +400,47 @@ impl Menu {
     }
 }
 
+/// One entry of an ordinary egui popup or context menu, drawn as a row of shellman's own menu:
+/// flat, lit only while hovered, with an icon column, the label, and a shortcut on the right; a
+/// tick in the icon column when `checked` and there is no icon. Use it for every entry of a
+/// popup so the popup reads like the right-click menu. True when clicked.
+///
+/// ```ignore
+/// resp.context_menu(|ui| {
+///     if menu::flat_item(ui, Icon::Glyph(glyph::ADD), "Open in new tab", "", false, true) {
+///         ui.close_menu();
+///     }
+/// });
+/// ```
+pub fn flat_item(ui: &mut egui::Ui, icon: Icon, label: &str, shortcut: &str, checked: bool, enabled: bool) -> bool {
+    let row = Row::<()> {
+        icon,
+        label: label.to_owned(),
+        shortcut: shortcut.to_owned(),
+        enabled,
+        checked,
+        mnemonic: None,
+        kind: Kind::Action(()),
+    };
+    let width = ui.available_width().max(row::menu_width(ui.ctx(), std::slice::from_ref(&row)) - 2.0 * row::PAD);
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(width, ROW_H), if enabled { Sense::click() } else { Sense::hover() });
+    row::paint(ui, rect, &row, resp.hovered(), false);
+    enabled && resp.clicked()
+}
+
+/// A thin line between groups of [`flat_item`]s.
+pub fn flat_separator(ui: &mut egui::Ui) {
+    let row = Row::<()>::separator();
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), row::height(&row)), Sense::hover());
+    row::paint(ui, rect, &row, false, false);
+}
+
+/// Make an egui popup's own spacing match the flat rows: no gaps between them. Call first in
+/// the popup.
+pub fn flat_popup(ui: &mut egui::Ui) {
+    ui.spacing_mut().item_spacing = Vec2::ZERO;
+}
+
 fn row_id(id: Id, level: usize, i: usize) -> Id {
     id.with(("menu-row", level, i))
 }

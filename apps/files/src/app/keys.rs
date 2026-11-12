@@ -42,12 +42,13 @@ impl super::FileMan {
             if key(Modifiers::CTRL, Key::W) {
                 actions.push(Action::CloseTab(self.active));
             }
-            if key(Modifiers::CTRL, Key::Tab) {
-                actions.push(Action::SwitchTab((self.active + 1) % self.tabs.len()));
-            }
+            // With Shift first: egui lets Ctrl+Tab's pattern match Ctrl+Shift+Tab too.
             if key(Modifiers::CTRL | Modifiers::SHIFT, Key::Tab) {
                 let n = self.tabs.len();
                 actions.push(Action::SwitchTab((self.active + n - 1) % n));
+            }
+            if key(Modifiers::CTRL, Key::Tab) {
+                actions.push(Action::SwitchTab((self.active + 1) % self.tabs.len()));
             }
             if key(Modifiers::ALT, Key::ArrowLeft) || mouse_back {
                 actions.push(Action::Back);
@@ -99,6 +100,10 @@ impl super::FileMan {
             if key(Modifiers::CTRL, Key::A) {
                 actions.push(Action::SelectAll);
             }
+            // Ctrl+Shift+C before Ctrl+C, whose pattern would take it too.
+            if key(Modifiers::CTRL | Modifiers::SHIFT, Key::C) {
+                actions.push(Action::CopyPath);
+            }
             if key(Modifiers::CTRL, Key::C) {
                 actions.push(Action::Clip(Op::Copy));
             }
@@ -107,9 +112,6 @@ impl super::FileMan {
             }
             if key(Modifiers::CTRL, Key::V) {
                 actions.push(Action::Paste);
-            }
-            if key(Modifiers::CTRL | Modifiers::SHIFT, Key::C) {
-                actions.push(Action::CopyPath);
             }
             // Arrow keys, Home and End move the cursor; Shift extends the selection. In the grid,
             // Up and Down move a whole line and Left and Right one tile.
@@ -126,13 +128,19 @@ impl super::FileMan {
             }
             let page = ((tab.list_height / line_h) as usize).max(1) * line;
             let cur = tab.cursor;
+            if i.consume_key(Modifiers::CTRL, Key::Space) {
+                actions.push(Action::ToggleCursor);
+            }
+            // Plain keys select, Shift extends, Ctrl only moves the cursor (to toggle with
+            // Ctrl+Space, as in Explorer).
             let mut target = None;
-            for shift in [false, true] {
-                let m = if shift {
-                    Modifiers::SHIFT
-                } else {
-                    Modifiers::NONE
-                };
+            // egui lets a pattern without Shift match a key pressed with it, so the Shift
+            // pattern goes first.
+            for (shift, m) in [
+                (Some(true), Modifiers::SHIFT),
+                (None, Modifiers::CTRL),
+                (Some(false), Modifiers::NONE),
+            ] {
                 let t = if i.consume_key(m, Key::ArrowDown) {
                     Some(cur.map_or(0, |c| (c + line).min(n - 1)))
                 } else if i.consume_key(m, Key::ArrowUp) {
@@ -157,10 +165,10 @@ impl super::FileMan {
                 }
             }
             if let Some((t, shift)) = target {
-                if shift {
-                    tab.select_range(t);
-                } else {
-                    tab.select_only(t);
+                match shift {
+                    Some(true) => tab.select_range(t),
+                    Some(false) => tab.select_only(t),
+                    None => tab.cursor = Some(t),
                 }
                 tab.scroll_to_cursor = true;
             }

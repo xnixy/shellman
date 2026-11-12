@@ -3,11 +3,11 @@
 //! window is gap: the desktop shows through, and it moves the window.
 
 use super::actions::Action;
-use super::plan::Plan;
+use super::plan::{Plan, GAP};
 use super::tab::Loc;
 use super::RADIUS;
 use crate::settings::ViewMode;
-use egui::{Align, Layout, Shape, Ui, UiBuilder, Vec2};
+use egui::{Align, Layout, Rect, Shape, Ui, UiBuilder, Vec2};
 use shellman_ui::glass::{islands, Island, Style};
 
 /// How much of the glass behind the cards shows (see `layout`). Over a bright, busy wallpaper,
@@ -19,14 +19,14 @@ const BACKING: f32 = 1.0;
 impl super::FileMan {
     pub(super) fn layout(&mut self, ctx: &egui::Context, actions: &mut Vec<Action>) {
         let screen = ctx.screen_rect();
-        let plan = Plan::new(screen);
+        let plan = Plan::new(screen, self.details_on());
         // Read every frame, so the glass follows the theme, accent and glass amount live.
         let style = Style::from_theme(RADIUS);
         let composed = self.panel.as_ref().is_some_and(|p| p.composed());
         if let Some(panel) = &self.panel {
             panel.set_style(style);
         }
-        let mut list: Vec<Island> = Vec::with_capacity(8);
+        let mut list: Vec<Island> = Vec::with_capacity(10);
         egui::CentralPanel::default()
             .frame(egui::Frame::new())
             .show(ctx, |ui| {
@@ -49,6 +49,7 @@ impl super::FileMan {
 
                 // A list sits on one island. Cards are their own surfaces, over shadowless glass
                 // that keeps them readable on any wallpaper.
+                self.content_island = plan.content;
                 let listed = self.listed();
                 let content = if listed {
                     list.push(Island::new(plan.content, RADIUS));
@@ -66,19 +67,38 @@ impl super::FileMan {
                 child.set_clip_rect(content);
                 self.folder_body(&mut child, actions);
 
+                if let Some(d) = plan.details {
+                    list.push(Island::new(d, RADIUS));
+                    self.details_island(ui, d, actions);
+                }
+
                 let mut extra = Vec::new();
+                // The free end of the top row, right of the tabs, for messages.
+                let top_free = Rect::from_min_max(
+                    egui::pos2(top.right() + GAP, plan.tabs_row.top()),
+                    plan.tabs_row.max,
+                );
                 let pill = if self.pick.is_some() {
+                    let pill = self.pick_band(ui, plan.band);
                     // Messages go up beside the title, the bottom being the picker's.
-                    self.toast_pill(ui, plan.tabs_row, &mut extra);
-                    self.pick_band(ui, plan.band)
+                    let whole = pill.unwrap_or(plan.band);
+                    self.toast_pill(ui, plan.band, whole, top_free, &mut extra);
+                    pill
                 } else {
-                    self.toast_pill(ui, plan.band, &mut extra);
-                    self.band(ui, plan.band, actions)
+                    let pill = self.band(ui, plan.band, actions);
+                    self.toast_pill(ui, plan.band, pill.unwrap_or(Rect::NOTHING), top_free, &mut extra);
+                    pill
                 };
                 if let Some(pill) = pill {
                     list.push(Island::pill(pill));
                 }
                 list.extend(extra.into_iter().map(Island::pill));
+                // Move to… / Copy to…, over the bar.
+                let mut popups = Vec::new();
+                self.dest_popup(ui.ctx(), &mut popups);
+                list.extend(popups.into_iter().map(|r| Island::new(r, 18.0)));
+                // The rail's hover labels are glass too.
+                list.extend(shellman_ui::hover::islands(ui.ctx()));
                 if !composed {
                     ui.painter()
                         .set(under, Shape::Vec(islands::solid_shapes(&list, &style)));

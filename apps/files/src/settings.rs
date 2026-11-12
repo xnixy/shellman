@@ -17,6 +17,10 @@ pub struct Settings {
     pub hidden_places: Vec<String>,
     /// Where the window was when it last closed, in physical pixels.
     pub window: Option<crate::placement::Rect>,
+    /// Where items were last moved or copied to with Move to… and Copy to…, newest first.
+    pub recent_dests: Vec<PathBuf>,
+    /// Whether the details island shows on the right.
+    pub details: bool,
 }
 
 /// How a folder's items are shown.

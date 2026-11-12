@@ -58,6 +58,31 @@ pub fn list_dir(dir: &Path) -> std::io::Result<Vec<Entry>> {
     Ok(out)
 }
 
+/// The entry for one path, wherever it is (a list of tagged items, say); None when it is gone.
+pub fn entry_for(path: &Path) -> Option<Entry> {
+    let meta = std::fs::metadata(path).ok()?;
+    let mut clock = LocalClock::default();
+    let is_dir = meta.is_dir();
+    let name = path
+        .file_name()
+        .map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned());
+    let modified = meta.modified().ok();
+    let attrs = meta.file_attributes();
+    Some(Entry {
+        key: name.to_lowercase(),
+        kind: kind_of(&name, is_dir),
+        modified_text: modified
+            .map(|t| format_time_at(t, clock.offset_for(t)))
+            .unwrap_or_default(),
+        size: if is_dir { 0 } else { meta.len() },
+        hidden: attrs & (FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM) != 0 || name.starts_with('.'),
+        name,
+        path: path.to_path_buf(),
+        is_dir,
+        modified,
+    })
+}
+
 fn kind_of(name: &str, is_dir: bool) -> String {
     if is_dir {
         return "Folder".into();

@@ -261,11 +261,41 @@ fn native_rows(ctx: &Context, open: &Open) -> Vec<Row<Pick>> {
         rows.push(act(glyph::COPY, "Copy path", "Ctrl+Shift+C", Action::CopyPath));
         rows.push(Row::separator());
         rows.push(act(glyph::RENAME, "Rename", "F2", Action::Rename));
+        rows.push(tags_row(ctx));
         rows.push(act(glyph::DELETE, "Move to Recycle Bin", "Del", Action::Recycle));
     }
     rows.push(Row::separator());
     rows.push(act(glyph::INFO, "Properties", "Alt+Enter", Action::Properties));
     rows
+}
+
+/// "Tags", a submenu of the six tags, each ticked when the whole selection has it, and a way to
+/// take them all off. The names and ticks are left in the context's memory each frame (see
+/// `FileMan::context_menu`), since the menu is drawn far from the tags.
+fn tags_row(ctx: &Context) -> Row<Pick> {
+    let state: Vec<(String, bool)> = ctx
+        .data(|d| d.get_temp(egui::Id::new("tag_menu_state")))
+        .unwrap_or_default();
+    let mut rows: Vec<Row<Pick>> = state
+        .iter()
+        .enumerate()
+        .map(|(i, (name, on))| {
+            let mut r = Row::action(Icon::None, name.clone(), "", Pick::Native(Action::ToggleTag(i)));
+            r.checked = *on;
+            r
+        })
+        .collect();
+    rows.push(Row::separator());
+    rows.push(Row::action(Icon::Glyph(glyph::CLOSE), "Remove all tags", "", Pick::Native(Action::ClearTags)));
+    Row {
+        icon: Icon::Glyph(glyph::PIN),
+        label: "Tags".into(),
+        shortcut: String::new(),
+        enabled: true,
+        checked: false,
+        mnemonic: None,
+        kind: Kind::Submenu { rows, on_open: None },
+    }
 }
 
 /// The shell's entries as rows, `prefix` being the path of the submenu they are in.

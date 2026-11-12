@@ -6,6 +6,10 @@ mod actions;
 mod band;
 mod bin;
 mod controls;
+mod counts;
+mod dest;
+mod details;
+mod details_ui;
 mod dialogs;
 mod grid;
 mod interact;
@@ -21,8 +25,11 @@ mod places;
 mod plan;
 mod rail;
 mod rows;
+mod select;
 mod tab;
 mod tab_bar;
+pub(crate) mod tag_ui;
+mod text;
 mod toolbar;
 
 use actions::{Dialog, Rename};
@@ -34,9 +41,13 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use tab::{Loc, Tab};
 
-const ROW_H: f32 = 32.0;
+/// One row of the list (the design's 8 px above and below a line of text).
+const ROW_H: f32 = 34.0;
 /// The corner radius of the islands that are not pills (the list's), and of the item cards.
 pub(crate) const RADIUS: f32 = 22.0;
+
+/// A cheap fingerprint of a tab's selection: tab, listing, count, cursor and anchor.
+type SelSig = (u64, u64, usize, Option<usize>, Option<usize>);
 
 enum Msg {
     Loaded {
@@ -56,10 +67,27 @@ enum Msg {
     /// A restore, delete or empty finished: the message to show, or why it failed.
     BinDone(Result<String, String>),
     Drives(Vec<Drive>),
+    /// A tag place's items, and the tagged paths that are gone.
+    Tagged {
+        tab: u64,
+        gen: u64,
+        found: Vec<Entry>,
+        gone: Vec<PathBuf>,
+    },
     OpDone {
         what: &'static str,
         result: Result<bool, String>,
+        /// Items a move took from one path to another, for their tags to follow.
+        moved: Vec<(PathBuf, PathBuf)>,
     },
+    /// The folder picker for Move to… or Copy to… answered.
+    Chosen {
+        op: Op,
+        items: Vec<PathBuf>,
+        dest: PathBuf,
+    },
+    /// The details island's reading of the selection.
+    Details(details::Reading),
 }
 
 pub(crate) struct FileMan {
@@ -111,6 +139,23 @@ pub(crate) struct FileMan {
     pin_exists: pins::Exists,
     /// Picker mode: the window is another app's file dialog (see `picker`). None when browsing.
     pick: Option<picker::Picker>,
+    /// The content island as last laid out: the rubber band's ground.
+    content_island: egui::Rect,
+    /// Folder cards' item counts.
+    counts: counts::Counts,
+    tags: tag_ui::Tags,
+    /// How far the tabs are scrolled sideways, and the (active tab, tab count) last shown, to
+    /// bring the active tab into view when either changes.
+    tab_scroll: f32,
+    tab_seen: (usize, usize),
+    /// The open Move to… / Copy to… list.
+    dest: Option<dest::DestMenu>,
+    /// The details island's state and its worker.
+    details: details::Details,
+    /// The tag list shows its names as fields, to rename them.
+    tag_edit: bool,
+    /// The selection as the details island last worked it out, and its fingerprint.
+    details_sel: (Option<SelSig>, Vec<Entry>),
 }
 
 impl FileMan {
@@ -197,6 +242,15 @@ impl FileMan {
             apps: places::Registered::new(&ctx_for_apps),
             pin_exists: pins::Exists::default(),
             pick,
+            content_island: egui::Rect::NOTHING,
+            counts: counts::Counts::new(&ctx_for_apps),
+            tags: tag_ui::Tags::load(),
+            tab_scroll: 0.0,
+            tab_seen: (usize::MAX, 0),
+            dest: None,
+            details: details::Details::default(),
+            tag_edit: false,
+            details_sel: (None, Vec::new()),
         };
         for loc in locs {
             app.push_tab(loc);
@@ -233,6 +287,28 @@ impl FileMan {
         if tab.loc == Loc::Bin {
             return self.load_bin(i);
         }
+        if let Loc::Tag(t) = tab.loc {
+            // Every tagged item, wherever it is; the ones gone since are dropped from the tags.
+            let paths = self.tags.store.tagged(t as usize);
+            let (tx, ctx, id, gen) = (self.tx.clone(), self.ctx.clone(), tab.id, tab.gen);
+            std::thread::spawn(move || {
+                let mut found = Vec::new();
+                let mut gone = Vec::new();
+                for p in paths {
+                    match fsops::entry_for(&p) {
+                        Some(e) => found.push(e),
+                        None => gone.push(p),
+                    }
+                }
+                let _ = tx.send(Msg::Tagged { tab: id, gen, found, gone });
+                ctx.request_repaint();
+            });
+            return;
+        }
+        if let Some(dir) = tab.loc.dir() {
+            self.counts.forget_in(dir);
+        }
+        let tab = &mut self.tabs[i];
         let Some(dir) = tab.loc.dir().map(Path::to_path_buf) else {
             tab.loading = false;
             tab.entries.clear();
@@ -261,10 +337,15 @@ impl FileMan {
     }
 
     fn run_op(&self, op: Op, what: &'static str, from: Vec<PathBuf>, to: Option<PathBuf>) {
+        self.run_op_moving(op, what, from, to, Vec::new());
+    }
+
+    /// `run_op`, telling the tags afterwards where moved items went (`moved`, from and to).
+    fn run_op_moving(&self, op: Op, what: &'static str, from: Vec<PathBuf>, to: Option<PathBuf>, moved: Vec<(PathBuf, PathBuf)>) {
         let (tx, ctx, hwnd) = (self.tx.clone(), self.ctx.clone(), self.hwnd);
         std::thread::spawn(move || {
             let result = fsops::shell_op(hwnd, op, &from, to.as_deref());
-            let _ = tx.send(Msg::OpDone { what, result });
+            let _ = tx.send(Msg::OpDone { what, result, moved });
             ctx.request_repaint();
         });
     }
@@ -326,7 +407,41 @@ impl FileMan {
                     self.reload_bins();
                 }
                 Msg::Drives(d) => self.drives = d,
-                Msg::OpDone { what, result } => {
+                Msg::Tagged {
+                    tab,
+                    gen,
+                    found,
+                    gone,
+                } => {
+                    let show_hidden = self.settings.show_hidden;
+                    if let Some(t) = self.tabs.iter_mut().find(|t| t.id == tab && t.gen == gen) {
+                        t.loading = false;
+                        t.set_entries(found);
+                        t.rebuild_view(show_hidden);
+                    }
+                    if !gone.is_empty() {
+                        let gone: std::collections::HashSet<String> =
+                            gone.iter().map(|p| crate::tags::key(p)).collect();
+                        let n = self.tags.store.prune(|p| !gone.contains(&crate::tags::key(p)));
+                        if n > 0 {
+                            let _ = self.tags.save();
+                        }
+                    }
+                }
+                Msg::Chosen { op, items, dest } => self.send_to(op, items, dest),
+                Msg::Details(reading) => self.details.arrived(reading),
+                Msg::OpDone { what, result, moved } => {
+                    // Tags follow what the move took, where it arrived (a move stopped partway
+                    // took only some).
+                    let mut retagged = false;
+                    for (from, to) in &moved {
+                        if !from.exists() && to.exists() {
+                            retagged |= self.tags.store.rekey(from, to);
+                        }
+                    }
+                    if retagged {
+                        self.tags_changed();
+                    }
                     match result {
                         Ok(true) => self.toast(format!("{what} done")),
                         Ok(false) => self.toast(format!("{what} stopped partway")),
@@ -392,9 +507,12 @@ impl FileMan {
                 look.apply(ctx);
             }
         }
-        theme::set_light(
-            std::env::var_os("SHELLMAN_FORCE_LIGHT").is_some() || ctx.theme() == egui::Theme::Light,
-        );
+        let forced = std::env::var_os("SHELLMAN_FORCE_LIGHT").is_some();
+        // Forced light: egui's own popups and fields take the light look too.
+        if forced && ctx.theme() != egui::Theme::Light {
+            ctx.set_theme(egui::ThemePreference::Light);
+        }
+        theme::set_light(forced || ctx.theme() == egui::Theme::Light);
         let now = ctx.input(|i| i.time);
         if self.look.accent == AccentChoice::System && now - self.last_accent_check > 2.0 {
             self.last_accent_check = now;
@@ -408,6 +526,9 @@ impl FileMan {
     /// Draw the right-click menu and run what was picked; read ahead the menu for a selection
     /// that has settled.
     fn context_menu(&mut self, ctx: &egui::Context) {
+        if self.menu.is_open() {
+            self.tag_menu_state();
+        }
         let mut picked = Vec::new();
         if let Some(notice) = self.menu.show(ctx, &mut picked) {
             self.toast(notice);
@@ -490,6 +611,7 @@ impl eframe::App for FileMan {
             }
         }
         self.thumbs.poll(ctx);
+        self.counts.poll();
         self.apps.poll(ctx);
         if self.pick.is_some() {
             self.pick_follow_selection();

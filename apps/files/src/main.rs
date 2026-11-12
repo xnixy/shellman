@@ -7,6 +7,7 @@ mod args;
 mod pick;
 mod placement;
 mod settings;
+mod tags;
 
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use shellman_pick::exit;

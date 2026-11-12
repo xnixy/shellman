@@ -5,7 +5,6 @@ use super::actions::Action;
 use super::tab::Loc;
 use egui::{Align2, Id, Ui};
 use shellman_ui::theme::{glyph, semibold_font};
-use shellman_ui::widgets::menu_item;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -125,8 +124,8 @@ impl super::FileMan {
                         fg,
                     );
                 },
-            )
-            .on_hover_text(tip);
+            );
+            super::rail::label(ui, &resp, &tip);
             if resp.clicked() {
                 if there {
                     actions.push(Action::Navigate(loc.clone()));
@@ -138,11 +137,12 @@ impl super::FileMan {
                 actions.push(Action::NewTab(loc.clone()));
             }
             resp.context_menu(|ui| {
-                if there && menu_item(ui, glyph::ADD, "Open in new tab", "") {
+                super::controls::flat_items(ui);
+                if there && super::controls::mi(ui, glyph::ADD, "Open in new tab", "") {
                     actions.push(Action::NewTab(loc.clone()));
                     ui.close_menu();
                 }
-                if menu_item(ui, glyph::UNPIN, "Unpin from sidebar", "") {
+                if super::controls::mi(ui, glyph::UNPIN, "Unpin from sidebar", "") {
                     actions.push(Action::TogglePin(path.clone()));
                     ui.close_menu();
                 }

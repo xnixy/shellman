@@ -5,6 +5,7 @@ pub mod appearance;
 pub mod chips;
 pub mod font_atlas;
 pub mod glass;
+pub mod hover;
 pub mod look_controls;
 pub mod menu;
 pub mod nav;

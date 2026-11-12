@@ -10,7 +10,7 @@ use egui::{Align, Align2, CornerRadius, FontId, Id, Key, Rect, RichText, Stroke,
 use shellman_pick::Mode;
 use shellman_ui::chips::{chip, chip_width, soft_colors, Chip, CHIP_H};
 use shellman_ui::theme::{self, colors, glyph, icon_font, semibold_font};
-use shellman_ui::widgets::{draw_text, menu_item};
+use shellman_ui::widgets::draw_text;
 use std::path::Path;
 
 /// Inside the pills, at each end, and between their parts.
@@ -274,8 +274,7 @@ impl super::FileMan {
                 ui.set_min_width(rect.width().max(220.0));
                 super::controls::flat_items(ui);
                 for (i, t) in types.iter().enumerate() {
-                    let g = if i == current { glyph::CHECK } else { ' ' };
-                    if menu_item(ui, g, &t.name, "") {
+                    if super::controls::mcheck(ui, i == current, &t.name, "") {
                         chosen = Some(i);
                     }
                 }

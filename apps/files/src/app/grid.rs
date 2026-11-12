@@ -8,9 +8,11 @@
 use super::actions::Action;
 use super::interact::{self, ItemEvents};
 use super::rows::file_icon;
+use super::select;
 use super::tab::Loc;
+use super::text;
 use egui::{Align2, Color32, CornerRadius, FontId, Id, Rect, Sense, Stroke, Ui, Vec2};
-use shellman_core::fsops::{self, Entry, Op};
+use shellman_core::fsops::{Entry, Op};
 use shellman_core::thumbs;
 use shellman_ui::glass::islands::shows_as;
 use shellman_ui::theme::{self, colors, icon_font, semibold_font, Colors};
@@ -18,11 +20,12 @@ use shellman_ui::widgets::{self, draw_text};
 
 /// Smallest card width; cards stretch to fill the line exactly.
 const CARD_MIN_W: f32 = 150.0;
+/// Between cards (the design's 18 px at its scale).
 const GAP: f32 = 14.0;
 /// Around the preview, inside the card.
 const INSET: f32 = 8.0;
 /// Below the preview: the name and the detail lines.
-const TEXT_H: f32 = 50.0;
+const TEXT_H: f32 = 48.0;
 const CARD_RADIUS: u8 = super::RADIUS as u8;
 const PREVIEW_RADIUS: u8 = 14;
 
@@ -34,14 +37,20 @@ pub(super) fn fit(width: f32) -> (usize, f32, f32) {
     (cols, card_w, INSET + preview_h + TEXT_H)
 }
 
-/// A card's fill and line, by its state.
+/// A card's fill and line, by its state. Selected: the accent at a fifth, ringed by a lighter
+/// accent, as the design has it.
 fn card_look(c: &Colors, selected: bool, hovered: bool) -> (Color32, Stroke) {
     // As the design gives them (CSS colours), converted for the window (see `shows_as`).
     let css = |r: u8, g: u8, b: u8, a: u8| shows_as(Color32::from_rgba_unmultiplied(r, g, b, a));
     if selected {
         let [r, g, b, _] = c.accent_fill.to_array();
-        let fill = css(r, g, b, if c.light { 46 } else { 60 });
-        return (fill, Stroke::new(2.0_f32, c.accent_fill));
+        let fill = css(r, g, b, if c.light { 40 } else { 51 });
+        let ring = if c.light {
+            c.accent_fill
+        } else {
+            theme::mix(c.accent_fill, Color32::WHITE, 0.25)
+        };
+        return (fill, Stroke::new(2.0_f32, ring));
     }
     let (fill, line) = if c.light {
         (
@@ -51,19 +60,10 @@ fn card_look(c: &Colors, selected: bool, hovered: bool) -> (Color32, Stroke) {
     } else {
         (
             css(255, 255, 255, if hovered { 18 } else { 10 }),
-            css(255, 255, 255, 18),
+            css(255, 255, 255, 16),
         )
     };
     (fill, Stroke::new(1.0_f32, line))
-}
-
-/// The muted line under a card's name.
-fn detail(e: &Entry) -> String {
-    if e.is_dir {
-        "Folder".into()
-    } else {
-        fsops::format_size(e.size)
-    }
 }
 
 impl super::FileMan {
@@ -73,16 +73,19 @@ impl super::FileMan {
             Some((Op::Move, paths)) => paths,
             _ => &[],
         };
+        let days = text::today();
         let tab = &mut self.tabs[self.active];
         let rename = &mut self.rename;
         let thumbs = &mut self.thumbs;
+        let counts = &mut self.counts;
+        let tags = &self.tags;
         let mut ev = ItemEvents::default();
 
         if interact::error_state(ui, tab) {
             return;
         }
-        interact::folder_backdrop(ui, tab, actions);
-        if interact::empty_state(ui, tab) {
+        interact::folder_backdrop(ui, self.content_island, tab, actions);
+        if interact::loading_state(ui, tab) || interact::empty_state(ui, tab) {
             return;
         }
 
@@ -94,6 +97,7 @@ impl super::FileMan {
         self.grid_line_h = line_h;
         let n = tab.view.len();
         let lines = n.div_ceil(cols);
+        let many = tab.selected.len() > 1;
 
         let scroll = interact::scroll_to_cursor(tab, line_h, cols);
         let out = scroll.show_rows(ui, line_h, lines, |ui, line_range| {
@@ -111,7 +115,9 @@ impl super::FileMan {
                         line_rect.min + Vec2::new(col as f32 * (card_w + GAP), 0.0),
                         Vec2::new(card_w, card_h),
                     );
-                    let resp = ui.interact(card, Id::new(("card", r)), Sense::click());
+                    // Drags too, so a drag that starts on a card is the card's, never a
+                    // rubber band.
+                    let resp = ui.interact(card, Id::new(("card", r)), Sense::click_and_drag());
                     let dim = interact::fade(e.hidden, cut.contains(&e.path));
                     let selected = tab.selected.contains(&e.path);
                     let (fill, stroke) = card_look(&c, selected, resp.hovered());
@@ -122,6 +128,15 @@ impl super::FileMan {
                         stroke,
                         egui::StrokeKind::Inside,
                     );
+                    // The keyboard's place, when it is not plainly the one selected item.
+                    if tab.cursor == Some(r) && (many || (!selected && !tab.selected.is_empty())) {
+                        ui.painter().rect_stroke(
+                            card.shrink(3.0),
+                            CornerRadius::same(CARD_RADIUS - 3),
+                            Stroke::new(1.0_f32, theme::with_alpha(c.accent_text, 160)),
+                            egui::StrokeKind::Inside,
+                        );
+                    }
 
                     let preview = Rect::from_min_max(
                         card.min + Vec2::splat(INSET),
@@ -133,9 +148,10 @@ impl super::FileMan {
                     paint_preview(ui, preview, e, thumb, &c, &dim);
 
                     // Name and detail, or the rename box.
+                    let dots = super::tag_ui::dots_width(tags.mask(&e.path));
                     let name = Rect::from_min_max(
                         egui::pos2(card.left() + 14.0, preview.bottom() + 6.0),
-                        egui::pos2(card.right() - 12.0, preview.bottom() + 26.0),
+                        egui::pos2(card.right() - 12.0 - dots, preview.bottom() + 25.0),
                     );
                     match rename.as_mut().filter(|rn| rn.path == e.path) {
                         Some(rn) => {
@@ -146,20 +162,41 @@ impl super::FileMan {
                             interact::rename_box(ui, field, rn, e.is_dir, &mut ev);
                         }
                         None => {
-                            draw_text(ui, name, &e.name, semibold_font(13.0), dim(c.text), false)
+                            let font = semibold_font(13.0);
+                            let shown = text::middle_ellipsis(&e.name, |s| {
+                                ui.fonts(|f| f.layout_no_wrap(s.to_owned(), font.clone(), c.text))
+                                    .size()
+                                    .x
+                                    <= name.width()
+                            });
+                            draw_text(ui, name, &shown, font, dim(c.text), false);
                         }
                     }
-                    let below = name.translate(Vec2::new(0.0, 17.0));
+                    super::tag_ui::paint_dots(
+                        ui.painter(),
+                        egui::pos2(card.right() - 14.0, name.center().y),
+                        tags.mask(&e.path),
+                        true,
+                    );
+                    let items = if e.is_dir && !bin { counts.get(&e.path) } else { None };
+                    let below = Rect::from_min_max(
+                        egui::pos2(name.left(), name.bottom()),
+                        egui::pos2(card.right() - 12.0, name.bottom() + 17.0),
+                    );
                     draw_text(
                         ui,
                         below,
-                        &detail(e),
+                        &text::card_detail(e, tab.sort, items, &days),
                         FontId::proportional(11.5),
                         dim(c.muted),
                         false,
                     );
 
-                    let resp = resp.on_hover_text_at_pointer(&e.name);
+                    let resp = if e.name.chars().count() > 18 {
+                        resp.on_hover_text_at_pointer(&e.name)
+                    } else {
+                        resp
+                    };
                     ev.record(ui, &resp, r, actions);
                     interact::item_menu(ui, &resp, actions, r, bin);
                 }
@@ -167,6 +204,14 @@ impl super::FileMan {
         });
         tab.list_offset = out.state.offset.y;
         tab.list_height = out.inner_rect.height();
+        tab.view_rect = out.inner_rect;
+        let layout = select::Layout {
+            count: n,
+            cols,
+            item: Vec2::new(card_w, card_h),
+            step: Vec2::new(card_w + GAP, line_h),
+        };
+        interact::rubber_band(ui, tab, layout);
         ev.apply(tab);
         self.finish_rename(&ev);
     }
@@ -191,7 +236,7 @@ fn paint_preview(
     let p = ui.painter();
     if e.is_dir {
         p.rect_filled(rect, radius, well);
-        let w = (rect.width() * 0.42).min(rect.height() * 0.62 / 0.74);
+        let w = (rect.width() * 0.36).min(rect.height() * 0.56 / 0.74);
         let icon = Rect::from_center_size(rect.center(), Vec2::new(w, w * 0.74));
         widgets::folder_icon(p, icon, c.accent_text, dim);
         return;
@@ -221,7 +266,7 @@ fn paint_preview(
         radius,
         dim(shows_as(theme::with_alpha(
             gcol,
-            if c.light { 40 } else { 46 },
+            if c.light { 34 } else { 40 },
         ))),
     );
     let size = (rect.height() * 0.36).clamp(20.0, 40.0);
@@ -236,7 +281,7 @@ fn paint_preview(
 
 /// The part of an image of `image` size that covers a box of `target` size, centred, in texture
 /// coordinates.
-fn cover_uv(image: Vec2, target: Vec2) -> Rect {
+pub(super) fn cover_uv(image: Vec2, target: Vec2) -> Rect {
     if image.x <= 0.0 || image.y <= 0.0 || target.x <= 0.0 || target.y <= 0.0 {
         return Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
     }
@@ -281,5 +326,15 @@ mod tests {
         let uv = cover_uv(Vec2::new(100.0, 400.0), Vec2::new(100.0, 100.0));
         assert!((uv.height() - 0.25).abs() < 1e-5 && uv.width() == 1.0);
         assert_eq!(cover_uv(Vec2::ZERO, Vec2::splat(10.0)).width(), 1.0);
+    }
+
+    #[test]
+    fn selected_cards_are_ringed_and_tinted() {
+        let c = Colors::new(false, Color32::from_rgb(59, 130, 246));
+        let (fill, stroke) = card_look(&c, true, false);
+        assert_eq!(stroke.width, 2.0);
+        assert!(fill.a() > 0 && fill.a() < 80);
+        let (_, plain) = card_look(&c, false, false);
+        assert_eq!(plain.width, 1.0);
     }
 }

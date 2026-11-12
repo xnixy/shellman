@@ -57,6 +57,16 @@ pub(super) enum Action {
     ShowPlace(String),
     /// Picker mode's Esc: put away the replace question, or cancel.
     PickEscape,
+    /// Show a message.
+    Toast(String),
+    /// Put this tag (from 0) on the selection, or take it off.
+    ToggleTag(usize),
+    /// Take every tag off the selection.
+    ClearTags,
+    /// Show or hide the details island.
+    ToggleDetails,
+    /// Ctrl+Space: select or unselect the item under the cursor.
+    ToggleCursor,
 }
 
 pub(super) struct Rename {
@@ -207,10 +217,15 @@ impl super::FileMan {
                         _ if same_dir => (Op::Duplicate, "Copy"),
                         _ => (Op::Copy, "Copy"),
                     };
+                    let mut moved = Vec::new();
                     if op == Op::Move {
                         self.clipboard = None;
+                        moved = paths
+                            .iter()
+                            .filter_map(|p| p.file_name().map(|n| (p.clone(), dir.join(n))))
+                            .collect();
                     }
-                    self.run_op(op, what, paths, Some(dir));
+                    self.run_op_moving(op, what, paths, Some(dir), moved);
                 }
             }
             Action::PasteShortcut => {
@@ -315,6 +330,15 @@ impl super::FileMan {
             }
             // Only picker mode has it, and `pick_action` took it.
             Action::PickEscape => {}
+            Action::Toast(t) => self.toast(t),
+            Action::ToggleTag(i) => self.toggle_tag(i),
+            Action::ClearTags => self.clear_tags(),
+            Action::ToggleDetails => self.toggle_details(),
+            Action::ToggleCursor => {
+                let tab = &mut self.tabs[self.active];
+                let sel = super::select::toggle_cursor(&tab.sel());
+                tab.set_sel(sel);
+            }
             Action::SetView(view) => {
                 self.settings.view = view;
                 self.tabs[self.active].scroll_to_cursor = true;
@@ -385,7 +409,11 @@ impl super::FileMan {
     /// else just the row. Shift held asks for the extra entries.
     pub(super) fn menu_target(&self, row: Option<usize>) -> Option<shellman_core::shell_menu::Target> {
         let tab = &self.tabs[self.active];
-        let folder = tab.loc.dir()?.to_path_buf();
+        // A tag place has no folder: the item's own stands in, for an item's menu only.
+        let folder = match (&tab.loc, row) {
+            (Loc::Tag(_), Some(r)) if r < tab.view.len() => tab.entry(r).path.parent()?.to_path_buf(),
+            _ => tab.loc.dir()?.to_path_buf(),
+        };
         let items: Vec<PathBuf> = match row {
             None => Vec::new(),
             Some(r) if r >= tab.view.len() => return None,
@@ -445,6 +473,9 @@ impl super::FileMan {
         }
         match std::fs::rename(&r.path, &target) {
             Ok(()) => {
+                if self.tags.store.rekey(&r.path, &target) {
+                    self.tags_changed();
+                }
                 self.tabs[self.active].select_after_load = Some((target, false));
                 self.load(self.active);
             }
