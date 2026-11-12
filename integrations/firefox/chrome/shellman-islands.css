@@ -1,0 +1,544 @@
+/* shellman-islands.css: the browser window as floating glass islands.
+ *
+ * Layout (top to bottom, wallpaper visible in every gap):
+ *   [ tab chips pill .......................... ] [ window buttons pill ]
+ *   [ nav pill: back/fwd/reload  (URL pill)  extensions/menu           ]
+ *   [ bookmarks pill, when shown ]
+ *   [ rail ] [ sidebar island ] [ page island ]
+ *
+ * Colours come from shellman-look.css. Everything here only derives from those four variables.
+ */
+
+:root {
+  --sm-gap: 10px;
+  --sm-edge: 12px;
+  --sm-radius: 22px;
+  --sm-pill-h: 46px;
+
+  --sm-fill: color-mix(in srgb, var(--shellman-island-fill) calc(var(--shellman-island-opacity) * 100%), transparent);
+  --sm-fill-solid: color-mix(in srgb, var(--shellman-island-fill) 94%, transparent);
+  --sm-accent-soft: color-mix(in srgb, var(--shellman-accent) 22%, transparent);
+  --sm-accent-ring: color-mix(in srgb, var(--shellman-accent) 55%, transparent);
+
+  --sm-soft: #ffffff0d;
+  --sm-soft-hover: #ffffff17;
+  --sm-hair: #ffffff1f;
+  --sm-hair-soft: #ffffff12;
+  --sm-text: #eef1f6;
+  --sm-muted: #aab3c5;
+  --sm-shadow: 0 8px 24px #0000004d, inset 0 1px 0 #ffffff14;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --sm-soft: #00000009;
+    --sm-soft-hover: #00000012;
+    --sm-hair: #0000001a;
+    --sm-hair-soft: #0000000f;
+    --sm-text: #1c2230;
+    --sm-muted: #4d586b;
+    --sm-shadow: 0 8px 24px #00000022, inset 0 1px 0 #ffffff80;
+  }
+}
+
+/* ---- Window: let the Windows backdrop show through everywhere there is no island ---- */
+
+:root,
+:root[customtitlebar] {
+  background-color: transparent !important;
+  --toolbox-background-color: transparent;
+  --toolbar-background-color: transparent;
+  --toolbar-bgcolor: transparent;
+  --tabs-navbar-separator-color: transparent;
+  --chrome-content-separator-color: transparent;
+  --content-area-shadow: none;
+  --focus-outline-color: var(--shellman-accent);
+}
+
+body {
+  background: transparent !important;
+}
+
+#navigator-toolbox {
+  appearance: none !important;
+  background: transparent !important;
+  background-image: none !important;
+  border: none !important;
+  box-shadow: none !important;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sm-gap);
+  padding: var(--sm-edge) var(--sm-edge) 0;
+  box-sizing: border-box;
+}
+
+#titlebar {
+  appearance: none !important;
+  background: transparent !important;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sm-gap);
+}
+
+#navigator-toolbox :is(#TabsToolbar, #nav-bar, #PersonalToolbar, #toolbar-menubar) {
+  background: transparent !important;
+  background-image: none !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+
+/* ---- Pill 1: tab chips; window buttons get their own small pill beside it ---- */
+
+#TabsToolbar {
+  gap: var(--sm-gap);
+  padding: 0 !important;
+  margin: 0 !important;
+  min-height: var(--sm-pill-h);
+}
+
+#TabsToolbar .titlebar-spacer {
+  display: none;
+}
+
+#TabsToolbar > .toolbar-items {
+  align-items: center;
+  height: var(--sm-pill-h);
+  box-sizing: border-box;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: var(--sm-fill);
+  border: 1px solid var(--sm-hair);
+  box-shadow: var(--sm-shadow);
+  backdrop-filter: blur(24px) saturate(1.4);
+}
+
+#TabsToolbar-customization-target {
+  align-items: center;
+}
+
+#tabbrowser-tabs {
+  --tab-min-height: 32px;
+  --tab-block-margin: 0px;
+  --tab-border-radius: 999px;
+  --tab-inner-inline-margin: 3px;
+  --tab-background-color: transparent;
+  --tab-background-color-hover: var(--sm-soft-hover);
+  --tab-background-color-selected: var(--shellman-accent);
+  --tab-selected-color: var(--shellman-on-accent);
+  --tab-selected-textcolor: var(--shellman-on-accent);
+  --tab-selected-bgcolor: var(--shellman-accent);
+  --tab-selected-outline-color: transparent;
+  --tab-hover-outline-color: transparent;
+  --tab-outline: none;
+  --tab-shadow-max-size: 0px;
+  min-height: 0 !important;
+  align-items: center;
+}
+
+#tabbrowser-tabs .tabbrowser-tab {
+  padding-inline: 2px;
+  color: var(--sm-text);
+}
+
+#tabbrowser-tabs .tab-background {
+  border-radius: 999px !important;
+  margin-block: 0 !important;
+  box-shadow: none !important;
+  outline: none !important;
+  border: none !important;
+}
+
+#tabbrowser-tabs .tab-background[selected],
+#tabbrowser-tabs .tabbrowser-tab[visuallyselected] > .tab-stack > .tab-background {
+  background: var(--shellman-accent) !important;
+  background-image: none !important;
+}
+
+#tabbrowser-tabs .tabbrowser-tab[visuallyselected] {
+  color: var(--shellman-on-accent) !important;
+  --tab-selected-color: var(--shellman-on-accent);
+  --toolbarbutton-icon-fill: currentColor;
+}
+
+#tabbrowser-tabs .tabbrowser-tab[visuallyselected] .tab-label,
+#tabbrowser-tabs .tabbrowser-tab[visuallyselected] .tab-close-button {
+  color: var(--shellman-on-accent) !important;
+  fill: currentColor;
+}
+
+#tabbrowser-tabs .tabbrowser-tab:not([visuallyselected]):hover > .tab-stack > .tab-background {
+  background: var(--sm-soft-hover) !important;
+}
+
+#tabbrowser-tabs .tabbrowser-tab > .tab-stack > .tab-background::before,
+#tabbrowser-tabs .tabbrowser-tab > .tab-stack > .tab-background::after {
+  display: none !important;
+}
+
+#TabsToolbar .titlebar-buttonbox-container {
+  align-self: stretch;
+  align-items: center;
+  height: var(--sm-pill-h);
+  box-sizing: border-box;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--sm-fill);
+  border: 1px solid var(--sm-hair);
+  box-shadow: var(--sm-shadow);
+  backdrop-filter: blur(24px) saturate(1.4);
+}
+
+#navigator-toolbox :is(#TabsToolbar, #nav-bar) .titlebar-buttonbox {
+  align-items: center;
+  gap: 2px;
+}
+
+.titlebar-button {
+  padding: 8px 14px !important;
+  border-radius: 999px !important;
+  color: var(--sm-text) !important;
+  background: transparent !important;
+}
+
+.titlebar-button:hover {
+  background: var(--sm-soft-hover) !important;
+}
+
+.titlebar-button.titlebar-close:hover {
+  background: #c42b1c !important;
+  color: #fff !important;
+}
+
+/* ---- Pill 2: navigation ---- */
+
+/* The nav bar is the pill. With vertical tabs the window buttons live at its right end. */
+#navigator-toolbox > #nav-bar {
+  height: var(--sm-pill-h);
+  min-height: 0 !important;
+  box-sizing: border-box;
+  padding: 0 8px 0 10px !important;
+  margin: 0 !important;
+  border-radius: 999px !important;
+  background: var(--sm-fill) !important;
+  border: 1px solid var(--sm-hair) !important;
+  box-shadow: var(--sm-shadow) !important;
+  backdrop-filter: blur(24px) saturate(1.4);
+  align-items: center;
+}
+
+#nav-bar-customization-target {
+  align-items: center;
+}
+
+#nav-bar > .titlebar-buttonbox-container {
+  margin-inline-start: 6px;
+  padding-inline-start: 6px;
+  border-inline-start: 1px solid var(--sm-hair);
+  align-self: center;
+  align-items: center;
+}
+#urlbar-container {
+  padding-block: 0 !important;
+  margin-inline: 8px;
+}
+
+#urlbar {
+  --urlbar-container-height: 36px;
+  --urlbar-height: 34px;
+  --urlbar-margin-inline: 0px;
+  --toolbar-field-focus-border-color: var(--shellman-accent);
+  --urlbar-box-background-color: var(--sm-soft);
+  --urlbar-box-background-color-hover: var(--sm-soft-hover);
+  --urlbar-box-background-color-focus: var(--sm-soft);
+  --toolbar-field-background-color: var(--sm-soft);
+  --toolbar-field-focus-background-color: var(--sm-soft);
+}
+
+#urlbar-background {
+  background: var(--sm-soft) !important;
+  border: 1px solid var(--sm-hair-soft) !important;
+  border-radius: 999px !important;
+  box-shadow: none !important;
+  outline: none !important;
+}
+
+#urlbar:hover > #urlbar-background {
+  background: var(--sm-soft-hover) !important;
+}
+
+#urlbar[focused] > #urlbar-background,
+#urlbar[focused]:not([open]) > #urlbar-background {
+  border-color: var(--shellman-accent) !important;
+  box-shadow: 0 0 0 3px var(--sm-accent-ring) !important;
+  outline: none !important;
+}
+
+#urlbar-input,
+#urlbar .urlbar-input {
+  color: var(--sm-text) !important;
+}
+
+.urlbar-page-action,
+.identity-box-button,
+#tracking-protection-icon-container,
+#identity-box {
+  border-radius: 999px !important;
+}
+
+#urlbar-input-container {
+  --urlbar-container-height: 36px;
+}
+
+/* toolbar buttons: round, soft hover */
+.toolbarbutton-1,
+#nav-bar .toolbarbutton-1,
+#nav-bar toolbarbutton {
+  --toolbarbutton-border-radius: 999px;
+  --toolbarbutton-outer-padding: 2px;
+  --toolbarbutton-inner-padding: 7px;
+  --toolbarbutton-hover-background: var(--sm-soft-hover);
+  --toolbarbutton-active-background: var(--sm-accent-soft);
+  --toolbarbutton-hover-bordercolor: transparent;
+  --toolbarbutton-active-bordercolor: transparent;
+  --toolbarbutton-hover-boxshadow: none;
+  color: var(--sm-text);
+}
+
+#nav-bar .toolbarbutton-1 > .toolbarbutton-icon,
+#nav-bar .toolbarbutton-1 > .toolbarbutton-badge-stack {
+  border-radius: 999px !important;
+}
+
+/* ---- Bookmarks toolbar, when shown ---- */
+
+#navigator-toolbox > #PersonalToolbar {
+  height: 40px;
+  min-height: 0 !important;
+  box-sizing: border-box;
+  padding: 0 12px !important;
+  margin: 0 !important;
+  border-radius: 999px !important;
+  background: var(--sm-fill) !important;
+  border: 1px solid var(--sm-hair) !important;
+  box-shadow: var(--sm-shadow) !important;
+  backdrop-filter: blur(24px) saturate(1.4);
+  align-items: center;
+}
+
+#PersonalToolbar .bookmark-item {
+  border-radius: 999px !important;
+}
+
+/* ---- The page: its own rounded island, with a gap all round ---- */
+
+#browser {
+  padding: var(--sm-gap) var(--sm-edge) var(--sm-edge);
+  gap: var(--sm-gap);
+  background: transparent !important;
+  box-sizing: border-box;
+}
+
+#tabbrowser-tabbox,
+#tabbrowser-tabpanels {
+  background: transparent !important;
+}
+
+#tabbrowser-tabbox {
+  border-radius: var(--sm-radius);
+  overflow: clip;
+  border: 1px solid var(--sm-hair);
+  box-shadow: var(--sm-shadow);
+  background: var(--sm-fill-solid) !important;
+}
+
+#tabbrowser-tabpanels,
+#tabbrowser-tabpanels .browserStack,
+#tabbrowser-tabpanels browser {
+  border-radius: calc(var(--sm-radius) - 1px);
+}
+
+#tabbrowser-tabpanels {
+  border: none !important;
+  box-shadow: none !important;
+}
+
+/* ---- Rail (vertical tabs / sidebar launcher) and sidebar panel (bookmarks, history) ----
+ * Position is never hardcoded: Firefox orders #browser's children by sidebar.position_start and all
+ * spacing here is symmetric (flex gap, uniform radii), so left and right mirror by themselves. */
+
+#sidebar-container {
+  align-self: stretch;
+  box-sizing: border-box;
+  background: var(--sm-fill) !important;
+  border: 1px solid var(--sm-hair) !important;
+  border-radius: 28px;
+  box-shadow: var(--sm-shadow);
+  backdrop-filter: blur(24px) saturate(1.4);
+  overflow: clip;
+  padding: 4px 0;
+}
+
+/* expanded: a wider island, same radius as the other islands */
+#sidebar-container:has(> sidebar-main[expanded]) {
+  border-radius: var(--sm-radius);
+}
+
+#sidebar-container[hidden] {
+  display: none;
+}
+
+sidebar-main {
+  background: transparent !important;
+  color: var(--sm-text);
+  --toolbarbutton-icon-fill: var(--sm-text);
+}
+
+#sidebar-launcher-splitter,
+#sidebar-splitter {
+  background: transparent !important;
+  border: none !important;
+  opacity: 0;
+  width: 6px !important;
+  min-width: 6px !important;
+  margin-inline: -3px;
+}
+
+/* vertical tabs */
+#vertical-tabs {
+  background: transparent !important;
+}
+
+#tabbrowser-tabs[orient="vertical"] {
+  --tab-border-radius: 14px;
+  --tab-min-height: 36px;
+  --tab-block-margin: 2px;
+  align-items: stretch;
+  background: transparent !important;
+}
+
+#tabbrowser-tabs[orient="vertical"] .tab-background,
+#tabbrowser-tabs[orient="vertical"] .tabbrowser-tab:not([visuallyselected]):hover > .tab-stack > .tab-background {
+  border-radius: 14px !important;
+}
+
+/* pinned tabs, the new-tab button and the bottom tool buttons use the same soft chips */
+#tabbrowser-tabs[orient="vertical"] #vertical-tabs-newtab-button,
+#vertical-tabs-newtab-button {
+  border-radius: 14px !important;
+  background: var(--sm-soft) !important;
+  border: 1px solid var(--sm-hair-soft) !important;
+  color: var(--sm-text);
+}
+
+#vertical-tabs-newtab-button:hover {
+  background: var(--sm-soft-hover) !important;
+}
+
+/* the panel island (bookmarks / history / synced tabs) */
+#sidebar-box {
+  background: var(--sm-fill-solid) !important;
+  border: 1px solid var(--sm-hair) !important;
+  border-radius: var(--sm-radius) !important;
+  box-shadow: var(--sm-shadow);
+  overflow: clip;
+  color: var(--sm-text);
+}
+
+#sidebar-header {
+  background: transparent !important;
+  border: none !important;
+  padding-inline: 8px;
+}
+
+#sidebar-box .sidebar-browser-stack,
+#sidebar {
+  background: transparent !important;
+  border: none !important;
+  outline: none !important;
+  box-shadow: none !important;
+  border-radius: 0 !important;
+}
+/* ---- Find bar: lives inside the page island, so it stays a full-width strip with a hairline above it ---- */
+
+findbar {
+  appearance: none !important;
+  background: var(--sm-fill-solid) !important;
+  border: none !important;
+  border-top: 1px solid var(--sm-hair) !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  color: var(--sm-text) !important;
+  margin: 0 !important;
+  padding: 6px 14px !important;
+}
+.findbar-textbox {
+  background: var(--sm-soft) !important;
+  border: 1px solid var(--sm-hair-soft) !important;
+  border-radius: 999px !important;
+  color: var(--sm-text) !important;
+}
+
+.findbar-textbox:focus {
+  border-color: var(--shellman-accent) !important;
+  box-shadow: 0 0 0 3px var(--sm-accent-ring) !important;
+}
+
+/* ---- Fullscreen (F11 and page fullscreen/video): edge to edge, no gaps, no radius ---- */
+
+:root[inFullscreen] #browser,
+:root[inDOMFullscreen] #browser {
+  padding: 0;
+  gap: 0;
+}
+
+:root[inFullscreen] #tabbrowser-tabbox,
+:root[inDOMFullscreen] #tabbrowser-tabbox,
+:root[inFullscreen] #tabbrowser-tabpanels,
+:root[inDOMFullscreen] #tabbrowser-tabpanels,
+:root[inFullscreen] #tabbrowser-tabpanels browser,
+:root[inDOMFullscreen] #tabbrowser-tabpanels browser {
+  border-radius: 0 !important;
+  border: none !important;
+  box-shadow: none !important;
+}
+
+:root[inFullscreen] #navigator-toolbox,
+:root[inDOMFullscreen] #navigator-toolbox {
+  padding: 0;
+}
+
+#navigator-toolbox::before,
+#navigator-toolbox::after,
+#titlebar::before,
+#titlebar::after,
+#nav-bar::before,
+#nav-bar::after {
+  display: none !important;
+}
+
+/* Keep the window draggable by the gaps around the pills (the pills' own empty space already drags). */
+#navigator-toolbox,
+#titlebar {
+  -moz-window-dragging: drag;
+}
+#navigator-toolbox :is(toolbarbutton, #urlbar, #tabbrowser-tabs, .tabbrowser-tab, sidebar-main) {
+  -moz-window-dragging: no-drag;
+}
+
+/* Focus rings in the accent, wherever Firefox draws them. */
+#urlbar[focused],
+#urlbar[focused] > #urlbar-input-container,
+#urlbar[focused] > #urlbar-background,
+:focus-visible {
+  outline-color: var(--shellman-accent) !important;
+}
+
+#urlbar,
+#urlbar-container {
+  --toolbar-field-border-color-focus: var(--shellman-accent) !important;
+  --urlbar-background-border-focused: 2px solid var(--shellman-accent) !important;
+  --urlbar-input-container-border-color-focus: var(--shellman-accent) !important;
+}
+#urlbar[focused] > #urlbar-input-container {
+  border-color: var(--shellman-accent) !important;
+}

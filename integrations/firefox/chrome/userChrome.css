@@ -1,0 +1,5 @@
+/* shellman Islands for Firefox.
+ * Order matters: the look variables first, then the window, then popups. */
+@import url("shellman-look.css");
+@import url("shellman-islands.css");
+@import url("shellman-popups.css");
