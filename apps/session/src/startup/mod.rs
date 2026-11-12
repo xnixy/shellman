@@ -9,12 +9,13 @@
 //! ShellAppRuntime, which the desktop already runs for modern apps, is the one that does logon
 //! tasks (see PLAN.md), so they may come up without any help from here.
 
-mod approved;
 mod dry;
 mod guard;
-mod items;
 mod runner;
 mod win;
+
+// The reading of the items is shared with Settings' startup page.
+use shellman_core::startup::{items, win as files};
 
 pub use dry::dry_run;
 
@@ -23,7 +24,7 @@ use crate::{log, shutdown};
 use std::time::Duration;
 
 fn collect(reg: &dyn Registry) -> Vec<items::Item> {
-    items::collect(reg, &win::startup_files(), &win::expand, win::is_elevated())
+    items::collect(reg, &files::startup_files(), &files::expand, win::is_elevated())
 }
 
 /// Run the startup items once for this logon, on a thread of its own. `adopted` is how many

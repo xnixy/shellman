@@ -1952,6 +1952,7 @@ name = "shellman-session"
 version = "0.1.0"
 dependencies = [
  "dirs",
+ "shellman-core",
  "windows",
  "winresource",
 ]

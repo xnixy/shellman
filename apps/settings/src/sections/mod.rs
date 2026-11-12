@@ -10,9 +10,11 @@ mod launcher;
 mod sound;
 mod sound_mixer;
 mod sound_rows;
+mod startup;
 
 pub use display::DisplayView;
 pub use sound::SoundView;
+pub use startup::StartupView;
 use crate::state::State;
 use shellman_ui::theme::glyph;
 
@@ -21,6 +23,7 @@ pub enum Section {
     Appearance,
     Sound,
     Display,
+    Startup,
     Dock,
     TopBar,
     Launcher,
@@ -28,10 +31,11 @@ pub enum Section {
 }
 
 impl Section {
-    pub const ALL: [Section; 7] = [
+    pub const ALL: [Section; 8] = [
         Section::Appearance,
         Section::Sound,
         Section::Display,
+        Section::Startup,
         Section::Dock,
         Section::TopBar,
         Section::Launcher,
@@ -43,6 +47,7 @@ impl Section {
             Section::Appearance => "Appearance",
             Section::Sound => "Sound",
             Section::Display => "Display",
+            Section::Startup => "Startup apps",
             Section::Dock => "Dock",
             Section::TopBar => "Top bar",
             Section::Launcher => "Launcher",
@@ -55,6 +60,7 @@ impl Section {
             Section::Appearance => '\u{E790}',
             Section::Sound => glyph::VOLUME,
             Section::Display => glyph::DESKTOP,
+            Section::Startup => '\u{E7E8}',
             Section::Dock => glyph::APP,
             Section::TopBar => glyph::DESKTOP,
             Section::Launcher => glyph::SEARCH,
@@ -67,6 +73,7 @@ impl Section {
             Section::Appearance => appearance::show(ui, state),
             Section::Sound => sound::show(ui, state),
             Section::Display => display::show(ui, state),
+            Section::Startup => startup::show(ui, state),
             Section::Dock => dock::show(ui, state),
             Section::TopBar => bar::show(ui, state),
             Section::Launcher => launcher::show(ui, state),
@@ -82,6 +89,7 @@ impl Section {
             Section::Appearance => "appearance",
             Section::Sound => "sound",
             Section::Display => "display",
+            Section::Startup => "startup",
             Section::Dock => "dock",
             Section::TopBar => "top-bar",
             Section::Launcher => "launcher",

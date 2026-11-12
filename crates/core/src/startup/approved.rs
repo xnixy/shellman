@@ -25,7 +25,10 @@ pub enum Area {
 }
 
 impl Area {
-    fn key(self) -> String {
+    pub const ALL: [Area; 3] = [Area::Run, Area::Run32, Area::StartupFolder];
+
+    /// The registry key (below the hive) that holds this area's approvals.
+    pub fn key(self) -> String {
         let leaf = match self {
             Area::Run => "Run",
             Area::Run32 => "Run32",
@@ -33,6 +36,37 @@ impl Area {
         };
         format!("{BASE}\\{leaf}")
     }
+
+    /// The word the administrator helper's command line uses for this area.
+    pub fn word(self) -> &'static str {
+        match self {
+            Area::Run => "run",
+            Area::Run32 => "run32",
+            Area::StartupFolder => "folder",
+        }
+    }
+
+    pub fn from_word(w: &str) -> Option<Area> {
+        Area::ALL.into_iter().find(|a| a.word() == w)
+    }
+}
+
+/// The twelve bytes Windows keeps for an item: 02 and zeros for enabled; 03 and the FILETIME of
+/// the moment it was turned off for disabled.
+pub fn bytes(enabled: bool, filetime: u64) -> [u8; 12] {
+    let mut b = [0u8; 12];
+    if enabled {
+        b[0] = 2;
+    } else {
+        b[0] = 3;
+        b[4..].copy_from_slice(&filetime.to_le_bytes());
+    }
+    b
+}
+
+/// Record that an item is on or off, in `hive`'s StartupApproved key for `area`.
+pub fn write(reg: &dyn Registry, hive: Hive, area: Area, name: &str, enabled: bool, filetime: u64) -> Result<(), String> {
+    reg.set_binary(hive, &area.key(), name, &bytes(enabled, filetime))
 }
 
 /// `Some(true)` enabled, `Some(false)` disabled, `None` when there is no byte to read.
@@ -76,6 +110,25 @@ mod tests {
         assert_eq!(parse(&[3]), Some(false));
         assert_eq!(parse(&[1]), Some(false));
         assert_eq!(parse(&[]), None);
+    }
+
+    #[test]
+    fn written_bytes_follow_windows_layout() {
+        assert_eq!(bytes(true, 99), [2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+        assert_eq!(bytes(false, 0x0102), [3, 0, 0, 0, 2, 1, 0, 0, 0, 0, 0, 0]);
+        let reg = Fake::default();
+        write(&reg, Hive::Hkcu, Area::Run32, "X", false, 5).unwrap();
+        assert!(!check(&reg, Area::Run32, "X").0);
+        write(&reg, Hive::Hkcu, Area::Run32, "x", true, 5).unwrap();
+        assert!(check(&reg, Area::Run32, "X").0);
+    }
+
+    #[test]
+    fn areas_have_words_that_round_trip() {
+        for a in Area::ALL {
+            assert_eq!(Area::from_word(a.word()), Some(a));
+        }
+        assert_eq!(Area::from_word("Run"), None);
     }
 
     #[test]

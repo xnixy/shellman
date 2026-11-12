@@ -6,9 +6,10 @@ description = "Shellman's session: the shell process that starts and supervises 
 license.workspace = true
 publish = false
 
-# Deliberately small: no egui and no shellman-core, so it builds fast and has little to go wrong.
+# Small: shellman-core is here only for the registry and startup-item code Settings shares.
 [dependencies]
 dirs.workspace = true
+shellman-core.workspace = true
 windows.workspace = true
 
 [build-dependencies]
