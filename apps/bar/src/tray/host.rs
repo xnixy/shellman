@@ -99,7 +99,23 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPA
 fn apply(n: Notify) -> bool {
     let Some(state) = STATE.get() else { return false };
     let mut state = state.lock().unwrap();
-    let key = |i: &TrayIcon| match (n.flags & NIF_GUID != 0, n.guid, i.guid) {
+    if super::log::enabled() {
+        let mut pid = 0u32;
+        unsafe { GetWindowThreadProcessId(HWND(n.hwnd as *mut _), Some(&mut pid)) };
+        super::log::line(&format!(
+            "notify msg={} [{} pid={} uid={}] flags={:#x} callback={:#x} version={} guid={} tip={:?}",
+            n.message,
+            super::log::process_name(pid),
+            pid,
+            n.uid,
+            n.flags,
+            n.callback,
+            n.version,
+            n.guid.is_some(),
+            n.tip
+        ));
+    }
+    let key =|i: &TrayIcon| match (n.flags & NIF_GUID != 0, n.guid, i.guid) {
         (true, Some(g), Some(ig)) => g == ig,
         _ => i.hwnd == n.hwnd && i.uid == n.uid,
     };
@@ -143,10 +159,13 @@ fn apply(n: Notify) -> bool {
             state.icons.len() != before
         }
         data::NIM_SETVERSION => {
-            if let Some(i) = state.icons.iter_mut().find(|i| key(i)) {
-                i.version = n.version;
+            match state.icons.iter_mut().find(|i| key(i)) {
+                Some(i) => {
+                    i.version = n.version;
+                    true
+                }
+                None => false,
             }
-            true
         }
         _ => true,
     }
