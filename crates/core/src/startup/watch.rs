@@ -1,4 +1,4 @@
-//! Noticing that startup items changed: the three Run keys, the StartupApproved keys (what Task
+//! Noticing that startup items changed (and, by `start_with`, other keys, for the Apps page): the three Run keys, the StartupApproved keys (what Task
 //! Manager and Settings write) and the two Startup folders. One thread sleeps on Windows' own
 //! change notifications, so nothing runs while nothing changes, and calls `on_change` once the
 //! changes have stopped for a moment.
@@ -25,6 +25,17 @@ const QUIET: Duration = Duration::from_millis(300);
 
 const CV: &str = "Software\\Microsoft\\Windows\\CurrentVersion";
 
+/// What to listen to: registry keys as (hive, key, whole subtree), and folders.
+pub struct Targets {
+    pub keys: Vec<(HKEY, String, bool)>,
+    pub dirs: Vec<std::path::PathBuf>,
+}
+
+/// The Run keys, the StartupApproved keys and the Startup folders.
+fn startup_targets() -> Targets {
+    Targets { keys: registry_targets(), dirs: startup_dirs().into_iter().map(|(_, d)| d).collect() }
+}
+
 /// (hive, key, whole subtree).
 fn registry_targets() -> Vec<(HKEY, String, bool)> {
     let approved = format!("{CV}\\Explorer\\StartupApproved");
@@ -47,11 +58,17 @@ pub struct RunWatch {
 
 impl RunWatch {
     pub fn start(on_change: impl Fn() + Send + 'static) -> Self {
+        Self::start_with(startup_targets, on_change)
+    }
+
+    /// Listen to other places (the Apps page's Uninstall keys). `targets` is called on the
+    /// watcher's own thread, which is where the handles are made and used.
+    pub fn start_with(targets: fn() -> Targets, on_change: impl Fn() + Send + 'static) -> Self {
         let stop = unsafe { CreateEventW(None, true, false, None) }.map_or(0, |h| h.0 as isize);
         let quit = Arc::new(AtomicBool::new(false));
         let thread = (stop != 0).then(|| {
             let quit = quit.clone();
-            std::thread::Builder::new().name("startup watch".into()).spawn(move || run(stop, &quit, &on_change)).ok()
+            std::thread::Builder::new().name("startup watch".into()).spawn(move || run(stop, &quit, targets(), &on_change)).ok()
         });
         Self { stop, quit, thread: thread.flatten() }
     }
@@ -118,9 +135,9 @@ impl Source {
     }
 }
 
-fn sources() -> Vec<Source> {
+fn sources(targets: Targets) -> Vec<Source> {
     let mut out = Vec::new();
-    for (root, path, subtree) in registry_targets() {
+    for (root, path, subtree) in targets.keys {
         let mut key = HKEY::default();
         let opened = unsafe { RegOpenKeyExW(root, &HSTRING::from(path), None, KEY_NOTIFY, &mut key) }.is_ok();
         if !opened {
@@ -137,7 +154,7 @@ fn sources() -> Vec<Source> {
             },
         }
     }
-    for (_, dir) in startup_dirs() {
+    for dir in targets.dirs {
         let h = unsafe {
             FindFirstChangeNotificationW(&HSTRING::from(dir.as_os_str()), false, FILE_NOTIFY_CHANGE_FILE_NAME | FILE_NOTIFY_CHANGE_LAST_WRITE)
         };
@@ -148,9 +165,9 @@ fn sources() -> Vec<Source> {
     out
 }
 
-fn run(stop: isize, quit: &AtomicBool, on_change: &dyn Fn()) {
+fn run(stop: isize, quit: &AtomicBool, targets: Targets, on_change: &dyn Fn()) {
     let stop = HANDLE(stop as *mut _);
-    let sources = sources();
+    let sources = sources(targets);
     let mut handles = vec![stop];
     handles.extend(sources.iter().map(Source::handle));
     let mut timeout = INFINITE;
