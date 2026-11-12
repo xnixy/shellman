@@ -30,7 +30,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 
 /// The panel's size in points, where its centre sits in the work area (a little above the middle),
 /// and the margin it keeps from the work area's edges.
-pub const WIDTH: f32 = 760.0;
+pub const WIDTH: f32 = 560.0;
 pub const HEIGHT: f32 = 560.0;
 const CENTRE_FRACTION: f64 = 0.46;
 const MARGIN: f32 = 24.0;
@@ -312,8 +312,8 @@ mod tests {
     fn primary_150_percent() {
         let work = RECT { left: 0, top: 48, right: 3840, bottom: 2043 };
         let r = panel_rect(work, 1.5);
-        assert_eq!((r.2, r.3), (1140, 840));
-        assert_eq!(r.0, (3840 - 1140) / 2);
+        assert_eq!((r.2, r.3), (840, 840));
+        assert_eq!(r.0, (3840 - 840) / 2);
         assert_eq!(r.1 + r.3 / 2, 48 + (1995.0 * 0.46) as i32);
         assert!(inside(work, r));
     }
@@ -322,7 +322,7 @@ mod tests {
     fn left_monitor_is_centred_in_its_own_work_area() {
         let work = RECT { left: -3840, top: 48, right: 0, bottom: 2043 };
         let r = panel_rect(work, 1.5);
-        assert_eq!(r.0, -3840 + (3840 - 1140) / 2);
+        assert_eq!(r.0, -3840 + (3840 - 840) / 2);
         assert!(inside(work, r));
     }
 
@@ -330,17 +330,17 @@ mod tests {
     fn monitor_300_percent_keeps_full_height_inside() {
         let work = RECT { left: 3746, top: 2256, right: 7586, bottom: 4086 };
         let r = panel_rect(work, 3.0);
-        assert_eq!((r.2, r.3), (2280, 1680));
-        assert_eq!(r.0, 3746 + (3840 - 2280) / 2);
+        assert_eq!((r.2, r.3), (1680, 1680));
+        assert_eq!(r.0, 3746 + (3840 - 1680) / 2);
         assert!(inside(work, r));
         assert!(r.1 - work.top >= 72 && work.bottom - (r.1 + r.3) >= 72);
     }
 
     #[test]
     fn short_screen_shrinks_the_panel_to_fit() {
-        let work = RECT { left: 0, top: 0, right: 1000, bottom: 500 };
+        let work = RECT { left: 0, top: 0, right: 700, bottom: 500 };
         let r = panel_rect(work, 1.5);
-        assert_eq!(r.2, 1000 - 72);
+        assert_eq!(r.2, 700 - 72);
         assert_eq!(r.3, 500 - 72);
         assert!(inside(work, r));
     }

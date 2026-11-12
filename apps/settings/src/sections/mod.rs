@@ -98,6 +98,7 @@ impl Section {
             Section::Appearance
                 | Section::Sound
                 | Section::Display
+                | Section::Apps
                 | Section::Startup
                 | Section::Dock
                 | Section::TopBar

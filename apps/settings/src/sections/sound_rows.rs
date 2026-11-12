@@ -3,6 +3,7 @@
 
 use egui::{Align2, CornerRadius, FontId, Id, Response, Sense, Ui, Vec2};
 use shellman_core::system::sound_dev::{Device, Kind};
+use shellman_ui::slider;
 use shellman_ui::theme::{self, colors, glyph, icon_font};
 use shellman_ui::widgets::{draw_text, round_button};
 
@@ -91,17 +92,18 @@ pub struct Level {
 /// keeps the value being dragged apart from what the audio system reports back meanwhile, so
 /// the knob does not jump. Returns the new level in the frames it is moved.
 pub fn level_slider(ui: &mut Ui, id: Id, served: f32, muted: bool, tail: f32) -> Option<f32> {
-    let mut v = ui.data(|d| d.get_temp::<f32>(id)).unwrap_or(served);
-    ui.spacing_mut().slider_width = (ui.available_width() - 44.0 - tail).max(60.0);
-    let resp = ui.add(egui::Slider::new(&mut v, 0.0..=1.0).show_value(false).trailing_fill(true));
-    if resp.dragged() || resp.changed() {
+    let held = ui.data(|d| d.get_temp::<f32>(id));
+    let width = (ui.available_width() - 44.0 - tail).max(60.0);
+    let out = slider::thin(ui, id.with("thin"), held.unwrap_or(served), Some(width), true);
+    let v = out.value.or(held).unwrap_or(served);
+    if out.dragging() {
         ui.data_mut(|d| d.insert_temp(id, v));
     } else {
         ui.data_mut(|d| d.remove::<f32>(id));
     }
     let shown = if muted { 0 } else { (v * 100.0).round() as u32 };
     ui.label(theme::muted(format!("{shown}%")).size(12.0));
-    resp.changed().then_some(v)
+    out.value
 }
 
 /// A mute button and a level slider.

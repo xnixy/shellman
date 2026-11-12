@@ -1,6 +1,7 @@
 //! Applying the palette to egui, and the shared frames and buttons.
 
 use super::icons::icon;
+use crate::glass::islands::shows_as;
 use super::{accent, colors, mix, with_alpha, Colors};
 use egui::{Color32, CornerRadius, Frame, Margin, RichText, Stroke, Theme, Ui, Vec2};
 
@@ -23,6 +24,8 @@ pub fn apply(ctx: &egui::Context) {
 
 fn shell_visuals(c: &Colors) -> egui::Visuals {
     let pick = |dark: Color32, light: Color32| if c.light { light } else { dark };
+    // A translucent white, as it should show over the glass (see `shows_as`).
+    let white = |a: u8| shows_as(Color32::from_rgba_unmultiplied(255, 255, 255, a));
     let mut visuals = if c.light {
         egui::Visuals::light()
     } else {
@@ -31,7 +34,7 @@ fn shell_visuals(c: &Colors) -> egui::Visuals {
     visuals.window_fill = c.popup;
     visuals.panel_fill = Color32::TRANSPARENT;
     visuals.faint_bg_color = pick(
-        Color32::from_rgba_unmultiplied(255, 255, 255, 14),
+        white(14),
         Color32::from_black_alpha(10),
     );
     visuals.extreme_bg_color = pick(
@@ -39,27 +42,20 @@ fn shell_visuals(c: &Colors) -> egui::Visuals {
         Color32::from_rgba_unmultiplied(255, 255, 255, 210),
     );
     visuals.widgets.noninteractive.fg_stroke.color = c.muted;
+    // What is disabled keeps a visible shape: egui draws it with the non-interactive fill, which
+    // on a light page would otherwise be as pale as the page.
+    visuals.widgets.noninteractive.weak_bg_fill = pick(white(10), Color32::from_black_alpha(6));
     visuals.widgets.noninteractive.bg_stroke.color = c.hairline;
     let mut idle = visuals.widgets.inactive;
     idle.bg_fill = c.track;
-    idle.weak_bg_fill = pick(
-        Color32::from_rgba_unmultiplied(255, 255, 255, 18),
-        Color32::from_black_alpha(14),
-    );
-    idle.bg_stroke = Stroke::new(
-        1.0_f32,
-        pick(
-            Color32::from_rgba_unmultiplied(255, 255, 255, 36),
-            Color32::from_black_alpha(32),
-        ),
-    );
+    // Buttons and combo boxes. On a light page a faint black would be a grey smudge, so they are
+    // a lifted white with a clear edge; on a dark one a faint white that shows as intended.
+    idle.weak_bg_fill = pick(white(18), Color32::from_rgba_unmultiplied(255, 255, 255, 170));
+    idle.bg_stroke = Stroke::new(1.0_f32, pick(white(36), Color32::from_black_alpha(40)));
     idle.corner_radius = CornerRadius::same(8);
     idle.fg_stroke.color = c.text;
     let mut hovered = idle;
-    hovered.weak_bg_fill = pick(
-        Color32::from_rgba_unmultiplied(255, 255, 255, 30),
-        Color32::from_black_alpha(26),
-    );
+    hovered.weak_bg_fill = pick(white(30), Color32::from_rgba_unmultiplied(255, 255, 255, 235));
     hovered.bg_fill = mix(c.track, c.accent_fill, 0.25);
     let mut active = hovered;
     active.bg_fill = c.accent_fill;

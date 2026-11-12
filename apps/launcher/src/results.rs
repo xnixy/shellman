@@ -1,5 +1,5 @@
 //! The ranked result list shown while typing: icon and name per row, the selected row (the top
-//! hit at first) softly highlighted with an "Open" hint, and a "Run" row last.
+//! hit at first) an accent row with an "Enter" hint, and a "Run" row last.
 
 use crate::fade::Fade;
 use egui::text::{LayoutJob, TextFormat};
@@ -9,7 +9,7 @@ use shellman_core::thumbs::Thumbs;
 use shellman_ui::theme::{colors, glyph, icon_font};
 
 /// A row's height; the results island is as tall as its rows.
-pub const ROW_H: f32 = 52.0;
+pub const ROW_H: f32 = 58.0;
 const ICON: f32 = 32.0;
 const NAME_SIZE: f32 = 15.0;
 
@@ -120,15 +120,17 @@ fn draw_row(
         egui::Vec2::splat(ICON),
     );
     // The hint takes room at the right of the selected row.
-    let hint_w = if selected { 70.0 } else { 0.0 };
+    let hint_w = if selected { 54.0 } else { 0.0 };
     let name_x = icon.right() + 14.0;
     let name_w = row.right() - 14.0 - hint_w - name_x;
-    let name_at = egui::pos2(name_x, row.center().y);
-    let verb = match item {
+    // The name sits a little above the middle, with what kind of thing it is beneath.
+    let name_at = egui::pos2(name_x, row.center().y - 8.0);
+    let sub_at = egui::pos2(name_x, row.center().y + 9.0);
+    match item {
         Item::App(index) => {
             crate::icon::paint(p, icon, &apps[index], thumbs);
             name(p, name_at, name_w, &apps[index].name, Some(query), ink);
-            "Open"
+            sub(p, sub_at, "App", ink, selected);
         }
         Item::Settings => {
             // shellman's own icon, in the current accent.
@@ -140,7 +142,7 @@ fn draw_row(
                 Color32::WHITE,
             );
             name(p, name_at, name_w, SETTINGS_NAME, Some(query), ink);
-            "Open"
+            sub(p, sub_at, "shellman", ink, selected);
         }
         Item::Run => {
             crate::icon::plate(p, icon);
@@ -152,11 +154,11 @@ fn draw_row(
                 c.accent_text,
             );
             name(p, name_at, name_w, &format!("Run \"{}\"", query.trim()), None, ink);
-            "Run"
+            sub(p, sub_at, "Run this command", ink, selected);
         }
-    };
+    }
     if selected {
-        hint(p, row, verb, ink);
+        hint(p, row, ink);
     }
 }
 
@@ -188,29 +190,20 @@ fn name(p: &Painter, at: egui::Pos2, width: f32, text: &str, query: Option<&str>
     p.galley(egui::pos2(at.x, at.y - galley.size().y / 2.0), galley, ink);
 }
 
-/// "Open" and a return-key arrow, muted, at the right end of the selected row.
-fn hint(p: &Painter, row: Rect, verb: &str, ink: Color32) {
-    let right = row.right() - 16.0;
-    let y = row.center().y;
-    // The return arrow: down, then left, with a head.
-    let (cx, h) = (right - 6.0, 4.5);
-    let stroke = egui::Stroke::new(1.3_f32, ink);
-    let shape = [
-        egui::pos2(cx + 5.0, y - h),
-        egui::pos2(cx + 5.0, y + 1.5),
-        egui::pos2(cx - 5.0, y + 1.5),
-    ];
-    p.line(shape.to_vec(), stroke);
-    p.line(
-        vec![egui::pos2(cx - 1.8, y - 1.5), egui::pos2(cx - 5.0, y + 1.5), egui::pos2(cx - 1.8, y + 4.5)],
-        stroke,
-    );
+/// The small line under a name, fainter than it.
+fn sub(p: &Painter, at: egui::Pos2, text: &str, ink: Color32, selected: bool) {
+    let color = if selected { ink.gamma_multiply(0.8) } else { colors().muted };
+    p.text(at, egui::Align2::LEFT_CENTER, text, egui::FontId::proportional(11.5), color);
+}
+
+/// "Enter", at the right end of the selected row: what the key will do.
+fn hint(p: &Painter, row: Rect, ink: Color32) {
     p.text(
-        egui::pos2(cx - 11.0, y),
+        egui::pos2(row.right() - 16.0, row.center().y),
         egui::Align2::RIGHT_CENTER,
-        verb,
-        egui::FontId::proportional(12.5),
-        ink,
+        "Enter",
+        egui::FontId::proportional(12.0),
+        ink.gamma_multiply(0.85),
     );
 }
 

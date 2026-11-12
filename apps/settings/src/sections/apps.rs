@@ -84,23 +84,30 @@ pub fn show(ui: &mut egui::Ui, st: &mut State) {
     st.apps.start(ui.ctx());
     st.apps.poll();
     if !st.apps.loaded {
-        ui.label(theme::muted("Reading the installed apps..."));
+        page::group(ui, "", |ui| {
+            ui.label(theme::muted("Reading the installed apps..."));
+        });
         return;
     }
     st.apps.refresh_shown();
-    controls(ui, &mut st.apps);
-    ui.add_space(12.0);
-
+    // The search and the sort on one island, the list on the next. Only the list's rows in view
+    // are drawn, and the island it sits on is the part of it in view.
+    page::group(ui, "", |ui| {
+        controls(ui, &mut st.apps);
+        if let Some(note) = &st.apps.page.notice {
+            ui.add_space(8.0);
+            ui.label(theme::muted(note).size(12.0));
+        }
+    });
     let apps = &mut st.apps;
-    if let Some(note) = &apps.page.notice {
-        ui.label(theme::muted(note).size(12.0));
-        ui.add_space(8.0);
-    }
     if apps.shown.is_empty() {
-        ui.label(theme::muted(if apps.query.trim().is_empty() { "No apps found." } else { "No app matches the search." }));
+        page::group(ui, "", |ui| {
+            ui.label(theme::muted(if apps.query.trim().is_empty() { "No apps found." } else { "No app matches the search." }));
+        });
         return;
     }
-    list_rows(ui, apps, &mut st.thumbs);
+    let thumbs = &mut st.thumbs;
+    page::group(ui, "", |ui| list_rows(ui, apps, thumbs));
 }
 
 /// The search box, the sort choice and the count.

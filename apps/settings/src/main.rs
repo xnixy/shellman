@@ -3,11 +3,14 @@
 //! other apps watch, so they follow as you change things.
 
 mod app;
+mod flow;
 mod instance;
 mod page;
 mod saver;
+mod search;
 mod sections;
 mod state;
+mod tip;
 
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use shellman_ui::appearance::Appearance;

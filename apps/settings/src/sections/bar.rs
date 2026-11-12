@@ -11,19 +11,28 @@ pub fn show(ui: &mut egui::Ui, st: &mut State) {
     page::heading(ui, "Top bar", "The clock and the tray icons in the corner of the top bar.");
 
     let mut changed = false;
-    page::group(ui, "Clock", |ui| {
-        page::label(ui, "Hours");
-        let options = HourCycle::ALL.map(|h| (h, h.label()));
-        changed |= page::segmented(ui, &mut st.bar.clock.hour_cycle, &options);
-        page::gap(ui);
-        changed |= switch(ui, &mut st.bar.clock.show_date, "Show the date").changed();
-    });
-
-    page::group(ui, "", |ui| {
-        page::label(ui, "Show tray icons on");
-        let options = TrayMonitors::ALL.map(|t| (t, t.label()));
-        changed |= page::segmented(ui, &mut st.bar.tray, &options);
-    });
+    page::pair(
+        ui,
+        &mut changed,
+        (
+            "Clock",
+            &mut |ui, changed| {
+                page::label(ui, "Hours");
+                let options = HourCycle::ALL.map(|h| (h, h.label()));
+                *changed |= page::segmented(ui, &mut st.bar.clock.hour_cycle, &options);
+                page::gap(ui);
+                *changed |= switch(ui, &mut st.bar.clock.show_date, "Show the date").changed();
+            },
+        ),
+        (
+            "",
+            &mut |ui, changed| {
+                page::label(ui, "Show tray icons on");
+                let options = TrayMonitors::ALL.map(|t| (t, t.label()));
+                *changed |= page::segmented(ui, &mut st.bar.tray, &options);
+            },
+        ),
+    );
 
     page::group(ui, "It will read", |ui| {
         // The sample moves on with the minute, like the bar's own clock.
