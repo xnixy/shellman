@@ -13,7 +13,7 @@ const PAD: f32 = 8.0;
 /// Extra room a divider takes between two sections.
 const DIVIDER: f32 = 13.0;
 
-/// A divider goes before the first running app (after Files and the pins), and before the bin.
+/// A divider goes before the first running app (after the Launcher, Files and the pins), and before the bin.
 fn divider_before(items: &[Item], i: usize) -> bool {
     match items[i].section {
         Section::Running => i == 0 || items[i - 1].section != Section::Running,
@@ -44,6 +44,14 @@ pub struct Events {
     pub menu: Option<usize>,
     /// Scrolled over an icon: its index and the wheel's vertical delta.
     pub scrolled: Option<(usize, f32)>,
+}
+
+/// The Launcher's icon: an accent plate with the launcher's mark, as in the top bar. Kept in one
+/// place so it can be swapped for the launcher exe's own icon.
+fn paint_launcher(ui: &egui::Ui, icon: egui::Rect) {
+    let c = colors();
+    ui.painter().rect_filled(icon, egui::CornerRadius::same(10), c.accent);
+    crate::topbar::paint_launcher_mark(ui.painter(), icon.center(), icon.width() / 22.0, c.accent_text);
 }
 
 pub fn paint(
@@ -101,6 +109,7 @@ pub fn paint(
                 egui::Image::from_texture((id, size))
                     .paint_at(ui, egui::Rect::from_center_size(icon.center(), size * scale));
             }
+            None if item.section == Section::Launcher => paint_launcher(ui, icon),
             None => {
                 ui.painter().rect_filled(icon, egui::CornerRadius::same(10), c.control);
                 ui.painter().text(icon.center(), egui::Align2::CENTER_CENTER, glyph::APP, icon_font(18.0), c.muted);
@@ -152,6 +161,7 @@ mod tests {
     #[test]
     fn dividers_sit_between_sections() {
         let items = [
+            item(Section::Launcher),
             item(Section::Files),
             item(Section::Pinned),
             item(Section::Running),
@@ -160,21 +170,24 @@ mod tests {
         ];
         let (xs, total) = layout(&items, IconSize::Medium);
         assert_eq!(xs[0], PAD);
+        // No divider between the Launcher and Files, or after Files before the pins.
         assert_eq!(xs[1], PAD + CELL);
+        assert_eq!(xs[2], PAD + 2.0 * CELL);
         // A divider before the first running app and before the bin, none inside a section.
-        assert_eq!(xs[2], PAD + 2.0 * CELL + DIVIDER);
-        assert_eq!(xs[3], xs[2] + CELL);
-        assert_eq!(xs[4], xs[3] + CELL + DIVIDER);
-        assert_eq!(total, xs[4] + CELL + PAD);
+        assert_eq!(xs[3], PAD + 3.0 * CELL + DIVIDER);
+        assert_eq!(xs[4], xs[3] + CELL);
+        assert_eq!(xs[5], xs[4] + CELL + DIVIDER);
+        assert_eq!(total, xs[5] + CELL + PAD);
         // Without running apps, only the one before the bin.
-        let (_, total) = layout(&[item(Section::Files), item(Section::Bin)], IconSize::Medium);
-        assert_eq!(total, PAD * 2.0 + CELL * 2.0 + DIVIDER);
+        let (_, total) =
+            layout(&[item(Section::Launcher), item(Section::Files), item(Section::Bin)], IconSize::Medium);
+        assert_eq!(total, PAD * 2.0 + CELL * 3.0 + DIVIDER);
     }
 
     #[test]
     fn bigger_icons_make_a_bigger_dock() {
         assert_eq!(HEIGHT, IconSize::Medium.height());
-        let items = [item(Section::Files), item(Section::Bin)];
+        let items = [item(Section::Launcher), item(Section::Files), item(Section::Bin)];
         let width = |s| layout(&items, s).1;
         assert!(width(IconSize::Small) < width(IconSize::Medium));
         assert!(width(IconSize::Medium) < width(IconSize::Large));
