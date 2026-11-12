@@ -8,7 +8,7 @@
 
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
-use windows::core::w;
+use windows::core::HSTRING;
 use windows::Win32::Foundation::{GetLastError, ERROR_ALREADY_EXISTS, HANDLE, HWND, POINT, RECT};
 use windows::Win32::Graphics::Gdi::{
     GetMonitorInfoW, MonitorFromPoint, MonitorFromWindow, HMONITOR, MONITORINFO,
@@ -26,7 +26,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 /// The panel's size in points, and how far down the screen's work area it starts.
-pub const WIDTH: f32 = 720.0;
+pub const WIDTH: f32 = 760.0;
 pub const HEIGHT: f32 = 560.0;
 const TOP_FRACTION: f64 = 0.14;
 
@@ -51,9 +51,20 @@ pub struct Shared {
     hide_requested: AtomicBool,
     /// Counts showings, so the window notices a new one.
     shown: AtomicU32,
+    /// Whether the panel is up, as this launcher last set it.
+    showing: AtomicBool,
 }
 
 impl Shared {
+    /// The window hid itself.
+    pub fn mark_hidden(&self) {
+        self.showing.store(false, Ordering::Release);
+    }
+
+    pub fn is_showing(&self) -> bool {
+        self.showing.load(Ordering::Acquire)
+    }
+
     pub fn take_hide_request(&self) -> bool {
         self.hide_requested.swap(false, Ordering::AcqRel)
     }
@@ -63,20 +74,26 @@ impl Shared {
     }
 }
 
+/// A kernel object's name. `SHELLMAN_INSTANCE` is added to it, so a test build can run next to the
+/// real launcher without the two finding each other.
+fn name(what: &str) -> HSTRING {
+    let instance = std::env::var("SHELLMAN_INSTANCE").unwrap_or_default();
+    HSTRING::from(format!("Local\\shellman-launcher-{what}{instance}"))
+}
+
 /// Become the resident launcher, or signal the one that is. Both sides create the event before
 /// the mutex, so whichever order two starts interleave in, the one that loses the mutex finds
 /// the event.
 pub fn claim() -> Claim {
     unsafe {
-        let Ok(event) = CreateEventW(None, false, false, w!("Local\\shellman-launcher-summon"))
-        else {
+        let Ok(event) = CreateEventW(None, false, false, &name("summon")) else {
             // Cannot coordinate; run on our own rather than not at all.
             return Claim::Resident(Instance {
                 event: HANDLE::default(),
                 _mutex: HANDLE::default(),
             });
         };
-        let mutex = CreateMutexW(None, false, w!("Local\\shellman-launcher-resident"));
+        let mutex = CreateMutexW(None, false, &name("resident"));
         let taken = mutex.is_ok() && GetLastError() == ERROR_ALREADY_EXISTS;
         if taken {
             // The resident process may take the foreground for the window it is about to show.
@@ -112,16 +129,25 @@ impl Instance {
             let hwnd = HWND(hwnd as *mut _);
             // The event wakes this thread, so nothing polls while the launcher is hidden.
             while unsafe { WaitForSingleObject(event, INFINITE) }.0 == 0 {
-                if unsafe { IsWindowVisible(hwnd) }.as_bool() {
+                // Toggle on what this launcher last did, not on `IsWindowVisible`: after a
+                // `--background` start the window library shows the window once by itself.
+                if shared.showing.load(Ordering::Acquire) {
                     shared.hide_requested.store(true, Ordering::Release);
                 } else {
-                    show(hwnd);
+                    // Count the showing first: a frame run by the show itself must already know.
+                    shared.showing.store(true, Ordering::Release);
                     shared.shown.fetch_add(1, Ordering::AcqRel);
+                    show(hwnd);
                 }
                 ctx.request_repaint();
             }
         });
     }
+}
+
+/// Whether the window is on screen right now.
+pub fn is_visible(hwnd: isize) -> bool {
+    unsafe { IsWindowVisible(HWND(hwnd as *mut _)) }.as_bool()
 }
 
 /// Hide the window. Called by the window itself.
@@ -157,6 +183,30 @@ fn show(hwnd: HWND) {
             h,
             SWP_SHOWWINDOW | SWP_FRAMECHANGED,
         );
+        take_foreground(hwnd);
+    }
+}
+
+/// Give `hwnd` the foreground and the keyboard. Windows refuses that to a process that did not
+/// get the last input, and the summoner here is a click on a bar that never activates. So when
+/// the first request is refused, send one press of a key no keyboard has (which makes this
+/// process the last input's sender; the switcher does the same) and ask again.
+fn take_foreground(hwnd: HWND) {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, VIRTUAL_KEY,
+    };
+    unsafe {
+        let _ = SetForegroundWindow(hwnd);
+        if GetForegroundWindow() == hwnd {
+            return;
+        }
+        let key = |flags| INPUT {
+            r#type: INPUT_KEYBOARD,
+            Anonymous: INPUT_0 {
+                ki: KEYBDINPUT { wVk: VIRTUAL_KEY(0xE8), dwFlags: flags, ..Default::default() },
+            },
+        };
+        SendInput(&[key(Default::default()), key(KEYEVENTF_KEYUP)], size_of::<INPUT>() as i32);
         let _ = SetForegroundWindow(hwnd);
     }
 }
@@ -184,13 +234,17 @@ fn panel_rect(work: RECT, scale: f32) -> (i32, i32, i32, i32) {
     (x, y, w, h)
 }
 
+/// The monitor under the mouse pointer: where the click that summoned the launcher happened. Only
+/// when the pointer can't be read, the monitor of the window in front.
 unsafe fn front_monitor() -> HMONITOR {
+    let mut at = POINT::default();
+    if GetCursorPos(&mut at).is_ok() {
+        return MonitorFromPoint(at, MONITOR_DEFAULTTONEAREST);
+    }
     let front = GetForegroundWindow();
     if !front.is_invalid() && !IsIconic(front).as_bool() {
         return MonitorFromWindow(front, MONITOR_DEFAULTTONEAREST);
     }
-    let mut at = POINT::default();
-    let _ = GetCursorPos(&mut at);
     MonitorFromPoint(at, MONITOR_DEFAULTTONEAREST)
 }
 
@@ -207,8 +261,8 @@ mod tests {
             bottom: 1400,
         };
         let (x, y, w, h) = panel_rect(work, 1.0);
-        assert_eq!((w, h), (720, 560));
-        assert_eq!(x, 1920 + (2560 - 720) / 2);
+        assert_eq!((w, h), (760, 560));
+        assert_eq!(x, 1920 + (2560 - 760) / 2);
         assert!(y > 100 && y < 300);
     }
 

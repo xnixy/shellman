@@ -6,6 +6,7 @@
 
 mod enumerate;
 mod launch;
+mod noise;
 
 pub use enumerate::enumerate;
 pub use launch::{launch, run_text};

@@ -1,6 +1,7 @@
 //! The launcher window: a search box on top, the app grid below while it is empty, ranked
 //! results while it is not.
 
+use crate::fade::Fade;
 use crate::grid::{self, Dir, Grid, Pos};
 use crate::results::{self, Item};
 use crate::summon::{self, Shared};
@@ -16,8 +17,14 @@ use std::time::{Duration, Instant};
 const MAX_RESULTS: usize = 60;
 /// The app list is read again on summoning when it is older than this.
 const REFRESH_AFTER: Duration = Duration::from_secs(30);
+/// The panel's content padding, and how long it takes to appear.
+const PAD_X: f32 = 28.0;
+const PAD_TOP: f32 = 22.0;
+const APPEAR: Duration = Duration::from_millis(120);
 /// If the window has no keyboard focus this long after appearing, ask for it again.
 const FOCUS_RETRY: Duration = Duration::from_millis(250);
+/// Losing focus this soon after appearing is the window settling, not the user clicking away.
+const FOCUS_GRACE: Duration = Duration::from_millis(400);
 
 pub struct Launcher {
     hwnd: isize,
@@ -55,9 +62,9 @@ impl Launcher {
             index,
             apps: Arc::default(),
             usage: Usage::load(),
-            thumbs: Thumbs::new(ctx),
+            thumbs: Thumbs::icons(ctx),
             query: String::new(),
-            grid: Grid::new(0, &[]),
+            grid: Grid::new(&[], &[]),
             grid_sel: Pos::default(),
             items: Vec::new(),
             result_sel: 0,
@@ -73,7 +80,8 @@ impl Launcher {
 
     fn rebuild_grid(&mut self) {
         let top = self.usage.top(&self.apps);
-        self.grid = Grid::new(self.apps.len(), &top);
+        let listed: Vec<usize> = (0..self.apps.len()).filter(|&i| self.apps[i].is_listed()).collect();
+        self.grid = Grid::new(&listed, &top);
         self.grid_sel = self.grid.first();
     }
 
@@ -107,6 +115,7 @@ impl Launcher {
 
     /// Back to a clean state and out of sight.
     fn hide(&mut self) {
+        self.shared.mark_hidden();
         summon::hide(self.hwnd);
         self.query.clear();
         self.items.clear();
@@ -207,40 +216,68 @@ impl Launcher {
             self.hide();
             return;
         }
+        // After a `--background` start the window library shows the window once by itself.
+        if !self.shared.is_showing() && summon::is_visible(self.hwnd) {
+            summon::hide(self.hwnd);
+        }
         let focused = ctx.input(|i| i.focused);
         if focused {
             self.had_focus = true;
-        } else if self.had_focus {
+        } else if self.had_focus && self.shown_at.elapsed() > FOCUS_GRACE {
             self.hide();
+        } else if self.had_focus {
+            // Focus flickered while the window was settling in: not a click elsewhere.
+            self.had_focus = false;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
         } else if self.shown_at.elapsed() > FOCUS_RETRY && self.shown_at.elapsed() < FOCUS_RETRY * 2 {
             ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
         }
     }
 
+    /// The search field: a glyph, the text at 22 pt, and an "esc" chip once something is typed.
+    /// No frame and no line beneath; the glass shows around it.
     fn search_box(&mut self, ui: &mut egui::Ui) {
         let c = colors();
-        let (bar, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 52.0), egui::Sense::hover());
+        let (bar, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 56.0), egui::Sense::hover());
         ui.painter().text(
-            egui::pos2(bar.left() + 14.0, bar.center().y),
+            egui::pos2(bar.left() + 11.0, bar.center().y),
             egui::Align2::CENTER_CENTER,
             glyph::SEARCH,
-            icon_font(24.0),
+            icon_font(18.0),
             c.muted,
         );
-        let edit_rect = egui::Rect::from_min_max(egui::pos2(bar.left() + 44.0, bar.top()), bar.max);
+        let chip_w = if self.typing() { 44.0 } else { 0.0 };
+        let edit_rect = egui::Rect::from_min_max(
+            egui::pos2(bar.left() + 34.0, bar.top()),
+            egui::pos2(bar.right() - chip_w, bar.bottom()),
+        );
         let edit = egui::TextEdit::singleline(&mut self.query)
             .id(egui::Id::new("query"))
-            .font(egui::FontId::proportional(26.0))
+            .font(egui::FontId::proportional(22.0))
             .frame(false)
             .margin(egui::Margin::ZERO)
             .vertical_align(egui::Align::Center)
-            .hint_text(egui::RichText::new("Search apps").color(c.muted))
+            .hint_text(egui::RichText::new("Search").color(c.muted))
             .desired_width(edit_rect.width());
         let resp = ui.put(edit_rect, edit);
         // The box owns the keyboard whenever the launcher is showing.
         resp.request_focus();
         if resp.changed() {
             self.rank();
+        }
+        if self.typing() {
+            let chip = egui::Rect::from_center_size(
+                egui::pos2(bar.right() - 20.0, bar.center().y),
+                egui::vec2(34.0, 22.0),
+            );
+            ui.painter().rect_filled(chip, 7.0, c.text.gamma_multiply(0.08));
+            ui.painter().text(
+                chip.center(),
+                egui::Align2::CENTER_CENTER,
+                "esc",
+                egui::FontId::proportional(11.0),
+                c.muted,
+            );
         }
     }
 
@@ -257,22 +294,51 @@ impl Launcher {
         self.follow_window(ctx);
         self.keys(ctx);
 
-        theme::set_light(ctx.theme() == egui::Theme::Light);
+        // SHELLMAN_FORCE_LIGHT: look at the light palette without changing Windows' setting.
+        let force_light = std::env::var_os("SHELLMAN_FORCE_LIGHT").is_some();
+        theme::set_light(force_light || ctx.theme() == egui::Theme::Light);
         let c = colors();
+        let screen = ctx.screen_rect();
+
+        // ---- PANEL BACKGROUND: the one place the panel's own fill is painted. ----
         let fill = if self.glass { c.shell } else { c.bg };
+        egui::CentralPanel::default().frame(egui::Frame::new().fill(fill)).show(ctx, |ui| {
+            if self.glass {
+                // The same surfaces as Files and the dock: the glass tint, then the sheet.
+                ui.painter().rect_filled(screen, 0.0, c.sheet);
+            }
+        });
+        // ---- end of panel background ----
+
+        // On showing, the content fades in and grows from 97%; nothing runs once it is done.
+        let t = (self.shown_at.elapsed().as_secs_f32() / APPEAR.as_secs_f32()).min(1.0);
+        let ease = 1.0 - (1.0 - t) * (1.0 - t);
+        if t < 1.0 {
+            ctx.request_repaint();
+        }
+        let layer = egui::LayerId::new(egui::Order::Foreground, egui::Id::new("content"));
+        let scale = 0.97 + 0.03 * ease;
+        ctx.set_transform_layer(
+            layer,
+            egui::emath::TSTransform::new(screen.center().to_vec2() * (1.0 - scale), scale),
+        );
         let mut picked = None;
-        egui::CentralPanel::default()
-            .frame(egui::Frame::new().fill(fill).inner_margin(egui::Margin::same(20)))
+        egui::Area::new(egui::Id::new("content"))
+            .order(egui::Order::Foreground)
+            .fixed_pos(screen.min)
+            .constrain(false)
             .show(ctx, |ui| {
-                if self.glass {
-                    // The same surfaces as Files and the dock: the glass tint, then the sheet.
-                    ui.painter().rect_filled(ctx.screen_rect(), 0.0, c.sheet);
-                }
-                self.search_box(ui);
-                let y = ui.cursor().top() + 4.0;
-                ui.painter().hline(ui.max_rect().x_range(), y, egui::Stroke::new(1.0_f32, c.hairline));
-                ui.add_space(12.0);
-                picked = self.content(ui);
+                ui.set_opacity(ease);
+                ui.set_min_size(screen.size());
+                let inner = egui::Rect::from_min_max(
+                    screen.min + egui::vec2(PAD_X, PAD_TOP),
+                    egui::pos2(screen.max.x - PAD_X, screen.max.y),
+                );
+                ui.scope_builder(egui::UiBuilder::new().max_rect(inner), |ui| {
+                    self.search_box(ui);
+                    ui.add_space(14.0);
+                    picked = self.content(ui, Fade { edge: screen.max.y });
+                });
             });
         if let Some(item) = picked {
             self.activate(item);
@@ -282,7 +348,7 @@ impl Launcher {
     }
 
     /// The grid or the result list. Returns what was clicked.
-    fn content(&mut self, ui: &mut egui::Ui) -> Option<Item> {
+    fn content(&mut self, ui: &mut egui::Ui, fade: Fade) -> Option<Item> {
         if self.typing() {
             let out = results::show(
                 ui,
@@ -291,6 +357,7 @@ impl Launcher {
                 &self.query,
                 self.result_sel,
                 &mut self.thumbs,
+                fade,
                 self.reveal,
             );
             if let Some(i) = out.hover {
@@ -304,6 +371,7 @@ impl Launcher {
                 &self.apps,
                 self.grid_sel,
                 &mut self.thumbs,
+                fade,
                 self.reveal,
                 self.reset_scroll,
             );

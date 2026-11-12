@@ -6,10 +6,13 @@
 //! resident process without showing the panel.
 
 mod app;
+mod fade;
 mod grid;
 mod icon;
+mod label;
 mod rank;
 mod results;
+mod section;
 mod summon;
 mod usage;
 
