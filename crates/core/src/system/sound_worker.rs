@@ -9,6 +9,7 @@ use super::sound_dev::{self as dev, Flow};
 use super::sound_format::{self as format, FormatSpec};
 use super::sound_page::{resolve_selected, Cmd, Detail, Page, Role, Section};
 use super::sound_sessions::{Poke, Sessions};
+use super::sound_spatial as spatial;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
@@ -53,6 +54,12 @@ struct Worker {
     /// device format and the mix format. Lets any change be taken back, even from a format the
     /// page cannot build (an encoded stream).
     undo: HashMap<String, (format::Raw, format::Raw)>,
+    /// Why the last spatial change / tone failed, per device.
+    spatial_err: HashMap<String, String>,
+    tone_err: HashMap<String, String>,
+    /// Hears each output's spatial state change.
+    spatial_watch: Vec<spatial::Watch>,
+    to_self: Sender<Cmd>,
     sessions: Sessions,
     meter: Option<IAudioMeterInformation>,
     attached: Vec<IAudioEndpointVolume>,
@@ -78,6 +85,10 @@ pub(crate) fn run(rx: Receiver<Cmd>, to_self: Sender<Cmd>, out: Arc<Mailbox<Page
         chosen: HashMap::new(),
         probed: HashMap::new(),
         undo: HashMap::new(),
+        spatial_err: HashMap::new(),
+        tone_err: HashMap::new(),
+        spatial_watch: Vec::new(),
+        to_self: to_self.clone(),
         sessions: Sessions::new(poke),
         meter: None,
         attached: Vec::new(),
@@ -145,6 +156,15 @@ impl Worker {
                 }
             }
         }
+        self.spatial_watch.clear();
+        for d in dev::list(&self.en, Flow::Output) {
+            let tx = self.to_self.clone();
+            if let Some(w) = spatial::watch(&d.id, move || {
+                let _ = tx.send(Cmd::Refresh);
+            }) {
+                self.spatial_watch.push(w);
+            }
+        }
         // SAFETY: COM call with valid arguments.
         let default = unsafe { self.en.GetDefaultAudioEndpoint(eRender, eConsole).ok() };
         self.sessions.attach(default.as_ref());
@@ -206,7 +226,29 @@ impl Worker {
                     }
                     self.probed.clear();
                 }
-                Cmd::Tone(id) => tone_later(id),
+                Cmd::Tone(id) => {
+                    self.tone_err.remove(&id);
+                    tone_later(id, self.to_self.clone());
+                }
+                Cmd::ToneDone(id, ok) => {
+                    if ok {
+                        self.tone_err.remove(&id);
+                    } else {
+                        self.tone_err.insert(id, "The test sound could not start. A device set to an encoded format (such as Dolby) cannot play it.".into());
+                    }
+                }
+                Cmd::Spatial(id, subtype) => {
+                    self.spatial_err.remove(&id);
+                    spatial_later(id, subtype, self.to_self.clone());
+                }
+                Cmd::SpatialDone(id, r) => match r {
+                    Ok(()) => {
+                        self.spatial_err.remove(&id);
+                    }
+                    Err(e) => {
+                        self.spatial_err.insert(id, e);
+                    }
+                },
                 Cmd::Meter(id) => {
                     self.meter = id.and_then(|id| dev::open(&self.en, &id)).and_then(|d| dev::meter(&d));
                 }
@@ -263,23 +305,38 @@ impl Worker {
             format: current,
             can_undo: self.undo.contains_key(id),
             supported,
+            spatial: if output { spatial::read(id) } else { None },
+            spatial_error: self.spatial_err.get(id).cloned(),
+            tone_error: self.tone_err.get(id).cloned(),
         })
     }
 }
 
 /// Play the test tone from a thread of its own, one at a time: it takes its length to play, and
 /// the worker must stay free to hear the volume move meanwhile.
-fn tone_later(id: String) {
+fn tone_later(id: String, tx: Sender<Cmd>) {
     static BUSY: AtomicBool = AtomicBool::new(false);
     if BUSY.swap(true, Ordering::SeqCst) {
         return;
     }
     live::spawn("sound-tone", move || {
         live::init_mta();
-        if let Some(d) = audio::enumerator().and_then(|en| dev::open(&en, &id)) {
-            dev::play_tone(&d);
-        }
+        let ok = match audio::enumerator().and_then(|en| dev::open(&en, &id)) {
+            Some(d) => dev::play_tone(&d),
+            None => false,
+        };
         BUSY.store(false, Ordering::SeqCst);
+        let _ = tx.send(Cmd::ToneDone(id, ok));
+    });
+}
+
+/// Ask Windows for a spatial format from a thread of its own (the answer is awaited), and tell the
+/// worker how it went; the change itself reaches the page through ConfigurationChanged.
+fn spatial_later(id: String, subtype: String, tx: Sender<Cmd>) {
+    live::spawn("sound-spatial", move || {
+        live::init_mta();
+        let r = spatial::set(&id, &subtype);
+        let _ = tx.send(Cmd::SpatialDone(id, r));
     });
 }
 

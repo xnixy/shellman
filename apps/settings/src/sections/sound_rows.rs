@@ -50,12 +50,17 @@ pub fn device_row(ui: &mut Ui, d: &Device, selected: bool) -> Response {
     };
     let name = egui::Rect::from_min_max(
         egui::pos2(row.left() + 48.0, row.top()),
-        egui::pos2(row.right() - tag_w - 12.0, row.bottom()),
+        egui::pos2(row.right() - tag_w - 4.0, row.bottom()),
     );
-    draw_text(ui, name, &d.name, FontId::proportional(14.0), text, false);
+    let name_font = FontId::proportional(14.0);
+    let cut = ui.fonts(|f| f.layout_no_wrap(d.name.clone(), name_font.clone(), text)).size().x > name.width();
+    draw_text(ui, name, &d.name, name_font, text, false);
     if !tag.is_empty() {
         let tag_rect = egui::Rect::from_min_max(egui::pos2(row.right() - tag_w - 8.0, row.top()), egui::pos2(row.right() - 12.0, row.bottom()));
         draw_text(ui, tag_rect, tag, FontId::proportional(12.0), muted, true);
+    }
+    if cut {
+        return resp.on_hover_text(&d.name);
     }
     resp
 }
