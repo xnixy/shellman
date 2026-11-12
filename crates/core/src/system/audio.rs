@@ -45,7 +45,7 @@ pub struct Sound {
 
 /// COM must be initialised on whichever thread calls us. S_FALSE (already initialised) and
 /// RPC_E_CHANGED_MODE (thread already MTA) both still leave COM usable, so the result is ignored.
-fn init_com() {
+pub(crate) fn init_com() {
     // SAFETY: plain FFI call with no pointers.
     unsafe {
         let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
@@ -203,6 +203,10 @@ pub(crate) mod policy {
     }
 
     // The format calls, for `sound_format`; `format` receives a CoTaskMem WAVEFORMATEX.
+    pub unsafe fn set_visibility(policy: &IPolicyConfig, id: PCWSTR, visible: i32) -> HRESULT {
+        policy.SetEndpointVisibility(id, visible)
+    }
+
     pub unsafe fn get_device_format(policy: &IPolicyConfig, id: PCWSTR, default: i32, format: *mut *mut core::ffi::c_void) -> HRESULT {
         policy.GetDeviceFormat(id, default, format)
     }

@@ -4,6 +4,7 @@
 pub mod app_host;
 pub mod apps_index;
 pub mod config;
+pub mod elevate;
 pub mod foreground;
 pub mod fsops;
 pub mod live_thumb;

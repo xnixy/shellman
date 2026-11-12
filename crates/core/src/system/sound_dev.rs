@@ -10,7 +10,7 @@ use windows::Win32::Foundation::PROPERTYKEY;
 use windows::Win32::Media::Audio::Endpoints::{IAudioEndpointVolume, IAudioMeterInformation};
 use windows::Win32::Media::Audio::{
     eCapture, eCommunications, eConsole, eRender, EDataFlow, IAudioClient, IAudioRenderClient,
-    IMMDevice, IMMDeviceEnumerator, AUDCLNT_SHAREMODE_SHARED, DEVICE_STATE_ACTIVE, WAVEFORMATEX,
+    IMMDevice, IMMDeviceEnumerator, AUDCLNT_SHAREMODE_SHARED, DEVICE_STATE_ACTIVE, DEVICE_STATE_DISABLED, WAVEFORMATEX,
 };
 use windows::Win32::System::Com::StructuredStorage::{PropVariantClear, PropVariantToStringAlloc, PropVariantToUInt32};
 use windows::Win32::System::Com::{CoTaskMemFree, CLSCTX_ALL, STGM_READ};
@@ -138,6 +138,24 @@ pub fn list(en: &IMMDeviceEnumerator, flow: Flow) -> Vec<Device> {
                 volume: vol.map_or(0.0, |v| v.level),
                 muted: vol.is_some_and(|v| v.muted),
             });
+        }
+    }
+    out
+}
+
+/// The devices of `flow` that are turned off, as they have no volume or default to show.
+pub fn list_disabled(en: &IMMDeviceEnumerator, flow: Flow) -> Vec<Device> {
+    let mut out = Vec::new();
+    // SAFETY: COM calls with valid arguments; a device that fails to answer is skipped.
+    unsafe {
+        let Ok(all) = en.EnumAudioEndpoints(flow.data_flow(), DEVICE_STATE_DISABLED) else {
+            return out;
+        };
+        for i in 0..all.GetCount().unwrap_or(0) {
+            let Ok(dev) = all.Item(i) else { continue };
+            let Some(id) = device_id(&dev) else { continue };
+            let (name, kind) = name_and_kind(&dev, flow);
+            out.push(Device { id, name, kind, default: false, default_comm: false, volume: 0.0, muted: false });
         }
     }
     out

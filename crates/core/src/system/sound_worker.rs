@@ -4,8 +4,10 @@
 //! otherwise it sleeps in a blocking receive and costs nothing.
 
 use super::audio::{self, set_default};
+use crate::elevate::{self, ops::Op};
 use super::live::{self, Mailbox, Wake};
 use super::sound_dev::{self as dev, Flow};
+use super::sound_enable::{self, Next};
 use super::sound_format::{self as format, FormatSpec};
 use super::sound_page::{resolve_selected, Cmd, Detail, Page, Role, Section};
 use super::sound_sessions::{Poke, Sessions};
@@ -57,6 +59,8 @@ struct Worker {
     /// Why the last spatial change / tone failed, per device.
     spatial_err: HashMap<String, String>,
     tone_err: HashMap<String, String>,
+    /// Why the last turning on or off failed.
+    enable_err: Option<String>,
     /// Hears each output's spatial state change.
     spatial_watch: Vec<spatial::Watch>,
     to_self: Sender<Cmd>,
@@ -87,6 +91,7 @@ pub(crate) fn run(rx: Receiver<Cmd>, to_self: Sender<Cmd>, out: Arc<Mailbox<Page
         undo: HashMap::new(),
         spatial_err: HashMap::new(),
         tone_err: HashMap::new(),
+        enable_err: None,
         spatial_watch: Vec::new(),
         to_self: to_self.clone(),
         sessions: Sessions::new(poke),
@@ -237,6 +242,11 @@ impl Worker {
                         self.tone_err.insert(id, "The test sound could not start. A device set to an encoded format (such as Dolby) cannot play it.".into());
                     }
                 }
+                Cmd::Enable(id, on) => {
+                    self.enable_err = None;
+                    enable_later(id, on, self.to_self.clone());
+                }
+                Cmd::EnableDone(err) => self.enable_err = err,
                 Cmd::Spatial(id, subtype) => {
                     self.spatial_err.remove(&id);
                     spatial_later(id, subtype, self.to_self.clone());
@@ -275,6 +285,7 @@ impl Worker {
             output: self.section(Flow::Output),
             input: self.section(Flow::Input),
             sessions: self.sessions.read(),
+            notice: self.enable_err.clone(),
         }
     }
 
@@ -282,7 +293,8 @@ impl Worker {
         let devices = dev::list(&self.en, flow);
         let selected = resolve_selected(&devices, self.chosen.get(&flow).map(String::as_str));
         let detail = selected.as_deref().and_then(|id| self.detail(flow, id));
-        Section { devices, selected, detail }
+        let disabled = dev::list_disabled(&self.en, flow);
+        Section { devices, disabled, selected, detail }
     }
 
     fn detail(&mut self, flow: Flow, id: &str) -> Option<Detail> {
@@ -327,6 +339,24 @@ fn tone_later(id: String, tx: Sender<Cmd>) {
         };
         BUSY.store(false, Ordering::SeqCst);
         let _ = tx.send(Cmd::ToneDone(id, ok));
+    });
+}
+
+/// Turn a device on or off from a thread of its own: directly first, and through the elevated
+/// helper (which shows the UAC prompt and is waited for) only when Windows says access denied.
+fn enable_later(id: String, on: bool, tx: Sender<Cmd>) {
+    live::spawn("sound-enable", move || {
+        live::init_mta();
+        let err = match sound_enable::next_step(sound_enable::set_enabled(&id, on)) {
+            Next::Done => None,
+            Next::Fail(why) => Some(why),
+            Next::Elevate => match Op::sound_device(on, &id) {
+                Some(op) => elevate::run(&op).message(),
+                None => Some("Windows gave this device an id the helper does not accept.".into()),
+            },
+        };
+        // The device-state notification refreshes the page; this carries any message.
+        let _ = tx.send(Cmd::EnableDone(err));
     });
 }
 

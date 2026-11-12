@@ -4,7 +4,7 @@
 //! what it last published and sends it what was asked.
 
 use super::sound_mixer;
-use super::sound_rows::{device_row, link_row, meter_bar, volume_row};
+use super::sound_rows::{device_row, disabled_row, link_row, meter_bar, volume_row};
 use crate::page;
 use crate::state::State;
 use shellman_core::system::sound_dev::{self, Device, Flow};
@@ -64,6 +64,11 @@ pub fn show(ui: &mut egui::Ui, st: &mut State) {
     page::gap(ui);
     sound_mixer::show(ui, handle, &page.sessions, &mut st.thumbs);
     page::gap(ui);
+    if let Some(why) = &page.notice {
+        ui.add_space(6.0);
+        ui.label(theme::muted(why).size(12.0));
+    }
+    page::gap(ui);
     if link_row(ui, "More sound settings").clicked() {
         sound_dev::open_classic(0);
     }
@@ -77,6 +82,8 @@ fn device_section(ui: &mut egui::Ui, h: &SoundPage, flow: Flow, section: &Sectio
     if section.devices.is_empty() {
         let none = if output { "No output device is connected." } else { "No microphone is connected." };
         ui.label(theme::muted(none));
+        // Everything may be turned off, and then this is the way back.
+        disabled_group(ui, h, &section.disabled);
         return;
     }
     ui.spacing_mut().item_spacing.y = 4.0;
@@ -85,13 +92,15 @@ fn device_section(ui: &mut egui::Ui, h: &SoundPage, flow: Flow, section: &Sectio
             h.select(flow, &d.id);
         }
     }
-    let Some(dev) = section.selected_device() else { return };
-    ui.add_space(10.0);
-    controls(ui, h, flow, section, dev);
-    if let Some(detail) = &section.detail {
-        details(ui, h, flow, dev, detail);
+    if let Some(dev) = section.selected_device() {
+        ui.add_space(10.0);
+        controls(ui, h, flow, section, dev);
+        if let Some(detail) = &section.detail {
+            details(ui, h, flow, dev, detail);
+        }
     }
-    let Some(meter) = meter else { return };
+    disabled_group(ui, h, &section.disabled);
+    let (Some(meter), Some(dev)) = (meter, section.selected_device()) else { return };
     // The meter follows the chosen microphone, and stops with it.
     let want = watching.then(|| dev.id.clone());
     if *meter != want {
@@ -102,6 +111,21 @@ fn device_section(ui: &mut egui::Ui, h: &SoundPage, flow: Flow, section: &Sectio
         page::gap(ui);
         page::label(ui, "Input level");
         meter_bar(ui, h.peak());
+    }
+}
+
+/// Devices that are turned off, set apart and muted. Pressing one turns it on (Windows may ask
+/// for administrator rights first).
+fn disabled_group(ui: &mut egui::Ui, h: &SoundPage, disabled: &[Device]) {
+    if disabled.is_empty() {
+        return;
+    }
+    ui.add_space(10.0);
+    ui.label(theme::muted("Disabled").size(12.0));
+    for d in disabled {
+        if disabled_row(ui, d).clicked() {
+            h.set_enabled(&d.id, true);
+        }
     }
 }
 
@@ -127,6 +151,9 @@ fn controls(ui: &mut egui::Ui, h: &SoundPage, flow: Flow, section: &Section, dev
             if let Some(id) = target {
                 h.set_default(id, flow, Role::Calls);
             }
+        }
+        if ui.button("Disable").on_hover_text("Turn this device off. It stays listed below, to turn on again.").clicked() {
+            h.set_enabled(&dev.id, false);
         }
     });
 }
