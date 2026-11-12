@@ -15,9 +15,9 @@ mod usage;
 
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use shellman_ui::appearance::{self, Appearance};
-use shellman_ui::{theme, window};
+use shellman_ui::glass::{GlassPanel, Style};
+use shellman_ui::theme;
 use std::sync::Arc;
-use windows::Win32::Foundation::HWND;
 
 fn main() -> eframe::Result {
     let background = std::env::args().any(|a| a == "--background");
@@ -47,13 +47,14 @@ fn main() -> eframe::Result {
             let look = Appearance::load_or(Appearance::default());
             look.apply(&cc.egui_ctx);
             let mut hwnd = 0isize;
-            let mut glass = false;
             if let Ok(handle) = cc.window_handle() {
                 if let RawWindowHandle::Win32(win32) = handle.as_raw() {
                     hwnd = win32.hwnd.get();
-                    glass = window::frost_window(HWND(hwnd as *mut _));
                 }
             }
+            // Rounded glass under the panel; without it, the panel paints its own surface.
+            let panel = (hwnd != 0).then(|| GlassPanel::attach(hwnd, Style::from_theme(summon::RADIUS)));
+            let glass = panel.as_ref().is_some_and(GlassPanel::composed);
             let shared = Arc::new(summon::Shared::default());
             instance.serve(hwnd, cc.egui_ctx.clone(), shared.clone());
             if !background {
@@ -65,6 +66,7 @@ fn main() -> eframe::Result {
             }
             Ok(Box::new(Launcher {
                 inner: app::Launcher::new(cc.egui_ctx.clone(), hwnd, glass, shared),
+                panel,
                 look,
                 look_watch,
                 _instance: instance,
@@ -76,6 +78,8 @@ fn main() -> eframe::Result {
 /// The window's shell: follows the shared look live, and hands each frame to the launcher.
 struct Launcher {
     inner: app::Launcher,
+    /// The panel's rounded glass (None only without a window handle).
+    panel: Option<GlassPanel>,
     look: Appearance,
     look_watch: shellman_core::watch::Watcher,
     /// Holds the single-instance mutex for as long as the process runs.
@@ -98,5 +102,10 @@ impl eframe::App for Launcher {
             }
         }
         self.inner.frame(ctx);
+        // After the frame, which takes the light or dark mode from Windows. Free when the look
+        // is unchanged.
+        if let Some(panel) = &self.panel {
+            panel.set_style(Style::from_theme(summon::RADIUS));
+        }
     }
 }

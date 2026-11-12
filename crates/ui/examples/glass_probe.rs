@@ -7,6 +7,10 @@
 //!   With `dx`, the window moves right by `dx` half-way through, to see the panel follow.
 //! - `accent`: the undocumented accent policy (acrylic blur-behind) plus a rounded window region.
 //! - `system`: DWM's system backdrop (transient/acrylic) plus a rounded window region.
+//! - `white`: a plain white backdrop window, to run `sync` over.
+//! - `sync`: a `GlassPanel` under a window that shows a small white marker 40 px from its left
+//!   edge and moves back and forth every 10 ms. In any screen capture, the marker should sit at
+//!   the same distance from the glass's edge; a lagging backdrop shows as a different distance.
 
 use shellman_ui::glass::{GlassPanel, Style};
 use shellman_ui::theme;
@@ -21,6 +25,7 @@ use windows::Win32::Graphics::Gdi::{
     SelectObject, SetBkMode, SetTextColor, DT_CENTER, PAINTSTRUCT, TRANSPARENT,
 };
 use windows::Win32::Graphics::Gdi::{CreateRoundRectRgn, SetWindowRgn};
+use windows::Win32::Graphics::Gdi::{RedrawWindow, RDW_INVALIDATE, RDW_UPDATENOW};
 use windows::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress, LoadLibraryW};
 use windows::Win32::UI::Controls::MARGINS;
 use windows::Win32::UI::HiDpi::{
@@ -32,7 +37,9 @@ use windows::Win32::UI::WindowsAndMessaging::{
     SWP_NOSIZE, SW_SHOWNOACTIVATE, WM_TIMER, WNDCLASSW, WS_EX_NOREDIRECTIONBITMAP,
     WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
 };
-use windows::Win32::UI::WindowsAndMessaging::{GetClientRect, WM_PAINT};
+use windows::Win32::UI::WindowsAndMessaging::{
+    GetClientRect, SetLayeredWindowAttributes, LWA_COLORKEY, SWP_NOMOVE, WM_PAINT, WS_EX_LAYERED,
+};
 
 #[repr(C)]
 struct AccentPolicy {
@@ -74,9 +81,13 @@ unsafe fn paint_stripes(hwnd: HWND) {
     let dc = BeginPaint(hwnd, &mut ps);
     let mut rc = RECT::default();
     let _ = GetClientRect(hwnd, &mut rc);
-    let colors = [
-        0x00FFFFFF, 0x00E89A3C, 0x0000D7FF, 0x00101010, 0x004763FF, 0x0090EE90,
-    ];
+    let colors: &[u32] = if SYNC {
+        &[0x00FFFFFF]
+    } else {
+        &[
+            0x00FFFFFF, 0x00E89A3C, 0x0000D7FF, 0x00101010, 0x004763FF, 0x0090EE90,
+        ]
+    };
     let band = (rc.right / colors.len() as i32).max(1);
     for (i, c) in colors.iter().enumerate() {
         let r = RECT {
@@ -88,6 +99,10 @@ unsafe fn paint_stripes(hwnd: HWND) {
         let brush = CreateSolidBrush(COLORREF(*c));
         FillRect(dc, &r, brush);
         let _ = DeleteObject(brush.into());
+    }
+    if SYNC {
+        let _ = EndPaint(hwnd, &ps);
+        return;
     }
     let font = CreateFontW(
         120,
@@ -133,10 +148,82 @@ unsafe extern "system" fn stripes_proc(
     DefWindowProcW(hwnd, msg, wparam, lparam)
 }
 
+/// `sync` mode: the backdrop is plain white, and the content window shows a white marker 40 px
+/// in from its left edge on a colour-keyed (see-through) background.
+static mut SYNC: bool = false;
+/// `sync` mode: where the window is, and which way it is moving.
+static mut STEP: (i32, i32, i32, i32) = (0, 0, 0, 4);
+/// `sync` mode with `PROBE_RESIZE=1`: the window's starting size; it then grows and shrinks
+/// instead of moving, with the marker 40 px in from its right edge.
+static mut RESIZE: Option<(i32, i32)> = None;
+
+unsafe fn paint_marker(hwnd: HWND) {
+    let mut ps = PAINTSTRUCT::default();
+    let dc = BeginPaint(hwnd, &mut ps);
+    let mut rc = RECT::default();
+    let _ = GetClientRect(hwnd, &mut rc);
+    let black = CreateSolidBrush(COLORREF(0));
+    FillRect(dc, &rc, black);
+    let white = CreateSolidBrush(COLORREF(0x00FFFFFF));
+    let mid = rc.bottom / 2;
+    let resizing = RESIZE;
+    let left = if resizing.is_some() {
+        rc.right - 60
+    } else {
+        40
+    };
+    let marker = RECT {
+        left,
+        top: mid - 10,
+        right: left + 20,
+        bottom: mid + 10,
+    };
+    FillRect(dc, &marker, white);
+    let _ = DeleteObject(black.into());
+    let _ = DeleteObject(white.into());
+    let _ = EndPaint(hwnd, &ps);
+}
+
 unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+    if msg == WM_PAINT && SYNC {
+        paint_marker(hwnd);
+        return LRESULT(0);
+    }
     if msg == WM_TIMER {
         if wparam.0 == 1 {
             PostQuitMessage(0);
+        } else if wparam.0 == 3 {
+            // Back and forth over 300 px, a few pixels every tick.
+            let (x0, y, at, step) = STEP;
+            let step = if at + step > 300 || at + step < 0 {
+                -step
+            } else {
+                step
+            };
+            STEP = (x0, y, at + step, step);
+            if let Some((w, h)) = RESIZE {
+                // Wider and narrower instead, the marker painted at once at the new right edge.
+                let _ = SetWindowPos(
+                    hwnd,
+                    None,
+                    0,
+                    0,
+                    w + at + step,
+                    h,
+                    SWP_NOMOVE | SWP_NOACTIVATE,
+                );
+                let _ = RedrawWindow(Some(hwnd), None, None, RDW_INVALIDATE | RDW_UPDATENOW);
+            } else {
+                let _ = SetWindowPos(
+                    hwnd,
+                    None,
+                    x0 + at + step,
+                    y,
+                    0,
+                    0,
+                    SWP_NOSIZE | SWP_NOACTIVATE,
+                );
+            }
         } else {
             let _ = KillTimer(Some(hwnd), 2);
             let (x, y, dx) = MOVE;
@@ -168,7 +255,8 @@ fn main() {
             ..Default::default()
         };
         RegisterClassW(&class);
-        if mode == "stripes" {
+        SYNC = mode == "sync" || mode == "white";
+        if mode == "stripes" || mode == "white" {
             let class = WNDCLASSW {
                 lpfnWndProc: Some(stripes_proc),
                 hInstance: instance.into(),
@@ -202,8 +290,14 @@ fn main() {
             }
             return;
         }
+        // In `sync` mode the window draws its marker; elsewhere it draws nothing at all.
+        let content = if SYNC {
+            WS_EX_LAYERED
+        } else {
+            WS_EX_NOREDIRECTIONBITMAP
+        };
         let hwnd = CreateWindowExW(
-            WS_EX_NOREDIRECTIONBITMAP | WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
+            content | WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
             w!("GlassProbe"),
             w!("glass probe"),
             WS_POPUP,
@@ -274,8 +368,9 @@ fn main() {
                     theme::set_glass(&egui::Context::default(), g);
                 }
                 let style = Style::from_theme(24.0);
-                _panel = GlassPanel::attach(hwnd.0 as isize, style);
-                report(&format!("panel: {}", _panel.is_some()));
+                let panel = GlassPanel::attach(hwnd.0 as isize, style);
+                report(&format!("panel composed: {}", panel.composed()));
+                _panel = Some(panel);
             }
         }
         let _ = SetWindowPos(hwnd, Some(HWND_TOPMOST), x, y, w_, h, SWP_NOACTIVATE);
@@ -284,6 +379,15 @@ fn main() {
         if dx != 0 {
             MOVE = (x, y, dx);
             SetTimer(Some(hwnd), 2, seconds as u32 * 500, None);
+        }
+        if SYNC {
+            // Black is see-through, so only the marker shows over the glass.
+            let _ = SetLayeredWindowAttributes(hwnd, COLORREF(0), 255, LWA_COLORKEY);
+            STEP = (x, y, 0, 4);
+            if std::env::var("PROBE_RESIZE").is_ok_and(|v| v == "1") {
+                RESIZE = Some((w_, h));
+            }
+            SetTimer(Some(hwnd), 3, 10, None);
         }
         let mut msg = MSG::default();
         while GetMessageW(&mut msg, None, 0, 0).as_bool() {

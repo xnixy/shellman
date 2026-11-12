@@ -8,7 +8,7 @@
 
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
-use windows::core::w;
+use windows::core::HSTRING;
 use windows::Win32::Foundation::{GetLastError, ERROR_ALREADY_EXISTS, HANDLE, HWND, POINT, RECT};
 use windows::Win32::Graphics::Gdi::{
     GetMonitorInfoW, MonitorFromPoint, MonitorFromWindow, HMONITOR, MONITORINFO,
@@ -29,6 +29,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
 pub const WIDTH: f32 = 720.0;
 pub const HEIGHT: f32 = 560.0;
 const TOP_FRACTION: f64 = 0.14;
+/// The panel's corner radius in points.
+pub const RADIUS: f32 = 24.0;
 
 /// Whether this process is the resident launcher; if not, the resident one has been signalled
 /// and this process has nothing more to do.
@@ -67,16 +69,21 @@ impl Shared {
 /// the mutex, so whichever order two starts interleave in, the one that loses the mutex finds
 /// the event.
 pub fn claim() -> Claim {
+    // `SHELLMAN_INSTANCE` names a separate launcher (for trying a build next to the one in use).
+    let suffix = std::env::var("SHELLMAN_INSTANCE")
+        .map(|name| format!("-{name}"))
+        .unwrap_or_default();
+    let event_name = HSTRING::from(format!("Local\\shellman-launcher-summon{suffix}"));
+    let mutex_name = HSTRING::from(format!("Local\\shellman-launcher-resident{suffix}"));
     unsafe {
-        let Ok(event) = CreateEventW(None, false, false, w!("Local\\shellman-launcher-summon"))
-        else {
+        let Ok(event) = CreateEventW(None, false, false, &event_name) else {
             // Cannot coordinate; run on our own rather than not at all.
             return Claim::Resident(Instance {
                 event: HANDLE::default(),
                 _mutex: HANDLE::default(),
             });
         };
-        let mutex = CreateMutexW(None, false, w!("Local\\shellman-launcher-resident"));
+        let mutex = CreateMutexW(None, false, &mutex_name);
         let taken = mutex.is_ok() && GetLastError() == ERROR_ALREADY_EXISTS;
         if taken {
             // The resident process may take the foreground for the window it is about to show.

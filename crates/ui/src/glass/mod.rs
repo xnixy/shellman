@@ -1,12 +1,36 @@
 //! Floating glass: a rounded surface of any radius with real blur, a soft shadow and a light rim,
 //! under a window whose content egui draws on a transparent background.
 //!
-//! MEASUREMENTS (to be filled in).
+//! What was measured (Windows 11 build 26300, `examples/glass_probe.rs`, screen captures at 150%
+//! and 300%):
 //!
-//! Using it: attach a panel to the window once it exists, draw the window's content with
-//! [`content_frame`] (transparent while the panel is composed), and call
-//! [`GlassPanel::set_style`] when the theme changes. The panel follows the window's moves,
-//! resizes, showing, hiding and DPI on its own.
+//! - DWM's system backdrop (`DWMWA_SYSTEMBACKDROP_TYPE`, what `window::frost_window` uses) paints
+//!   the whole window rectangle; a rounded window region does not clip it. On a window that is
+//!   never active it is a flat grey, not glass.
+//! - The undocumented accent policy (`SetWindowCompositionAttribute`, acrylic blur-behind) does
+//!   blur, but also over the whole rectangle: the rounded region is ignored there too.
+//! - Windows.UI.Composition works: the host backdrop brush (the blurred desktop behind the window)
+//!   clipped by a rounded-rectangle geometry gives real blur with smooth, anti-aliased corners at
+//!   any radius, and a drop shadow masked by the same shape. Its visuals cannot go under an egui
+//!   window's own content, and its shadow needs room outside the shape, so they live in a second
+//!   window just below.
+//!
+//! So a panel is two windows: the served window keeps its size, loses Windows' corners, border
+//! and backdrop, and gets a rounded window region (so clicks outside the shape fall through); a
+//! backdrop window of its own class sits right under it, shape plus shadow, layered and
+//! transparent to the mouse, and shows only the composition tree. A subclass on the served window
+//! moves, sizes, shows and hides the backdrop in the same message that moved the window; screen
+//! captures taken while a window moved every 10 ms found the two never apart. During a live resize
+//! about one capture in forty showed them one step apart.
+//!
+//! When transparency effects are off, the tree fills the shape with a solid colour instead of the
+//! blur (rounded corners and shadow stay). When composition is not available at all (or
+//! `SHELLMAN_NO_COMPOSITION` is set, to see this path), the window paints its own rounded surface
+//! with [`content_frame`], without blur or shadow.
+//!
+//! Using it: attach a panel once the window exists, paint the content inside
+//! [`content_frame`]`(panel.composed(), ..)`, and pass the theme's style to
+//! [`GlassPanel::set_style`] when it may have changed. Everything else follows on its own.
 
 mod backdrop;
 mod style;
@@ -38,7 +62,7 @@ use windows::UI::ViewManagement::UISettings;
 /// The subclass id on the served window.
 const SUBCLASS: usize = 0x6c61_7373;
 
-/// A glass surface under one window. Dropping it removes the surface.
+/// A rounded glass surface under one window. Dropping it removes the surface.
 pub struct GlassPanel {
     inner: Rc<Inner>,
 }
@@ -46,46 +70,38 @@ pub struct GlassPanel {
 struct Inner {
     /// The window the panel serves, whose content sits on top.
     target: HWND,
-    /// The backdrop window under it.
-    window: HWND,
-    tree: Tree,
+    /// The backdrop window and its visuals; None when Windows cannot compose them.
+    composed: Option<Composed>,
     style: Cell<Style>,
-    /// What the tree was last laid out for: the shape's size and the DPI. None forces a layout.
+    /// What the shape was last laid out for: its size and the DPI. None forces a layout.
     laid_out: Cell<Option<((i32, i32), u32)>>,
     /// Whether Windows' transparency effects are on.
     effects: Cell<bool>,
+    /// False once the served window is destroyed (and the backdrop with it).
+    alive: Cell<bool>,
+}
+
+struct Composed {
+    window: HWND,
+    tree: Tree,
     /// Tells the panel when transparency effects are turned on or off.
     settings: Option<(UISettings, i64)>,
 }
 
 impl GlassPanel {
-    /// Put glass under `hwnd` (a top-level window of this thread). None when Windows cannot
-    /// compose it; the window then paints its own surface, see [`content_frame`].
-    ///
-    /// The window loses Windows' own corners, border and backdrop, and gets a rounded window
-    /// region so that clicks outside the shape fall through.
-    pub fn attach(hwnd: isize, style: Style) -> Option<Self> {
+    /// Put a rounded surface under `hwnd`, a top-level window of this thread. The window loses
+    /// Windows' own corners, border and backdrop, and gets a rounded window region so clicks
+    /// outside the shape fall through. See [`GlassPanel::composed`] for whether there is glass.
+    pub fn attach(hwnd: isize, style: Style) -> Self {
         let target = HWND(hwnd as *mut _);
-        let compositor = tree::compositor()?;
-        let window = backdrop::create()?;
-        let tree = match Tree::new(&compositor, window) {
-            Ok(tree) => tree,
-            Err(_) => {
-                unsafe {
-                    let _ = DestroyWindow(window);
-                }
-                return None;
-            }
-        };
         bare(target);
         let inner = Rc::new(Inner {
             target,
-            window,
-            tree,
+            composed: compose(hwnd),
             style: Cell::new(style),
             laid_out: Cell::new(None),
             effects: Cell::new(effects_enabled()),
-            settings: watch_effects(hwnd),
+            alive: Cell::new(true),
         });
         unsafe {
             let _ = SetWindowSubclass(
@@ -96,7 +112,13 @@ impl GlassPanel {
             );
         }
         inner.follow();
-        Some(Self { inner })
+        Self { inner }
+    }
+
+    /// Whether the surface is drawn under the window (blur, tint, rim and shadow). If not, the
+    /// window paints it itself: see [`content_frame`].
+    pub fn composed(&self) -> bool {
+        self.inner.composed.is_some()
     }
 
     /// Change the look (the theme, accent or glass amount changed). Free when nothing changed.
@@ -116,31 +138,58 @@ impl GlassPanel {
 impl Drop for GlassPanel {
     fn drop(&mut self) {
         let inner = &self.inner;
+        if let Some(composed) = &inner.composed {
+            if let Some((settings, token)) = &composed.settings {
+                let _ = settings.RemoveAdvancedEffectsEnabledChanged(*token);
+            }
+        }
+        if !inner.alive.get() {
+            return;
+        }
         unsafe {
             let _ = RemoveWindowSubclass(inner.target, Some(follow_proc), SUBCLASS);
-            let _ = DestroyWindow(inner.window);
+            if let Some(composed) = &inner.composed {
+                let _ = DestroyWindow(composed.window);
+            }
             let _ = SetWindowRgn(inner.target, None, true);
         }
-        if let Some((settings, token)) = &inner.settings {
-            let _ = settings.RemoveAdvancedEffectsEnabledChanged(*token);
+    }
+}
+
+/// The backdrop window and its visuals, if Windows can compose them.
+fn compose(hwnd: isize) -> Option<Composed> {
+    if std::env::var_os("SHELLMAN_NO_COMPOSITION").is_some() {
+        return None;
+    }
+    let compositor = tree::compositor()?;
+    let window = backdrop::create()?;
+    match Tree::new(&compositor, window) {
+        Ok(tree) => Some(Composed {
+            window,
+            tree,
+            settings: watch_effects(hwnd),
+        }),
+        Err(_) => {
+            unsafe {
+                let _ = DestroyWindow(window);
+            }
+            None
         }
     }
 }
 
 impl Inner {
-    /// Put the backdrop where the window is: same place, same visibility, right under it.
+    /// Match the window: its rounded region, and the backdrop in the same place, at the same
+    /// visibility, right under it.
     fn follow(&self) {
         unsafe {
-            if !IsWindowVisible(self.target).as_bool() || IsIconic(self.target).as_bool() {
-                let _ = SetWindowPos(
-                    self.window,
-                    None,
-                    0,
-                    0,
-                    0,
-                    0,
-                    SWP_HIDEWINDOW | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
-                );
+            let visible =
+                IsWindowVisible(self.target).as_bool() && !IsIconic(self.target).as_bool();
+            if !visible {
+                if let Some(composed) = &self.composed {
+                    let flags = SWP_HIDEWINDOW | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER;
+                    let _ = SetWindowPos(composed.window, None, 0, 0, 0, 0, flags | SWP_NOACTIVATE);
+                }
                 return;
             }
             let mut rc = RECT::default();
@@ -152,22 +201,26 @@ impl Inner {
             let style = self.style.get();
             let geo = Geometry::new(shape, dpi as f32 / 96.0, &style);
             if self.laid_out.replace(Some((shape, dpi))) != Some((shape, dpi)) {
-                let _ = self.tree.apply(&geo, &style, self.effects.get());
+                if let Some(composed) = &self.composed {
+                    let _ = composed.tree.apply(&geo, &style, self.effects.get());
+                }
                 // This sends the window another move message, which finds the layout done.
                 let r = geo.region_radius() * 2;
                 let region = CreateRoundRectRgn(0, 0, shape.0 + 1, shape.1 + 1, r, r);
                 SetWindowRgn(self.target, Some(region), true);
             }
-            let (w, h) = geo.window();
-            let _ = SetWindowPos(
-                self.window,
-                Some(self.target),
-                rc.left - geo.left,
-                rc.top - geo.top,
-                w,
-                h,
-                SWP_SHOWWINDOW | SWP_NOACTIVATE,
-            );
+            if let Some(composed) = &self.composed {
+                let (w, h) = geo.window();
+                let _ = SetWindowPos(
+                    composed.window,
+                    Some(self.target),
+                    rc.left - geo.left,
+                    rc.top - geo.top,
+                    w,
+                    h,
+                    SWP_SHOWWINDOW | SWP_NOACTIVATE,
+                );
+            }
         }
     }
 }
@@ -234,8 +287,11 @@ unsafe extern "system" fn follow_proc(
             result
         }
         WM_NCDESTROY => {
+            inner.alive.set(false);
             let _ = RemoveWindowSubclass(hwnd, Some(follow_proc), SUBCLASS);
-            let _ = DestroyWindow(inner.window);
+            if let Some(composed) = &inner.composed {
+                let _ = DestroyWindow(composed.window);
+            }
             DefSubclassProc(hwnd, msg, wparam, lparam)
         }
         _ if msg == effects_message() => {

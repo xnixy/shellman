@@ -8,6 +8,7 @@ use crate::usage::Usage;
 use crate::rank;
 use shellman_core::apps_index::{self, App, AppIndex};
 use shellman_core::thumbs::Thumbs;
+use shellman_ui::glass;
 use shellman_ui::theme::{self, colors, glyph, icon_font};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -259,15 +260,12 @@ impl Launcher {
 
         theme::set_light(ctx.theme() == egui::Theme::Light);
         let c = colors();
-        let fill = if self.glass { c.shell } else { c.bg };
+        // Over the glass panel, nothing; without it, a rounded surface painted here.
+        let surface = glass::content_frame(self.glass, &glass::Style::from_theme(summon::RADIUS));
         let mut picked = None;
         egui::CentralPanel::default()
-            .frame(egui::Frame::new().fill(fill).inner_margin(egui::Margin::same(20)))
+            .frame(surface.inner_margin(egui::Margin::same(20)))
             .show(ctx, |ui| {
-                if self.glass {
-                    // The same surfaces as Files and the dock: the glass tint, then the sheet.
-                    ui.painter().rect_filled(ctx.screen_rect(), 0.0, c.sheet);
-                }
                 self.search_box(ui);
                 let y = ui.cursor().top() + 4.0;
                 ui.painter().hline(ui.max_rect().x_range(), y, egui::Stroke::new(1.0_f32, c.hairline));
