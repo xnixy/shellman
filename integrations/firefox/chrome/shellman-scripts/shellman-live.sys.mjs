@@ -116,6 +116,20 @@ let sheetUri = null;
 let lastCss = null;
 let lastAppearance = null;
 
+/** Tells the glass module (shellman-glass.sys.mjs) that the look changed. */
+function lookChanged() {
+  try { Services.obs.notifyObservers(null, "shellman-look-changed"); } catch (_) {}
+}
+
+/** The accent (0xRRGGBB) and glass amount in effect: the CSS defaults when there is no file. */
+export function currentLook() {
+  if (!lastAppearance) return { rgb: 0x0067c0, glass: 1.0 };
+  const [r, g, b] = resolveAccent(lastAppearance.accent);
+  let glass = Number(lastAppearance.glass);
+  if (!Number.isFinite(glass)) glass = 1.0;
+  return { rgb: (r << 16) | (g << 8) | b, glass: Math.min(1, Math.max(0, glass)) };
+}
+
 function applyCss(css) {
   if (css === lastCss) return;
   const sss = Cc["@mozilla.org/content/style-sheet-service;1"].getService(Ci.nsIStyleSheetService);
@@ -124,6 +138,7 @@ function applyCss(css) {
   if (sheetUri && sss.sheetRegistered(sheetUri, sss.USER_SHEET)) sss.unregisterSheet(sheetUri, sss.USER_SHEET);
   sheetUri = uri;
   lastCss = css;
+  lookChanged();
 }
 
 function clearCss() {
@@ -132,6 +147,7 @@ function clearCss() {
   if (sss.sheetRegistered(sheetUri, sss.USER_SHEET)) sss.unregisterSheet(sheetUri, sss.USER_SHEET);
   sheetUri = null;
   lastCss = null;
+  lookChanged();
 }
 
 export function appearancePath() {

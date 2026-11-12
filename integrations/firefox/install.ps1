@@ -11,10 +11,15 @@
   autoconfig files (config.js, defaults\pref\config-prefs.js) into the Firefox install folder named by
   -FirefoxDir. That folder is usually under Program Files and then needs an elevated PowerShell; the script
   checks and stops with a message instead of asking for elevation. See README ("Scripts").
+
+  -GlassDll <path> (with -Scripts, opt-in) also copies shellman_glass.dll (cargo build --release -p
+  shellman-firefox-glass) into chrome\shellman-scripts\: real see-through gaps with shellman's own glass under
+  each island. See README ("Real gaps").
 .EXAMPLE
   .\install.ps1 -DefaultProfile
   .\install.ps1 -Profile C:\Temp\test-profile
   .\install.ps1 -DefaultProfile -Scripts -FirefoxDir "C:\Program Files\Mozilla Firefox"
+  .\install.ps1 -DefaultProfile -Scripts -FirefoxDir "C:\Program Files\Mozilla Firefox" -GlassDll ..\..\target\release\shellman_glass.dll
 #>
 [CmdletBinding()]
 param(
@@ -23,6 +28,8 @@ param(
     # Also install the live-look script and its autoconfig loader (needs -FirefoxDir).
     [switch]$Scripts,
     [string]$FirefoxDir,
+    # Also install shellman_glass.dll (real gaps; needs -Scripts).
+    [string]$GlassDll,
     # Install even if the profile looks in use. Firefox must be restarted either way.
     [switch]$Force
 )
@@ -46,6 +53,12 @@ if ($Scripts) {
     }
 } elseif ($FirefoxDir) {
     throw '-FirefoxDir is only used together with -Scripts.'
+}
+if ($GlassDll) {
+    if (-not $Scripts) { throw '-GlassDll is only used together with -Scripts.' }
+    if (-not (Test-Path -LiteralPath $GlassDll -PathType Leaf)) { throw "No file at $GlassDll (build it with: cargo build --release -p shellman-firefox-glass)" }
+    if ((Split-Path $GlassDll -Leaf) -ne $script:GlassDllName) { throw "-GlassDll must point to $($script:GlassDllName)" }
+    $GlassDll = (Resolve-Path -LiteralPath $GlassDll).Path
 }
 if ((Test-ProfileInUse $target) -and -not $Force) {
     throw "Firefox is running with this profile ($target). Close it first (or pass -Force; Firefox would overwrite user.js-derived prefs on exit)."
@@ -129,10 +142,17 @@ if ($Scripts) {
     $dstScripts = Join-Path $chromeDir $script:ScriptsDir
     New-Item -ItemType Directory -Force -Path $dstScripts | Out-Null
     foreach ($f in $script:ScriptFiles) { Copy-Item -LiteralPath (Join-Path $srcScripts $f) -Destination (Join-Path $dstScripts $f) -Force }
+    $installed = @($script:ScriptFiles)
+    if ($GlassDll) {
+        Copy-Item -LiteralPath $GlassDll -Destination (Join-Path $dstScripts $script:GlassDllName) -Force
+        $installed += $script:GlassDllName
+    } elseif ($state.PSObject.Properties['scripts'] -and (@($state.scripts) -contains $script:GlassDllName)) {
+        $installed += $script:GlassDllName # installed earlier: kept, and still removed on uninstall
+    }
 
     $state | Add-Member -NotePropertyName firefoxDir -NotePropertyValue $ffDir -Force
     $state | Add-Member -NotePropertyName autoconfig -NotePropertyValue $records -Force
-    $state | Add-Member -NotePropertyName scripts -NotePropertyValue $script:ScriptFiles -Force
+    $state | Add-Member -NotePropertyName scripts -NotePropertyValue $installed -Force
     $state | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $stateFile -Encoding UTF8
     Write-Host "Scripts: loader in $ffDir, live look in $dstScripts"
 }
