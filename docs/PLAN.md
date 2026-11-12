@@ -8,7 +8,7 @@ accent color, fast.
 | App | Replaces | Status |
 | --- | --- | --- |
 | `apps/files` | File Explorer windows | working: tabs, list/grid, thumbnails, shell menu, auto-refresh |
-| `apps/taskbar` | taskbar, tray, clock | next |
+| `apps/bar` | taskbar, tray, clock, Start button (as a top bar and a dock) | next |
 | `apps/launcher` | Start menu and search | planned |
 | `apps/switcher` | Alt+Tab, Task View | planned |
 | `apps/desktop` | wallpaper window, desktop icons | planned |
@@ -30,40 +30,53 @@ and restarts the others.
 - Everything is built and tested **next to** the real Explorer. Only the last step, `session`,
   swaps the shell, and that swap is a single registry value that can be set back.
 
-## Taskbar plan
+## Bar plan: a top bar and a dock
 
-A bar along the bottom of each monitor, in the same glass and accent as Files.
+Rule: **the top bar is the system, the dock is apps.** Both are windows of one process,
+`apps/bar`, since they share the window list, hooks and icon cache.
 
-**Window**: undecorated, always on top, no taskbar button of its own (`WS_EX_TOOLWINDOW`),
-glass backdrop. It registers as an *app bar* (`SHAppBarMessage`), so maximized windows stop at
-its edge, as they do at Explorer's taskbar.
+| Explorer job | Where |
+| --- | --- |
+| Start / launcher | top bar, left corner (Win key too) |
+| Running and pinned apps, switching windows | dock |
+| Tray icons, all of them | top bar, right (up to 8, the rest behind a chevron) |
+| Network, volume, battery | top bar, one status pill |
+| Clock, calendar, notifications | top bar, right corner |
+| Files, Recycle Bin | dock ends |
+| Space for maximized windows | both bars reserve theirs |
 
-**Running apps**
-- Which windows count: visible, top-level, not cloaked (DWM hides other virtual desktops'
-  windows by cloaking), no owner, not a tool window unless it asks to be shown (`WS_EX_APPWINDOW`),
-  and with a title.
-- Kept current with `SetWinEventHook` (create, destroy, show, hide, name change, foreground) and
-  never by polling.
-- Grouped by AppUserModelID (`SHGetPropertyStoreForWindow`), falling back to the exe path, so
-  every Chrome window sits under one Chrome button.
-- Icons come from the shell image of the exe or AUMID, via `core::thumbs`, which are cached.
-- Click: activate, or minimize if it is already in front. Middle click: new instance. Right click:
-  close or close all, and later jump lists.
-- UWP apps live in `ApplicationFrameHost` windows; their real app is the child core window.
+**Top bar**: 32 pt, full width, flush to the edge so edge pixels hit items.
+- Left: the launcher glyph in the corner, then the active app's name and window title.
+- Centre: empty, except a "now" pill for media, copy progress, or an app asking for attention.
+- Right: tray, overflow chevron, status pill (scroll for volume), clock ("Wed 11 Nov  14:32").
+  The clock wakes once a minute on the boundary, plus on time changes and resume.
 
-**Pinned apps**: a list of shortcuts in `taskbar.json`, merged with running ones as Windows does.
+**Dock**: bottom centre, a floating glass pill.
+- Size: 40 pt icons in 52 pt cells, 56 pt tall, radius 16. Reserved space; autohide is a setting.
+- Order: Files, pinned apps, divider, running unpinned apps, divider, Recycle Bin.
+- Running dots (up to three for several windows); an accent bar marks the app in front;
+  attention pulses at most three times.
+- Click activates, or minimizes the app in front. Middle click opens a new window; scroll cycles
+  windows. Hovering shows live DWM previews, and sliding along the dock scrubs them.
+- No magnification, which would repaint on every mouse move; a short hover lift instead.
+- Holding Win shows 1-9 on icons. Dropping a file on an icon opens it with that app.
+- Slots for progress and overlay badges; Files reports its copy progress directly.
 
-**Tray** (notification area)
-- Apps add icons with `Shell_NotifyIcon`, which sends `WM_COPYDATA` (`dwData = 1`) to the window
-  of class `Shell_TrayWnd`. The payload is a 32-bit-handle `NOTIFYICONDATA` behind a small
-  header. The tray *is* whoever owns that window class, so it only works while Explorer's
-  taskbar is not running.
-- On start, broadcast the `TaskbarCreated` message so apps re-add their icons.
-- Clicks are sent back to each app's callback window with its callback message, using the
-  version-4 message format when the app asked for it (`NIM_SETVERSION`).
-- During development the tray is tested with Explorer stopped; the rest runs beside Explorer.
+**Behaviour**
+- Bars never take focus (`WS_EX_NOACTIVATE`), so "minimize if in front" sees the real
+  foreground window.
+- Fullscreen apps and games: when the foreground window covers its monitor, the bars on that
+  monitor step aside.
+- Space: next to Explorer through `SHAppBarMessage`; as the shell, by setting the work area per
+  monitor directly.
+- Monitors: a top bar on every monitor; the tray and dock on the primary at first.
+- Window list from `RegisterShellHookWindow` plus narrow WinEvent ranges, never polling.
+- Tray: copy each icon (owners destroy theirs), coalesce animated updates, check that clicks reach
+  elevated apps.
 
-**Clock**: time and date, local format; a calendar flyout comes later.
-
-**Later**: live window thumbnails on hover (`DwmRegisterThumbnail`), jump lists, multiple
-monitors, a Start button that opens `launcher`.
+**Order of work**
+1. Prototype the dock's rounded glass. Windows draws backdrops as rectangles, so this is the
+   biggest visual risk.
+2. Dock with running and pinned apps, next to Explorer.
+3. Top bar: launcher button, active app, clock, status.
+4. With Explorer stopped: tray, work area, Win keys.
