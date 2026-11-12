@@ -1,25 +1,35 @@
-//! The top bar's left side: the launcher mark, the app in front, and its window title.
+//! The top bar's left island: the launcher mark, then the app in front (its icon, its name, and
+//! its window title, muted).
 
-use super::{highlight, open_start};
+use super::{highlight, layout, open_start, Front};
 use shellman_core::system::app_name;
-use shellman_core::winlist::AppWindow;
 use shellman_ui::theme::{colors, semibold_font, with_alpha};
 use shellman_ui::widgets::draw_text;
 
 /// The launcher mark's size and the round highlight behind it, in points.
 const MARK: f32 = 14.0;
-const ROUND: f32 = 28.0;
-/// Where the mark's centre sits from the left edge; the click area runs from the edge to past it.
-const MARK_X: f32 = 20.0;
-const NAME_GAP: f32 = 14.0;
-const TITLE_GAP: f32 = 10.0;
+const ROUND: f32 = 30.0;
+/// Where the mark's centre sits from the island's left end; without an app, the island is a
+/// circle around it.
+const MARK_X: f32 = ISLAND_HALF;
+const ISLAND_HALF: f32 = layout::ISLAND_H / 2.0;
+/// The app's icon, and the space around it and between the texts.
+const ICON: f32 = 16.0;
+const ICON_GAP: f32 = 6.0;
+const NAME_GAP: f32 = 8.0;
+const TITLE_GAP: f32 = 8.0;
+/// Space after the text, inside the island's right end.
+const PAD: f32 = 16.0;
 
-/// The launcher mark, then the app in front and its window title, none of it past `limit`.
-pub fn draw(ui: &mut egui::Ui, bar: egui::Rect, front: Option<&AppWindow>, limit: f32) {
+/// The launcher mark, then the app in front and its window title, in `row`, the island ending by
+/// `limit`. Returns the island.
+pub fn draw(ui: &mut egui::Ui, bar: egui::Rect, row: egui::Rect, front: Option<Front>, limit: f32) -> egui::Rect {
     let c = colors();
-    // The click area reaches the screen edge, so a flick into the corner hits it.
-    let button = egui::Rect::from_min_size(bar.min, egui::vec2(MARK_X + ROUND / 2.0 + 2.0, bar.height()));
-    let center = egui::pos2(bar.left() + MARK_X, bar.center().y);
+    let left = bar.left() + layout::SIDE;
+    let center = egui::pos2(left + MARK_X, row.center().y);
+    // The click area also takes the corner of the screen around the island, so a flick into the
+    // corner opens the launcher, as it did when the bar was a strip.
+    let button = egui::Rect::from_min_max(bar.min, egui::pos2(center.x + ROUND / 2.0, row.bottom()));
     let resp = ui
         .interact(button, egui::Id::new("launcher"), egui::Sense::click())
         .on_hover_text("Start (right-click for settings)");
@@ -35,19 +45,38 @@ pub fn draw(ui: &mut egui::Ui, bar: egui::Rect, front: Option<&AppWindow>, limit
     if resp.secondary_clicked() {
         shellman_core::sibling::start("settings");
     }
-    let Some(w) = front else { return };
+    let island = |right: f32| egui::Rect::from_x_y_ranges(left..=right.max(left + 2.0 * ISLAND_HALF), row.y_range());
+    let Some(front) = front else { return island(left + 2.0 * ISLAND_HALF) };
+    let w = front.window;
+    let text_limit = limit - PAD;
+    let mut x = center.x + ROUND / 2.0 + ICON_GAP;
+    if let Some((texture, _)) = front.icon {
+        if x + ICON <= text_limit {
+            let r = egui::Rect::from_min_size(egui::pos2(x, row.center().y - ICON / 2.0), egui::Vec2::splat(ICON));
+            let uv = egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0));
+            ui.painter().image(texture, r, uv, egui::Color32::WHITE);
+            x += ICON + NAME_GAP;
+        }
+    }
     let name = app_name::display_name(&w.app_id, w.exe.as_deref());
-    let font = semibold_font(13.0);
+    let font = semibold_font(14.0);
     let name_w = ui.fonts(|f| f.layout_no_wrap(name.clone(), font.clone(), c.text)).size().x;
-    let x = center.x + MARK / 2.0 + NAME_GAP;
-    let name_rect = egui::Rect::from_min_max(egui::pos2(x, bar.top()), egui::pos2((x + name_w).min(limit), bar.bottom()));
+    let name_rect = egui::Rect::from_min_max(egui::pos2(x, row.top()), egui::pos2((x + name_w + 1.0).min(text_limit), row.bottom()));
     draw_text(ui, name_rect, &name, font, c.text, false);
+    let mut end = name_rect.right();
     if let Some(title) = clean_title(&w.title, &name) {
         let left = name_rect.right() + TITLE_GAP;
-        let r = egui::Rect::from_min_max(egui::pos2(left, bar.top()), egui::pos2(limit, bar.bottom()));
-        // Cut with an ellipsis when it does not fit.
-        draw_text(ui, r, title, egui::FontId::proportional(13.0), c.muted, false);
+        let font = egui::FontId::proportional(14.0);
+        let title_w = ui.fonts(|f| f.layout_no_wrap(title.to_owned(), font.clone(), c.muted)).size().x;
+        let right = (left + title_w + 1.0).min(text_limit);
+        if right - left > 24.0 {
+            let r = egui::Rect::from_min_max(egui::pos2(left, row.top()), egui::pos2(right, row.bottom()));
+            // Cut with an ellipsis when it does not fit.
+            draw_text(ui, r, title, font, c.muted, false);
+            end = right;
+        }
     }
+    island(end + PAD)
 }
 
 /// The window title worth showing next to the app's name: none when it only repeats the name,

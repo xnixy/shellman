@@ -1,4 +1,4 @@
-//! Painting the dock: the icons on the glass with their running marks, the dividers, and the
+//! Painting the dock: the icons on its islands with their running marks, the divider, and the
 //! name label above. It only reports what the pointer did; `Dock` decides what that means.
 //!
 //! Motion is short and only runs while something changes: icons slide to their new places and
@@ -41,8 +41,10 @@ pub struct Scene<'a> {
     /// Each icon's left edge from the glass's left, and the glass's width (not animated).
     pub xs: &'a [f32],
     pub width: f32,
-    /// The glass, in the window's points, as it is drawn this frame.
+    /// The apps island, in the window's points, as it is drawn this frame.
     pub glass: Rect,
+    /// The bin's island, which follows the apps island's right edge.
+    pub bin: Option<Rect>,
     /// Keeps this dock window's animations apart from the other monitors'.
     pub salt: &'a str,
     /// The glass's tint, which the marks are drawn from.
@@ -102,6 +104,10 @@ pub fn paint(ui: &mut egui::Ui, scene: &Scene, thumbs: &mut Thumbs) -> Events {
         .zip(scene.xs)
         .zip(&fresh)
         .map(|((item, &x), &fresh)| {
+            // The bin rides on its own island, which already moves with the apps island.
+            if let Some(bin) = scene.bin.filter(|_| item.section == Section::Bin) {
+                return bin.left() + x;
+            }
             let id = Id::new(("dock x", scene.salt, &item.app_id));
             let target = x - scene.width / 2.0;
             if fresh {
@@ -181,7 +187,7 @@ fn lerp_color(a: Color32, b: Color32, t: f32) -> Color32 {
 
 /// The image for an item, drawn sharp at `px` pixels: shellman's own icons (the Launcher and
 /// Files) in the accent, everything else from the shell.
-fn texture(ctx: &egui::Context, item: &Item, px: f32, thumbs: &mut Thumbs) -> Option<(egui::TextureId, Vec2)> {
+pub(super) fn texture(ctx: &egui::Context, item: &Item, px: f32, thumbs: &mut Thumbs) -> Option<(egui::TextureId, Vec2)> {
     if item.section == Section::Launcher {
         return Some(app_icon::kind_texture_px(ctx, Kind::Shellman, px));
     }

@@ -8,7 +8,7 @@
 //! A window that is destroyed takes its backdrop with it (the panel hears `WM_NCDESTROY`), so a
 //! panel left in the map is only an empty shell; `prune` drops those.
 
-use shellman_ui::glass::{GlassPanel, Style};
+use shellman_ui::glass::{GlassPanel, Island, Style};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use windows::Win32::Foundation::{HWND, RECT};
@@ -41,11 +41,17 @@ pub fn set_style(hwnd: isize, style: Style) {
     });
 }
 
-/// Put `hwnd`'s glass on `shape` and also show `also` (see `GlassPanel::set_shape`).
-pub fn set_shape(hwnd: isize, shape: Option<RECT>, also: Option<RECT>) {
+/// Put `hwnd`'s glass on `islands` (points, at `scale` pixels per point). With `only`, just the
+/// islands and `also` (pixels) show and take clicks; without, all of the window takes clicks.
+/// Free when nothing changed.
+pub fn set_islands(hwnd: isize, islands: &[Island], scale: f32, only: bool, also: Option<RECT>) {
     PANELS.with(|p| {
         if let Some(panel) = p.borrow().get(&hwnd) {
-            panel.set_shape(shape, also);
+            if only {
+                panel.set_islands_only(islands, scale, also);
+            } else {
+                panel.set_islands(islands, scale);
+            }
         }
     });
 }

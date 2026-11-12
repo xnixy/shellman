@@ -42,7 +42,8 @@
 //!
 //! Or the window can have several separate pieces ("islands", see [`islands`]) through
 //! [`GlassPanel::set_islands`]: then the whole window stays clickable (the gaps between the
-//! islands are the window's own, to drag it by) and only the islands are glass.
+//! islands are the window's own, to drag it by) and only the islands are glass;
+//! [`GlassPanel::set_islands_only`] instead lets clicks between them through to what is below.
 
 mod backdrop;
 mod effect;
@@ -102,6 +103,8 @@ struct Inner {
     islands: RefCell<Option<(Vec<Island>, f32)>>,
     /// Counts changes to `islands`, so a layout can tell it is out of date.
     islands_seen: Cell<u64>,
+    /// Which part of an islands window takes clicks.
+    islands_hit: Cell<Hit>,
     /// What the shape was last laid out for: the window's size, the shape, the extra part and
     /// the DPI. None forces a layout.
     laid_out: Cell<Option<Layout>>,
@@ -111,6 +114,19 @@ struct Inner {
     alive: Cell<bool>,
 }
 
+/// What an islands window shows and takes clicks on.
+#[derive(Clone, Copy, PartialEq)]
+enum Hit {
+    /// All of it.
+    Window,
+    /// The islands, and the given part of the window, in its pixels.
+    Islands(Option<RECT>),
+}
+
+/// The islands' edges (window pixels) and radii, and the extra part, that make up the region of
+/// a window whose islands alone take clicks.
+type Cut = (Vec<([i32; 4], f32)>, Option<RECT>);
+
 #[derive(Clone, Copy, PartialEq)]
 struct Layout {
     window: (i32, i32),
@@ -119,6 +135,8 @@ struct Layout {
     dpi: u32,
     /// The islands' change count, and where the client area starts in the window.
     islands: Option<(u64, (i32, i32))>,
+    /// Whether the region was cut to the islands (`Hit::Islands`).
+    cut: bool,
 }
 
 struct Composed {
@@ -143,6 +161,7 @@ impl GlassPanel {
             also: Cell::new(None),
             islands: RefCell::new(None),
             islands_seen: Cell::new(0),
+            islands_hit: Cell::new(Hit::Window),
             laid_out: Cell::new(None),
             effects: Cell::new(effects_enabled()),
             alive: Cell::new(true),
@@ -194,16 +213,28 @@ impl GlassPanel {
     /// nothing changed, so it can be called every frame; [`GlassPanel::set_shape`] goes back to
     /// one shape.
     pub fn set_islands(&self, islands: &[Island], scale: f32) {
+        self.put_islands(islands, scale, Hit::Window);
+    }
+
+    /// Like [`GlassPanel::set_islands`], but only the islands, and `also` (another part of the
+    /// window, in its pixels from its top-left, such as a label beside them), show and take
+    /// clicks; elsewhere clicks go through to whatever is under the window. For a window much
+    /// bigger than its islands, such as a dock window as wide as its monitor.
+    pub fn set_islands_only(&self, islands: &[Island], scale: f32, also: Option<RECT>) {
+        self.put_islands(islands, scale, Hit::Islands(also));
+    }
+
+    fn put_islands(&self, islands: &[Island], scale: f32, hit: Hit) {
         {
             let mut current = self.inner.islands.borrow_mut();
-            if current
-                .as_ref()
-                .is_some_and(|(list, s)| list == islands && *s == scale)
+            if current.as_ref().is_some_and(|(list, s)| list == islands && *s == scale)
+                && self.inner.islands_hit.get() == hit
             {
                 return;
             }
             *current = Some((islands.to_vec(), scale));
         }
+        self.inner.islands_hit.set(hit);
         self.inner.islands_seen.set(self.inner.islands_seen.get() + 1);
         self.inner.follow();
     }
@@ -281,12 +312,26 @@ impl Inner {
             let scale = dpi as f32 / 96.0;
             let style = self.style.get();
             let islands = self.islands.borrow();
+            // With `Hit::Islands`, the islands in the window's pixels and their radii: the
+            // window's region, which is all of it that shows and takes clicks.
+            let mut cut: Option<Cut> = None;
             let (geo, area, placed, also, key) = match islands.as_ref() {
                 Some((list, points)) => {
                     // The backdrop covers the whole window and the shadow's room around it; the
                     // islands are placed inside it, from where the client area starts.
                     let geo = Geometry::new(window, scale, &style);
                     let client = client_origin(self.target, &rc);
+                    if let Hit::Islands(extra) = self.islands_hit.get() {
+                        let pieces = list
+                            .iter()
+                            .map(|i| {
+                                let (e, radius) = islands::to_pixels(i, *points);
+                                let e = [e[0] + client.0, e[1] + client.1, e[2] + client.0, e[3] + client.1];
+                                (e, radius)
+                            })
+                            .collect();
+                        cut = Some((pieces, extra));
+                    }
                     let placed = list
                         .iter()
                         .map(|i| {
@@ -340,7 +385,7 @@ impl Inner {
                 }
             };
             drop(islands);
-            let layout = Layout { window, shape: area, also, dpi, islands: key };
+            let layout = Layout { window, shape: area, also, dpi, islands: key, cut: cut.is_some() };
             let before = self.laid_out.replace(Some(layout));
             if before != Some(layout) {
                 let moved = before.is_none_or(|b| {
@@ -359,8 +404,24 @@ impl Inner {
                 // with its size; one shape is all of the window that shows and takes clicks.
                 // Either way the region also takes away Windows' own shadow and border.
                 // Setting it sends the window another move message, which finds the layout done.
-                if key.is_some() {
-                    let same = before.is_some_and(|b| b.islands.is_some() && b.window == window);
+                if let Some((pieces, extra)) = &cut {
+                    // Only the islands (and the extra part) show and take clicks.
+                    let region = CreateRectRgn(0, 0, 0, 0);
+                    for (e, radius) in pieces {
+                        let r = ((radius - 2.0).max(0.0).round() as i32) * 2;
+                        let piece = CreateRoundRectRgn(e[0], e[1], e[2] + 1, e[3] + 1, r, r);
+                        CombineRgn(Some(region), Some(region), Some(piece), RGN_OR);
+                        let _ = DeleteObject(piece.into());
+                    }
+                    if let Some(x) = extra {
+                        let piece = CreateRectRgn(x.left, x.top, x.right, x.bottom);
+                        CombineRgn(Some(region), Some(region), Some(piece), RGN_OR);
+                        let _ = DeleteObject(piece.into());
+                    }
+                    SetWindowRgn(self.target, Some(region), true);
+                } else if key.is_some() {
+                    // A window that only now takes all of itself again needs its region reset.
+                    let same = before.is_some_and(|b| b.islands.is_some() && b.window == window && !b.cut);
                     if !same {
                         let region = CreateRectRgn(0, 0, window.0, window.1);
                         SetWindowRgn(self.target, Some(region), true);

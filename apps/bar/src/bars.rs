@@ -11,18 +11,19 @@ use crate::reserve::{Mode, Reservation};
 use crate::shape::surface;
 use crate::{dock, fullscreen, place, shape, topbar};
 use shellman_ui::glass::{self, Shadow, Style};
+use windows::Win32::Foundation::RECT;
 
-/// Space between the dock and the edge of the screen (or Explorer's taskbar) below it, in points.
-const GAP: f32 = 8.0;
+/// Space between the dock and the edge of the screen (or Explorer's taskbar) below it, and
+/// between the dock and maximized windows above it, in points: the same as the top bar's
+/// islands keep from the top edge.
+const GAP: f32 = 12.0;
 
-/// The top bar's glass: the same tint and blur as the dock, so the two read as one material, as
-/// a flush strip: square, and no shadow (it would fall on the windows below). Its one line along
-/// the bottom is the bar's own (`topbar::paint_edge`), not the glass's rim, which runs all round.
+/// The top bar's glass: the same material as the dock's, on its islands (pills, each with its own
+/// radius), with the dock's short, tight shadow so little of it falls on the windows below.
 pub fn top_style() -> Style {
-    let style = Style::from_theme(0.0);
+    let style = Style::from_theme(topbar::ISLAND_H / 2.0);
     Style {
-        rim: egui::Color32::TRANSPARENT,
-        shadow: Shadow { offset_y: 0.0, blur: 0.0, color: egui::Color32::TRANSPARENT },
+        shadow: Shadow { offset_y: 3.0, blur: 14.0, ..style.shadow },
         ..style
     }
 }
@@ -91,12 +92,23 @@ impl Set {
 
     /// The dock window spans its band (free when it is there already); its glass, inside it,
     /// follows the icons on its own.
-    fn place_dock(&self, sizes: &Sizes) {
+    fn place_dock(&self, mode: Mode, sizes: &Sizes) {
         let (Some(dock), Some(r)) = (&self.dock, &self.reservation) else { return };
         if let (Some(hwnd), Some(band)) = (dock.hwnd, r.band) {
-            place::put(hwnd, layout::dock_rect(band, self.slot.scale, sizes));
+            place::put(hwnd, shifted(mode, layout::dock_rect(band, self.slot.scale, sizes), self.slot.scale, -1));
         }
     }
+}
+
+/// A test bar (`--no-shell`) can be moved in from the edges by `SHELLMAN_BAR_TEST_SHIFT`
+/// points (the top bar down, the dock up, by `sign`), so it can be looked at clear of the real
+/// bar, which sits on the same edges. Never for a bar that reserves space.
+fn shifted(mode: Mode, rect: RECT, scale: f32, sign: i32) -> RECT {
+    let shift = (mode == Mode::Off)
+        .then(|| std::env::var("SHELLMAN_BAR_TEST_SHIFT").ok()?.parse::<f32>().ok())
+        .flatten()
+        .map_or(0, |pt| layout::px(pt, scale) * sign);
+    RECT { top: rect.top + shift, bottom: rect.bottom + shift, ..rect }
 }
 
 pub struct Bars {
@@ -224,9 +236,9 @@ impl Bars {
                 set.reservation = Some(Reservation::new(self.mode, &set.slot, set.top.hwnd.unwrap_or(0), dock, &self.sizes));
             }
             if let (Some(hwnd), Some(r)) = (set.top.hwnd, &set.reservation) {
-                place::put(hwnd, r.top);
+                place::put(hwnd, shifted(self.mode, r.top, set.slot.scale, 1));
             }
-            set.place_dock(&self.sizes);
+            set.place_dock(self.mode, &self.sizes);
         }
         let groups = self
             .sets
