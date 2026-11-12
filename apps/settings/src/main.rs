@@ -22,7 +22,6 @@ fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("shellman Settings")
-            .with_icon(egui::IconData { rgba: include_bytes!("../../../assets/icons/settings-64.rgba").to_vec(), width: 64, height: 64 })
             .with_inner_size([880.0, 620.0])
             .with_min_inner_size([640.0, 420.0])
             .with_transparent(true)

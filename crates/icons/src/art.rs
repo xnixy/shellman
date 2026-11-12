@@ -4,7 +4,7 @@
 
 use crate::shapes::{union_dist, RRect};
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Kind {
     /// Four rounded dots, like the top bar's launcher glyph.
     Shellman,

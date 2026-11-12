@@ -99,13 +99,9 @@ pub fn show(
                         draw_text(ui, text, &apps[index].name, egui::FontId::proportional(16.0), c.text, false);
                     }
                     Item::Settings => {
-                        ui.painter().text(
-                            icon.center(),
-                            egui::Align2::CENTER_CENTER,
-                            glyph::SETTINGS,
-                            icon_font(20.0),
-                            c.accent_text,
-                        );
+                        // shellman's own icon, in the current accent.
+                        let (id, size) = shellman_ui::app_icon::kind_texture(ui.ctx(), shellman_ui::app_icon::Kind::Settings, false);
+                        egui::Image::from_texture((id, size)).paint_at(ui, icon);
                         draw_text(ui, text, SETTINGS_NAME, egui::FontId::proportional(16.0), c.text, false);
                     }
                     Item::Run => {

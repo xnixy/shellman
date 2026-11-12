@@ -1956,6 +1956,7 @@ dependencies = [
  "egui",
  "serde",
  "shellman-core",
+ "shellman-icons",
  "windows",
 ]
 

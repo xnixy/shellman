@@ -10,6 +10,7 @@ name = "shellman_ui"
 
 [dependencies]
 shellman-core.workspace = true
+shellman-icons.workspace = true
 egui.workspace = true
 serde.workspace = true
 windows.workspace = true

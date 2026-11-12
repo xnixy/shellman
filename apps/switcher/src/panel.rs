@@ -56,7 +56,7 @@ pub fn draw(ctx: &egui::Context, view: &View, icons: &mut Thumbs) -> Option<usiz
             } else if resp.hovered() {
                 ui.painter().rect_filled(outer, tile_radius, c.control);
             }
-            let icon = window.icon_source().and_then(|p| icons.get(&p, true).map(|t| (t.id(), t.size_vec2())));
+            let icon = window.icon_source().and_then(|p| shellman_ui::app_icon::get(ui.ctx(), &p, true, icons));
             let preview = at(tile.preview);
             if !view.live.get(i).copied().unwrap_or(false) {
                 // Minimized, or not previewable: the app's icon on a plate.

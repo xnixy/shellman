@@ -338,6 +338,7 @@ impl eframe::App for FileMan {
         self.drain();
         self.watch_tabs();
         self.track_system(ctx);
+        shellman_ui::app_icon::sync_window_icon(ctx, shellman_ui::app_icon::Kind::Files);
         let show_hidden = self.settings.show_hidden;
         for t in &mut self.tabs {
             if t.dirty {

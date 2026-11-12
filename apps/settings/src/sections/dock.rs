@@ -80,7 +80,7 @@ fn pin_row(ui: &mut egui::Ui, st: &mut State, i: usize) -> Option<Edit> {
     );
     let image = st
         .pin_icon(i)
-        .and_then(|p| st.thumbs.get(&p, true).map(|t| (t.id(), t.size_vec2())));
+        .and_then(|p| shellman_ui::app_icon::get(ui.ctx(), &p, true, &mut st.thumbs));
     match image {
         Some((id, size)) => {
             let scale = (ICON / size.x).min(ICON / size.y);

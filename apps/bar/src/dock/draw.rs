@@ -95,7 +95,7 @@ pub fn paint(
             cell.center() - egui::vec2(0.0, 2.0 + hover * 2.0),
             egui::Vec2::splat(icon_w),
         );
-        match item.icon_source().and_then(|p| thumbs.get(&p, true).map(|t| (t.id(), t.size_vec2()))) {
+        match item.icon_source().and_then(|p| shellman_ui::app_icon::get(ui.ctx(), &p, true, thumbs)) {
             Some((id, size)) => {
                 let scale = (icon_w / size.x).min(icon_w / size.y);
                 egui::Image::from_texture((id, size))
