@@ -8,8 +8,10 @@
 
 use crate::decode::{self, Target};
 use crate::fit::Area;
+use crate::frames;
 use crate::monitors;
 use crate::source;
+use crate::frames::WM_FRAMES_POLL;
 use crate::surface::{self, Surface, WM_REFRESH_DISPLAY};
 use std::cell::RefCell;
 use std::sync::atomic::{AtomicIsize, Ordering};
@@ -28,6 +30,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
 const WM_READY: u32 = 0x8000 + 1;
 /// SPI_SETDESKWALLPAPER, as sent in `WM_SETTINGCHANGE`.
 const SPI_SETDESKWALLPAPER: usize = 0x0014;
+/// Sent to top-level windows when the Windows accent colour changes.
+const WM_DWMCOLORIZATIONCOLORCHANGED: u32 = 0x0320;
 /// PBT_APMRESUMEAUTOMATIC: the machine woke from sleep.
 const PBT_APMRESUMEAUTOMATIC: usize = 0x0012;
 
@@ -53,10 +57,13 @@ pub fn controller() -> Option<HWND> {
     (h != 0).then_some(HWND(h as *mut _))
 }
 
-/// Create the windows and run until the process is closed.
-pub fn run() {
+/// Create the windows and run until the process is closed. With `frames_only` there is no
+/// wallpaper, just the controller and the frames service.
+pub fn run(frames_only: bool) {
     unsafe {
-        surface::register();
+        if !frames_only {
+            surface::register();
+        }
         let class = register_class();
         let Ok(ctl) = CreateWindowExW(
             WINDOW_EX_STYLE(0),
@@ -75,13 +82,18 @@ pub fn run() {
             return;
         };
         CONTROLLER.store(ctl.0 as isize, Ordering::Relaxed);
-        refresh(ctl);
+        if !frames_only {
+            refresh(ctl);
+        }
+        frames::start(ctl);
 
         let mut msg = MSG::default();
         while GetMessageW(&mut msg, None, 0, 0).as_bool() {
             let _ = TranslateMessage(&msg);
             DispatchMessageW(&msg);
         }
+        // Windows we restyled go back to their own colours.
+        frames::stop();
     }
 }
 
@@ -106,6 +118,15 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPA
         }
         WM_SETTINGCHANGE if wparam.0 == SPI_SETDESKWALLPAPER => {
             refresh(hwnd);
+            LRESULT(0)
+        }
+        WM_FRAMES_POLL => {
+            frames::poll();
+            LRESULT(0)
+        }
+        // Windows' light/dark or accent changed (other changes make the service find no difference).
+        WM_SETTINGCHANGE | WM_DWMCOLORIZATIONCOLORCHANGED => {
+            frames::refresh();
             LRESULT(0)
         }
         WM_POWERBROADCAST if wparam.0 == PBT_APMRESUMEAUTOMATIC => {

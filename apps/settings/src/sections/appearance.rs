@@ -4,6 +4,7 @@ use crate::page;
 use crate::state::State;
 use shellman_ui::look_controls;
 use shellman_ui::theme;
+use shellman_ui::widgets::switch;
 
 pub fn show(ui: &mut egui::Ui, st: &mut State) {
     page::heading(ui, "Appearance", "The look every shellman app shares. Changes apply at once.");
@@ -31,4 +32,22 @@ pub fn show(ui: &mut egui::Ui, st: &mut State) {
             st.save_look();
         }
     });
+
+    page::group(ui, "Window frames", frames_group);
+}
+
+/// Other apps' title bars and borders in shellman's look (`frames.json`, read by the desktop).
+/// Kept in the page's memory once read, and written as soon as a switch is flipped.
+fn frames_group(ui: &mut egui::Ui) {
+    let id = egui::Id::new("frames settings");
+    let mut frames: shellman_core::frames::FramesSettings =
+        ui.data(|d| d.get_temp(id)).unwrap_or_else(shellman_core::frames::FramesSettings::load);
+    let mut changed = switch(ui, &mut frames.enabled, "Match other apps' window frames").changed();
+    ui.add_enabled_ui(frames.enabled, |ui| {
+        changed |= switch(ui, &mut frames.accent_border, "Accent border on the focused window").changed();
+    });
+    if changed {
+        frames.save();
+    }
+    ui.data_mut(|d| d.insert_temp(id, frames));
 }
