@@ -24,7 +24,7 @@ pub fn draw(ui: &mut egui::Ui, icons: &[TrayIcon], tex: &mut TrayTextures, bar: 
         let cell = egui::Rect::from_min_max(egui::pos2(x, bar.top() + 4.0), egui::pos2(x + CELL, bar.bottom() - 4.0));
         let resp = ui.interact(cell, egui::Id::new(("tray", icon.hwnd, icon.uid)), egui::Sense::click());
         if resp.hovered() {
-            ui.painter().rect_filled(cell, egui::CornerRadius::same(8), c.control_hover);
+            ui.painter().rect_filled(cell, egui::CornerRadius::same(12), c.control_hover);
         }
         if let Some(image) = &icon.image {
             let key = (icon.hwnd, icon.uid);

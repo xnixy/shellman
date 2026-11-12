@@ -122,9 +122,14 @@ impl Dock {
         let c = colors();
         let full = ui.max_rect();
         let pill = full;
-        let fill = if self.glass { c.shell } else { c.bg };
-        ui.painter()
-            .rect_filled(pill, egui::CornerRadius::same(RADIUS as u8), fill);
+        // The same surfaces as Files: its glass tint, and the lighter sheet its files sit on.
+        let radius = egui::CornerRadius::same(RADIUS as u8);
+        if self.glass {
+            ui.painter().rect_filled(pill, radius, c.shell);
+            ui.painter().rect_filled(pill, radius, c.sheet);
+        } else {
+            ui.painter().rect_filled(pill, radius, c.bg);
+        }
         ui.painter().rect_stroke(
             pill.shrink(0.5),
             egui::CornerRadius::same(RADIUS as u8),
@@ -139,7 +144,12 @@ impl Dock {
                 egui::vec2(CELL, CELL),
             );
             let resp = ui.interact(cell, egui::Id::new(("dock", i)), egui::Sense::click());
-            let lift = ui.ctx().animate_bool(resp.id, resp.hovered()) * 3.0;
+            let hover = ui.ctx().animate_bool(resp.id, resp.hovered());
+            if hover > 0.0 {
+                let tile = cell.shrink(3.0);
+                ui.painter().rect_filled(tile, egui::CornerRadius::same(10), c.control_hover.gamma_multiply(hover));
+            }
+            let lift = hover * 2.0;
             let icon = egui::Rect::from_center_size(cell.center() - egui::vec2(0.0, 2.0 + lift), egui::Vec2::splat(ICON));
             match item.icon_source().and_then(|p| self.thumbs.get(&p, true).map(|t| (t.id(), t.size_vec2()))) {
                 Some((id, size)) => {
@@ -162,7 +172,7 @@ impl Dock {
                 let n = item.windows.len().min(3);
                 for d in 0..n {
                     let x = cell.center().x + (d as f32 - (n - 1) as f32 / 2.0) * 7.0;
-                    ui.painter().circle_filled(egui::pos2(x, y), 2.0, c.muted);
+                    ui.painter().circle_filled(egui::pos2(x, y), 2.0, c.text.gamma_multiply(0.55));
                 }
             }
             let tip = shellman_core::system::app_name::display_name(&item.app_id, item.exe.as_deref());

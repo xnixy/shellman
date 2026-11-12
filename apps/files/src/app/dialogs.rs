@@ -25,6 +25,10 @@ impl super::FileMan {
                 theme::set_glass(ui.ctx(), self.settings.glass);
                 self.save_pending = true;
             }
+            // Shared once the slider is let go, not on every step of a drag.
+            if resp.drag_stopped() || (resp.changed() && !resp.dragged()) {
+                self.share_look();
+            }
             if !self.glass {
                 resp.on_disabled_hover_text("Needs Windows 11");
             }

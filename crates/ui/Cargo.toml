@@ -9,6 +9,7 @@ publish = false
 name = "shellman_ui"
 
 [dependencies]
+shellman-core.workspace = true
 egui.workspace = true
 serde.workspace = true
 windows.workspace = true

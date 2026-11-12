@@ -292,6 +292,16 @@ impl FileMan {
         theme::set_accent(&self.ctx, choice.resolve());
         shellman_ui::window::paint_frame(self.hwnd);
         self.save_pending = true;
+        self.share_look();
+    }
+
+    /// Save the look for the other shellman apps (the bars follow it live).
+    pub(super) fn share_look(&self) {
+        shellman_ui::appearance::Appearance {
+            accent: self.settings.accent,
+            glass: self.settings.glass,
+        }
+        .save();
     }
 
     fn take_dropped_files(&mut self, ctx: &egui::Context) {

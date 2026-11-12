@@ -49,6 +49,7 @@ pub fn run(state: Arc<Mutex<TrayState>>, wake: Box<dyn Fn() + Send + Sync>) {
         ) else {
             return;
         };
+        register_as_taskman(_hwnd);
         // Apps re-add their icons when the taskbar is (re)created; tell them it just was.
         let created = RegisterWindowMessageW(w!("TaskbarCreated"));
         let _ = SendNotifyMessageW(HWND_BROADCAST, created, WPARAM(0), LPARAM(0));
@@ -57,6 +58,19 @@ pub fn run(state: Arc<Mutex<TrayState>>, wake: Box<dyn Fn() + Send + Sync>) {
             let _ = TranslateMessage(&msg);
             DispatchMessageW(&msg);
         }
+    }
+}
+
+/// Tell Windows this is the shell's task window, as Explorer does. Windows only hides minimized
+/// windows (instead of drawing title-bar stubs on the desktop) when one is registered. The call
+/// is exported by user32 but not declared in the SDK, so it is looked up by name.
+unsafe fn register_as_taskman(hwnd: HWND) {
+    use windows::core::s;
+    use windows::Win32::System::LibraryLoader::GetProcAddress;
+    let Ok(user32) = GetModuleHandleW(w!("user32.dll")) else { return };
+    if let Some(f) = GetProcAddress(user32, s!("SetTaskmanWindow")) {
+        let set: unsafe extern "system" fn(HWND) -> i32 = std::mem::transmute(f);
+        set(hwnd);
     }
 }
 

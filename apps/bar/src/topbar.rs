@@ -124,8 +124,6 @@ impl TopBar {
             .frame(egui::Frame::new().fill(fill))
             .show(ctx, |ui| {
                 let bar = ui.max_rect();
-                ui.painter()
-                    .hline(bar.x_range(), bar.bottom() - 0.5, egui::Stroke::new(1.0_f32, c.hairline));
                 let right = self.right_side(ui, bar);
                 left_side(ui, bar, front, right);
             });
@@ -169,12 +167,18 @@ impl TopBar {
             egui::pos2(clock_rect.left() - 10.0, bar.bottom() - 4.0),
         );
         let resp = ui.interact(pill, egui::Id::new("status"), egui::Sense::click());
+        // Soft pills like Files' toolbar: one for the tray, one for status.
+        let pill_radius = egui::CornerRadius::same((pill.height() / 2.0) as u8);
+        ui.painter().rect_filled(pill, pill_radius, if resp.hovered() { c.control_hover } else { c.control });
         if let Some(tray) = &self.tray {
             let icons = tray.icons();
-            crate::tray::view::draw(ui, &icons, &mut self.tray_textures, bar, pill.left() - 6.0);
-        }
-        if resp.hovered() {
-            ui.painter().rect_filled(pill, egui::CornerRadius::same(8), c.control_hover);
+            if !icons.is_empty() {
+                let right = pill.left() - 8.0;
+                let width = icons.len() as f32 * 28.0 + 8.0;
+                let group = egui::Rect::from_min_max(egui::pos2(right - width, pill.top()), egui::pos2(right, pill.bottom()));
+                ui.painter().rect_filled(group, pill_radius, c.control);
+                crate::tray::view::draw(ui, &icons, &mut self.tray_textures, bar, right - 4.0);
+            }
         }
         let mut x = pill.left() + 6.0;
         for (g, text) in &glyphs {
@@ -217,7 +221,8 @@ fn left_side(ui: &mut egui::Ui, bar: egui::Rect, front: Option<&AppWindow>, limi
         .interact(button, egui::Id::new("launcher"), egui::Sense::click())
         .on_hover_text("Start");
     if resp.hovered() {
-        ui.painter().rect_filled(button, egui::CornerRadius::ZERO, c.control_hover);
+        let round = egui::Rect::from_center_size(button.center(), egui::Vec2::splat(HEIGHT - 6.0));
+        ui.painter().circle_filled(round.center(), round.width() / 2.0, c.control_hover);
     }
     // Four small squares: the launcher's mark, drawn so it doesn't depend on a font glyph.
     for (dx, dy) in [(-3.5, -3.5), (3.5, -3.5), (-3.5, 3.5), (3.5, 3.5)] {
