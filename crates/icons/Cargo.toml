@@ -1,0 +1,10 @@
+[package]
+name = "shellman-icons"
+version = "0.1.0"
+edition.workspace = true
+description = "Draws shellman's own app icons in any accent color, with no dependencies"
+license.workspace = true
+publish = false
+
+[lib]
+name = "shellman_icons"
