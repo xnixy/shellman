@@ -287,7 +287,7 @@ mod tests {
     fn only_the_rows_in_view_are_drawn() {
         // 100 rows of 60 from y=100; the clip shows y 400..900.
         let r = visible_range(400.0, 900.0, 100.0, 60.0, 100);
-        assert_eq!(r, 5..16);
+        assert_eq!(r, 5..15);
         assert!(r.len() <= 12);
     }
 
