@@ -3,12 +3,12 @@
 
 use super::items::{Item, Section};
 use crate::shape::SYSTEM_RADIUS as RADIUS;
+use shellman_core::settings::dock::IconSize;
 use shellman_core::thumbs::Thumbs;
 use shellman_ui::theme::{colors, glyph, icon_font};
 
+/// The medium dock's height, for the window's first size; the settings pick the real one.
 pub const HEIGHT: f32 = 56.0;
-const CELL: f32 = 52.0;
-const ICON: f32 = 40.0;
 const PAD: f32 = 8.0;
 /// Extra room a divider takes between two sections.
 const DIVIDER: f32 = 13.0;
@@ -23,7 +23,7 @@ fn divider_before(items: &[Item], i: usize) -> bool {
 }
 
 /// Left edge of each icon's cell, and the dock's total width, in points.
-pub fn layout(items: &[Item]) -> (Vec<f32>, f32) {
+pub fn layout(items: &[Item], size: IconSize) -> (Vec<f32>, f32) {
     let mut x = PAD;
     let mut xs = Vec::with_capacity(items.len());
     for i in 0..items.len() {
@@ -31,7 +31,7 @@ pub fn layout(items: &[Item]) -> (Vec<f32>, f32) {
             x += DIVIDER;
         }
         xs.push(x);
-        x += CELL;
+        x += size.cell();
     }
     (xs, x + PAD)
 }
@@ -46,7 +46,15 @@ pub struct Events {
     pub scrolled: Option<(usize, f32)>,
 }
 
-pub fn paint(ui: &mut egui::Ui, glass: bool, thumbs: &mut Thumbs, items: &[Item], front: Option<isize>) -> Events {
+pub fn paint(
+    ui: &mut egui::Ui,
+    glass: bool,
+    size: IconSize,
+    thumbs: &mut Thumbs,
+    items: &[Item],
+    front: Option<isize>,
+) -> Events {
+    let (cell_w, icon_w) = (size.cell(), size.icon());
     let c = colors();
     let pill = ui.max_rect();
     // The same surfaces as Files: its glass tint, and the lighter sheet its files sit on.
@@ -63,7 +71,7 @@ pub fn paint(ui: &mut egui::Ui, glass: bool, thumbs: &mut Thumbs, items: &[Item]
         egui::Stroke::new(1.0_f32, c.hairline),
         egui::StrokeKind::Inside,
     );
-    let (xs, _) = layout(items);
+    let (xs, _) = layout(items, size);
     let mut events = Events::default();
     for (i, item) in items.iter().enumerate() {
         if divider_before(items, i) {
@@ -75,8 +83,8 @@ pub fn paint(ui: &mut egui::Ui, glass: bool, thumbs: &mut Thumbs, items: &[Item]
             );
         }
         let cell = egui::Rect::from_min_size(
-            pill.min + egui::vec2(xs[i], (HEIGHT - CELL) / 2.0),
-            egui::vec2(CELL, CELL),
+            pill.min + egui::vec2(xs[i], (size.height() - cell_w) / 2.0),
+            egui::vec2(cell_w, cell_w),
         );
         let resp = ui.interact(cell, egui::Id::new(("dock", &item.app_id)), egui::Sense::click());
         let hover = ui.ctx().animate_bool(resp.id, resp.hovered());
@@ -85,11 +93,11 @@ pub fn paint(ui: &mut egui::Ui, glass: bool, thumbs: &mut Thumbs, items: &[Item]
         }
         let icon = egui::Rect::from_center_size(
             cell.center() - egui::vec2(0.0, 2.0 + hover * 2.0),
-            egui::Vec2::splat(ICON),
+            egui::Vec2::splat(icon_w),
         );
         match item.icon_source().and_then(|p| thumbs.get(&p, true).map(|t| (t.id(), t.size_vec2()))) {
             Some((id, size)) => {
-                let scale = (ICON / size.x).min(ICON / size.y);
+                let scale = (icon_w / size.x).min(icon_w / size.y);
                 egui::Image::from_texture((id, size))
                     .paint_at(ui, egui::Rect::from_center_size(icon.center(), size * scale));
             }
@@ -135,6 +143,8 @@ pub fn paint(ui: &mut egui::Ui, glass: bool, thumbs: &mut Thumbs, items: &[Item]
 mod tests {
     use super::*;
 
+    const CELL: f32 = 52.0;
+
     fn item(section: Section) -> Item {
         Item { section, app_id: String::new(), exe: None, windows: Vec::new() }
     }
@@ -148,7 +158,7 @@ mod tests {
             item(Section::Running),
             item(Section::Bin),
         ];
-        let (xs, total) = layout(&items);
+        let (xs, total) = layout(&items, IconSize::Medium);
         assert_eq!(xs[0], PAD);
         assert_eq!(xs[1], PAD + CELL);
         // A divider before the first running app and before the bin, none inside a section.
@@ -157,7 +167,16 @@ mod tests {
         assert_eq!(xs[4], xs[3] + CELL + DIVIDER);
         assert_eq!(total, xs[4] + CELL + PAD);
         // Without running apps, only the one before the bin.
-        let (_, total) = layout(&[item(Section::Files), item(Section::Bin)]);
+        let (_, total) = layout(&[item(Section::Files), item(Section::Bin)], IconSize::Medium);
         assert_eq!(total, PAD * 2.0 + CELL * 2.0 + DIVIDER);
+    }
+
+    #[test]
+    fn bigger_icons_make_a_bigger_dock() {
+        assert_eq!(HEIGHT, IconSize::Medium.height());
+        let items = [item(Section::Files), item(Section::Bin)];
+        let width = |s| layout(&items, s).1;
+        assert!(width(IconSize::Small) < width(IconSize::Medium));
+        assert!(width(IconSize::Medium) < width(IconSize::Large));
     }
 }

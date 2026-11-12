@@ -1,7 +1,7 @@
 //! What the dock shows, in order: Files, pinned apps, running apps that are not pinned, and the
 //! Recycle Bin. Pure logic over the window list and the pins, so it can be tested without windows.
 
-use super::pins::{self, Pin};
+use shellman_core::settings::dock::{self as pins, Pin};
 use shellman_core::winlist::AppWindow;
 use std::path::PathBuf;
 

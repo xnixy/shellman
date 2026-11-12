@@ -3,9 +3,22 @@
 use serde::{de::DeserializeOwned, Serialize};
 use std::path::{Path, PathBuf};
 
-/// `%APPDATA%\shellman`, where each app keeps its `<name>.json`.
+/// Setting this environment variable to a folder makes every app use it instead of
+/// `%APPDATA%\shellman`: for trying things out, and for tests, without touching the real files.
+pub const DIR_OVERRIDE: &str = "SHELLMAN_CONFIG_DIR";
+
+/// `%APPDATA%\shellman`, where each app keeps its `<name>.json` (or the folder named by
+/// `SHELLMAN_CONFIG_DIR`).
 pub fn config_dir() -> Option<PathBuf> {
-    dirs::config_dir().map(|d| d.join("shellman"))
+    pick_dir(std::env::var_os(DIR_OVERRIDE), dirs::config_dir())
+}
+
+/// The override when it is set and not empty, else the standard folder's `shellman`.
+fn pick_dir(over: Option<std::ffi::OsString>, base: Option<PathBuf>) -> Option<PathBuf> {
+    match over.filter(|o| !o.is_empty()) {
+        Some(dir) => Some(PathBuf::from(dir)),
+        None => base.map(|d| d.join("shellman")),
+    }
 }
 
 /// The settings named `name`, or their default when missing or unreadable.
@@ -56,6 +69,18 @@ mod tests {
     struct Sample {
         name: String,
         n: u32,
+    }
+
+    #[test]
+    fn override_wins_when_set() {
+        let base = Some(PathBuf::from("C:\\Users\\a\\AppData\\Roaming"));
+        assert_eq!(
+            pick_dir(Some("D:\\scratch".into()), base.clone()),
+            Some(PathBuf::from("D:\\scratch"))
+        );
+        let standard = base.clone().map(|d| d.join("shellman"));
+        assert_eq!(pick_dir(None, base.clone()), standard);
+        assert_eq!(pick_dir(Some("".into()), base), standard);
     }
 
     #[test]

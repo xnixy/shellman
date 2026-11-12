@@ -4,7 +4,9 @@
 pub mod apps_index;
 pub mod config;
 pub mod fsops;
+pub mod settings;
 pub mod shell_menu;
+pub mod sibling;
 pub mod system;
 pub mod thumbs;
 pub mod watch;

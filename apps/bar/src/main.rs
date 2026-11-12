@@ -80,6 +80,7 @@ impl eframe::App for Bar {
         if !self.look_watch.poll().is_empty() {
             // The same folder holds the dock's pin file.
             self.dock.reload_pins();
+            self.top.reload_settings();
             let look = Appearance::load_or(self.look);
             if look != self.look {
                 self.look = look;

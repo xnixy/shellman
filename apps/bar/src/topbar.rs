@@ -8,6 +8,7 @@ use crate::appbar::AppBar;
 use crate::tray::{view::TrayTextures, Tray};
 use crate::workarea::WorkArea;
 use crate::shape;
+use shellman_core::settings::bar::BarSettings;
 use shellman_core::system::{app_name, clock, status};
 use shellman_core::winlist::AppWindow;
 use shellman_ui::theme::{self, colors, icon_font};
@@ -42,6 +43,8 @@ pub struct TopBar {
     /// The tray, when shellman owns it (Explorer's taskbar is not running).
     tray: Option<Tray>,
     tray_textures: TrayTextures,
+    /// Read on first use, and again whenever the settings folder changes.
+    settings: Option<BarSettings>,
 }
 
 struct Status {
@@ -51,6 +54,11 @@ struct Status {
 }
 
 impl TopBar {
+    /// Read the bar's settings again, when something saved them (the settings app).
+    pub fn reload_settings(&mut self) {
+        self.settings = None;
+    }
+
     /// Show the bar as a second window of the bar process, across the top of the primary screen.
     pub fn show(&mut self, parent: &egui::Context, front: Option<&AppWindow>, glass: bool) {
         let ppp = parent.pixels_per_point();
@@ -132,8 +140,8 @@ impl TopBar {
     /// Status pill and clock, from the right edge. Returns where they begin.
     fn right_side(&mut self, ui: &mut egui::Ui, bar: egui::Rect) -> f32 {
         let c = colors();
-        let (date, time) = clock::now_text();
-        let clock_text = format!("{date}   {time}");
+        let settings = *self.settings.get_or_insert_with(BarSettings::load);
+        let clock_text = clock::text(&settings.clock);
         let font = egui::FontId::proportional(13.0);
         let clock_w = ui.fonts(|f| f.layout_no_wrap(clock_text.clone(), font.clone(), c.text)).size().x;
         let clock_rect = egui::Rect::from_min_max(
@@ -219,7 +227,7 @@ fn left_side(ui: &mut egui::Ui, bar: egui::Rect, front: Option<&AppWindow>, limi
     let button = egui::Rect::from_min_size(bar.min, egui::vec2(HEIGHT + 8.0, HEIGHT));
     let resp = ui
         .interact(button, egui::Id::new("launcher"), egui::Sense::click())
-        .on_hover_text("Start");
+        .on_hover_text("Start (right-click for settings)");
     if resp.hovered() {
         let round = egui::Rect::from_center_size(button.center(), egui::Vec2::splat(HEIGHT - 6.0));
         ui.painter().circle_filled(round.center(), round.width() / 2.0, c.control_hover);
@@ -231,6 +239,9 @@ fn left_side(ui: &mut egui::Ui, bar: egui::Rect, front: Option<&AppWindow>, limi
     }
     if resp.clicked() {
         open_start();
+    }
+    if resp.secondary_clicked() {
+        shellman_core::sibling::start("settings");
     }
     let Some(w) = front else { return };
     let name = app_name::display_name(&w.app_id, w.exe.as_deref());

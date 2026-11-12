@@ -1,15 +1,28 @@
 //! Locale-aware clock text and the schedule for the bar's single periodic repaint.
 
+use crate::settings::bar::ClockSettings;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use windows::core::{w, PCWSTR};
+use windows::core::{w, HSTRING, PCWSTR};
 use windows::Win32::Globalization::{GetDateFormatEx, GetTimeFormatEx, TIME_NOSECONDS};
 
 /// Extra delay past the boundary so the repaint lands in the new minute, not the old one.
 const SLACK: Duration = Duration::from_millis(20);
 
+/// The text the bar shows, e.g. "Wed 11 Nov   14:32": the date only when the settings ask for it,
+/// and the time as 12 or 24 hour if they say so.
+pub fn text(settings: &ClockSettings) -> String {
+    let (date, time) = now_text(settings.hour_cycle.pattern());
+    if settings.show_date {
+        format!("{date}   {time}")
+    } else {
+        time
+    }
+}
+
 /// (date, time) for the current local moment in the user's locale, e.g. ("Wed 11 Nov", "14:32").
-/// Passing no SYSTEMTIME makes Windows use "now", saving a separate GetLocalTime call.
-pub fn now_text() -> (String, String) {
+/// `time_pattern` overrides the locale's own time format. Passing no SYSTEMTIME makes Windows use
+/// "now", saving a separate GetLocalTime call.
+pub fn now_text(time_pattern: Option<&str>) -> (String, String) {
     let mut buf = [0u16; 64];
     // SAFETY: buffers are valid for each call; a null locale name means the user default.
     unsafe {
@@ -22,7 +35,11 @@ pub fn now_text() -> (String, String) {
             PCWSTR::null(),
         );
         let date = to_string(&buf, n);
-        let n = GetTimeFormatEx(PCWSTR::null(), TIME_NOSECONDS, None, PCWSTR::null(), Some(&mut buf));
+        let pattern = time_pattern.map(HSTRING::from);
+        let pattern_ptr = pattern.as_ref().map_or(PCWSTR::null(), |p| PCWSTR(p.as_ptr()));
+        // The no-seconds flag may not be combined with an explicit pattern, which has none anyway.
+        let flags = if pattern.is_some() { Default::default() } else { TIME_NOSECONDS };
+        let n = GetTimeFormatEx(PCWSTR::null(), flags, None, pattern_ptr, Some(&mut buf));
         let time = to_string(&buf, n);
         (date, time)
     }
@@ -48,9 +65,23 @@ mod tests {
 
     #[test]
     fn now_text_is_populated() {
-        let (d, t) = now_text();
+        let (d, t) = now_text(None);
         assert!(!d.is_empty() && !t.is_empty());
         assert!(t.chars().any(|c| c.is_numeric()), "time: {t}");
+    }
+
+    #[test]
+    fn explicit_patterns_and_hidden_date() {
+        let (_, h24) = now_text(Some("HH:mm"));
+        assert_eq!(h24.len(), 5, "{h24}");
+        assert_eq!(h24.as_bytes()[2], b':');
+        let (_, h12) = now_text(Some("h:mm tt"));
+        assert!(h12.contains(':') && h12.len() >= 7, "{h12}");
+
+        let mut s = ClockSettings::default();
+        assert!(text(&s).contains("   "));
+        s.show_date = false;
+        assert!(!text(&s).contains("   "));
     }
 
     #[test]
