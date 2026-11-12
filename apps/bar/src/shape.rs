@@ -1,29 +1,28 @@
 //! The bar windows' behaviour and outline.
 //!
-//! Windows paints a glass backdrop over the whole window rectangle, rounded only by its own
-//! window corners; a window region does not clip it (tried and measured). So the dock's pill uses
-//! exactly Windows' corner radius, which keeps real blur and smooth, anti-aliased corners.
+//! Their surfaces are `shellman_ui::glass` panels (kept in `surface`): Windows' own backdrop
+//! paints the whole window rectangle and goes flat on a window that is never active, which these
+//! never are, while the glass module's composed backdrop blurs at any radius.
+
+pub mod surface;
 
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::UI::Shell::{DefSubclassProc, SetWindowSubclass};
-use windows::Win32::Graphics::Dwm::{
-    DwmSetWindowAttribute, DWMWA_BORDER_COLOR, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DONOTROUND,
-};
+use windows::Win32::UI::Controls::MARGINS;
+use windows::Win32::Graphics::Dwm::{DwmExtendFrameIntoClientArea, DwmSetWindowAttribute, DWMWA_BORDER_COLOR};
 use windows::core::BOOL;
-use windows::Win32::UI::WindowsAndMessaging::{SendMessageW, WM_NCACTIVATE, EnumWindows, GetWindowTextW, GetWindowThreadProcessId};
+use windows::Win32::UI::WindowsAndMessaging::{EnumWindows, GetWindowTextW, GetWindowThreadProcessId};
 use windows::Win32::UI::WindowsAndMessaging::{
     GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos, GWL_EXSTYLE, GWL_STYLE, STYLESTRUCT,
-    SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, WM_DPICHANGED, WM_STYLECHANGING,
+    SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, WM_DPICHANGED,
+    WM_DWMCOMPOSITIONCHANGED, WM_STYLECHANGING,
     WS_CAPTION, WS_EX_APPWINDOW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_MAXIMIZEBOX,
     WS_MINIMIZEBOX, WS_SYSMENU, WS_THICKFRAME,
 };
 
-/// Windows 11's rounded window corner radius, in points.
-pub const SYSTEM_RADIUS: f32 = 8.0;
-
 /// Clicking the dock must not take focus from the app in front, or "minimize the app in front"
-/// would always see the dock instead. The dock draws its own hairline, so Windows' window border
-/// (which follows the accent color) is turned off.
+/// would always see the dock instead. Windows' window border (which follows the accent color) is
+/// turned off: the glass draws the edge.
 ///
 /// The window library re-applies its own styles on resizes, so the styles are enforced as they
 /// change, in a subclass, rather than set once.
@@ -34,8 +33,6 @@ pub fn never_activate(hwnd: isize) {
         let none: u32 = 0xFFFF_FFFE;
         let _ = DwmSetWindowAttribute(hwnd, DWMWA_BORDER_COLOR, (&raw const none).cast(), 4);
         let _ = SetWindowSubclass(hwnd, Some(dock_proc), 1, 0);
-        // A new window starts inactive; say it is active now (the subclass keeps it so).
-        SendMessageW(hwnd, WM_NCACTIVATE, Some(WPARAM(1)), Some(LPARAM(-1)));
         let ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
         SetWindowLongPtrW(hwnd, GWL_EXSTYLE, fix_ex_style(ex as u32) as isize);
         let style = GetWindowLongPtrW(hwnd, GWL_STYLE);
@@ -68,9 +65,6 @@ unsafe extern "system" fn dock_proc(
     const MA_NOACTIVATE: isize = 3;
     match msg {
         WM_MOUSEACTIVATE => LRESULT(MA_NOACTIVATE),
-        // These windows are never active, and Windows swaps an inactive window's acrylic for a
-        // flat colour. Telling the frame it is active keeps the real backdrop.
-        WM_NCACTIVATE => DefSubclassProc(hwnd, msg, WPARAM(1), lparam),
         // The monitor's scale changed, or the window was moved onto one with another scale: the
         // window library resizes it by the scale, and the bars are then laid out again.
         WM_DPICHANGED => {
@@ -98,17 +92,43 @@ unsafe extern "system" fn dock_proc(
     }
 }
 
-/// Square corners, for a bar that runs flush along a screen edge.
-pub fn square_corners(hwnd: isize) {
-    let value = DWMWCP_DONOTROUND.0;
+/// Let the window's own transparent pixels show what is under it (its glass). A window the
+/// window library made transparent should already, but a bar window's GL surface showed black
+/// there until DWM was told its frame covers the whole window.
+///
+/// DWM forgets this when it restarts (it crashed and restarted nine times in a minute once while
+/// the bar ran, and every bar window started in that minute stayed a black slab), and a call
+/// made while it is down fails. Windows tells every top-level window when DWM is back
+/// (`WM_DWMCOMPOSITIONCHANGED`), so the window says it again then.
+pub fn see_through(hwnd: isize) {
+    extend_frame(HWND(hwnd as *mut _));
     unsafe {
-        let _ = DwmSetWindowAttribute(
-            HWND(hwnd as *mut _),
-            DWMWA_WINDOW_CORNER_PREFERENCE,
-            (&raw const value).cast(),
-            4,
-        );
+        let _ = SetWindowSubclass(HWND(hwnd as *mut _), Some(see_through_proc), SEE_THROUGH, 0);
     }
+}
+
+/// The subclass id of `see_through`'s handler.
+const SEE_THROUGH: usize = 4;
+
+fn extend_frame(hwnd: HWND) {
+    let margins = MARGINS { cxLeftWidth: -1, cxRightWidth: -1, cyTopHeight: -1, cyBottomHeight: -1 };
+    unsafe {
+        let _ = DwmExtendFrameIntoClientArea(hwnd, &margins);
+    }
+}
+
+unsafe extern "system" fn see_through_proc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+    _id: usize,
+    _data: usize,
+) -> LRESULT {
+    if msg == WM_DWMCOMPOSITIONCHANGED {
+        extend_frame(hwnd);
+    }
+    DefSubclassProc(hwnd, msg, wparam, lparam)
 }
 
 /// This process's window with the given title. egui creates extra windows (the top bar) without

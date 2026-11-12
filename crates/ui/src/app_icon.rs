@@ -53,8 +53,27 @@ fn cache(ctx: &Context) -> Shared {
 
 /// The icon of `kind` in the current accent, as a texture and its size in pixels.
 pub fn kind_texture(ctx: &Context, kind: Kind, large: bool) -> (TextureId, Vec2) {
+    texture(ctx, kind, if large { LARGE } else { SMALL })
+}
+
+/// The icon of `kind` in the current accent, drawn with at least `px` pixels a side (up to 256),
+/// for an icon shown bigger than a tile: a 56 pt dock icon at 300% is 168 px. Sizes go in steps
+/// of 32, so a few are cached and each is drawn once per accent.
+pub fn kind_texture_px(ctx: &Context, kind: Kind, px: f32) -> (TextureId, Vec2) {
+    texture(ctx, kind, step_px(px))
+}
+
+fn step_px(px: f32) -> u32 {
+    let px = px.ceil().max(0.0) as u32;
+    if px <= LARGE {
+        LARGE
+    } else {
+        px.div_ceil(32).saturating_mul(32).min(256)
+    }
+}
+
+fn texture(ctx: &Context, kind: Kind, size: u32) -> (TextureId, Vec2) {
     let accent = current_accent();
-    let size = if large { LARGE } else { SMALL };
     let shared = cache(ctx);
     let mut cache = shared.lock().unwrap();
     if cache.accent != accent {
@@ -64,7 +83,9 @@ pub fn kind_texture(ctx: &Context, kind: Kind, large: bool) -> (TextureId, Vec2)
     let tex = cache.textures.entry((kind, size)).or_insert_with(|| {
         let rgba = shellman_icons::render(kind, size, accent);
         let image = ColorImage::from_rgba_unmultiplied([size as usize; 2], &rgba);
-        ctx.load_texture(format!("shellman-icon-{kind:?}-{size}"), image, TextureOptions::LINEAR)
+        // Mipmapped: the same texture is drawn at several sizes (a tile, a smaller dock icon).
+        let options = TextureOptions { mipmap_mode: Some(egui::TextureFilter::Linear), ..TextureOptions::LINEAR };
+        ctx.load_texture(format!("shellman-icon-{kind:?}-{size}"), image, options)
     });
     (tex.id(), tex.size_vec2())
 }
@@ -122,6 +143,12 @@ mod tests {
         let a = shellman_icons::render(Kind::Files, SMALL, [196, 54, 78]);
         let b = shellman_icons::render(Kind::Files, SMALL, [0, 103, 192]);
         assert_ne!(a, b);
+    }
+
+    #[test]
+    fn big_icons_are_drawn_in_steps() {
+        let steps = [10.0, 96.0, 97.0, 168.0, 900.0].map(step_px);
+        assert_eq!(steps, [96, 96, 128, 192, 256]);
     }
 
     #[test]

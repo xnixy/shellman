@@ -33,6 +33,12 @@
 //! [`GlassPanel::set_style`] when it may have changed. Everything else follows on its own,
 //! except cloaking, which sends no message: cloak the window with [`cloak`], which takes its
 //! glass along (from any thread).
+//!
+//! The surface fills the window unless [`GlassPanel::set_shape`] puts it on a part of it. A
+//! window whose surface changes size often (the dock, as apps come and go) can stay one size and
+//! change the shape instead: a resized window shows its old content for a frame, and a resized
+//! backdrop window shows its old visuals, while a shape changed inside both windows reaches the
+//! screen with the window's next frame.
 
 mod backdrop;
 mod cloak;
@@ -53,13 +59,15 @@ use windows::Win32::Graphics::Dwm::{
     DwmSetWindowAttribute, DWMSBT_NONE, DWMWA_BORDER_COLOR, DWMWA_SYSTEMBACKDROP_TYPE,
     DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DONOTROUND, DWMWINDOWATTRIBUTE,
 };
-use windows::Win32::Graphics::Gdi::{CreateRoundRectRgn, SetWindowRgn};
+use windows::Win32::Graphics::Gdi::{
+    CombineRgn, CreateRectRgn, CreateRoundRectRgn, DeleteObject, SetWindowRgn, RGN_OR,
+};
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::Shell::{DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass};
 use windows::Win32::UI::WindowsAndMessaging::{
     DestroyWindow, GetWindowRect, IsIconic, IsWindowVisible, PostMessageW, RegisterWindowMessageW,
     SetWindowPos, SWP_HIDEWINDOW, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
-    SWP_SHOWWINDOW, WM_DPICHANGED, WM_NCDESTROY, WM_WINDOWPOSCHANGED,
+    SWP_SHOWWINDOW, WM_DPICHANGED, WM_DWMCOMPOSITIONCHANGED, WM_NCDESTROY, WM_WINDOWPOSCHANGED,
 };
 use windows::UI::ViewManagement::UISettings;
 
@@ -77,12 +85,25 @@ struct Inner {
     /// The backdrop window and its visuals; None when Windows cannot compose them.
     composed: Option<Composed>,
     style: Cell<Style>,
-    /// What the shape was last laid out for: its size and the DPI. None forces a layout.
-    laid_out: Cell<Option<((i32, i32), u32)>>,
+    /// Where the surface is, in the window's pixels from its top-left; None for all of it.
+    shape: Cell<Option<RECT>>,
+    /// A part of the window outside the surface that still shows and takes clicks.
+    also: Cell<Option<RECT>>,
+    /// What the shape was last laid out for: the window's size, the shape, the extra part and
+    /// the DPI. None forces a layout.
+    laid_out: Cell<Option<Layout>>,
     /// Whether Windows' transparency effects are on.
     effects: Cell<bool>,
     /// False once the served window is destroyed (and the backdrop with it).
     alive: Cell<bool>,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+struct Layout {
+    window: (i32, i32),
+    shape: RECT,
+    also: Option<RECT>,
+    dpi: u32,
 }
 
 struct Composed {
@@ -103,6 +124,8 @@ impl GlassPanel {
             target,
             composed: compose(hwnd),
             style: Cell::new(style),
+            shape: Cell::new(None),
+            also: Cell::new(None),
             laid_out: Cell::new(None),
             effects: Cell::new(effects_enabled()),
             alive: Cell::new(true),
@@ -132,6 +155,17 @@ impl GlassPanel {
     pub fn set_style(&self, style: Style) {
         if self.inner.style.replace(style) != style {
             self.inner.laid_out.set(None);
+            self.inner.follow();
+        }
+    }
+
+    /// Put the surface on `shape` (in the window's pixels, from its top-left) instead of the
+    /// whole window; None gives it the whole window again. `also` is another part of the window
+    /// that shows and takes clicks without glass under it (a label above the surface); the rest
+    /// of the window is neither drawn nor clicked. Free when nothing changed.
+    pub fn set_shape(&self, shape: Option<RECT>, also: Option<RECT>) {
+        let changed = self.inner.shape.replace(shape) != shape;
+        if (self.inner.also.replace(also) != also) | changed {
             self.inner.follow();
         }
     }
@@ -204,17 +238,41 @@ impl Inner {
             if GetWindowRect(self.target, &mut rc).is_err() {
                 return;
             }
-            let shape = (rc.right - rc.left, rc.bottom - rc.top);
+            let window = (rc.right - rc.left, rc.bottom - rc.top);
+            let area = self.shape.get().unwrap_or(RECT {
+                left: 0,
+                top: 0,
+                right: window.0,
+                bottom: window.1,
+            });
+            let shape = (area.right - area.left, area.bottom - area.top);
             let dpi = GetDpiForWindow(self.target).max(96);
             let style = self.style.get();
-            let geo = Geometry::new(shape, dpi as f32 / 96.0, &style);
-            if self.laid_out.replace(Some((shape, dpi))) != Some((shape, dpi)) {
-                if let Some(composed) = &self.composed {
+            let mut geo = Geometry::new(shape, dpi as f32 / 96.0, &style);
+            // The backdrop window covers the whole served window (and the shadow's room around
+            // it), and the shape moves inside it. So a shape that changes every frame (the dock
+            // growing as an app opens) only changes the visuals, which land on screen together
+            // with the window's own next frame; moving the backdrop window as well would show it
+            // a frame ahead of them.
+            geo.left += area.left;
+            geo.top += area.top;
+            geo.right += window.0 - area.right;
+            geo.bottom += window.1 - area.bottom;
+            let layout = Layout { window, shape: area, also: self.also.get(), dpi };
+            let before = self.laid_out.replace(Some(layout));
+            if before != Some(layout) {
+                let moved = before.is_none_or(|b| (b.window, b.shape, b.dpi) != (window, area, dpi));
+                if let Some(composed) = self.composed.as_ref().filter(|_| moved) {
                     let _ = composed.tree.apply(&geo, &style, self.effects.get());
                 }
                 // This sends the window another move message, which finds the layout done.
                 let r = geo.region_radius() * 2;
-                let region = CreateRoundRectRgn(0, 0, shape.0 + 1, shape.1 + 1, r, r);
+                let region = CreateRoundRectRgn(area.left, area.top, area.right + 1, area.bottom + 1, r, r);
+                if let Some(also) = layout.also {
+                    let extra = CreateRectRgn(also.left, also.top, also.right, also.bottom);
+                    CombineRgn(Some(region), Some(region), Some(extra), RGN_OR);
+                    let _ = DeleteObject(extra.into());
+                }
                 SetWindowRgn(self.target, Some(region), true);
             }
             if let Some(composed) = &self.composed {
@@ -222,8 +280,8 @@ impl Inner {
                 let _ = SetWindowPos(
                     composed.window,
                     Some(self.target),
-                    rc.left - geo.left,
-                    rc.top - geo.top,
+                    rc.left - (geo.left - area.left),
+                    rc.top - (geo.top - area.top),
                     w,
                     h,
                     SWP_SHOWWINDOW | SWP_NOACTIVATE,
@@ -301,6 +359,13 @@ unsafe extern "system" fn follow_proc(
             if let Some(composed) = &inner.composed {
                 let _ = DestroyWindow(composed.window);
             }
+            DefSubclassProc(hwnd, msg, wparam, lparam)
+        }
+        // DWM restarted (Windows tells every top-level window): lay the surface out and colour
+        // it again, in case the new DWM missed what was set before.
+        WM_DWMCOMPOSITIONCHANGED => {
+            inner.laid_out.set(None);
+            inner.follow();
             DefSubclassProc(hwnd, msg, wparam, lparam)
         }
         _ if msg == effects_message() => {

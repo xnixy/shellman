@@ -46,6 +46,7 @@ pub struct Thumbs {
     cache: HashMap<Key, Slot>,
     queue: Queue,
     rx: Receiver<(Key, Option<ColorImage>)>,
+    options: TextureOptions,
 }
 
 /// Files whose shell image says more than a glyph would: previews, and programs' own icons.
@@ -116,10 +117,18 @@ impl Thumbs {
             let (queue, tx, ctx) = (queue.clone(), tx.clone(), ctx.clone());
             std::thread::spawn(move || worker(queue, tx, ctx, trim));
         }
+        // Icons come at 256 px and are drawn far smaller (a 48 pt dock icon at 150% is 72 px):
+        // mipmaps keep them smooth there, where plain linear sampling would leave jagged edges.
+        let options = if trim {
+            TextureOptions { mipmap_mode: Some(egui::TextureFilter::Linear), ..TextureOptions::LINEAR }
+        } else {
+            TextureOptions::LINEAR
+        };
         Self {
             cache: HashMap::new(),
             queue,
             rx,
+            options,
         }
     }
 
@@ -148,7 +157,7 @@ impl Thumbs {
             let slot = match image {
                 Some(img) => {
                     let name = format!("thumb:{}:{}", key.1, key.0.display());
-                    Slot::Ready(ctx.load_texture(name, img, TextureOptions::LINEAR))
+                    Slot::Ready(ctx.load_texture(name, img, self.options))
                 }
                 None => Slot::Missing,
             };
