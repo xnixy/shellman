@@ -31,6 +31,8 @@ fn main() -> eframe::Result {
             .with_min_inner_size([640.0, 420.0])
             .with_transparent(true)
             .with_decorations(false),
+        // Without this Windows picks the spot, and it cascades the window down under the dock.
+        centered: true,
         ..Default::default()
     };
     eframe::run_native(
