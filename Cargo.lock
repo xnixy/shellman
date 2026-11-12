@@ -1910,7 +1910,9 @@ dependencies = [
 name = "shellman-desktop"
 version = "0.1.0"
 dependencies = [
+ "egui",
  "shellman-core",
+ "shellman-ui",
  "windows",
  "winresource",
 ]
