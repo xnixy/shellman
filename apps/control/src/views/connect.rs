@@ -98,7 +98,9 @@ fn radio_tile(g: char, title: &'static str, detail: String, s: Switch, kind: Kin
 }
 
 /// Lay the grid out. Returns what was asked for.
-pub fn show(ui: &mut Ui, n: &Connectivity) -> Option<Asked> {
+/// `links` is whether the tiles may open their Settings page: without a shell to service the
+/// link they show no chevron and their body does nothing (the chip still toggles).
+pub fn show(ui: &mut Ui, n: &Connectivity, links: bool) -> Option<Asked> {
     let list = tiles(n);
     if list.is_empty() {
         return None;
@@ -111,7 +113,7 @@ pub fn show(ui: &mut Ui, n: &Connectivity) -> Option<Asked> {
         for (i, t) in row.iter().enumerate() {
             let w = if row.len() == 1 { width } else { half };
             let r = Rect::from_min_size(Pos2::new(rect.left() + i as f32 * (half + GAP), rect.top()), Vec2::new(w, TILE_HEIGHT));
-            if let Some(a) = tile(ui, r, t) {
+            if let Some(a) = tile(ui, r, t, links) {
                 asked = Some(a);
             }
         }
@@ -119,26 +121,28 @@ pub fn show(ui: &mut Ui, n: &Connectivity) -> Option<Asked> {
     asked
 }
 
-fn tile(ui: &mut Ui, rect: Rect, t: &Tile) -> Option<Asked> {
+fn tile(ui: &mut Ui, rect: Rect, t: &Tile, links: bool) -> Option<Asked> {
     let c = colors();
     let id = egui::Id::new(("connect", t.title));
-    let body = ui.interact(rect, id, Sense::click());
+    let body = ui.interact(rect, id, if links { Sense::click() } else { Sense::hover() });
     let chip_center = Pos2::new(rect.left() + TILE_INSET + CHIP / 2.0, rect.center().y);
     let chip_rect = Rect::from_center_size(chip_center, Vec2::splat(CHIP));
     let chip_resp = ui.interact(chip_rect, id.with("chip"), Sense::click());
     let chip_hover = chip_resp.hovered() && t.toggle.is_some();
-    ui.painter().rect_filled(rect, CornerRadius::same(TILE_RADIUS), kit::tile_fill(body.hovered() && !chip_resp.hovered()));
+    ui.painter().rect_filled(rect, CornerRadius::same(TILE_RADIUS), kit::tile_fill(links && body.hovered() && !chip_resp.hovered()));
     chip(ui, chip_center, t.glyph, t.on, chip_hover);
     let text_left = chip_rect.right() + 10.0;
     let text_width = rect.right() - 26.0 - text_left;
     clipped_text(ui, Pos2::new(text_left, rect.center().y - 1.0), Align2::LEFT_BOTTOM, t.title, label_font(), c.text, text_width);
     clipped_text(ui, Pos2::new(text_left, rect.center().y + 1.0), Align2::LEFT_TOP, &t.detail, small_font(), c.muted, text_width);
-    let chevron = Pos2::new(rect.right() - 16.0, rect.center().y);
-    ui.painter().text(chevron, Align2::CENTER_CENTER, glyph::CHEVRON, icon_font(10.0), with_alpha(c.muted, 160));
+    if links {
+        let chevron = Pos2::new(rect.right() - 16.0, rect.center().y);
+        ui.painter().text(chevron, Align2::CENTER_CENTER, glyph::CHEVRON, icon_font(10.0), with_alpha(c.muted, 160));
+    }
     if chip_resp.clicked() {
         return t.toggle.map(Asked::Toggle);
     }
-    if body.clicked() || body.secondary_clicked() || chip_resp.secondary_clicked() {
+    if links && (body.clicked() || body.secondary_clicked() || chip_resp.secondary_clicked()) {
         return Some(Asked::Open(t.page));
     }
     None

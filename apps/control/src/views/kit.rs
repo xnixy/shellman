@@ -25,8 +25,8 @@ pub fn small_font() -> FontId {
 /// The panel's translucent fills. The window is composited so that a translucent colour lifts
 /// the blurred backdrop much more than its alpha suggests (measured on the dark panel: white at
 /// 7% opacity lifted it by a quarter of the way to white), so the alphas here are small and
-/// were picked by eye on screen captures. (The colour lands far brighter than its alpha, so a
-/// light tile's white is at 1% opacity; black, which only dims, behaves as its alpha says.) Dark panels get a mid grey, not white, which keeps the
+/// were picked by eye on screen captures. A light tile's white is at 1% opacity; black, which
+/// only dims, behaves as its alpha says. Dark panels get a mid grey, not white, which keeps the
 /// steps between alphas fine; light panels get white for raised tiles and black for what sinks.
 fn veil(dark_alpha: u8, light: (u8, bool)) -> Color32 {
     if colors().light {

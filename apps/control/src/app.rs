@@ -44,6 +44,8 @@ pub struct Control {
     media: MediaView,
     battery: Option<Battery>,
     power: PowerMenu,
+    /// Whether the tiles may open Settings pages: asked at every showing (see `settings_page`).
+    links: bool,
     /// The showing this window last saw, whether it has had focus since, and when it appeared.
     seen_shown: u32,
     had_focus: bool,
@@ -64,6 +66,7 @@ impl Control {
             media: MediaView::default(),
             battery: None,
             power: PowerMenu::default(),
+            links: false,
             seen_shown: 0,
             had_focus: false,
             shown_at: Instant::now(),
@@ -77,6 +80,7 @@ impl Control {
         // One wake-up to check that focus arrived; no repeating timer.
         ctx.request_repaint_after(FOCUS_RETRY + Duration::from_millis(10));
         self.battery = status::battery();
+        self.links = settings_page::available();
         self.live = Some(Live {
             sound: SoundWatch::start(self.wake.clone()),
             connectivity: ConnectivityWatch::start(self.wake.clone()),
@@ -170,7 +174,7 @@ impl Control {
     fn modules(&mut self, ui: &mut egui::Ui) -> Asked {
         let live = self.live.as_ref();
         let mut asked = Asked::None;
-        if let Some(a) = connect::show(ui, &self.net) {
+        if let Some(a) = connect::show(ui, &self.net, self.links) {
             asked = Asked::Connect(a);
         }
         self.sound.show(ui, live.map(|l| &l.sound));
