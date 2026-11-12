@@ -12,9 +12,10 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver, Sender};
 
-const ROW_H: f32 = 30.0;
+const ROW_H: f32 = 34.0;
 const HEADER_H: f32 = 28.0;
-const SIDEBAR_W: f32 = 210.0;
+const SIDEBAR_W: f32 = 224.0;
+const FOOTER_H: f32 = 30.0;
 const TOAST_SECS: f64 = 3.0;
 /// Height of the tab strip, which is also the title bar.
 const CAPTION_H: f32 = 40.0;
@@ -249,6 +250,8 @@ pub struct FileMan {
     toast: Option<(String, f64)>,
     save_pending: bool,
     title: String,
+    /// Size of the Windows caption buttons in points, when Windows draws them over the glass.
+    caption: Option<Vec2>,
 }
 
 /// The places shown in the sidebar and on This PC.
@@ -309,6 +312,7 @@ impl FileMan {
             toast: None,
             save_pending: false,
             title: String::new(),
+            caption: None,
         };
         for loc in locs {
             app.push_tab(loc);
@@ -802,37 +806,57 @@ impl FileMan {
 
     fn tab_strip(&mut self, ui: &mut Ui, actions: &mut Vec<Action>) {
         let c = colors();
-        ui.horizontal(|ui| {
-            ui.set_min_height(CAPTION_H);
-            ui.spacing_mut().item_spacing.x = 2.0;
-            for (i, tab) in self.tabs.iter().enumerate() {
+        // Room for the window buttons: Windows' own over glass, ours otherwise.
+        let reserve = self.caption.map_or(46.0 * 3.0, |s| s.x + 6.0);
+        let height = ui.available_height();
+        ui.horizontal_centered(|ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            let n = self.tabs.len();
+            let room = ui.available_width() - reserve - 48.0;
+            let tab_w = (room / n as f32 - 4.0).clamp(84.0, 220.0);
+            for i in 0..n {
                 let active = i == self.active;
-                let mut title = tab.loc.title();
-                if title.chars().count() > 24 {
-                    title = title.chars().take(22).collect::<String>() + "…";
-                }
-                let g = if tab.loc == Loc::Pc { glyph::PC } else { glyph::FOLDER };
-                let text = icon_text(g, &title, if active { c.text } else { c.muted }, 13.0);
-                let fill = if active { c.card } else { Color32::TRANSPARENT };
-                let resp = ui.add(
-                    egui::Button::new(text)
-                        .fill(fill)
-                        .stroke(if active { Stroke::new(1.0_f32, c.hairline) } else { Stroke::NONE })
-                        .corner_radius(CornerRadius::same(8))
-                        .min_size(Vec2::new(120.0, 30.0)),
-                );
+                let loc = self.tabs[i].loc.clone();
+                let tab_id = self.tabs[i].id;
+                let (rect, resp) = ui.allocate_exact_size(Vec2::new(tab_w, 32.0), Sense::click());
+                let hovered = ui.rect_contains_pointer(rect);
                 if active {
-                    let r = resp.rect;
-                    ui.painter().rect_filled(
-                        Rect::from_min_max(
-                            egui::pos2(r.left() + 12.0, r.bottom() - 3.0),
-                            egui::pos2(r.right() - 12.0, r.bottom() - 1.0),
-                        ),
-                        CornerRadius::same(1),
-                        c.accent,
-                    );
+                    ui.painter().rect_filled(rect, CornerRadius::same(10), c.control_active);
+                } else if hovered {
+                    ui.painter().rect_filled(rect, CornerRadius::same(10), c.control);
                 }
-                if resp.clicked() {
+                let g = if loc == Loc::Pc { glyph::PC } else { glyph::FOLDER };
+                ui.painter().text(
+                    egui::pos2(rect.left() + 14.0, rect.center().y),
+                    Align2::LEFT_CENTER,
+                    g,
+                    icon_font(13.0),
+                    if active { c.accent_text } else { c.muted },
+                );
+                let show_close = n > 1 && (active || hovered);
+                let text_right = rect.right() - if show_close { 30.0 } else { 10.0 };
+                draw_text(
+                    ui,
+                    Rect::from_min_max(egui::pos2(rect.left() + 36.0, rect.top()), egui::pos2(text_right, rect.bottom())),
+                    &loc.title(),
+                    FontId::proportional(13.0),
+                    if active { c.text } else { c.muted },
+                    false,
+                );
+                let mut closed = false;
+                if show_close {
+                    let cr = Rect::from_center_size(egui::pos2(rect.right() - 16.0, rect.center().y), Vec2::splat(20.0));
+                    let close = ui.interact(cr, Id::new(("tab-close", tab_id)), Sense::click());
+                    if close.hovered() {
+                        ui.painter().rect_filled(cr, CornerRadius::same(6), c.control_hover);
+                    }
+                    ui.painter().text(cr.center(), Align2::CENTER_CENTER, glyph::CLOSE, icon_font(8.5), c.muted);
+                    if close.clicked() {
+                        actions.push(Action::CloseTab(i));
+                        closed = true;
+                    }
+                }
+                if !closed && resp.clicked() {
                     actions.push(Action::SwitchTab(i));
                 }
                 if resp.middle_clicked() {
@@ -840,103 +864,126 @@ impl FileMan {
                 }
                 resp.context_menu(|ui| {
                     if menu_item(ui, glyph::ADD, "Duplicate tab", "") {
-                        actions.push(Action::NewTab(tab.loc.clone()));
+                        actions.push(Action::NewTab(loc.clone()));
                         ui.close_menu();
                     }
-                    if self.tabs.len() > 1 && menu_item(ui, glyph::CLOSE, "Close tab", "Ctrl+W") {
+                    if n > 1 && menu_item(ui, glyph::CLOSE, "Close tab", "Ctrl+W") {
                         actions.push(Action::CloseTab(i));
                         ui.close_menu();
                     }
                 });
-                if self.tabs.len() > 1 && active {
-                    if theme::icon_button(ui, glyph::CLOSE, true, "Close tab (Ctrl+W)").clicked() {
-                        actions.push(Action::CloseTab(i));
-                    }
-                }
             }
-            if theme::icon_button(ui, glyph::ADD, true, "New tab (Ctrl+T)").clicked() {
+            if round_button(ui, glyph::ADD, true, "New tab (Ctrl+T)").clicked() {
                 actions.push(Action::NewTab(self.tabs[self.active].loc.clone()));
             }
-            // The rest of the strip is the title bar: window buttons on the right, and empty
-            // space that drags the window and maximizes it on a double click.
-            ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
+            // The rest of the strip is title bar: it drags the window, and a double click
+            // maximizes it.
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 ui.spacing_mut().item_spacing.x = 0.0;
-                let maximized = ui.input(|i| i.viewport().maximized.unwrap_or(false));
-                if caption_button(ui, glyph::CHROME_CLOSE, true).clicked() {
-                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
-                }
-                let g = if maximized { glyph::RESTORE } else { glyph::MAXIMIZE };
-                if caption_button(ui, g, false).clicked() {
-                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
-                }
-                if caption_button(ui, glyph::MINIMIZE, false).clicked() {
-                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+                if self.caption.is_some() {
+                    ui.add_space(reserve);
+                } else {
+                    let maximized = ui.input(|i| i.viewport().maximized.unwrap_or(false));
+                    if caption_button(ui, glyph::CHROME_CLOSE, true, height).clicked() {
+                        ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                    }
+                    let g = if maximized { glyph::RESTORE } else { glyph::MAXIMIZE };
+                    if caption_button(ui, g, false, height).clicked() {
+                        ui.ctx().send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
+                    }
+                    if caption_button(ui, glyph::MINIMIZE, false, height).clicked() {
+                        ui.ctx().send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+                    }
                 }
                 let (_, drag) = ui.allocate_exact_size(
-                    Vec2::new(ui.available_width(), CAPTION_H),
+                    Vec2::new(ui.available_width(), height),
                     Sense::click_and_drag(),
                 );
-                if drag.double_clicked() {
-                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
-                } else if drag.drag_started() {
-                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
-                }
+                window_drag(ui, &drag);
             });
         });
     }
 
     fn toolbar(&mut self, ui: &mut Ui, actions: &mut Vec<Action>) {
-        let c = colors();
         let tab = &self.tabs[self.active];
         let (can_back, can_fwd, can_up) =
             (!tab.back.is_empty(), !tab.fwd.is_empty(), tab.loc != Loc::Pc);
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 2.0;
-            if theme::icon_button(ui, glyph::BACK, can_back, "Back (Alt+Left)").clicked() {
+            if round_button(ui, glyph::BACK, can_back, "Back (Alt+Left)").clicked() {
                 actions.push(Action::Back);
             }
-            if theme::icon_button(ui, glyph::FORWARD, can_fwd, "Forward (Alt+Right)").clicked() {
+            if round_button(ui, glyph::FORWARD, can_fwd, "Forward (Alt+Right)").clicked() {
                 actions.push(Action::Forward);
             }
-            if theme::icon_button(ui, glyph::UP, can_up, "Up (Alt+Up)").clicked() {
+            if round_button(ui, glyph::UP, can_up, "Up (Alt+Up)").clicked() {
                 actions.push(Action::Up);
             }
-            if theme::icon_button(ui, glyph::REFRESH, true, "Refresh (F5)").clicked() {
+            if round_button(ui, glyph::REFRESH, true, "Refresh (F5)").clicked() {
                 actions.push(Action::Refresh);
             }
-            ui.add_space(6.0);
-            let search_w = 230.0;
-            let path_w = (ui.available_width() - search_w - 12.0).max(120.0);
-            let (rect, _) = ui.allocate_exact_size(Vec2::new(path_w, 32.0), Sense::hover());
-            self.path_bar(ui, rect, actions);
             ui.add_space(8.0);
-            // Search box.
-            let tab = &mut self.tabs[self.active];
-            let hint = format!("Search {}", tab.loc.title());
-            let resp = ui.add(
-                egui::TextEdit::singleline(&mut tab.filter)
-                    .hint_text(RichText::new(hint).color(c.muted))
-                    .desired_width(search_w - 16.0)
-                    .margin(Vec2::new(10.0, 7.0)),
-            );
-            if std::mem::take(&mut self.focus_search) {
-                resp.request_focus();
-            }
-            if resp.changed() {
-                tab.dirty = true;
-            }
-            if resp.has_focus() && ui.input(|i| i.key_pressed(Key::Escape)) {
-                tab.filter.clear();
-                tab.dirty = true;
-            }
+            let search_w = 250.0;
+            let path_w = (ui.available_width() - search_w - 10.0).max(120.0);
+            let (rect, _) = ui.allocate_exact_size(Vec2::new(path_w, 34.0), Sense::hover());
+            self.path_bar(ui, rect, actions);
+            ui.add_space(10.0);
+            let (srect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 34.0), Sense::hover());
+            self.search_box(ui, srect);
         });
     }
 
-    /// Breadcrumbs, or a text box for typing a path after Ctrl+L or a click on empty space.
+    fn search_box(&mut self, ui: &mut Ui, rect: Rect) {
+        let c = colors();
+        let id = Id::new("search");
+        let focused = ui.memory(|m| m.has_focus(id));
+        let hovered = ui.rect_contains_pointer(rect);
+        let fill = if focused || hovered { c.control_hover } else { c.control };
+        ui.painter().rect_filled(rect, CornerRadius::same(17), fill);
+        if focused {
+            ui.painter().rect_stroke(
+                rect,
+                CornerRadius::same(17),
+                Stroke::new(1.0_f32, theme::with_alpha(c.accent, 170)),
+                egui::StrokeKind::Inside,
+            );
+        }
+        ui.painter().text(
+            egui::pos2(rect.left() + 16.0, rect.center().y),
+            Align2::LEFT_CENTER,
+            glyph::SEARCH,
+            icon_font(12.0),
+            c.muted,
+        );
+        let tab = &mut self.tabs[self.active];
+        let hint = format!("Search {}", tab.loc.title());
+        let inner = Rect::from_min_max(egui::pos2(rect.left() + 34.0, rect.top()), egui::pos2(rect.right() - 12.0, rect.bottom()));
+        let resp = ui.put(
+            inner,
+            egui::TextEdit::singleline(&mut tab.filter)
+                .id(id)
+                .frame(false)
+                .hint_text(RichText::new(hint).color(c.muted))
+                .vertical_align(Align::Center)
+                .margin(Vec2::new(2.0, 0.0))
+                .desired_width(inner.width()),
+        );
+        if std::mem::take(&mut self.focus_search) {
+            resp.request_focus();
+        }
+        if resp.changed() {
+            tab.dirty = true;
+        }
+        if resp.has_focus() && ui.input(|i| i.key_pressed(Key::Escape)) {
+            tab.filter.clear();
+            tab.dirty = true;
+        }
+    }
+
     fn path_bar(&mut self, ui: &mut Ui, rect: Rect, actions: &mut Vec<Action>) {
         let c = colors();
-        ui.painter()
-            .rect(rect, CornerRadius::same(8), c.well, Stroke::new(1.0_f32, c.hairline), egui::StrokeKind::Inside);
+        let fill = if ui.rect_contains_pointer(rect) { c.control_hover } else { c.control };
+        ui.painter().rect_filled(rect, CornerRadius::same(17), fill);
         let loc = self.tabs[self.active].loc.clone();
         if std::mem::take(&mut self.focus_path) && self.editing_path.is_none() {
             self.editing_path = Some(loc.dir().map(|d| d.display().to_string()).unwrap_or_default());
@@ -1007,7 +1054,7 @@ impl FileMan {
             used += w;
             first -= 1;
         }
-        let inner = rect.shrink2(Vec2::new(6.0, 1.0));
+        let inner = rect.shrink2(Vec2::new(10.0, 1.0));
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(inner).layout(Layout::left_to_right(Align::Center)));
         child.spacing_mut().item_spacing.x = 0.0;
         if first > 0 {
@@ -1019,7 +1066,13 @@ impl FileMan {
                 child.label(icon(glyph::CHEVRON, 9.0).color(c.muted));
             }
             let text = RichText::new(name).color(if i == last { c.text } else { c.muted });
-            let resp = child.add(egui::Button::new(text).frame(false).min_size(Vec2::new(0.0, 26.0)));
+            let resp = child.add(
+                egui::Button::new(text)
+                    .fill(Color32::TRANSPARENT)
+                    .stroke(Stroke::NONE)
+                    .corner_radius(CornerRadius::same(12))
+                    .min_size(Vec2::new(0.0, 26.0)),
+            );
             if resp.clicked() {
                 actions.push(Action::Navigate(target.clone()));
             }
@@ -1029,11 +1082,23 @@ impl FileMan {
         }
     }
 
-    fn sidebar(&mut self, ui: &mut Ui, actions: &mut Vec<Action>) {
+    fn sidebar(&mut self, ui: &mut Ui, caption_h: f32, actions: &mut Vec<Action>) {
         let c = colors();
         let current = self.tabs[self.active].loc.clone();
-        ui.add_space(2.0);
-        ui.label(theme::muted("Places").size(12.0));
+        // The top of the sidebar is title bar too, with the app's name in it.
+        let (bar, drag) = ui.allocate_exact_size(Vec2::new(ui.available_width(), caption_h), Sense::click_and_drag());
+        window_drag(ui, &drag);
+        ui.painter().circle_filled(egui::pos2(bar.left() + 14.0, bar.center().y), 4.5, c.accent);
+        ui.painter().text(
+            egui::pos2(bar.left() + 26.0, bar.center().y),
+            Align2::LEFT_CENTER,
+            "Fileman",
+            FontId::proportional(13.5),
+            c.text,
+        );
+        ui.add_space(46.0);
+        ui.spacing_mut().item_spacing.y = 2.0;
+        section_label(ui, "Places");
         for (g, name, path) in quick_places() {
             let loc = Loc::Dir(path);
             let resp = nav_row(ui, g, name, current == loc);
@@ -1044,8 +1109,7 @@ impl FileMan {
                 actions.push(Action::NewTab(loc));
             }
         }
-        ui.add_space(10.0);
-        ui.label(theme::muted("This PC").size(12.0));
+        section_label(ui, "Drives");
         if nav_row(ui, glyph::PC, "This PC", current == Loc::Pc).clicked() {
             actions.push(Action::Navigate(Loc::Pc));
         }
@@ -1060,16 +1124,23 @@ impl FileMan {
             }
         }
         ui.with_layout(Layout::bottom_up(Align::Min), |ui| {
-            ui.add_space(4.0);
             if nav_row(ui, glyph::SETTINGS, "Appearance", false).clicked() {
                 actions.push(Action::Settings);
             }
-            let _ = c;
         });
     }
 
-    fn status_bar(&mut self, ui: &mut Ui) {
+    /// Item count, selection, and messages, along the bottom of the sheet.
+    fn footer(&mut self, ui: &mut Ui) {
         let c = colors();
+        let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), FOOTER_H), Sense::hover());
+        ui.painter().hline(rect.x_range(), rect.top(), Stroke::new(1.0_f32, c.hairline));
+        let mut child = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(rect.shrink2(Vec2::new(10.0, 0.0)))
+                .layout(Layout::left_to_right(Align::Center)),
+        );
+        let ui = &mut child;
         let tab = &self.tabs[self.active];
         ui.horizontal(|ui| {
             let mut text = match &tab.loc {
@@ -1090,7 +1161,7 @@ impl FileMan {
             if tab.loading {
                 text += "   ·   Loading…";
             }
-            ui.label(RichText::new(text).size(12.5).color(c.muted));
+            ui.label(RichText::new(text).size(12.0).color(c.muted));
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 let now = ui.input(|i| i.time);
                 if let Some((msg, at)) = &self.toast {
@@ -1327,34 +1398,28 @@ impl FileMan {
                 let row_rect = rect.shrink2(Vec2::new(2.0, 1.0));
                 let p = ui.painter();
                 if selected {
-                    p.rect_filled(row_rect, CornerRadius::same(6), c.row_selected);
-                    if tab.cursor == Some(r) {
-                        p.rect_filled(
-                            Rect::from_min_size(row_rect.min + Vec2::new(0.0, 8.0), Vec2::new(3.0, ROW_H - 18.0)),
-                            CornerRadius::same(2),
-                            c.accent,
+                    p.rect_filled(row_rect, CornerRadius::same(9), c.row_selected);
+                    if tab.cursor == Some(r) && tab.selected.len() > 1 {
+                        p.rect_stroke(
+                            row_rect,
+                            CornerRadius::same(9),
+                            Stroke::new(1.0_f32, theme::with_alpha(c.accent, 150)),
+                            egui::StrokeKind::Inside,
                         );
                     }
                 } else if resp.hovered() {
-                    p.rect_filled(row_rect, CornerRadius::same(6), c.row_hover);
+                    p.rect_filled(row_rect, CornerRadius::same(9), c.control);
                 }
                 let dim = |col: Color32| if e.hidden { col.gamma_multiply(0.55) } else { col };
                 let cut = matches!(&self.clipboard, Some((Op::Move, ps)) if ps.contains(&e.path));
                 let dim = |col: Color32| if cut { dim(col).gamma_multiply(0.5) } else { dim(col) };
-                let (g, gcol) = if e.is_dir {
-                    (glyph::FOLDER, c.accent_text)
-                } else {
-                    (glyph::FILE, c.muted)
-                };
-                p.text(
-                    egui::pos2(rect.left() + 14.0, rect.center().y),
-                    Align2::LEFT_CENTER,
-                    g,
-                    icon_font(16.0),
-                    dim(gcol),
-                );
+                // A soft tile in the file type's color, with its glyph on it.
+                let (g, gcol) = file_icon(e, &c);
+                let tile = Rect::from_center_size(egui::pos2(rect.left() + 22.0, rect.center().y), Vec2::splat(24.0));
+                p.rect_filled(tile, CornerRadius::same(7), dim(theme::with_alpha(gcol, if c.light { 36 } else { 46 })));
+                p.text(tile.center(), Align2::CENTER_CENTER, g, icon_font(12.5), dim(gcol));
                 let name_rect = Rect::from_min_max(
-                    egui::pos2(rect.left() + 40.0, rect.top()),
+                    egui::pos2(rect.left() + 46.0, rect.top()),
                     egui::pos2(rect.left() + name_w - 8.0, rect.bottom()),
                 );
                 let renaming = rename.as_ref().is_some_and(|rn| rn.path == e.path);
@@ -1386,7 +1451,7 @@ impl FileMan {
                         }
                     }
                 } else {
-                    draw_text(ui, name_rect, &e.name, FontId::proportional(14.0), dim(c.text), false);
+                    draw_text(ui, name_rect, &e.name, FontId::proportional(13.5), dim(c.text), false);
                 }
                 let col = |x: f32, w: f32| {
                     Rect::from_min_size(egui::pos2(rect.left() + x + 10.0, rect.top()), Vec2::new(w - 20.0, ROW_H))
@@ -1616,33 +1681,58 @@ impl eframe::App for FileMan {
         self.keyboard(ctx, &mut actions);
         self.take_dropped_files(ctx);
 
-        let glass = self.glass;
-        egui::TopBottomPanel::top("tabs")
-            .frame(theme::chrome(glass).inner_margin(egui::Margin { left: 10, right: 0, top: 0, bottom: 0 }))
-            .show_separator_line(false)
-            .show(ctx, |ui| self.tab_strip(ui, &mut actions));
-        egui::TopBottomPanel::top("toolbar")
-            .frame(theme::chrome(glass))
-            .show_separator_line(false)
-            .show(ctx, |ui| self.toolbar(ui, &mut actions));
-        egui::TopBottomPanel::bottom("status")
-            .frame(theme::chrome(glass).inner_margin(egui::Margin::symmetric(14, 4)))
-            .show_separator_line(false)
-            .show(ctx, |ui| self.status_bar(ui));
+        let ppp = ctx.pixels_per_point();
+        self.caption = if self.glass {
+            crate::caption_buttons_size(self.hwnd).map(|(w, h)| Vec2::new(w as f32 / ppp, h as f32 / ppp))
+        } else {
+            None
+        };
+        let caption_h = self.caption.map_or(CAPTION_H, |s| s.y.clamp(32.0, 48.0)) + 6.0;
+        let c = colors();
+        // One even tint over the whole window; nothing else paints a band of its own.
+        ctx.layer_painter(egui::LayerId::background()).rect_filled(
+            ctx.screen_rect(),
+            CornerRadius::ZERO,
+            if self.glass { c.shell } else { c.bg },
+        );
         egui::SidePanel::left("sidebar")
-            .frame(theme::sidebar(glass))
+            .frame(egui::Frame::new().inner_margin(egui::Margin { left: 10, right: 8, top: 0, bottom: 10 }))
             .exact_width(SIDEBAR_W)
             .resizable(false)
             .show_separator_line(false)
-            .show(ctx, |ui| self.sidebar(ui, &mut actions));
+            .show(ctx, |ui| self.sidebar(ui, caption_h, &mut actions));
         egui::CentralPanel::default()
-            .frame(theme::page(glass))
+            .frame(egui::Frame::new().inner_margin(egui::Margin { left: 0, right: 10, top: 0, bottom: 10 }))
             .show(ctx, |ui| {
-                if self.tabs[self.active].loc == Loc::Pc {
-                    self.pc_page(ui, &mut actions);
-                } else {
-                    self.file_list(ui, &mut actions);
-                }
+                egui::TopBottomPanel::top("tabs")
+                    .frame(egui::Frame::new())
+                    .show_separator_line(false)
+                    .exact_height(caption_h)
+                    .show_inside(ui, |ui| self.tab_strip(ui, &mut actions));
+                egui::TopBottomPanel::top("toolbar")
+                    .frame(egui::Frame::new().inner_margin(egui::Margin { left: 0, right: 0, top: 2, bottom: 10 }))
+                    .show_separator_line(false)
+                    .show_inside(ui, |ui| self.toolbar(ui, &mut actions));
+                egui::Frame::new()
+                    .fill(c.sheet)
+                    .stroke(Stroke::new(1.0_f32, c.hairline))
+                    .corner_radius(CornerRadius::same(14))
+                    .inner_margin(egui::Margin { left: 8, right: 8, top: 6, bottom: 0 })
+                    .shadow(egui::Shadow { offset: [0, 6], blur: 24, spread: 0, color: c.shadow })
+                    .show(ui, |ui| {
+                        let size = ui.available_size();
+                        ui.set_min_size(size);
+                        let body = Vec2::new(size.x, (size.y - FOOTER_H).max(0.0));
+                        ui.allocate_ui_with_layout(body, Layout::top_down(Align::Min), |ui| {
+                            ui.set_min_size(body);
+                            if self.tabs[self.active].loc == Loc::Pc {
+                                self.pc_page(ui, &mut actions);
+                            } else {
+                                self.file_list(ui, &mut actions);
+                            }
+                        });
+                        self.footer(ui);
+                    });
             });
         self.dialogs(ctx);
 
@@ -1694,18 +1784,81 @@ fn icon_text(g: char, text: &str, color: Color32, size: f32) -> WidgetText {
     WidgetText::LayoutJob(job)
 }
 
-/// Minimize, maximize, or close, sized and colored like the Windows ones.
-fn caption_button(ui: &mut Ui, g: char, close: bool) -> egui::Response {
+/// Minimize, maximize, or close, for when Windows draws none over the glass.
+fn caption_button(ui: &mut Ui, g: char, close: bool, height: f32) -> egui::Response {
     let c = colors();
-    let (rect, resp) = ui.allocate_exact_size(Vec2::new(46.0, CAPTION_H), Sense::click());
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(46.0, height), Sense::click());
     let (fill, fg) = match (resp.hovered(), close) {
         (true, true) => (Color32::from_rgb(196, 43, 28), Color32::WHITE),
-        (true, false) => (c.row_hover, c.text),
+        (true, false) => (c.control_hover, c.text),
         _ => (Color32::TRANSPARENT, c.text),
     };
     ui.painter().rect_filled(rect, CornerRadius::ZERO, fill);
     ui.painter().text(rect.center(), Align2::CENTER_CENTER, g, icon_font(10.0), fg);
     resp
+}
+
+/// A round, borderless icon button.
+fn round_button(ui: &mut Ui, g: char, enabled: bool, tip: &str) -> egui::Response {
+    let c = colors();
+    let sense = if enabled { Sense::click() } else { Sense::hover() };
+    let (rect, resp) = ui.allocate_exact_size(Vec2::splat(34.0), sense);
+    if enabled && resp.hovered() {
+        ui.painter().circle_filled(rect.center(), 16.0, c.control_hover);
+    }
+    let col = if enabled { c.text } else { theme::with_alpha(c.muted, 80) };
+    ui.painter().text(rect.center(), Align2::CENTER_CENTER, g, icon_font(13.0), col);
+    resp.on_hover_text(tip)
+}
+
+/// Title-bar behavior for empty space: drag to move, double click to maximize or restore.
+fn window_drag(ui: &Ui, resp: &egui::Response) {
+    if resp.double_clicked() {
+        let maximized = ui.input(|i| i.viewport().maximized.unwrap_or(false));
+        ui.ctx().send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
+    } else if resp.drag_started() {
+        ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
+    }
+}
+
+fn section_label(ui: &mut Ui, text: &str) {
+    ui.add_space(12.0);
+    ui.horizontal(|ui| {
+        ui.add_space(12.0);
+        ui.label(RichText::new(text).size(11.5).color(colors().muted));
+    });
+    ui.add_space(2.0);
+}
+
+/// A glyph and color for a file, by its type.
+fn file_icon(e: &Entry, c: &theme::Colors) -> (char, Color32) {
+    if e.is_dir {
+        return (glyph::FOLDER_FILL, c.accent_text);
+    }
+    let ext = Path::new(&e.name)
+        .extension()
+        .map(|x| x.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+    let (g, rgb): (char, [u8; 3]) = match ext.as_str() {
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "svg" | "heic" | "ico" | "tif" | "tiff" | "avif" => {
+            (glyph::IMAGE, [214, 92, 168])
+        }
+        "mp4" | "mkv" | "mov" | "avi" | "webm" | "wmv" | "m4v" => (glyph::VIDEO, [226, 96, 72]),
+        "mp3" | "wav" | "flac" | "ogg" | "m4a" | "aac" | "opus" => (glyph::AUDIO, [222, 160, 40]),
+        "zip" | "7z" | "rar" | "tar" | "gz" | "xz" | "bz2" | "zst" | "cab" | "iso" => (glyph::ARCHIVE, [184, 132, 76]),
+        "rs" | "js" | "ts" | "tsx" | "jsx" | "py" | "c" | "h" | "cpp" | "hpp" | "cs" | "go" | "java"
+        | "kt" | "swift" | "rb" | "php" | "sh" | "ps1" | "bat" | "cmd" | "json" | "toml" | "yaml"
+        | "yml" | "xml" | "html" | "css" | "scss" | "lua" | "sql" | "lock" => (glyph::CODE, [56, 170, 160]),
+        "pdf" => (glyph::DOC, [220, 72, 72]),
+        "doc" | "docx" | "txt" | "md" | "rtf" | "odt" | "log" | "ini" | "cfg" => (glyph::DOC, [72, 132, 220]),
+        "xls" | "xlsx" | "csv" | "ods" => (glyph::DOC, [40, 160, 96]),
+        "ppt" | "pptx" | "odp" => (glyph::DOC, [222, 112, 48]),
+        "exe" | "msi" | "appx" | "msix" | "dll" => (glyph::APP, [120, 128, 220]),
+        _ => return (glyph::FILE, c.muted),
+    };
+    let col = Color32::from_rgb(rgb[0], rgb[1], rgb[2]);
+    let col = if c.light { theme::mix(col, Color32::BLACK, 0.12) } else { theme::mix(col, Color32::WHITE, 0.15) };
+    (g, col)
 }
 
 fn menu_item(ui: &mut Ui, g: char, label: &str, shortcut: &str) -> bool {
@@ -1717,30 +1870,25 @@ fn menu_item(ui: &mut Ui, g: char, label: &str, shortcut: &str) -> bool {
     ui.add(b).clicked()
 }
 
-/// A place in the sidebar, marked with the accent while it is open.
+/// A place in the sidebar, tinted with the accent while it is open.
 fn nav_row(ui: &mut Ui, g: char, label: &str, active: bool) -> egui::Response {
     let c = colors();
-    let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 32.0), Sense::click());
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 34.0), Sense::click());
     let p = ui.painter();
     if active {
-        p.rect_filled(rect, CornerRadius::same(8), c.row_selected);
-        p.rect_filled(
-            Rect::from_min_size(rect.min + Vec2::new(0.0, 9.0), Vec2::new(3.0, 14.0)),
-            CornerRadius::same(2),
-            c.accent,
-        );
+        p.rect_filled(rect, CornerRadius::same(10), theme::with_alpha(c.accent, if c.light { 38 } else { 52 }));
     } else if resp.hovered() {
-        p.rect_filled(rect, CornerRadius::same(8), c.row_hover);
+        p.rect_filled(rect, CornerRadius::same(10), c.control);
     }
     p.text(
-        egui::pos2(rect.left() + 14.0, rect.center().y),
+        egui::pos2(rect.left() + 16.0, rect.center().y),
         Align2::LEFT_CENTER,
         g,
-        icon_font(15.0),
+        icon_font(14.0),
         if active { c.accent_text } else { c.muted },
     );
-    let text_rect = Rect::from_min_max(egui::pos2(rect.left() + 40.0, rect.top()), rect.max);
-    draw_text(ui, text_rect, label, FontId::proportional(14.0), c.text, false);
+    let text_rect = Rect::from_min_max(egui::pos2(rect.left() + 42.0, rect.top()), rect.max);
+    draw_text(ui, text_rect, label, FontId::proportional(13.5), c.text, false);
     resp
 }
 
@@ -1762,8 +1910,8 @@ fn hover_outline(ui: &Ui, resp: &egui::Response) {
     if resp.hovered() {
         ui.painter().rect_stroke(
             resp.rect,
-            CornerRadius::same(16),
-            Stroke::new(1.5_f32, colors().accent),
+            CornerRadius::same(14),
+            Stroke::new(1.0_f32, theme::with_alpha(colors().accent, 170)),
             egui::StrokeKind::Inside,
         );
     }

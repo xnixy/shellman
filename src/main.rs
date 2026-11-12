@@ -10,8 +10,9 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Dwm::{
-    DwmExtendFrameIntoClientArea, DwmSetWindowAttribute, DWMSBT_TRANSIENTWINDOW,
-    DWMWA_BORDER_COLOR, DWMWA_CAPTION_COLOR, DWMWA_SYSTEMBACKDROP_TYPE, DWMWA_TEXT_COLOR,
+    DwmDefWindowProc, DwmExtendFrameIntoClientArea, DwmGetWindowAttribute, DwmSetWindowAttribute,
+    DWMWA_CAPTION_BUTTON_BOUNDS, DWMSBT_TRANSIENTWINDOW,
+    DWMWA_BORDER_COLOR, DWMWA_CAPTION_COLOR, DWMWA_SYSTEMBACKDROP_TYPE,
     DWMWA_USE_IMMERSIVE_DARK_MODE, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND,
     DWMWINDOWATTRIBUTE,
 };
@@ -19,7 +20,8 @@ use windows::Win32::UI::Controls::MARGINS;
 use windows::Win32::UI::Shell::{DefSubclassProc, SetWindowSubclass};
 use windows::Win32::UI::HiDpi::{GetDpiForWindow, GetSystemMetricsForDpi};
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetWindowRect, IsZoomed, SetWindowPos, NCCALCSIZE_PARAMS, SM_CXPADDEDBORDER, SM_CYFRAME,
+    GetWindowLongPtrW, GetWindowRect, IsZoomed, SetWindowLongPtrW, GWL_STYLE, WS_CAPTION,
+    WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_SYSMENU, WS_THICKFRAME, SetWindowPos, NCCALCSIZE_PARAMS, SM_CXPADDEDBORDER, SM_CYFRAME,
     SWP_FRAMECHANGED, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, WM_NCACTIVATE, WM_NCCALCSIZE,
     WM_NCHITTEST,
 };
@@ -66,7 +68,8 @@ fn main() -> eframe::Result {
             .with_title("Fileman")
             .with_inner_size([1100.0, 700.0])
             .with_min_inner_size([640.0, 400.0])
-            .with_transparent(true),
+            .with_transparent(true)
+            .with_decorations(false),
         ..Default::default()
     };
     eframe::run_native(
@@ -112,7 +115,7 @@ fn colorref(c: egui::Color32) -> u32 {
     (c.b() as u32) << 16 | (c.g() as u32) << 8 | c.r() as u32
 }
 
-/// Title bar and border in the palette's mode and accent tint.
+/// Border in the palette's mode and accent tint, and no caption fill.
 pub fn paint_frame(hwnd: isize) {
     if hwnd == 0 {
         return;
@@ -121,8 +124,8 @@ pub fn paint_frame(hwnd: isize) {
     let c = theme::colors();
     set_dwm_u32(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, u32::from(!c.light));
     set_dwm_u32(hwnd, DWMWA_BORDER_COLOR, colorref(theme::mix(c.sidebar_solid, c.accent, 0.35)));
-    set_dwm_u32(hwnd, DWMWA_CAPTION_COLOR, colorref(c.sidebar_solid));
-    set_dwm_u32(hwnd, DWMWA_TEXT_COLOR, colorref(c.text));
+    // DWMWA_COLOR_NONE: no caption fill, so the top of the window is the same glass as the rest.
+    set_dwm_u32(hwnd, DWMWA_CAPTION_COLOR, 0xFFFF_FFFE);
 }
 
 /// The Windows 11 acrylic backdrop, so the window itself is frosted glass. False where Windows
@@ -150,11 +153,16 @@ fn frost_window(hwnd: HWND) -> bool {
     frosted
 }
 
-/// Drop the Windows caption and let the tab strip be the title bar. The frame stays, so resizing,
-/// Snap, the shadow, and rounded corners all still work.
+/// Let the tab strip be the title bar. The window keeps a thick frame (no caption), so it still
+/// gets Snap, the shadow, and rounded corners. Over glass, DWM draws the real Windows 11
+/// minimize, maximize and close buttons; `frame_proc` routes them through `DwmDefWindowProc`, so
+/// they hover, click, and open Snap layouts like any window's.
 fn remove_caption(hwnd: HWND, glass: bool) {
     unsafe {
         let _ = SetWindowSubclass(hwnd, Some(frame_proc), 1, usize::from(glass));
+        let style = GetWindowLongPtrW(hwnd, GWL_STYLE) & !(WS_CAPTION.0 as isize);
+        let style = style | (WS_THICKFRAME.0 | WS_SYSMENU.0 | WS_MINIMIZEBOX.0 | WS_MAXIMIZEBOX.0) as isize;
+        SetWindowLongPtrW(hwnd, GWL_STYLE, style);
         // Ask Windows to measure the frame again, now through `frame_proc`.
         let _ = SetWindowPos(
             hwnd,
@@ -168,6 +176,25 @@ fn remove_caption(hwnd: HWND, glass: bool) {
     }
 }
 
+/// Size of the Windows caption buttons in physical pixels, or None when Windows draws none.
+pub fn caption_buttons_size(hwnd: isize) -> Option<(i32, i32)> {
+    if hwnd == 0 {
+        return None;
+    }
+    let mut rc = RECT::default();
+    unsafe {
+        DwmGetWindowAttribute(
+            HWND(hwnd as *mut _),
+            DWMWA_CAPTION_BUTTON_BOUNDS,
+            (&raw mut rc).cast(),
+            size_of::<RECT>() as u32,
+        )
+    }
+    .ok()?;
+    let size = (rc.right - rc.left, rc.bottom - rc.top);
+    (size.0 > 0 && size.1 > 0).then_some(size)
+}
+
 /// How thick the sizing frame is at the window's DPI.
 unsafe fn frame_thickness(hwnd: HWND) -> i32 {
     let dpi = GetDpiForWindow(hwnd);
@@ -176,9 +203,9 @@ unsafe fn frame_thickness(hwnd: HWND) -> i32 {
 
 /// The window's frame, without a caption.
 ///
-/// - The client area grows up over where the caption was. Left, right and bottom keep their
-///   (invisible on Windows 11) sizing borders.
-/// - The top few pixels still resize the window, since the caption is gone.
+/// - The client area is the whole window; a maximized window is inset by its frame, which hangs
+///   off the screen edge.
+/// - The outer few pixels of the client area resize the window.
 /// - With glass, the frame is always drawn active: Windows otherwise swaps the backdrop for a flat
 ///   color while the window is inactive.
 unsafe extern "system" fn frame_proc(
@@ -189,24 +216,28 @@ unsafe extern "system" fn frame_proc(
     _id: usize,
     glass: usize,
 ) -> LRESULT {
+    if glass != 0 {
+        let mut handled = LRESULT(0);
+        if DwmDefWindowProc(hwnd, msg, wparam, lparam, &mut handled).as_bool() {
+            return handled;
+        }
+    }
     match msg {
         WM_NCACTIVATE if glass != 0 => DefSubclassProc(hwnd, msg, WPARAM(1), lparam),
         WM_NCCALCSIZE if wparam.0 != 0 => {
-            let params = lparam.0 as *mut NCCALCSIZE_PARAMS;
-            let top = (*params).rgrc[0].top;
-            let result = DefSubclassProc(hwnd, msg, wparam, lparam);
-            (*params).rgrc[0].top = top;
-            // A maximized window hangs its frame off the screen edge; keep content on screen.
             if IsZoomed(hwnd).as_bool() {
-                (*params).rgrc[0].top += frame_thickness(hwnd);
+                let params = lparam.0 as *mut NCCALCSIZE_PARAMS;
+                let f = frame_thickness(hwnd);
+                let r = &mut (*params).rgrc[0];
+                r.left += f;
+                r.top += f;
+                r.right -= f;
+                r.bottom -= f;
             }
-            result
+            LRESULT(0)
         }
         WM_NCHITTEST => {
             const HTCLIENT: isize = 1;
-            const HTTOP: isize = 12;
-            const HTTOPLEFT: isize = 13;
-            const HTTOPRIGHT: isize = 14;
             let hit = DefSubclassProc(hwnd, msg, wparam, lparam);
             if hit.0 != HTCLIENT || IsZoomed(hwnd).as_bool() {
                 return hit;
@@ -215,19 +246,34 @@ unsafe extern "system" fn frame_proc(
             let y = ((lparam.0 >> 16) & 0xFFFF) as i16 as i32;
             let mut rc = RECT::default();
             let _ = GetWindowRect(hwnd, &mut rc);
-            let border = frame_thickness(hwnd);
-            if y < rc.top + border {
-                let corner = border * 2;
-                return LRESULT(if x < rc.left + corner {
-                    HTTOPLEFT
-                } else if x >= rc.right - corner {
-                    HTTOPRIGHT
-                } else {
-                    HTTOP
-                });
-            }
-            hit
+            LRESULT(edge_hit(x, y, &rc, frame_thickness(hwnd)).unwrap_or(HTCLIENT))
         }
         _ => DefSubclassProc(hwnd, msg, wparam, lparam),
     }
+}
+
+/// Which sizing edge or corner a point is on, if any. Corners are twice as forgiving.
+fn edge_hit(x: i32, y: i32, rc: &RECT, border: i32) -> Option<isize> {
+    let corner = border * 2;
+    let left = x < rc.left + border;
+    let right = x >= rc.right - border;
+    let top = y < rc.top + border;
+    let bottom = y >= rc.bottom - border;
+    let near_left = x < rc.left + corner;
+    let near_right = x >= rc.right - corner;
+    let near_top = y < rc.top + corner;
+    let near_bottom = y >= rc.bottom - corner;
+    // HTLEFT 10, HTRIGHT 11, HTTOP 12, HTTOPLEFT 13, HTTOPRIGHT 14, HTBOTTOM 15,
+    // HTBOTTOMLEFT 16, HTBOTTOMRIGHT 17.
+    Some(match () {
+        _ if (top && near_left) || (left && near_top) => 13,
+        _ if (top && near_right) || (right && near_top) => 14,
+        _ if (bottom && near_left) || (left && near_bottom) => 16,
+        _ if (bottom && near_right) || (right && near_bottom) => 17,
+        _ if top => 12,
+        _ if bottom => 15,
+        _ if left => 10,
+        _ if right => 11,
+        _ => return None,
+    })
 }

@@ -4,7 +4,7 @@
 //! Windows accent, a preset, or a custom color. Neutrals carry a faint tint of the accent, the
 //! way Blurman's plum shell carries its rose. Dark and light follow the Windows app mode.
 
-use egui::{Color32, CornerRadius, Frame, Margin, RichText, Shadow, Stroke, Theme, Ui, Vec2};
+use egui::{Color32, CornerRadius, Frame, Margin, RichText, Stroke, Theme, Ui, Vec2};
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
@@ -77,7 +77,7 @@ pub fn mix(a: Color32, b: Color32, t: f32) -> Color32 {
     Color32::from_rgb(l(a.r(), b.r()), l(a.g(), b.g()), l(a.b(), b.b()))
 }
 
-fn with_alpha(c: Color32, a: u8) -> Color32 {
+pub fn with_alpha(c: Color32, a: u8) -> Color32 {
     Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), a)
 }
 
@@ -120,6 +120,15 @@ pub struct Colors {
     pub sidebar_glass: Color32,
     pub sidebar_solid: Color32,
     pub page_glass: Color32,
+    /// The one tint over the whole window's glass, so every part of the shell reads as one surface.
+    pub shell: Color32,
+    /// The sheet the folder sits on.
+    pub sheet: Color32,
+    /// Pills: path bar, search, cards, hovered rows.
+    pub control: Color32,
+    pub control_hover: Color32,
+    /// The active tab.
+    pub control_active: Color32,
 }
 
 impl Colors {
@@ -155,6 +164,11 @@ impl Colors {
                 sidebar_glass: with_alpha(tint(230, 0.05), 170),
                 sidebar_solid: tint(230, 0.05),
                 page_glass: with_alpha(tint(248, 0.03), 120),
+                shell: with_alpha(tint(238, 0.06), 150),
+                sheet: with_alpha(tint(255, 0.01), 236),
+                control: with_alpha(tint(255, 0.02), 150),
+                control_hover: with_alpha(tint(255, 0.03), 210),
+                control_active: with_alpha(tint(255, 0.0), 245),
             }
         } else {
             Self {
@@ -179,6 +193,12 @@ impl Colors {
                 sidebar_glass: with_alpha(tint(10, 0.06), 178),
                 sidebar_solid: tint(12, 0.06),
                 page_glass: with_alpha(tint(16, 0.06), 140),
+                shell: with_alpha(tint(10, 0.06), 150),
+                sheet: with_alpha(tint(22, 0.05), 236),
+                // Deep tinted fills, not translucent white: over glass, white lifts toward grey.
+                control: with_alpha(tint(26, 0.07), 190),
+                control_hover: with_alpha(tint(36, 0.09), 215),
+                control_active: with_alpha(tint(44, 0.08), 240),
             }
         }
     }
@@ -287,27 +307,8 @@ fn shell_visuals(c: &Colors) -> egui::Visuals {
     visuals
 }
 
-pub fn sidebar(glass: bool) -> Frame {
-    let c = colors();
-    Frame::new()
-        .fill(if glass { c.sidebar_glass } else { c.sidebar_solid })
-        .inner_margin(Margin::symmetric(10, 12))
-}
 
-pub fn page(glass: bool) -> Frame {
-    let c = colors();
-    Frame::new()
-        .fill(if glass { c.page_glass } else { c.bg })
-        .inner_margin(Margin::symmetric(12, 8))
-}
 
-/// The tab strip and toolbar: the sidebar's shade, so the content reads as the lit part.
-pub fn chrome(glass: bool) -> Frame {
-    let c = colors();
-    Frame::new()
-        .fill(if glass { c.sidebar_glass } else { c.sidebar_solid })
-        .inner_margin(Margin::symmetric(10, 6))
-}
 
 pub fn dialog() -> Frame {
     let c = colors();
@@ -319,18 +320,10 @@ pub fn dialog() -> Frame {
 }
 
 pub fn card<R>(ui: &mut Ui, add_contents: impl FnOnce(&mut Ui) -> R) -> egui::InnerResponse<R> {
-    let c = colors();
     Frame::new()
-        .fill(c.card)
-        .stroke(Stroke::new(1.0_f32, c.hairline))
-        .corner_radius(CornerRadius::same(16))
+        .fill(colors().control)
+        .corner_radius(CornerRadius::same(14))
         .inner_margin(Margin::same(14))
-        .shadow(Shadow {
-            offset: [0, 8],
-            blur: 18,
-            spread: 0,
-            color: c.shadow,
-        })
         .show(ui, add_contents)
 }
 
@@ -387,6 +380,14 @@ pub mod glyph {
     pub const SORT_UP: char = '\u{E70E}';
     pub const SORT_DOWN: char = '\u{E70D}';
     pub const CHECK: char = '\u{E73E}';
+    pub const FOLDER_FILL: char = '\u{E8D5}';
+    pub const IMAGE: char = '\u{EB9F}';
+    pub const VIDEO: char = '\u{E714}';
+    pub const AUDIO: char = '\u{E8D6}';
+    pub const ARCHIVE: char = '\u{E7B8}';
+    pub const CODE: char = '\u{E943}';
+    pub const DOC: char = '\u{E8A5}';
+    pub const APP: char = '\u{E756}';
     pub const MINIMIZE: char = '\u{E921}';
     pub const MAXIMIZE: char = '\u{E922}';
     pub const RESTORE: char = '\u{E923}';
@@ -406,7 +407,11 @@ pub fn install_fonts(ctx: &egui::Context) {
     use egui::{FontData, FontFamily};
     use std::sync::Arc;
     let mut fonts = egui::FontDefinitions::default();
-    if let Ok(bytes) = std::fs::read(r"C:\Windows\Fonts\segoeui.ttf") {
+    // Segoe UI Variable on Windows 11, Segoe UI before it.
+    let text_font = [r"C:\Windows\Fonts\SegUIVar.ttf", r"C:\Windows\Fonts\segoeui.ttf"]
+        .into_iter()
+        .find_map(|p| std::fs::read(p).ok());
+    if let Some(bytes) = text_font {
         fonts
             .font_data
             .insert("segoe".into(), Arc::new(FontData::from_owned(bytes)));
@@ -428,6 +433,7 @@ pub fn install_fonts(ctx: &egui::Context) {
     ctx.set_fonts(fonts);
 }
 
+#[allow(dead_code)]
 /// A flat icon button, tinted on hover, that dims when it cannot be used.
 pub fn icon_button(ui: &mut Ui, c: char, enabled: bool, tip: &str) -> egui::Response {
     let button = egui::Button::new(icon(c, 14.0))
