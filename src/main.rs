@@ -8,7 +8,7 @@ mod theme;
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
+use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Dwm::{
     DwmExtendFrameIntoClientArea, DwmSetWindowAttribute, DWMSBT_TRANSIENTWINDOW,
     DWMWA_BORDER_COLOR, DWMWA_CAPTION_COLOR, DWMWA_SYSTEMBACKDROP_TYPE, DWMWA_TEXT_COLOR,
@@ -17,7 +17,12 @@ use windows::Win32::Graphics::Dwm::{
 };
 use windows::Win32::UI::Controls::MARGINS;
 use windows::Win32::UI::Shell::{DefSubclassProc, SetWindowSubclass};
-use windows::Win32::UI::WindowsAndMessaging::WM_NCACTIVATE;
+use windows::Win32::UI::HiDpi::{GetDpiForWindow, GetSystemMetricsForDpi};
+use windows::Win32::UI::WindowsAndMessaging::{
+    GetWindowRect, IsZoomed, SetWindowPos, NCCALCSIZE_PARAMS, SM_CXPADDEDBORDER, SM_CYFRAME,
+    SWP_FRAMECHANGED, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, WM_NCACTIVATE, WM_NCCALCSIZE,
+    WM_NCHITTEST,
+};
 
 #[derive(Clone, Serialize, Deserialize, Default)]
 #[serde(default)]
@@ -78,6 +83,7 @@ fn main() -> eframe::Result {
                 if let RawWindowHandle::Win32(win32) = handle.as_raw() {
                     hwnd = win32.hwnd.get();
                     glass = frost_window(HWND(hwnd as *mut _));
+                    remove_caption(HWND(hwnd as *mut _), glass);
                 }
             }
             Ok(Box::new(app::FileMan::new(
@@ -141,26 +147,87 @@ fn frost_window(hwnd: HWND) -> bool {
             )
             .is_ok()
     };
-    if frosted {
-        unsafe {
-            let _ = SetWindowSubclass(hwnd, Some(stay_frosted), 1, 0);
-        }
-    }
     frosted
 }
 
-/// Windows swaps the backdrop for a flat color while the window is inactive. Always drawing the
-/// frame active keeps the glass.
-unsafe extern "system" fn stay_frosted(
+/// Drop the Windows caption and let the tab strip be the title bar. The frame stays, so resizing,
+/// Snap, the shadow, and rounded corners all still work.
+fn remove_caption(hwnd: HWND, glass: bool) {
+    unsafe {
+        let _ = SetWindowSubclass(hwnd, Some(frame_proc), 1, usize::from(glass));
+        // Ask Windows to measure the frame again, now through `frame_proc`.
+        let _ = SetWindowPos(
+            hwnd,
+            None,
+            0,
+            0,
+            0,
+            0,
+            SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER,
+        );
+    }
+}
+
+/// How thick the sizing frame is at the window's DPI.
+unsafe fn frame_thickness(hwnd: HWND) -> i32 {
+    let dpi = GetDpiForWindow(hwnd);
+    GetSystemMetricsForDpi(SM_CYFRAME, dpi) + GetSystemMetricsForDpi(SM_CXPADDEDBORDER, dpi)
+}
+
+/// The window's frame, without a caption.
+///
+/// - The client area grows up over where the caption was. Left, right and bottom keep their
+///   (invisible on Windows 11) sizing borders.
+/// - The top few pixels still resize the window, since the caption is gone.
+/// - With glass, the frame is always drawn active: Windows otherwise swaps the backdrop for a flat
+///   color while the window is inactive.
+unsafe extern "system" fn frame_proc(
     hwnd: HWND,
     msg: u32,
     wparam: WPARAM,
     lparam: LPARAM,
     _id: usize,
-    _data: usize,
+    glass: usize,
 ) -> LRESULT {
-    if msg == WM_NCACTIVATE {
-        return DefSubclassProc(hwnd, msg, WPARAM(1), lparam);
+    match msg {
+        WM_NCACTIVATE if glass != 0 => DefSubclassProc(hwnd, msg, WPARAM(1), lparam),
+        WM_NCCALCSIZE if wparam.0 != 0 => {
+            let params = lparam.0 as *mut NCCALCSIZE_PARAMS;
+            let top = (*params).rgrc[0].top;
+            let result = DefSubclassProc(hwnd, msg, wparam, lparam);
+            (*params).rgrc[0].top = top;
+            // A maximized window hangs its frame off the screen edge; keep content on screen.
+            if IsZoomed(hwnd).as_bool() {
+                (*params).rgrc[0].top += frame_thickness(hwnd);
+            }
+            result
+        }
+        WM_NCHITTEST => {
+            const HTCLIENT: isize = 1;
+            const HTTOP: isize = 12;
+            const HTTOPLEFT: isize = 13;
+            const HTTOPRIGHT: isize = 14;
+            let hit = DefSubclassProc(hwnd, msg, wparam, lparam);
+            if hit.0 != HTCLIENT || IsZoomed(hwnd).as_bool() {
+                return hit;
+            }
+            let x = (lparam.0 & 0xFFFF) as i16 as i32;
+            let y = ((lparam.0 >> 16) & 0xFFFF) as i16 as i32;
+            let mut rc = RECT::default();
+            let _ = GetWindowRect(hwnd, &mut rc);
+            let border = frame_thickness(hwnd);
+            if y < rc.top + border {
+                let corner = border * 2;
+                return LRESULT(if x < rc.left + corner {
+                    HTTOPLEFT
+                } else if x >= rc.right - corner {
+                    HTTOPRIGHT
+                } else {
+                    HTTOP
+                });
+            }
+            hit
+        }
+        _ => DefSubclassProc(hwnd, msg, wparam, lparam),
     }
-    DefSubclassProc(hwnd, msg, wparam, lparam)
 }

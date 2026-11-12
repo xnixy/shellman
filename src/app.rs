@@ -16,6 +16,8 @@ const ROW_H: f32 = 30.0;
 const HEADER_H: f32 = 28.0;
 const SIDEBAR_W: f32 = 210.0;
 const TOAST_SECS: f64 = 3.0;
+/// Height of the tab strip, which is also the title bar.
+const CAPTION_H: f32 = 40.0;
 
 #[derive(Clone, PartialEq, Debug)]
 pub enum Loc {
@@ -801,6 +803,7 @@ impl FileMan {
     fn tab_strip(&mut self, ui: &mut Ui, actions: &mut Vec<Action>) {
         let c = colors();
         ui.horizontal(|ui| {
+            ui.set_min_height(CAPTION_H);
             ui.spacing_mut().item_spacing.x = 2.0;
             for (i, tab) in self.tabs.iter().enumerate() {
                 let active = i == self.active;
@@ -854,6 +857,31 @@ impl FileMan {
             if theme::icon_button(ui, glyph::ADD, true, "New tab (Ctrl+T)").clicked() {
                 actions.push(Action::NewTab(self.tabs[self.active].loc.clone()));
             }
+            // The rest of the strip is the title bar: window buttons on the right, and empty
+            // space that drags the window and maximizes it on a double click.
+            ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
+                ui.spacing_mut().item_spacing.x = 0.0;
+                let maximized = ui.input(|i| i.viewport().maximized.unwrap_or(false));
+                if caption_button(ui, glyph::CHROME_CLOSE, true).clicked() {
+                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+                let g = if maximized { glyph::RESTORE } else { glyph::MAXIMIZE };
+                if caption_button(ui, g, false).clicked() {
+                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
+                }
+                if caption_button(ui, glyph::MINIMIZE, false).clicked() {
+                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+                }
+                let (_, drag) = ui.allocate_exact_size(
+                    Vec2::new(ui.available_width(), CAPTION_H),
+                    Sense::click_and_drag(),
+                );
+                if drag.double_clicked() {
+                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
+                } else if drag.drag_started() {
+                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
+                }
+            });
         });
     }
 
@@ -1590,7 +1618,7 @@ impl eframe::App for FileMan {
 
         let glass = self.glass;
         egui::TopBottomPanel::top("tabs")
-            .frame(theme::chrome(glass).inner_margin(egui::Margin { left: 10, right: 10, top: 6, bottom: 0 }))
+            .frame(theme::chrome(glass).inner_margin(egui::Margin { left: 10, right: 0, top: 0, bottom: 0 }))
             .show_separator_line(false)
             .show(ctx, |ui| self.tab_strip(ui, &mut actions));
         egui::TopBottomPanel::top("toolbar")
@@ -1664,6 +1692,22 @@ fn icon_text(g: char, text: &str, color: Color32, size: f32) -> WidgetText {
         },
     );
     WidgetText::LayoutJob(job)
+}
+
+/// Minimize, maximize, or close, sized and colored like the Windows ones.
+fn caption_button(ui: &mut Ui, g: char, close: bool) -> egui::Response {
+    let c = colors();
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(46.0, CAPTION_H), Sense::click());
+    let (fill, fg) = match (resp.hovered(), close) {
+        (true, true) => (Color32::from_rgb(196, 43, 28), Color32::WHITE),
+        (true, false) => (theme::mix(c.sidebar_solid, c.text, 0.1), c.text),
+        // Solid, not glass: a visual style can leave its own caption buttons drawn in the frame
+        // behind ours, and they would show through.
+        _ => (c.sidebar_solid, c.text),
+    };
+    ui.painter().rect_filled(rect, CornerRadius::ZERO, fill);
+    ui.painter().text(rect.center(), Align2::CENTER_CENTER, g, icon_font(10.0), fg);
+    resp
 }
 
 fn menu_item(ui: &mut Ui, g: char, label: &str, shortcut: &str) -> bool {

@@ -387,6 +387,10 @@ pub mod glyph {
     pub const SORT_UP: char = '\u{E70E}';
     pub const SORT_DOWN: char = '\u{E70D}';
     pub const CHECK: char = '\u{E73E}';
+    pub const MINIMIZE: char = '\u{E921}';
+    pub const MAXIMIZE: char = '\u{E922}';
+    pub const RESTORE: char = '\u{E923}';
+    pub const CHROME_CLOSE: char = '\u{E8BB}';
 }
 
 pub fn icon_font(size: f32) -> egui::FontId {
