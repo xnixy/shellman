@@ -98,8 +98,8 @@ fn radio_tile(g: char, title: &'static str, detail: String, s: Switch, kind: Kin
 }
 
 /// Lay the grid out. Returns what was asked for.
-/// `links` is whether the tiles may open their Settings page: without a shell to service the
-/// link they show no chevron and their body does nothing (the chip still toggles).
+/// `links` is whether Settings can open: without it, a tile whose page has no classic fallback
+/// shows no chevron and its body does nothing (the chip still toggles).
 pub fn show(ui: &mut Ui, n: &Connectivity, links: bool) -> Option<Asked> {
     let list = tiles(n);
     if list.is_empty() {
@@ -122,6 +122,7 @@ pub fn show(ui: &mut Ui, n: &Connectivity, links: bool) -> Option<Asked> {
 }
 
 fn tile(ui: &mut Ui, rect: Rect, t: &Tile, links: bool) -> Option<Asked> {
+    let links = crate::settings_page::can_open(t.page, links);
     let c = colors();
     let id = egui::Id::new(("connect", t.title));
     let body = ui.interact(rect, id, if links { Sense::click() } else { Sense::hover() });

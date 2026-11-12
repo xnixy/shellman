@@ -62,6 +62,13 @@ impl Reservation {
         r
     }
 
+    /// The work area changed: if it is shellman's to keep, put it back as reserved.
+    pub fn reassert(&self) {
+        if let Some(work) = &self._work {
+            work.reassert();
+        }
+    }
+
     /// Explorer said bar positions changed: ask again. True if anything moved.
     pub fn requery(&mut self, slot: &Slot, sizes: &Sizes) -> bool {
         let mut moved = false;

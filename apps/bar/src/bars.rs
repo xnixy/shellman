@@ -125,6 +125,10 @@ impl Bars {
                             set.dock = Some(View::new(Kind::Dock, &slot.device));
                         }
                         set.slot = slot;
+                    } else if let Some(r) = &set.reservation {
+                        // Same monitor, same space: a layout came from a work-area change,
+                        // possibly someone else's.
+                        r.reassert();
                     }
                     set
                 }
