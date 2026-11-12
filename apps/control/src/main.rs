@@ -103,10 +103,11 @@ impl eframe::App for Shell {
                 look.apply(ctx);
             }
         }
-        self.inner.frame(ctx);
-        // After the frame, which takes the light or dark mode. Free when the look is unchanged.
+        let islands = self.inner.frame(ctx);
+        // After the frame, which takes the light or dark mode. Both are free when nothing changed.
         if let Some(panel) = &self.panel {
             panel.set_style(Style::from_theme(place::RADIUS));
+            panel.set_islands(&islands, ctx.pixels_per_point());
         }
     }
 }

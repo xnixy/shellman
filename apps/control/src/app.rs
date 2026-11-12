@@ -6,8 +6,8 @@
 
 use crate::power_menu::PowerMenu;
 use crate::summon::{self, Shared};
-use crate::views::{connect, display::DisplayView, footer, kit, media::MediaView, sound::SoundView};
-use crate::{outside, place, settings_page};
+use crate::views::{connect, display::DisplayView, footer, island, media::MediaView, sound::SoundView};
+use crate::{outside, settings_page};
 use shellman_core::system::audio_watch::SoundWatch;
 use shellman_core::system::brightness::BrightnessWatch;
 use shellman_core::system::live::Wake;
@@ -133,7 +133,7 @@ impl Control {
         true
     }
 
-    pub fn frame(&mut self, ctx: &egui::Context) {
+    pub fn frame(&mut self, ctx: &egui::Context) -> Vec<glass::Island> {
         let showing = self.follow_window(ctx);
         if let Some(live) = &self.live {
             if let Some(n) = live.connectivity.take() {
@@ -147,49 +147,72 @@ impl Control {
         let force_light = std::env::var_os("SHELLMAN_FORCE_LIGHT").is_some();
         theme::set_light(force_light || ctx.theme() == egui::Theme::Light);
         let mut asked = Asked::None;
-        let mut height = 0.0;
-        // Over the glass, no fill; without it, a rounded surface painted by the frame.
-        let surface = glass::content_frame(self.glass, &glass::Style::from_theme(place::RADIUS))
-            .inner_margin(egui::Margin::same(kit::PAD as i8));
-        egui::CentralPanel::default()
-            .frame(surface)
-            .show(ctx, |ui| {
-                ui.spacing_mut().item_spacing = egui::vec2(kit::GAP, kit::GAP);
-                // Scrolls only on a screen too short for the whole panel, with a bar that floats
-                // over the tiles rather than narrowing them.
-                ui.spacing_mut().scroll = egui::style::ScrollStyle::floating();
-                let out = egui::ScrollArea::vertical().auto_shrink([false, true]).show(ui, |ui| {
-                    ui.spacing_mut().item_spacing = egui::vec2(kit::GAP, kit::GAP);
-                    self.modules(ui)
-                });
-                asked = out.inner;
-                height = out.content_size.y + kit::PAD * 2.0;
-            });
+        let mut islands = Vec::new();
+        let screen = ctx.screen_rect();
+        // The panel is its islands: no surface of its own, the glass between them is the desktop.
+        egui::CentralPanel::default().frame(egui::Frame::NONE).show(ctx, |ui| {
+            ui.spacing_mut().item_spacing = egui::vec2(0.0, island::SPACING);
+            // Without composed glass the islands paint their own solid fills, under all this.
+            let under = ui.painter().add(egui::Shape::Noop);
+            asked = self.modules(ui, &mut islands);
+            if !self.glass {
+                let style = glass::Style::from_theme(island::RADIUS);
+                ui.painter().set(under, egui::Shape::Vec(glass::islands::solid_shapes(&islands, &style)));
+            }
+        });
+        // A press between the islands is a click away.
+        let pressed = ctx.input(|i| i.pointer.primary_pressed().then(|| i.pointer.interact_pos()).flatten());
+        if showing && pressed.is_some_and(|at| !islands.iter().any(|i| i.rect.contains(at))) {
+            self.shared.closed_by_click();
+            self.hide();
+            return islands;
+        }
+        // The window is the union of the islands, hanging from its top.
+        let height = islands.iter().map(|i| i.rect.bottom()).fold(0.0, f32::max) - screen.top();
         if showing {
             summon::fit(self.hwnd, &self.shared, height);
         }
         self.act(asked);
+        islands
     }
 
-    fn modules(&mut self, ui: &mut egui::Ui) -> Asked {
+    /// The islands, top to bottom: the connectivity tiles; sound; brightness; now playing
+    /// (when something plays); the battery and the buttons. Each is recorded in `islands`.
+    fn modules(&mut self, ui: &mut egui::Ui, islands: &mut Vec<glass::Island>) -> Asked {
         let live = self.live.as_ref();
         let mut asked = Asked::None;
-        if let Some(a) = connect::show(ui, &self.net, self.links) {
-            asked = Asked::Connect(a);
+        if connect::has_tiles(&self.net) {
+            let (net, links) = (&self.net, self.links);
+            if let Some(a) = island::show(ui, islands, 14.0, |ui| connect::show(ui, net, links)) {
+                asked = Asked::Connect(a);
+            }
         }
-        if self.sound.show(ui, live.map(|l| &l.sound)) {
-            asked = Asked::SoundSettings;
+        if self.sound.sound.volume.is_some() {
+            island::show(ui, islands, 16.0, |ui| {
+                if self.sound.show(ui, live.map(|l| &l.sound)) {
+                    asked = Asked::SoundSettings;
+                }
+            });
         }
-        if self.display.show(ui, live.map(|l| &l.brightness)) {
-            asked = Asked::DisplaySettings;
+        if !self.display.screens.is_empty() {
+            island::show(ui, islands, 16.0, |ui| {
+                if self.display.show(ui, live.map(|l| &l.brightness)) {
+                    asked = Asked::DisplaySettings;
+                }
+            });
         }
-        self.media.show(ui, live.map(|l| &l.media));
-        if let Some(b) = self.battery {
-            footer::battery(ui, b);
+        if self.media.now.is_some() {
+            island::show(ui, islands, 12.0, |ui| self.media.show(ui, live.map(|l| &l.media)));
         }
-        if let Some(a) = footer::show(ui, &mut self.power) {
-            asked = Asked::Footer(a);
-        }
+        let battery = self.battery;
+        island::show(ui, islands, 12.0, |ui| {
+            if let Some(b) = battery {
+                footer::battery(ui, b);
+            }
+            if let Some(a) = footer::show(ui, &mut self.power) {
+                asked = Asked::Footer(a);
+            }
+        });
         asked
     }
 

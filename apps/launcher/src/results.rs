@@ -8,7 +8,8 @@ use shellman_core::apps_index::App;
 use shellman_core::thumbs::Thumbs;
 use shellman_ui::theme::{colors, glyph, icon_font};
 
-const ROW_H: f32 = 52.0;
+/// A row's height; the results island is as tall as its rows.
+pub const ROW_H: f32 = 52.0;
 const ICON: f32 = 32.0;
 const NAME_SIZE: f32 = 15.0;
 
@@ -107,8 +108,10 @@ fn draw_row(
 ) {
     let c = colors();
     let row = rect.shrink2(egui::vec2(0.0, 2.0));
+    // The selected row is a rounded accent fill, its text on the accent.
+    let ink = if selected { c.on_accent } else { c.text };
     if selected {
-        p.rect_filled(row, 12.0, c.text.gamma_multiply(0.12));
+        p.rect_filled(row, 14.0, c.accent_fill);
     } else if hovered {
         p.rect_filled(row, 12.0, c.text.gamma_multiply(0.08));
     }
@@ -124,7 +127,7 @@ fn draw_row(
     let verb = match item {
         Item::App(index) => {
             crate::icon::paint(p, icon, &apps[index], thumbs);
-            name(p, name_at, name_w, &apps[index].name, Some(query));
+            name(p, name_at, name_w, &apps[index].name, Some(query), ink);
             "Open"
         }
         Item::Settings => {
@@ -136,7 +139,7 @@ fn draw_row(
                 Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
                 Color32::WHITE,
             );
-            name(p, name_at, name_w, SETTINGS_NAME, Some(query));
+            name(p, name_at, name_w, SETTINGS_NAME, Some(query), ink);
             "Open"
         }
         Item::Run => {
@@ -148,24 +151,23 @@ fn draw_row(
                 icon_font(16.0),
                 c.accent_text,
             );
-            name(p, name_at, name_w, &format!("Run \"{}\"", query.trim()), None);
+            name(p, name_at, name_w, &format!("Run \"{}\"", query.trim()), None, ink);
             "Run"
         }
     };
     if selected {
-        hint(p, row, verb);
+        hint(p, row, verb, ink);
     }
 }
 
 /// A name at `at` (left, vertically centred), cut to `width`; letters the query matched stand
 /// out against the rest.
-fn name(p: &Painter, at: egui::Pos2, width: f32, text: &str, query: Option<&str>) {
-    let c = colors();
+fn name(p: &Painter, at: egui::Pos2, width: f32, text: &str, query: Option<&str>, ink: Color32) {
     let marks = query.map(|q| crate::rank::matched(text, q)).unwrap_or_default();
     let any = marks.contains(&true);
     let format = |on: bool| TextFormat {
         font_id: egui::FontId::proportional(NAME_SIZE),
-        color: if any && !on { c.text.gamma_multiply(0.72) } else { c.text },
+        color: if any && !on { ink.gamma_multiply(0.72) } else { ink },
         ..Default::default()
     };
     let mut job = LayoutJob::default();
@@ -183,17 +185,16 @@ fn name(p: &Painter, at: egui::Pos2, width: f32, text: &str, query: Option<&str>
     job.append(&run, 0.0, format(run_on));
     job.wrap = egui::text::TextWrapping::truncate_at_width(width.max(1.0));
     let galley = p.ctx().fonts(|f| f.layout_job(job));
-    p.galley(egui::pos2(at.x, at.y - galley.size().y / 2.0), galley, c.text);
+    p.galley(egui::pos2(at.x, at.y - galley.size().y / 2.0), galley, ink);
 }
 
 /// "Open" and a return-key arrow, muted, at the right end of the selected row.
-fn hint(p: &Painter, row: Rect, verb: &str) {
-    let c = colors();
+fn hint(p: &Painter, row: Rect, verb: &str, ink: Color32) {
     let right = row.right() - 16.0;
     let y = row.center().y;
     // The return arrow: down, then left, with a head.
     let (cx, h) = (right - 6.0, 4.5);
-    let stroke = egui::Stroke::new(1.3_f32, c.muted);
+    let stroke = egui::Stroke::new(1.3_f32, ink);
     let shape = [
         egui::pos2(cx + 5.0, y - h),
         egui::pos2(cx + 5.0, y + 1.5),
@@ -209,7 +210,7 @@ fn hint(p: &Painter, row: Rect, verb: &str) {
         egui::Align2::RIGHT_CENTER,
         verb,
         egui::FontId::proportional(12.5),
-        c.muted,
+        ink,
     );
 }
 

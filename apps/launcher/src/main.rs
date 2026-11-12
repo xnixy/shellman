@@ -107,11 +107,12 @@ impl eframe::App for Launcher {
                 look.apply(ctx);
             }
         }
-        self.inner.frame(ctx);
-        // After the frame, which takes the light or dark mode from Windows. Free when the look
-        // is unchanged.
+        let islands = self.inner.frame(ctx);
+        // After the frame, which takes the light or dark mode from Windows. Both are free when
+        // nothing changed.
         if let Some(panel) = &self.panel {
             panel.set_style(Style::from_theme(summon::RADIUS));
+            panel.set_islands(&islands, ctx.pixels_per_point());
         }
     }
 }

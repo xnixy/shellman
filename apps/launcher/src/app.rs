@@ -18,9 +18,19 @@ use std::time::{Duration, Instant};
 const MAX_RESULTS: usize = 60;
 /// The app list is read again on summoning when it is older than this.
 const REFRESH_AFTER: Duration = Duration::from_secs(30);
-/// The panel's content padding, and how long it takes to appear.
-const PAD_X: f32 = 28.0;
-const PAD_TOP: f32 = 22.0;
+/// The islands: the window's margin to them, the search pill's height and inner padding, the gap
+/// under it, the list island's corner radius and the padding of what it holds.
+const ISLAND_MARGIN: f32 = 20.0;
+const PILL_H: f32 = 58.0;
+const PILL_PAD: f32 = 24.0;
+const GAP: f32 = 14.0;
+const ISLAND_RADIUS: f32 = 22.0;
+const LIST_PAD: f32 = 10.0;
+/// Room above the rows (and the last row's room below), and above the grid's first label.
+const RESULTS_PAD_TOP: f32 = 16.0;
+const RESULTS_END: f32 = 16.0;
+const GRID_PAD_TOP: f32 = 6.0;
+/// How long the content takes to fade in.
 const APPEAR: Duration = Duration::from_millis(120);
 /// If the window has no keyboard focus this long after appearing, ask for it again.
 const FOCUS_RETRY: Duration = Duration::from_millis(250);
@@ -235,30 +245,29 @@ impl Launcher {
         }
     }
 
-    /// The search field: a glyph, the text at 22 pt, and an "esc" chip once something is typed.
-    /// No frame and no line beneath; the glass shows around it.
-    fn search_box(&mut self, ui: &mut egui::Ui) {
+    /// The search field inside the pill `bar`: a glyph, the text at 20 pt, and an "esc" chip
+    /// once something is typed. No frame and no line beneath; the pill is the field.
+    fn search_box(&mut self, ui: &mut egui::Ui, bar: egui::Rect) {
         let c = colors();
-        let (bar, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 56.0), egui::Sense::hover());
         ui.painter().text(
-            egui::pos2(bar.left() + 11.0, bar.center().y),
+            egui::pos2(bar.left() + PILL_PAD + 9.0, bar.center().y),
             egui::Align2::CENTER_CENTER,
             glyph::SEARCH,
             icon_font(18.0),
             c.muted,
         );
-        let chip_w = if self.typing() { 44.0 } else { 0.0 };
+        let chip_w = if self.typing() { 48.0 } else { 0.0 };
         let edit_rect = egui::Rect::from_min_max(
-            egui::pos2(bar.left() + 34.0, bar.top()),
-            egui::pos2(bar.right() - chip_w, bar.bottom()),
+            egui::pos2(bar.left() + PILL_PAD + 32.0, bar.top()),
+            egui::pos2(bar.right() - PILL_PAD - chip_w, bar.bottom()),
         );
         let edit = egui::TextEdit::singleline(&mut self.query)
             .id(egui::Id::new("query"))
-            .font(egui::FontId::proportional(22.0))
+            .font(egui::FontId::proportional(20.0))
             .frame(false)
             .margin(egui::Margin::ZERO)
             .vertical_align(egui::Align::Center)
-            .hint_text(egui::RichText::new("Search").color(c.muted))
+            .hint_text(egui::RichText::new("Search apps, files, settings").color(c.muted))
             .desired_width(edit_rect.width());
         let resp = ui.put(edit_rect, edit);
         // The box owns the keyboard whenever the launcher is showing.
@@ -268,7 +277,7 @@ impl Launcher {
         }
         if self.typing() {
             let chip = egui::Rect::from_center_size(
-                egui::pos2(bar.right() - 20.0, bar.center().y),
+                egui::pos2(bar.right() - PILL_PAD - 17.0, bar.center().y),
                 egui::vec2(34.0, 22.0),
             );
             ui.painter().rect_filled(chip, 7.0, c.text.gamma_multiply(0.08));
@@ -282,7 +291,32 @@ impl Launcher {
         }
     }
 
-    pub fn frame(&mut self, ctx: &egui::Context) {
+    /// The search pill and, under it, the island of results (or the app grid); a pill alone when
+    /// there is nothing to list. The window stays one size, so what changes with the content is
+    /// only these rectangles, and the glass and the content are laid out in the same frame.
+    fn layout(&self, screen: egui::Rect) -> Layout {
+        let left = screen.left() + ISLAND_MARGIN;
+        let right = screen.right() - ISLAND_MARGIN;
+        let pill = egui::Rect::from_min_max(
+            egui::pos2(left, screen.top()),
+            egui::pos2(right, screen.top() + PILL_H),
+        );
+        let top = pill.bottom() + GAP;
+        let room = (screen.bottom() - top).max(0.0);
+        let (pad_top, content) = if self.typing() {
+            (RESULTS_PAD_TOP, results::ROW_H * self.items.len() as f32 + RESULTS_END)
+        } else {
+            (GRID_PAD_TOP, self.grid.height())
+        };
+        let want = if content > 0.0 { pad_top + content } else { 0.0 };
+        let height = want.min(room);
+        let list = (height > 0.0)
+            .then(|| egui::Rect::from_min_size(egui::pos2(left, top), egui::vec2(right - left, height)));
+        Layout { pill, list, pad_top, overflows: want > room }
+    }
+
+    /// One frame. Returns the glass for it: the islands, in points; empty while hidden.
+    pub fn frame(&mut self, ctx: &egui::Context) -> Vec<glass::Island> {
         self.thumbs.poll(ctx);
         let apps = self.index.apps();
         if !Arc::ptr_eq(&apps, &self.apps) {
@@ -296,7 +330,7 @@ impl Launcher {
         // Hidden: draw nothing. A drawn search box keeps the focus, and its caret blink asks for
         // repaints that a hidden window never gets, which spins the event loop on a whole core.
         if !self.shared.is_showing() {
-            return;
+            return Vec::new();
         }
         self.keys(ctx);
 
@@ -304,48 +338,63 @@ impl Launcher {
         let force_light = std::env::var_os("SHELLMAN_FORCE_LIGHT").is_some();
         theme::set_light(force_light || ctx.theme() == egui::Theme::Light);
         let screen = ctx.screen_rect();
+        let layout = self.layout(screen);
+        let mut islands = vec![glass::Island::pill(layout.pill)];
+        if let Some(list) = layout.list {
+            islands.push(glass::Island::new(list, ISLAND_RADIUS));
+        }
 
-        // ---- PANEL BACKGROUND: the one place the panel's own fill is painted. ----
-        // Over the glass panel, nothing; without it, a rounded surface painted here.
-        let surface = glass::content_frame(self.glass, &glass::Style::from_theme(summon::RADIUS));
-        egui::CentralPanel::default().frame(surface).show(ctx, |_| {});
-        // ---- end of panel background ----
+        // A press that lands on no island (the margins, the gap, the empty window below) is a
+        // click away: the launcher closes, so the transparent part of the window never traps
+        // clicks meant for the desktop.
+        let pressed = ctx.input(|i| i.pointer.primary_pressed().then(|| i.pointer.interact_pos()).flatten());
+        if pressed.is_some_and(|at| !islands.iter().any(|i| i.rect.contains(at))) {
+            self.hide();
+            return Vec::new();
+        }
 
-        // On showing, the content fades in and grows from 97%; nothing runs once it is done.
+        // On showing, the content fades in; nothing runs once it is done. (The glass is
+        // instant: it is a separate window, and cannot take part in a fade.)
         let t = (self.shown_at.elapsed().as_secs_f32() / APPEAR.as_secs_f32()).min(1.0);
         let ease = 1.0 - (1.0 - t) * (1.0 - t);
         if t < 1.0 {
             ctx.request_repaint();
         }
-        let layer = egui::LayerId::new(egui::Order::Foreground, egui::Id::new("content"));
-        let scale = 0.97 + 0.03 * ease;
-        ctx.set_transform_layer(
-            layer,
-            egui::emath::TSTransform::new(screen.center().to_vec2() * (1.0 - scale), scale),
-        );
         let mut picked = None;
         egui::Area::new(egui::Id::new("content"))
             .order(egui::Order::Foreground)
             .fixed_pos(screen.min)
             .constrain(false)
             .show(ctx, |ui| {
-                ui.set_opacity(ease);
                 ui.set_min_size(screen.size());
-                let inner = egui::Rect::from_min_max(
-                    screen.min + egui::vec2(PAD_X, PAD_TOP),
-                    egui::pos2(screen.max.x - PAD_X, screen.max.y),
-                );
-                ui.scope_builder(egui::UiBuilder::new().max_rect(inner), |ui| {
-                    self.search_box(ui);
-                    ui.add_space(14.0);
-                    picked = self.content(ui, Fade { edge: screen.max.y });
+                // Without composed glass the islands paint their own solid fills, under all this.
+                let under = ui.painter().add(egui::Shape::Noop);
+                ui.set_opacity(ease);
+                ui.scope_builder(egui::UiBuilder::new().max_rect(layout.pill), |ui| {
+                    self.search_box(ui, layout.pill);
                 });
+                if let Some(list) = layout.list {
+                    let inner = egui::Rect::from_min_max(
+                        egui::pos2(list.left() + LIST_PAD, list.top() + layout.pad_top),
+                        egui::pos2(list.right() - LIST_PAD, list.bottom()),
+                    );
+                    // Rows only fade into the island's edge when there are more than fit.
+                    let edge = if layout.overflows { list.bottom() - 4.0 } else { 1.0e9 };
+                    ui.scope_builder(egui::UiBuilder::new().max_rect(inner), |ui| {
+                        picked = self.content(ui, Fade { edge });
+                    });
+                }
+                if !self.glass {
+                    let style = glass::Style::from_theme(ISLAND_RADIUS);
+                    ui.painter().set(under, egui::Shape::Vec(glass::islands::solid_shapes(&islands, &style)));
+                }
             });
         if let Some(item) = picked {
             self.activate(item);
         }
         self.reveal = false;
         self.reset_scroll = false;
+        islands
     }
 
     /// The grid or the result list. Returns what was clicked.
@@ -382,6 +431,17 @@ impl Launcher {
             out.launch.map(Item::App)
         }
     }
+}
+
+/// Where the pieces of one frame go.
+struct Layout {
+    pill: egui::Rect,
+    /// The island under the pill, when there is anything to list.
+    list: Option<egui::Rect>,
+    /// How far the list's content starts below the island's top.
+    pad_top: f32,
+    /// Whether the content is taller than the island, so it scrolls and fades at the edge.
+    overflows: bool,
 }
 
 /// Shell launches want COM on the thread that makes them.

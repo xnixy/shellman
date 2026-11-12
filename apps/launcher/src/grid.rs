@@ -73,6 +73,11 @@ impl Grid {
         }
     }
 
+    /// The grid's full height in points.
+    pub fn height(&self) -> f32 {
+        self.height
+    }
+
     /// The first app's cell, where the selection starts.
     pub fn first(&self) -> Pos {
         let row = self
@@ -236,8 +241,9 @@ fn draw_cell(
 ) {
     let c = colors();
     let inner = rect.shrink2(egui::vec2(2.0, 0.0));
+    let ink = if selected { c.on_accent } else { c.text };
     if selected {
-        p.rect_filled(inner, 14.0, c.text.gamma_multiply(0.12));
+        p.rect_filled(inner, 14.0, c.accent_fill);
     } else if hovered {
         p.rect_filled(inner, 14.0, c.text.gamma_multiply(0.08));
     }
@@ -252,7 +258,7 @@ fn draw_cell(
             egui::Align2::CENTER_TOP,
             line,
             egui::FontId::proportional(LABEL_SIZE),
-            c.text,
+            ink,
         );
     }
 }

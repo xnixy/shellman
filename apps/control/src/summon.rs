@@ -244,6 +244,23 @@ pub fn fit(hwnd: isize, shared: &Shared, height: f32) {
     };
     let want = place::panel_rect(rect, scale, height);
     let hwnd = HWND(hwnd as *mut _);
+    // The islands fill the whole client area, so a caption the window library gave the window
+    // back would cover the top island: take it off again, with the frame recalculated.
+    unsafe {
+        let style = GetWindowLongPtrW(hwnd, GWL_STYLE) as u32;
+        if style & (WS_CAPTION.0 | WS_THICKFRAME.0) != 0 {
+            strip_frame(hwnd);
+            let _ = SetWindowPos(
+                hwnd,
+                None,
+                want.x,
+                want.y,
+                want.w,
+                want.h,
+                SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
+            );
+        }
+    }
     let mut now = RECT::default();
     unsafe {
         let _ = GetWindowRect(hwnd, &mut now);
