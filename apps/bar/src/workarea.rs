@@ -27,18 +27,40 @@ const SEND_CHANGE: SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS = SYSTEM_PARAMETERS_INFO_
 /// One monitor's work area, with space taken off its top and bottom.
 pub struct WorkArea {
     monitor: RECT,
+    wanted: RECT,
 }
 
 impl WorkArea {
     /// Keep `top` and `bottom` physical pixels of `monitor` free of maximized windows.
     pub fn reserve(monitor: RECT, top: i32, bottom: i32) -> Self {
-        set(RECT {
+        let wanted = RECT {
             top: monitor.top + top,
             bottom: monitor.bottom - bottom,
             ..monitor
-        });
-        Self { monitor }
+        };
+        set(wanted);
+        Self { monitor, wanted }
     }
+
+    /// Set it again if something else changed it. An Explorer that Winlogon starts for a moment
+    /// (when the modern-app host dies, see `shellman_core::app_host`) sets every monitor's work
+    /// area for its own taskbar, and nothing else would put shellman's back.
+    pub fn reassert(&self) {
+        if work_area(self.monitor).is_some_and(|now| now != self.wanted) {
+            set(self.wanted);
+        }
+    }
+}
+
+/// The work area of the monitor with exactly this rectangle.
+fn work_area(monitor: RECT) -> Option<RECT> {
+    let handle = unsafe { MonitorFromRect(&monitor, MONITOR_DEFAULTTONULL) };
+    if handle.is_invalid() {
+        return None;
+    }
+    let mut info = MONITORINFO { cbSize: size_of::<MONITORINFO>() as u32, ..Default::default() };
+    let ok = unsafe { GetMonitorInfoW(handle, &mut info) }.as_bool() && info.rcMonitor == monitor;
+    ok.then_some(info.rcWork)
 }
 
 impl Drop for WorkArea {
@@ -51,17 +73,7 @@ impl Drop for WorkArea {
 
 /// Is there still a monitor with exactly this rectangle?
 fn still_there(monitor: RECT) -> bool {
-    unsafe {
-        let handle = MonitorFromRect(&monitor, MONITOR_DEFAULTTONULL);
-        if handle.is_invalid() {
-            return false;
-        }
-        let mut info = MONITORINFO {
-            cbSize: size_of::<MONITORINFO>() as u32,
-            ..Default::default()
-        };
-        GetMonitorInfoW(handle, &mut info).as_bool() && info.rcMonitor == monitor
-    }
+    work_area(monitor).is_some()
 }
 
 fn set(mut rect: RECT) {

@@ -23,6 +23,12 @@ fn main() {
         if GetLastError() == ERROR_ALREADY_EXISTS {
             return;
         }
+        // Windows' host for modern apps (Settings, Calculator, the Store), kept running while
+        // shellman is the shell. The desktop carries it because it is the plainest and longest
+        // lived of the apps, and the first to start. `--no-shell` (or a SHELLMAN_INSTANCE test
+        // copy) leaves it out.
+        let no_shell = std::env::args().any(|a| a == "--no-shell");
+        shellman_core::app_host::start(no_shell);
         app::run();
     }
 }

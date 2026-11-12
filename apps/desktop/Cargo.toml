@@ -7,6 +7,7 @@ license.workspace = true
 publish = false
 
 [dependencies]
+shellman-core.workspace = true
 windows.workspace = true
 
 [build-dependencies]

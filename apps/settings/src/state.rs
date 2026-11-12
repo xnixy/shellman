@@ -5,6 +5,7 @@ use crate::saver::Saver;
 use shellman_core::settings::bar::BarSettings;
 use shellman_core::settings::dock::{self, DockSettings};
 use shellman_core::settings::launcher::LauncherSettings;
+use shellman_core::settings::shell::ShellSettings;
 use shellman_core::system::app_name;
 use shellman_core::thumbs::Thumbs;
 use shellman_ui::appearance::Appearance;
@@ -18,6 +19,7 @@ pub struct State {
     pub dock_names: Vec<String>,
     pub bar: BarSettings,
     pub launcher: LauncherSettings,
+    pub shell: ShellSettings,
     pub saver: Saver,
     pub thumbs: Thumbs,
     pub hwnd: isize,
@@ -33,6 +35,7 @@ impl State {
             dock_names: Vec::new(),
             bar: BarSettings::load(),
             launcher: LauncherSettings::load(),
+            shell: ShellSettings::load(),
             saver: Saver::new(),
             thumbs: Thumbs::new(ctx.clone()),
             hwnd,
@@ -83,6 +86,11 @@ impl State {
         self.saver.run(move || launcher.save());
     }
 
+    pub fn save_shell(&self) {
+        let shell = self.shell;
+        self.saver.run(move || shell.save());
+    }
+
     /// Read every file again, after something else changed one (the dock pinning an app, say).
     /// True when anything differs.
     pub fn reload(&mut self, ctx: &egui::Context) -> bool {
@@ -107,6 +115,11 @@ impl State {
         let launcher = LauncherSettings::load();
         if launcher != self.launcher {
             self.launcher = launcher;
+            changed = true;
+        }
+        let shell = ShellSettings::load();
+        if shell != self.shell {
+            self.shell = shell;
             changed = true;
         }
         changed

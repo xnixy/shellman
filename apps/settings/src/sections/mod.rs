@@ -53,7 +53,7 @@ impl Section {
             Section::Dock => dock::show(ui, state),
             Section::TopBar => bar::show(ui, state),
             Section::Launcher => launcher::show(ui, state),
-            Section::About => about::show(ui),
+            Section::About => about::show(ui, state),
         }
     }
 }
