@@ -7,6 +7,7 @@ pub mod config;
 pub mod elevate;
 pub mod foreground;
 pub mod frames;
+pub mod icon_pack;
 pub mod fsops;
 pub mod installed;
 pub mod live_thumb;

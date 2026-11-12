@@ -6,6 +6,7 @@ mod appearance;
 mod bar;
 mod display;
 mod display_map;
+mod icon_pack;
 mod dock;
 mod launcher;
 mod sound;
@@ -15,6 +16,7 @@ mod startup;
 
 pub use apps::AppsView;
 pub use display::DisplayView;
+pub use icon_pack::IconsView;
 pub use sound::SoundView;
 pub use startup::StartupView;
 use crate::state::State;

@@ -41,6 +41,7 @@ pub fn show(ui: &mut egui::Ui, st: &mut State) {
         }
         font_picker::preview(ui);
     });
+    page::group(ui, "Icon pack", |ui| super::icon_pack::group(ui, st));
     page::group(ui, "Window frames", frames_group);
 }
 

@@ -44,6 +44,10 @@ type Queue = Arc<(Mutex<Vec<Key>>, Condvar)>;
 
 pub struct Thumbs {
     cache: HashMap<Key, Slot>,
+    /// Which file each app path is drawn from (its icon pack's image, or itself), until the
+    /// icon settings change.
+    mapped: HashMap<PathBuf, PathBuf>,
+    mapped_generation: u64,
     queue: Queue,
     rx: Receiver<(Key, Option<ColorImage>)>,
     options: TextureOptions,
@@ -113,6 +117,9 @@ impl Thumbs {
     fn build(ctx: egui::Context, trim: bool) -> Self {
         let queue: Queue = Arc::new((Mutex::new(Vec::new()), Condvar::new()));
         let (tx, rx) = channel();
+        // The icon pack arriving or changing should show without waiting for the next input.
+        let waker = ctx.clone();
+        crate::icon_pack::on_change(move || waker.request_repaint());
         for _ in 0..WORKERS {
             let (queue, tx, ctx) = (queue.clone(), tx.clone(), ctx.clone());
             std::thread::spawn(move || worker(queue, tx, ctx, trim));
@@ -126,6 +133,8 @@ impl Thumbs {
         };
         Self {
             cache: HashMap::new(),
+            mapped: HashMap::new(),
+            mapped_generation: 0,
             queue,
             rx,
             options,
@@ -135,7 +144,34 @@ impl Thumbs {
     /// The image for a file if it is ready, small for a row or large for a tile. Otherwise asks
     /// for it, once.
     pub fn get(&mut self, path: &Path, large: bool) -> Option<&TextureHandle> {
-        let key = (path.to_path_buf(), large);
+        // The icon pack's image (or the user's own) for a program, shortcut or Apps-folder entry
+        // the pack knows, else the file itself.
+        let generation = crate::icon_pack::generation();
+        if generation != self.mapped_generation || self.mapped.len() > 8000 {
+            self.mapped.clear();
+            self.mapped_generation = generation;
+        }
+        let source = match self.mapped.get(path) {
+            Some(found) => found.clone(),
+            None => {
+                let source = crate::icon_pack::resolve_path(path, None).unwrap_or_else(|| path.to_path_buf());
+                self.mapped.insert(path.to_path_buf(), source.clone());
+                source
+            }
+        };
+        self.fetch(source, large)
+    }
+
+    /// Like `get`, for an app known by more than its file: its `id` (an AUMID or program path,
+    /// which overrides are kept by) and the `name` it is shown under, either may be empty. Without
+    /// a `path`, only the icon pack can answer.
+    pub fn get_app(&mut self, path: Option<&Path>, id: &str, name: &str, large: bool) -> Option<&TextureHandle> {
+        let source = crate::icon_pack::resolve_app(path, id, name).or_else(|| path.map(Path::to_path_buf))?;
+        self.fetch(source, large)
+    }
+
+    fn fetch(&mut self, source: PathBuf, large: bool) -> Option<&TextureHandle> {
+        let key = (source, large);
         if !self.cache.contains_key(&key) {
             if self.cache.len() >= MAX_CACHED {
                 self.cache.retain(|_, s| matches!(s, Slot::Pending));
@@ -204,7 +240,13 @@ fn worker(queue: Queue, tx: Sender<(Key, Option<ColorImage>)>, ctx: egui::Contex
             (false, true) => LARGE_PX,
             (false, false) => SMALL_PX,
         };
-        let image = shell_image(&key.0, px).map(|i| if trim { crop_to_opaque(i) } else { i });
+        // The shell cannot draw SVG, which is what icon packs mostly hold. Those are drawn square
+        // and whole, not cropped: a pack's icons are meant to sit in one grid.
+        let image = if crate::icon_pack::raster::is_svg(&key.0) {
+            crate::icon_pack::raster::svg_file(&key.0, px as u32)
+        } else {
+            shell_image(&key.0, px).map(|i| if trim { crop_to_opaque(i) } else { i })
+        };
         if tx.send((key, image)).is_err() {
             return;
         }

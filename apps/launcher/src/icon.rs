@@ -21,7 +21,7 @@ pub fn plate(p: &Painter, rect: Rect) {
 /// Draw the app's icon in `rect`.
 pub fn paint(p: &Painter, rect: Rect, app: &App, thumbs: &mut Thumbs) {
     let path = app.shell_path();
-    let Some(texture) = thumbs.get(Path::new(&path), true) else {
+    let Some(texture) = thumbs.get_app(Some(Path::new(&path)), &app.id, &app.name, true) else {
         placeholder(p, rect, app);
         return;
     };

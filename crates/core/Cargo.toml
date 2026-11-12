@@ -18,3 +18,5 @@ serde_json.workspace = true
 windows.workspace = true
 windows-core.workspace = true
 windows-future.workspace = true
+# Draws SVG icon packs. No text, no system fonts, no embedded rasters: icons are plain paths.
+resvg = { version = "0.45", default-features = false }
