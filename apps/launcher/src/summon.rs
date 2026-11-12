@@ -28,10 +28,12 @@ use windows::Win32::UI::WindowsAndMessaging::{
     WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_SYSMENU, WS_THICKFRAME,
 };
 
-/// The panel's size in points, and how far down the screen's work area it starts.
+/// The panel's size in points, where its centre sits in the work area (a little above the middle),
+/// and the margin it keeps from the work area's edges.
 pub const WIDTH: f32 = 760.0;
 pub const HEIGHT: f32 = 560.0;
-const TOP_FRACTION: f64 = 0.14;
+const CENTRE_FRACTION: f64 = 0.46;
+const MARGIN: f32 = 24.0;
 /// The panel's corner radius in points.
 pub const RADIUS: f32 = 24.0;
 
@@ -270,14 +272,17 @@ fn strip_frame(hwnd: HWND) {
     }
 }
 
-/// The panel's rectangle in pixels within a monitor's work area: centred across, in the upper
-/// middle, and never taller than most of the screen.
+/// The panel's rectangle in pixels within a monitor's work area: centred across, centred down with
+/// a slight upward bias, always inside the work area with a margin; on a short screen the panel
+/// gets shorter rather than reach the top bar or the dock.
 fn panel_rect(work: RECT, scale: f32) -> (i32, i32, i32, i32) {
     let (work_w, work_h) = (work.right - work.left, work.bottom - work.top);
-    let w = ((WIDTH * scale) as i32).min(work_w);
-    let h = ((HEIGHT * scale) as i32).min((work_h as f64 * 0.8) as i32);
+    let margin = (MARGIN * scale) as i32;
+    let w = ((WIDTH * scale) as i32).min((work_w - 2 * margin).max(1));
+    let h = ((HEIGHT * scale) as i32).min((work_h - 2 * margin).max(1));
     let x = work.left + (work_w - w) / 2;
-    let y = work.top + (work_h as f64 * TOP_FRACTION) as i32;
+    let centre = work.top + (work_h as f64 * CENTRE_FRACTION) as i32;
+    let y = (centre - h / 2).clamp(work.top + margin.min(work_h - h), work.bottom - h - margin.min(work_h - h));
     (x, y, w, h)
 }
 
@@ -299,30 +304,44 @@ unsafe fn front_monitor() -> HMONITOR {
 mod tests {
     use super::*;
 
-    #[test]
-    fn panel_is_centred_in_the_upper_middle() {
-        let work = RECT {
-            left: 1920,
-            top: 0,
-            right: 1920 + 2560,
-            bottom: 1400,
-        };
-        let (x, y, w, h) = panel_rect(work, 1.0);
-        assert_eq!((w, h), (760, 560));
-        assert_eq!(x, 1920 + (2560 - 760) / 2);
-        assert!(y > 100 && y < 300);
+    fn inside(work: RECT, r: (i32, i32, i32, i32)) -> bool {
+        r.0 >= work.left && r.1 >= work.top && r.0 + r.2 <= work.right && r.1 + r.3 <= work.bottom
     }
 
     #[test]
-    fn panel_scales_and_fits_small_screens() {
-        let work = RECT {
-            left: 0,
-            top: 0,
-            right: 1000,
-            bottom: 500,
-        };
-        let (_, _, w, h) = panel_rect(work, 1.5);
-        assert_eq!(w, 1000);
-        assert_eq!(h, 400);
+    fn primary_150_percent() {
+        let work = RECT { left: 0, top: 48, right: 3840, bottom: 2043 };
+        let r = panel_rect(work, 1.5);
+        assert_eq!((r.2, r.3), (1140, 840));
+        assert_eq!(r.0, (3840 - 1140) / 2);
+        assert_eq!(r.1 + r.3 / 2, 48 + (1995.0 * 0.46) as i32);
+        assert!(inside(work, r));
+    }
+
+    #[test]
+    fn left_monitor_is_centred_in_its_own_work_area() {
+        let work = RECT { left: -3840, top: 48, right: 0, bottom: 2043 };
+        let r = panel_rect(work, 1.5);
+        assert_eq!(r.0, -3840 + (3840 - 1140) / 2);
+        assert!(inside(work, r));
+    }
+
+    #[test]
+    fn monitor_300_percent_keeps_full_height_inside() {
+        let work = RECT { left: 3746, top: 2256, right: 7586, bottom: 4086 };
+        let r = panel_rect(work, 3.0);
+        assert_eq!((r.2, r.3), (2280, 1680));
+        assert_eq!(r.0, 3746 + (3840 - 2280) / 2);
+        assert!(inside(work, r));
+        assert!(r.1 - work.top >= 72 && work.bottom - (r.1 + r.3) >= 72);
+    }
+
+    #[test]
+    fn short_screen_shrinks_the_panel_to_fit() {
+        let work = RECT { left: 0, top: 0, right: 1000, bottom: 500 };
+        let r = panel_rect(work, 1.5);
+        assert_eq!(r.2, 1000 - 72);
+        assert_eq!(r.3, 500 - 72);
+        assert!(inside(work, r));
     }
 }

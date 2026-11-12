@@ -4,7 +4,7 @@
 //! process finds the mutex taken, sets the event, and exits. The event wakes the waiting thread,
 //! so nothing polls.
 
-use windows::core::w;
+use windows::core::HSTRING;
 use windows::Win32::Foundation::{GetLastError, ERROR_ALREADY_EXISTS, HANDLE, HWND};
 use windows::Win32::System::Threading::{CreateEventW, CreateMutexW, SetEvent, WaitForSingleObject, INFINITE};
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -25,15 +25,22 @@ pub struct Instance {
     _mutex: HANDLE,
 }
 
+/// A kernel object's name. `SHELLMAN_INSTANCE` is added to it, so a test build can run next to the
+/// real window without the two finding each other (the launcher does the same).
+fn name(what: &str) -> HSTRING {
+    let instance = std::env::var("SHELLMAN_INSTANCE").unwrap_or_default();
+    HSTRING::from(format!("Local\\shellman-settings-{what}{instance}"))
+}
+
 /// Become the first settings window, or signal the one that is. Both sides create the event
 /// before the mutex, so whichever order two starts interleave in, the loser finds the event.
 pub fn claim() -> Claim {
     unsafe {
-        let Ok(event) = CreateEventW(None, false, false, w!("Local\\shellman-settings-raise")) else {
+        let Ok(event) = CreateEventW(None, false, false, &name("raise")) else {
             // Cannot coordinate; run on our own rather than not at all.
             return Claim::First(Instance { event: HANDLE::default(), _mutex: HANDLE::default() });
         };
-        let mutex = CreateMutexW(None, false, w!("Local\\shellman-settings-resident"));
+        let mutex = CreateMutexW(None, false, &name("resident"));
         if mutex.is_ok() && GetLastError() == ERROR_ALREADY_EXISTS {
             // The first process may take the foreground for the window it is about to raise.
             let _ = AllowSetForegroundWindow(ASFW_ANY);
