@@ -217,7 +217,7 @@ impl Colors {
                 sidebar_glass: with_alpha(tint(230, 0.05), 170),
                 sidebar_solid: tint(230, 0.05),
                 page_glass: with_alpha(tint(248, 0.03), 120),
-                shell: with_alpha(tint(238, 0.06), see(225, 110)),
+                shell: shell(true, accent, g),
                 // Translucent, so the window's acrylic shows through the sheet as well.
                 sheet: with_alpha(tint(255, 0.01), see(240, 60)),
                 control: with_alpha(tint(255, 0.02), 150),
@@ -253,7 +253,7 @@ impl Colors {
                 sidebar_glass: with_alpha(tint(10, 0.06), 178),
                 sidebar_solid: tint(12, 0.06),
                 page_glass: with_alpha(tint(16, 0.06), 140),
-                shell: with_alpha(tint(10, 0.06), see(225, 110)),
+                shell: shell(false, accent, g),
                 // Translucent, so the window's acrylic shows through the sheet as well.
                 sheet: with_alpha(tint(30, 0.06), see(240, 40)),
                 // Deep tinted fills, not translucent white: over glass, white lifts toward grey.
@@ -268,6 +268,15 @@ impl Colors {
             }
         }
     }
+}
+
+/// The one tint over a glass window's acrylic (`Colors::shell`), for a mode, accent and glass
+/// amount. The floating glass (`glass::Style`) lays the same tint over its backdrop, so the two
+/// materials hide the same amount at every glass setting.
+pub fn shell(light: bool, accent: Color32, glass: f32) -> Color32 {
+    let grey = if light { 238 } else { 10 };
+    let alpha = (225.0 + (110.0 - 225.0) * glass.clamp(0.0, 1.0)).round() as u8;
+    with_alpha(mix(Color32::from_gray(grey), accent, 0.06), alpha)
 }
 
 /// Opacity (0..=255) of the top bar's tint: `solid` with no glass, `clear` with all of it.

@@ -1973,6 +1973,7 @@ dependencies = [
  "shellman-core",
  "shellman-icons",
  "windows",
+ "windows-core",
  "windows-numerics",
 ]
 

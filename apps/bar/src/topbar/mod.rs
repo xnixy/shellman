@@ -76,12 +76,12 @@ impl TopBar {
         theme::set_light(crate::app::light(ctx));
         let c = colors();
         // Over composed glass (the dock's material, under the window) only a scrim is filled
-        // here, so the bar's small muted text stays legible at the clearest glass settings (at
-        // glass 1 over a white window the date all but vanished); without glass, the bar paints
-        // a solid surface.
+        // here, so the bar's small muted text stays legible at the clearest glass settings; the
+        // material alone keeps the main text legible (it holds a white window down to a mid
+        // grey in dark mode). Without glass, the bar paints a solid surface.
         let style = crate::bars::top_style();
         let mut surface = shellman_ui::glass::content_frame(glass, &style).corner_radius(0);
-        if glass {
+        if glass && !c.light {
             surface = surface.fill(scrim(style.tint));
         }
         egui::CentralPanel::default()
@@ -96,9 +96,11 @@ impl TopBar {
 }
 
 /// What tops the glass's tint up to at least `COVER` of the backdrop hidden, in the tint's own
-/// colour; transparent when the tint already hides that much.
+/// colour; transparent when the tint already hides that much (up to a glass of about 0.65). At
+/// that cover the muted text keeps 3:1 over a white window in dark mode. Light mode needs none:
+/// its material never shows darker than a light grey.
 fn scrim(tint: egui::Color32) -> egui::Color32 {
-    const COVER: f32 = 0.85;
+    const COVER: f32 = 0.55;
     let a = tint.a() as f32 / 255.0;
     let extra = (1.0 - (1.0 - COVER) / (1.0 - a).max(0.001)).max(0.0);
     theme::with_alpha(tint.to_opaque(), (extra * 255.0).round() as u8)

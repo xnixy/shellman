@@ -41,12 +41,13 @@
 //! screen with the window's next frame.
 
 mod backdrop;
+mod effect;
 mod cloak;
 mod style;
 mod tree;
 
 pub use cloak::{cloak, is_cloaked};
-pub use style::{content_frame, Geometry, Shadow, Style};
+pub use style::{content_frame, Geometry, Luminosity, Shadow, Style};
 
 use std::cell::Cell;
 use std::rc::Rc;
