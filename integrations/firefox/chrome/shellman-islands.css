@@ -10,7 +10,7 @@
  */
 
 :root {
-  --sm-gap: 10px;
+  --sm-gap: 12px;
   --sm-edge: 12px;
   --sm-radius: 22px;
   --sm-pill-h: 46px;
@@ -57,6 +57,24 @@
 
 body {
   background: transparent !important;
+}
+
+/* Unfocused: Firefox has its own inactive colours; keep everything as transparent as when focused.
+ * (The flat slab Windows paints behind an inactive window is DWM's backdrop, not CSS; the optional
+ * script shellman-window.sys.mjs keeps that live. See README.) */
+:root,
+:root:-moz-window-inactive {
+  --toolbox-bgcolor-inactive: transparent;
+  --toolbox-non-lwt-bgcolor-inactive: transparent;
+  --lwt-accent-color-inactive: transparent;
+  --toolbox-textcolor-inactive: var(--sm-text);
+}
+:root:-moz-window-inactive :is(#navigator-toolbox, #titlebar, #TabsToolbar, #nav-bar, #PersonalToolbar, #browser, #sidebar-container, sidebar-main, #vertical-tabs) {
+  background-color: transparent !important;
+  opacity: 1 !important;
+}
+:root:-moz-window-inactive :is(toolbarbutton, .tabbrowser-tab, #urlbar, .titlebar-button) {
+  opacity: 1 !important;
 }
 
 #navigator-toolbox {
@@ -109,7 +127,6 @@ body {
   background: var(--sm-fill);
   border: 1px solid var(--sm-hair);
   box-shadow: var(--sm-shadow);
-  backdrop-filter: blur(24px) saturate(1.4);
 }
 
 #TabsToolbar-customization-target {
@@ -185,7 +202,6 @@ body {
   background: var(--sm-fill);
   border: 1px solid var(--sm-hair);
   box-shadow: var(--sm-shadow);
-  backdrop-filter: blur(24px) saturate(1.4);
 }
 
 #navigator-toolbox :is(#TabsToolbar, #nav-bar) .titlebar-buttonbox {
@@ -211,18 +227,20 @@ body {
 
 /* ---- Pill 2: navigation ---- */
 
-/* The nav bar is the pill. With vertical tabs the window buttons live at its right end. */
+/* The nav bar itself is transparent; its pieces are painted as pills.
+ * CSS only: [ all toolbar items + menu ] [ window buttons ].
+ * With the scripts (:root[shellman-pills], see shellman-scripts/shellman-pills.sys.mjs), every run of
+ * navigation buttons, the address bar and the other actions is its own pill:
+ * [ back fwd reload ] [ address ........ ] [ actions + menu ] [ window buttons ]. */
 #navigator-toolbox > #nav-bar {
   height: var(--sm-pill-h);
   min-height: 0 !important;
   box-sizing: border-box;
-  padding: 0 8px 0 10px !important;
+  padding: 0 !important;
   margin: 0 !important;
-  border-radius: 999px !important;
-  background: var(--sm-fill) !important;
-  border: 1px solid var(--sm-hair) !important;
-  box-shadow: var(--sm-shadow) !important;
-  backdrop-filter: blur(24px) saturate(1.4);
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
   align-items: center;
 }
 
@@ -230,12 +248,96 @@ body {
   align-items: center;
 }
 
-#nav-bar > .titlebar-buttonbox-container {
-  margin-inline-start: 6px;
-  padding-inline-start: 6px;
-  border-inline-start: 1px solid var(--sm-hair);
-  align-self: center;
+/* CSS only: the customizable items plus the menu button form one pill. */
+:root:not([shellman-pills]) #nav-bar-customization-target {
+  align-self: stretch;
+  padding-inline: 10px 2px;
+  background: var(--sm-fill);
+  border: 1px solid var(--sm-hair);
+  border-inline-end: none;
+  border-start-start-radius: 999px;
+  border-end-start-radius: 999px;
+  box-shadow: var(--sm-shadow);
+}
+:root:not([shellman-pills]) #nav-bar > :is(toolbarbutton, toolbaritem):not([hidden]) {
+  align-self: stretch;
   align-items: center;
+  margin: 0 !important;
+  background: var(--sm-fill);
+  border-block: 1px solid var(--sm-hair);
+}
+:root:not([shellman-pills]) #nav-bar > #PanelUI-button {
+  padding-inline-end: 8px;
+  border-inline-end: 1px solid var(--sm-hair);
+  border-start-end-radius: 999px;
+  border-end-end-radius: 999px;
+}
+
+/* Scripts: each labelled run is a pill. */
+:root[shellman-pills] [shellman-pill] {
+  align-self: stretch;
+  align-items: center;
+  margin: 0 !important;
+  background: var(--sm-fill);
+  border-block: 1px solid var(--sm-hair);
+  box-shadow: inset 0 1px 0 #ffffff10;
+}
+:root[shellman-pills] [shellman-first] {
+  margin-inline-start: var(--sm-gap) !important;
+  padding-inline-start: 6px !important;
+  border-inline-start: 1px solid var(--sm-hair);
+  border-start-start-radius: 999px;
+  border-end-start-radius: 999px;
+}
+:root[shellman-pills] #nav-bar-customization-target > [shellman-first]:first-child {
+  margin-inline-start: 0 !important;
+}
+:root[shellman-pills] [shellman-last] {
+  padding-inline-end: 6px !important;
+  border-inline-end: 1px solid var(--sm-hair);
+  border-start-end-radius: 999px;
+  border-end-end-radius: 999px;
+}
+/* The address pill is the URL bar itself: full pill height, no inner second pill. */
+:root[shellman-pills] #urlbar-container[shellman-pill] {
+  background: none;
+  border: none;
+  box-shadow: none;
+  backdrop-filter: none;
+  padding-inline: 0 !important;
+  margin-inline: var(--sm-gap) 0 !important;
+}
+:root[shellman-pills] #urlbar-container[shellman-pill] + [shellman-first] {
+  margin-inline-start: var(--sm-gap) !important;
+}
+:root[shellman-pills] #urlbar {
+  --urlbar-container-height: var(--sm-pill-h);
+  --urlbar-height: var(--sm-pill-h);
+}
+:root[shellman-pills] #urlbar:not([open]) > #urlbar-background {
+  background: var(--sm-fill) !important;
+  border: 1px solid var(--sm-hair) !important;
+  box-shadow: var(--sm-shadow) !important;
+}
+:root[shellman-pills] #urlbar:not([open]):hover > #urlbar-background {
+  background: color-mix(in srgb, var(--sm-fill), var(--sm-soft-hover)) !important;
+}
+/* springs/spaces only separate pills; they do not add width of their own */
+:root[shellman-pills]:not([customizing]) #nav-bar-customization-target > :is(toolbarspring, toolbarspacer) {
+  min-width: 0 !important;
+  max-width: 0 !important;
+}
+
+/* Window buttons: always a pill of their own, like Files and Settings. */
+#nav-bar > .titlebar-buttonbox-container {
+  margin-inline-start: var(--sm-gap);
+  align-self: stretch;
+  align-items: center;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--sm-fill);
+  border: 1px solid var(--sm-hair);
+  box-shadow: var(--sm-shadow);
 }
 #urlbar-container {
   padding-block: 0 !important;
@@ -321,7 +423,6 @@ body {
   background: var(--sm-fill) !important;
   border: 1px solid var(--sm-hair) !important;
   box-shadow: var(--sm-shadow) !important;
-  backdrop-filter: blur(24px) saturate(1.4);
   align-items: center;
 }
 
@@ -373,7 +474,6 @@ body {
   border: 1px solid var(--sm-hair) !important;
   border-radius: 28px;
   box-shadow: var(--sm-shadow);
-  backdrop-filter: blur(24px) saturate(1.4);
   overflow: clip;
   padding: 4px 0;
 }
@@ -434,6 +534,58 @@ sidebar-main {
   background: var(--sm-soft-hover) !important;
 }
 
+/* Scripts: the rail is split into islands of its own, with gaps between them:
+ * [ pinned tabs ] [ tab list ] [ New Tab ] [ tools: bookmarks, history, ... (shadow DOM, styled by the script) ] */
+:root[shellman-pills] #sidebar-container {
+  background: transparent !important;
+  border: none !important;
+  border-radius: 0 !important;
+  box-shadow: none;
+  backdrop-filter: none;
+  overflow: visible;
+  padding: 0;
+}
+:root[shellman-pills] #tabbrowser-tabs[orient="vertical"] {
+  gap: var(--sm-gap);
+}
+/* let the islands' shadows out of the tab column */
+:root[shellman-pills] #vertical-tabs {
+  overflow: visible !important;
+}
+:root[shellman-pills] #tabbrowser-tabs[orient="vertical"] > :is(#tabbrowser-arrowscrollbox, #pinned-tabs-container:has(.tabbrowser-tab)) {
+  background: var(--sm-fill);
+  border: 1px solid var(--sm-hair);
+  border-radius: var(--sm-radius);
+  box-shadow: var(--sm-shadow);
+  padding: 6px 0;
+  box-sizing: border-box;
+}
+:root[shellman-pills] sidebar-main:not([expanded]) #tabbrowser-tabs[orient="vertical"] > :is(#tabbrowser-arrowscrollbox, #pinned-tabs-container:has(.tabbrowser-tab)) {
+  border-radius: 28px;
+}
+:root[shellman-pills] #tabbrowser-tabs[orient="vertical"] > #pinned-tabs-container:not(:has(.tabbrowser-tab)) + #vertical-pinned-tabs-splitter {
+  display: none;
+}
+/* "New Tab": the button below the list (Firefox's own one for an overflowing list), as a small pill */
+:root[shellman-pills] #tabbrowser-tabs[orient="vertical"] #tabs-newtab-button {
+  display: none !important;
+}
+:root[shellman-pills] #tabbrowser-tabs[orient="vertical"] > #vertical-tabs-newtab-button {
+  display: flex !important;
+  visibility: visible !important;
+  margin: 0 !important;
+  min-height: 40px;
+  border-radius: 999px !important;
+  background: var(--sm-fill) !important;
+  border: 1px solid var(--sm-hair) !important;
+  box-shadow: var(--sm-shadow);
+}
+:root[shellman-pills] sidebar-main:not([expanded]) #tabbrowser-tabs[orient="vertical"] > #vertical-tabs-newtab-button {
+  align-self: stretch;
+  width: auto !important;
+  justify-content: center;
+}
+
 /* the panel island (bookmarks / history / synced tabs) */
 #sidebar-box {
   background: var(--sm-fill-solid) !important;
@@ -458,18 +610,17 @@ sidebar-main {
   box-shadow: none !important;
   border-radius: 0 !important;
 }
-/* ---- Find bar: lives inside the page island, so it stays a full-width strip with a hairline above it ---- */
+/* ---- Find bar: a floating pill at the bottom of the page island ---- */
 
 findbar {
   appearance: none !important;
   background: var(--sm-fill-solid) !important;
-  border: none !important;
-  border-top: 1px solid var(--sm-hair) !important;
-  border-radius: 0 !important;
-  box-shadow: none !important;
+  border: 1px solid var(--sm-hair) !important;
+  border-radius: 999px !important;
+  box-shadow: var(--sm-shadow) !important;
   color: var(--sm-text) !important;
-  margin: 0 !important;
-  padding: 6px 14px !important;
+  margin: 8px var(--sm-gap) var(--sm-gap) !important;
+  padding: 4px 14px !important;
 }
 .findbar-textbox {
   background: var(--sm-soft) !important;
