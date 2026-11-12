@@ -6,6 +6,8 @@ mod dock;
 mod place;
 mod shape;
 mod topbar;
+mod tray;
+mod workarea;
 
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use shellman_ui::{theme, window};

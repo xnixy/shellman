@@ -5,6 +5,8 @@
 //! otherwise it is idle.
 
 use crate::appbar::AppBar;
+use crate::tray::{view::TrayTextures, Tray};
+use crate::workarea::WorkArea;
 use crate::shape;
 use shellman_core::system::{app_name, clock, status};
 use shellman_core::winlist::AppWindow;
@@ -27,11 +29,19 @@ const GLOBE: char = '\u{E774}';
 const LOCAL_NET: char = '\u{E839}';
 const BATTERY: char = '\u{E83F}';
 
+/// Space kept free for the dock below maximized windows, in points: its height and two gaps.
+const DOCK_RESERVE: f32 = 72.0;
+
 #[derive(Default)]
 pub struct TopBar {
     hwnd: Option<isize>,
+    /// While Explorer runs, it reserves the bar's space; without it, the work area is set here.
     _appbar: Option<AppBar>,
+    _workarea: Option<WorkArea>,
     status: Option<(Instant, Status)>,
+    /// The tray, when shellman owns it (Explorer's taskbar is not running).
+    tray: Option<Tray>,
+    tray_textures: TrayTextures,
 }
 
 struct Status {
@@ -83,7 +93,14 @@ impl TopBar {
             bottom: screen_px.1,
         };
         let height = (HEIGHT * ctx.pixels_per_point()).round() as i32;
+        // Become the tray first: without Explorer, app-bar requests then come to shellman,
+        // which declines them, and the work area is set directly instead.
+        self.tray = Tray::start(ctx.clone());
         self._appbar = AppBar::top(hwnd, screen, height);
+        if self._appbar.is_none() {
+            let dock = (DOCK_RESERVE * ctx.pixels_per_point()).round() as i32;
+            self._workarea = Some(WorkArea::reserve(height, dock));
+        }
     }
 
     fn status(&mut self) -> &Status {
@@ -152,6 +169,10 @@ impl TopBar {
             egui::pos2(clock_rect.left() - 10.0, bar.bottom() - 4.0),
         );
         let resp = ui.interact(pill, egui::Id::new("status"), egui::Sense::click());
+        if let Some(tray) = &self.tray {
+            let icons = tray.icons();
+            crate::tray::view::draw(ui, &icons, &mut self.tray_textures, bar, pill.left() - 6.0);
+        }
         if resp.hovered() {
             ui.painter().rect_filled(pill, egui::CornerRadius::same(8), c.control_hover);
         }
