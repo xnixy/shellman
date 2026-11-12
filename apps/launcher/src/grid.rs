@@ -1,18 +1,22 @@
-//! The app grid shown while the search box is empty: an optional "most used" row, then every app
-//! alphabetically, in rows of icons with names beneath.
+//! The app grid shown while the search box is empty: an optional "most used" row, then every
+//! listed app alphabetically, in rows of icons with names beneath, under small section labels.
 //!
 //! `Grid` is only layout and arrow-key movement (no egui), so it is unit-tested; `show` draws
 //! just the rows in view.
 
+use crate::fade::Fade;
 use shellman_core::apps_index::App;
 use shellman_core::thumbs::Thumbs;
 use shellman_ui::theme::colors;
-use shellman_ui::widgets::draw_text;
 
-pub const COLS: usize = 7;
-const HEADER_H: f32 = 32.0;
-const ROW_H: f32 = 94.0;
-const ICON: f32 = 48.0;
+pub const COLS: usize = 6;
+const CELL_W: f32 = 112.0;
+const HEADER_H: f32 = 34.0;
+const ROW_H: f32 = 116.0;
+const ICON: f32 = 64.0;
+/// Room after the last row, so it can scroll clear of the fade.
+const END_PAD: f32 = 16.0;
+const LABEL_SIZE: f32 = 12.5;
 
 /// A cell: row and column in the grid.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -43,16 +47,15 @@ pub struct Grid {
 }
 
 impl Grid {
-    /// Lay out `count` apps (in list order), with `top` (indices of most used apps) in a row of
-    /// their own above, when there are any.
-    pub fn new(count: usize, top: &[usize]) -> Self {
+    /// Lay out `all` (indices of the apps to list, in order), with `top` (indices of the most
+    /// used apps) in a row of their own above, when there are any.
+    pub fn new(all: &[usize], top: &[usize]) -> Self {
         let mut rows = Vec::new();
         if !top.is_empty() {
             rows.push(Row::Header("Most used"));
             rows.push(Row::Items(top.to_vec()));
-            rows.push(Row::Header("All apps"));
         }
-        let all: Vec<usize> = (0..count).collect();
+        rows.push(Row::Header("All apps"));
         rows.extend(all.chunks(COLS).map(|c| Row::Items(c.to_vec())));
         let mut tops = Vec::with_capacity(rows.len());
         let mut y = 0.0;
@@ -66,7 +69,7 @@ impl Grid {
         Self {
             rows,
             tops,
-            height: y,
+            height: y + END_PAD,
         }
     }
 
@@ -140,20 +143,21 @@ pub struct Outcome {
 }
 
 /// Draw the rows in view. `reveal` scrolls the selected cell into view (after arrow keys).
+#[allow(clippy::too_many_arguments)]
 pub fn show(
     ui: &mut egui::Ui,
     grid: &Grid,
     apps: &[App],
     selected: Pos,
     thumbs: &mut Thumbs,
+    fade: Fade,
     reveal: bool,
     reset_scroll: bool,
 ) -> Outcome {
-    let c = colors();
     let mut out = Outcome::default();
     let mut area = egui::ScrollArea::vertical()
         .auto_shrink([false, false])
-        .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::VisibleWhenNeeded);
+        .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden);
     if reset_scroll {
         area = area.vertical_scroll_offset(0.0);
     }
@@ -161,7 +165,8 @@ pub fn show(
         let width = ui.available_width();
         let origin = ui.cursor().min;
         ui.allocate_space(egui::vec2(width, grid.height));
-        let cell_w = width / COLS as f32;
+        let cell_w = CELL_W.min(width / COLS as f32);
+        let left = (width - cell_w * COLS as f32) / 2.0;
         let moved = ui.input(|i| i.pointer.delta() != egui::Vec2::ZERO);
         for (r, row) in grid.rows.iter().enumerate() {
             let top = grid.tops[r];
@@ -175,15 +180,15 @@ pub fn show(
             match row {
                 Row::Header(title) => {
                     let rect = egui::Rect::from_min_size(
-                        origin + egui::vec2(6.0, top),
-                        egui::vec2(width - 12.0, HEADER_H),
+                        origin + egui::vec2(left + 10.0, top),
+                        egui::vec2(width - 2.0 * left - 20.0, HEADER_H),
                     );
-                    draw_text(ui, rect, title, egui::FontId::proportional(12.5), c.muted, false);
+                    fade.paint(ui, rect, |p| crate::section::label(p, rect, title));
                 }
                 Row::Items(items) => {
                     for (col, &index) in items.iter().enumerate() {
                         let rect = egui::Rect::from_min_size(
-                            origin + egui::vec2(col as f32 * cell_w, top),
+                            origin + egui::vec2(left + col as f32 * cell_w, top),
                             egui::vec2(cell_w, ROW_H),
                         );
                         let pos = Pos { row: r, col };
@@ -198,7 +203,11 @@ pub fn show(
                         if is_selected && reveal {
                             ui.scroll_to_rect(rect, None);
                         }
-                        draw_cell(ui, rect, &apps[index], is_selected, resp.hovered(), thumbs);
+                        let lines = name_lines(ui, &apps[index].name, cell_w - 12.0);
+                        let hovered = resp.hovered();
+                        fade.paint(ui, rect, |p| {
+                            draw_cell(p, rect, &apps[index], &lines, is_selected, hovered, thumbs)
+                        });
                     }
                 }
             }
@@ -207,49 +216,45 @@ pub fn show(
     out
 }
 
+/// The name as up to two lines that fit `width`.
+fn name_lines(ui: &egui::Ui, name: &str, width: f32) -> Vec<String> {
+    let fits = |s: &str| {
+        let font = egui::FontId::proportional(LABEL_SIZE);
+        ui.fonts(|f| f.layout_no_wrap(s.to_owned(), font, egui::Color32::WHITE).size().x) <= width
+    };
+    crate::label::wrap(name, 2, &fits)
+}
+
 fn draw_cell(
-    ui: &egui::Ui,
+    p: &egui::Painter,
     rect: egui::Rect,
     app: &App,
+    lines: &[String],
     selected: bool,
     hovered: bool,
     thumbs: &mut Thumbs,
 ) {
     let c = colors();
-    let p = ui.painter();
-    let inner = rect.shrink2(egui::vec2(3.0, 2.0));
+    let inner = rect.shrink2(egui::vec2(2.0, 0.0));
     if selected {
-        p.rect_filled(inner, 10.0, c.row_selected);
+        p.rect_filled(inner, 14.0, c.text.gamma_multiply(0.12));
     } else if hovered {
-        p.rect_filled(inner, 10.0, c.row_hover);
+        p.rect_filled(inner, 14.0, c.text.gamma_multiply(0.08));
     }
     let icon = egui::Rect::from_center_size(
         egui::pos2(rect.center().x, rect.top() + 10.0 + ICON / 2.0),
         egui::Vec2::splat(ICON),
     );
-    crate::icon::paint(ui, icon, app, true, thumbs);
-    let label = egui::Rect::from_min_max(
-        egui::pos2(rect.left() + 6.0, icon.bottom() + 6.0),
-        egui::pos2(rect.right() - 6.0, icon.bottom() + 24.0),
-    );
-    draw_centered(ui, label, &app.name);
-}
-
-/// A name centred under its icon, cut with an ellipsis when it is too long.
-fn draw_centered(ui: &egui::Ui, rect: egui::Rect, text: &str) {
-    let c = colors();
-    let mut job = egui::text::LayoutJob::single_section(
-        text.to_owned(),
-        egui::TextFormat {
-            font_id: egui::FontId::proportional(12.5),
-            color: c.text,
-            ..Default::default()
-        },
-    );
-    job.wrap = egui::text::TextWrapping::truncate_at_width(rect.width());
-    let galley = ui.fonts(|f| f.layout_job(job));
-    let pos = egui::pos2(rect.center().x - galley.size().x / 2.0, rect.top());
-    ui.painter().galley(pos, galley, c.text);
+    crate::icon::paint(p, icon, app, thumbs);
+    for (i, line) in lines.iter().enumerate() {
+        p.text(
+            egui::pos2(rect.center().x, icon.bottom() + 7.0 + i as f32 * 16.0),
+            egui::Align2::CENTER_TOP,
+            line,
+            egui::FontId::proportional(LABEL_SIZE),
+            c.text,
+        );
+    }
 }
 
 #[cfg(test)]
@@ -260,56 +265,61 @@ mod tests {
         Pos { row, col }
     }
 
-    #[test]
-    fn layout_without_most_used() {
-        let g = Grid::new(15, &[]);
-        // 15 apps in rows of 7: 7 + 7 + 1.
-        assert_eq!(g.rows.len(), 3);
-        assert_eq!(g.first(), p(0, 0));
-        assert_eq!(g.app_at(p(2, 0)), Some(14));
-        assert_eq!(g.app_at(p(2, 1)), None);
+    /// Apps 0..n, all listed.
+    fn all(n: usize) -> Vec<usize> {
+        (0..n).collect()
     }
 
     #[test]
-    fn layout_with_most_used_has_headers() {
-        let g = Grid::new(10, &[4, 2]);
-        // Header, most used, header, two rows of apps.
+    fn layout_without_most_used() {
+        let g = Grid::new(&all(15), &[]);
+        // "All apps" header, then 15 apps in rows of 6: 6 + 6 + 3.
+        assert_eq!(g.rows.len(), 4);
+        assert_eq!(g.first(), p(1, 0));
+        assert_eq!(g.app_at(p(3, 2)), Some(14));
+        assert_eq!(g.app_at(p(3, 3)), None);
+    }
+
+    #[test]
+    fn layout_with_most_used_has_two_headers() {
+        let g = Grid::new(&all(10), &[4, 2]);
+        // Header, most used, header, two rows of apps (6 + 4).
         assert_eq!(g.rows.len(), 5);
         assert_eq!(g.first(), p(1, 0));
         assert_eq!(g.app_at(p(1, 0)), Some(4));
         assert_eq!(g.app_at(p(3, 0)), Some(0));
-        assert_eq!(g.height, 2.0 * HEADER_H + 3.0 * ROW_H);
+        assert_eq!(g.height, 2.0 * HEADER_H + 3.0 * ROW_H + END_PAD);
     }
 
     #[test]
     fn arrows_move_in_two_dimensions() {
-        let g = Grid::new(15, &[]);
-        assert_eq!(g.step(p(0, 3), Dir::Down), p(1, 3));
-        assert_eq!(g.step(p(1, 3), Dir::Up), p(0, 3));
-        assert_eq!(g.step(p(0, 0), Dir::Up), p(0, 0));
-        assert_eq!(g.step(p(0, 3), Dir::Right), p(0, 4));
-        assert_eq!(g.step(p(0, 3), Dir::Left), p(0, 2));
+        let g = Grid::new(&all(15), &[]);
+        assert_eq!(g.step(p(1, 3), Dir::Down), p(2, 3));
+        assert_eq!(g.step(p(2, 3), Dir::Up), p(1, 3));
+        assert_eq!(g.step(p(1, 0), Dir::Up), p(1, 0));
+        assert_eq!(g.step(p(1, 3), Dir::Right), p(1, 4));
+        assert_eq!(g.step(p(1, 3), Dir::Left), p(1, 2));
     }
 
     #[test]
     fn down_into_a_short_row_stops_at_its_last_icon() {
-        let g = Grid::new(15, &[]);
-        assert_eq!(g.step(p(1, 5), Dir::Down), p(2, 0));
-        assert_eq!(g.step(p(2, 0), Dir::Down), p(2, 0));
+        let g = Grid::new(&all(15), &[]);
+        assert_eq!(g.step(p(2, 5), Dir::Down), p(3, 2));
+        assert_eq!(g.step(p(3, 2), Dir::Down), p(3, 2));
     }
 
     #[test]
     fn left_and_right_wrap_to_the_next_row() {
-        let g = Grid::new(15, &[]);
-        assert_eq!(g.step(p(0, 6), Dir::Right), p(1, 0));
-        assert_eq!(g.step(p(1, 0), Dir::Left), p(0, 6));
-        assert_eq!(g.step(p(0, 0), Dir::Left), p(0, 0));
-        assert_eq!(g.step(p(2, 0), Dir::Right), p(2, 0));
+        let g = Grid::new(&all(15), &[]);
+        assert_eq!(g.step(p(1, 5), Dir::Right), p(2, 0));
+        assert_eq!(g.step(p(2, 0), Dir::Left), p(1, 5));
+        assert_eq!(g.step(p(1, 0), Dir::Left), p(1, 0));
+        assert_eq!(g.step(p(3, 2), Dir::Right), p(3, 2));
     }
 
     #[test]
     fn arrows_skip_headers() {
-        let g = Grid::new(10, &[4, 2]);
+        let g = Grid::new(&all(10), &[4, 2]);
         // From the most-used row down lands on the first app row, past the "All apps" header.
         assert_eq!(g.step(p(1, 1), Dir::Down), p(3, 1));
         assert_eq!(g.step(p(3, 1), Dir::Up), p(1, 1));
@@ -317,5 +327,12 @@ mod tests {
         assert_eq!(g.step(p(1, 1), Dir::Right), p(3, 0));
         assert_eq!(g.step(p(3, 0), Dir::Left), p(1, 1));
         assert_eq!(g.step(p(1, 1), Dir::Left), p(1, 0));
+    }
+
+    #[test]
+    fn six_columns_a_row() {
+        assert_eq!(COLS, 6);
+        let g = Grid::new(&all(7), &[]);
+        assert_eq!(g.step(p(1, 5), Dir::Right), p(2, 0));
     }
 }

@@ -8,7 +8,7 @@
 
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
-use windows::core::w;
+use windows::core::HSTRING;
 use windows::Win32::Foundation::{GetLastError, ERROR_ALREADY_EXISTS, HANDLE, HWND, POINT, RECT};
 use windows::Win32::Graphics::Gdi::{
     GetMonitorInfoW, MonitorFromPoint, MonitorFromWindow, HMONITOR, MONITORINFO,
@@ -26,7 +26,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 /// The panel's size in points, and how far down the screen's work area it starts.
-pub const WIDTH: f32 = 720.0;
+pub const WIDTH: f32 = 760.0;
 pub const HEIGHT: f32 = 560.0;
 const TOP_FRACTION: f64 = 0.14;
 
@@ -63,20 +63,26 @@ impl Shared {
     }
 }
 
+/// A kernel object's name. `SHELLMAN_INSTANCE` is added to it, so a test build can run next to the
+/// real launcher without the two finding each other.
+fn name(what: &str) -> HSTRING {
+    let instance = std::env::var("SHELLMAN_INSTANCE").unwrap_or_default();
+    HSTRING::from(format!("Local\\shellman-launcher-{what}{instance}"))
+}
+
 /// Become the resident launcher, or signal the one that is. Both sides create the event before
 /// the mutex, so whichever order two starts interleave in, the one that loses the mutex finds
 /// the event.
 pub fn claim() -> Claim {
     unsafe {
-        let Ok(event) = CreateEventW(None, false, false, w!("Local\\shellman-launcher-summon"))
-        else {
+        let Ok(event) = CreateEventW(None, false, false, &name("summon")) else {
             // Cannot coordinate; run on our own rather than not at all.
             return Claim::Resident(Instance {
                 event: HANDLE::default(),
                 _mutex: HANDLE::default(),
             });
         };
-        let mutex = CreateMutexW(None, false, w!("Local\\shellman-launcher-resident"));
+        let mutex = CreateMutexW(None, false, &name("resident"));
         let taken = mutex.is_ok() && GetLastError() == ERROR_ALREADY_EXISTS;
         if taken {
             // The resident process may take the foreground for the window it is about to show.
@@ -207,8 +213,8 @@ mod tests {
             bottom: 1400,
         };
         let (x, y, w, h) = panel_rect(work, 1.0);
-        assert_eq!((w, h), (720, 560));
-        assert_eq!(x, 1920 + (2560 - 720) / 2);
+        assert_eq!((w, h), (760, 560));
+        assert_eq!(x, 1920 + (2560 - 760) / 2);
         assert!(y > 100 && y < 300);
     }
 

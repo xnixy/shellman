@@ -1,13 +1,16 @@
 //! The ranked result list shown while typing: icon and name per row, the selected row (the top
-//! hit at first) highlighted, and a "Run" row last.
+//! hit at first) softly highlighted with an "Open" hint, and a "Run" row last.
 
+use crate::fade::Fade;
+use egui::text::{LayoutJob, TextFormat};
+use egui::{Color32, Painter, Rect};
 use shellman_core::apps_index::App;
 use shellman_core::thumbs::Thumbs;
 use shellman_ui::theme::{colors, glyph, icon_font};
-use shellman_ui::widgets::draw_text;
 
 const ROW_H: f32 = 52.0;
 const ICON: f32 = 32.0;
+const NAME_SIZE: f32 = 15.0;
 
 /// One result row.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -44,6 +47,7 @@ pub struct Outcome {
 }
 
 /// Draw the rows in view. `reveal` scrolls the selected row into view (after arrow keys).
+#[allow(clippy::too_many_arguments)]
 pub fn show(
     ui: &mut egui::Ui,
     items: &[Item],
@@ -51,21 +55,23 @@ pub fn show(
     query: &str,
     selected: usize,
     thumbs: &mut Thumbs,
+    fade: Fade,
     reveal: bool,
 ) -> Outcome {
-    let c = colors();
     let mut out = Outcome::default();
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
+        .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
         .show_viewport(ui, |ui, view| {
             let width = ui.available_width();
             let origin = ui.cursor().min;
-            ui.allocate_space(egui::vec2(width, ROW_H * items.len() as f32));
+            // A little room at the end, so the last row can scroll clear of the fade.
+            ui.allocate_space(egui::vec2(width, ROW_H * items.len() as f32 + 16.0));
             let moved = ui.input(|i| i.pointer.delta() != egui::Vec2::ZERO);
             let first = (view.min.y / ROW_H).floor().max(0.0) as usize;
             let last = ((view.max.y / ROW_H).ceil() as usize).min(items.len());
             for (i, item) in items.iter().enumerate().take(last).skip(first) {
-                let rect = egui::Rect::from_min_size(
+                let rect = Rect::from_min_size(
                     origin + egui::vec2(0.0, i as f32 * ROW_H),
                     egui::vec2(width, ROW_H),
                 );
@@ -79,45 +85,132 @@ pub fn show(
                 if i == selected && reveal {
                     ui.scroll_to_rect(rect, None);
                 }
-                let row = rect.shrink2(egui::vec2(0.0, 2.0));
-                if i == selected {
-                    ui.painter().rect_filled(row, 10.0, c.row_selected);
-                } else if resp.hovered() {
-                    ui.painter().rect_filled(row, 10.0, c.row_hover);
-                }
-                let icon = egui::Rect::from_center_size(
-                    egui::pos2(row.left() + 12.0 + ICON / 2.0, row.center().y),
-                    egui::Vec2::splat(ICON),
-                );
-                let text = egui::Rect::from_min_max(
-                    egui::pos2(icon.right() + 14.0, row.top()),
-                    egui::pos2(row.right() - 12.0, row.bottom()),
-                );
-                match *item {
-                    Item::App(index) => {
-                        crate::icon::paint(ui, icon, &apps[index], false, thumbs);
-                        draw_text(ui, text, &apps[index].name, egui::FontId::proportional(16.0), c.text, false);
-                    }
-                    Item::Settings => {
-                        // shellman's own icon, in the current accent.
-                        let (id, size) = shellman_ui::app_icon::kind_texture(ui.ctx(), shellman_ui::app_icon::Kind::Settings, false);
-                        egui::Image::from_texture((id, size)).paint_at(ui, icon);
-                        draw_text(ui, text, SETTINGS_NAME, egui::FontId::proportional(16.0), c.text, false);
-                    }
-                    Item::Run => {
-                        ui.painter().text(
-                            icon.center(),
-                            egui::Align2::CENTER_CENTER,
-                            glyph::OPEN_EXTERNAL,
-                            icon_font(20.0),
-                            c.accent_text,
-                        );
-                        draw_text(ui, text, &format!("Run \"{}\"", query.trim()), egui::FontId::proportional(16.0), c.muted, false);
-                    }
-                }
+                let (is_selected, hovered) = (i == selected, resp.hovered());
+                fade.paint(ui, rect, |p| {
+                    draw_row(p, rect, *item, apps, query, is_selected, hovered, thumbs)
+                });
             }
         });
     out
+}
+
+#[allow(clippy::too_many_arguments)]
+fn draw_row(
+    p: &Painter,
+    rect: Rect,
+    item: Item,
+    apps: &[App],
+    query: &str,
+    selected: bool,
+    hovered: bool,
+    thumbs: &mut Thumbs,
+) {
+    let c = colors();
+    let row = rect.shrink2(egui::vec2(0.0, 2.0));
+    if selected {
+        p.rect_filled(row, 12.0, c.text.gamma_multiply(0.12));
+    } else if hovered {
+        p.rect_filled(row, 12.0, c.text.gamma_multiply(0.08));
+    }
+    let icon = Rect::from_center_size(
+        egui::pos2(row.left() + 14.0 + ICON / 2.0, row.center().y),
+        egui::Vec2::splat(ICON),
+    );
+    // The hint takes room at the right of the selected row.
+    let hint_w = if selected { 70.0 } else { 0.0 };
+    let name_x = icon.right() + 14.0;
+    let name_w = row.right() - 14.0 - hint_w - name_x;
+    let name_at = egui::pos2(name_x, row.center().y);
+    let verb = match item {
+        Item::App(index) => {
+            crate::icon::paint(p, icon, &apps[index], thumbs);
+            name(p, name_at, name_w, &apps[index].name, Some(query));
+            "Open"
+        }
+        Item::Settings => {
+            // shellman's own icon, in the current accent.
+            let (id, _) = shellman_ui::app_icon::kind_texture(p.ctx(), shellman_ui::app_icon::Kind::Settings, false);
+            p.image(
+                id,
+                icon,
+                Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                Color32::WHITE,
+            );
+            name(p, name_at, name_w, SETTINGS_NAME, Some(query));
+            "Open"
+        }
+        Item::Run => {
+            crate::icon::plate(p, icon);
+            p.text(
+                icon.center(),
+                egui::Align2::CENTER_CENTER,
+                glyph::OPEN_EXTERNAL,
+                icon_font(16.0),
+                c.accent_text,
+            );
+            name(p, name_at, name_w, &format!("Run \"{}\"", query.trim()), None);
+            "Run"
+        }
+    };
+    if selected {
+        hint(p, row, verb);
+    }
+}
+
+/// A name at `at` (left, vertically centred), cut to `width`; letters the query matched stand
+/// out against the rest.
+fn name(p: &Painter, at: egui::Pos2, width: f32, text: &str, query: Option<&str>) {
+    let c = colors();
+    let marks = query.map(|q| crate::rank::matched(text, q)).unwrap_or_default();
+    let any = marks.contains(&true);
+    let format = |on: bool| TextFormat {
+        font_id: egui::FontId::proportional(NAME_SIZE),
+        color: if any && !on { c.text.gamma_multiply(0.72) } else { c.text },
+        ..Default::default()
+    };
+    let mut job = LayoutJob::default();
+    let mut run = String::new();
+    let mut run_on = false;
+    for (i, ch) in text.chars().enumerate() {
+        let on = marks.get(i).copied().unwrap_or(false);
+        if !run.is_empty() && on != run_on {
+            job.append(&run, 0.0, format(run_on));
+            run.clear();
+        }
+        run_on = on;
+        run.push(ch);
+    }
+    job.append(&run, 0.0, format(run_on));
+    job.wrap = egui::text::TextWrapping::truncate_at_width(width.max(1.0));
+    let galley = p.ctx().fonts(|f| f.layout_job(job));
+    p.galley(egui::pos2(at.x, at.y - galley.size().y / 2.0), galley, c.text);
+}
+
+/// "Open" and a return-key arrow, muted, at the right end of the selected row.
+fn hint(p: &Painter, row: Rect, verb: &str) {
+    let c = colors();
+    let right = row.right() - 16.0;
+    let y = row.center().y;
+    // The return arrow: down, then left, with a head.
+    let (cx, h) = (right - 6.0, 4.5);
+    let stroke = egui::Stroke::new(1.3_f32, c.muted);
+    let shape = [
+        egui::pos2(cx + 5.0, y - h),
+        egui::pos2(cx + 5.0, y + 1.5),
+        egui::pos2(cx - 5.0, y + 1.5),
+    ];
+    p.line(shape.to_vec(), stroke);
+    p.line(
+        vec![egui::pos2(cx - 1.8, y - 1.5), egui::pos2(cx - 5.0, y + 1.5), egui::pos2(cx - 1.8, y + 4.5)],
+        stroke,
+    );
+    p.text(
+        egui::pos2(cx - 11.0, y),
+        egui::Align2::RIGHT_CENTER,
+        verb,
+        egui::FontId::proportional(12.5),
+        c.muted,
+    );
 }
 
 #[cfg(test)]
