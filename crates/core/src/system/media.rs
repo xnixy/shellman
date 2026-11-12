@@ -167,12 +167,19 @@ fn run(rx: Receiver<Cmd>, to_self: Sender<Cmd>, out: Arc<Mailbox<Option<NowPlayi
 /// What the session shows now; `before` lends its art when the track is the same.
 fn read(session: &Session, before: Option<&NowPlaying>) -> Option<NowPlaying> {
     let props = session.TryGetMediaPropertiesAsync().ok()?.get().ok()?;
-    let title = props.Title().map(|s| s.to_string()).unwrap_or_default();
+    let mut title = props.Title().map(|s| s.to_string()).unwrap_or_default();
     let artist = props.Artist().map(|s| s.to_string()).unwrap_or_default();
-    if title.is_empty() && artist.is_empty() {
-        return None;
-    }
     let info = session.GetPlaybackInfo().ok()?;
+    let playing = info.PlaybackStatus().ok() == Some(Status::Playing);
+    // A session with nothing to say and nothing playing is left out; one that plays but names
+    // nothing (some players) goes by its app's name.
+    if title.is_empty() && artist.is_empty() {
+        if !playing {
+            return None;
+        }
+        let app = session.SourceAppUserModelId().map(|s| s.to_string()).unwrap_or_default();
+        title = super::app_name::display_name(&app, None);
+    }
     let controls = info.Controls().ok()?;
     let same_track = before.is_some_and(|b| b.title == title && b.artist == artist);
     let art = if same_track {
@@ -181,7 +188,7 @@ fn read(session: &Session, before: Option<&NowPlaying>) -> Option<NowPlaying> {
         props.Thumbnail().ok().and_then(|t| media_art::load(&t, ART_SIDE)).map(Arc::new)
     };
     Some(NowPlaying {
-        playing: info.PlaybackStatus().ok() == Some(Status::Playing),
+        playing,
         can_previous: controls.IsPreviousEnabled().unwrap_or(false),
         can_next: controls.IsNextEnabled().unwrap_or(false),
         can_toggle: controls.IsPlayPauseToggleEnabled().unwrap_or(false),
@@ -204,6 +211,13 @@ mod tests {
         println!("manager: {:?}", manager.as_ref().map(|_| ()));
         if let Ok(m) = manager {
             println!("sessions: {:?}", m.GetSessions().map(|s| s.Size()));
+            let current = m.GetCurrentSession();
+            println!("current: {:?}", current.as_ref().map(|s| s.SourceAppUserModelId()));
+            if let Ok(s) = current {
+                let props = s.TryGetMediaPropertiesAsync().and_then(|op| op.get());
+                println!("title: {:?}", props.as_ref().map(|p| (p.Title(), p.Artist())));
+                println!("status: {:?}", s.GetPlaybackInfo().and_then(|i| i.PlaybackStatus()));
+            }
         }
         let wake: Wake = Arc::new(|| {});
         let watch = MediaWatch::start(wake);

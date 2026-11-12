@@ -27,7 +27,8 @@ static CLICKED: AtomicBool = AtomicBool::new(false);
 /// The hook thread's id while it runs, 0 when not.
 static THREAD: AtomicU32 = AtomicU32::new(0);
 /// What to call when a click lands outside: the UI's repaint.
-static WAKE: OnceLock<Mutex<Option<Box<dyn Fn() + Send>>>> = OnceLock::new();
+static WAKE: OnceLock<Mutex<Option<WakeFn>>> = OnceLock::new();
+type WakeFn = Box<dyn Fn() + Send>;
 
 /// Where the panel is now; call whenever it moves or resizes.
 pub fn set_rect(x: i32, y: i32, w: i32, h: i32) {

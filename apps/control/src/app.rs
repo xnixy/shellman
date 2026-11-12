@@ -96,6 +96,7 @@ impl Control {
         outside::stop();
         self.live = None;
         self.power = PowerMenu::default();
+        self.sound.collapse();
     }
 
     /// Notice a new showing, and hide on Esc, a second summon, a click elsewhere, or focus
@@ -149,8 +150,13 @@ impl Control {
             .show(ctx, |ui| {
                 paint_surface(ui, ctx.screen_rect(), self.glass);
                 ui.spacing_mut().item_spacing = egui::vec2(kit::GAP, kit::GAP);
-                asked = self.modules(ui);
-                height = ui.min_rect().height() + kit::PAD * 2.0;
+                // Scrolls only on a screen too short for the whole panel.
+                let out = egui::ScrollArea::vertical().auto_shrink([false, true]).show(ui, |ui| {
+                    ui.spacing_mut().item_spacing = egui::vec2(kit::GAP, kit::GAP);
+                    self.modules(ui)
+                });
+                asked = out.inner;
+                height = out.content_size.y + kit::PAD * 2.0;
             });
         if showing {
             summon::fit(self.hwnd, &self.shared, height);

@@ -238,6 +238,13 @@ mod tests {
         }
     }
 
+    /// What this machine has; run with `--ignored --nocapture`. Reads only.
+    #[test]
+    #[ignore]
+    fn probe() {
+        init_com();
+        println!("{:?}", read_sound(&enumerator().unwrap()));
+    }
     #[test]
     fn every_role_is_set() {
         let mut roles: Vec<i32> = ROLES.iter().map(|r| r.0).collect();

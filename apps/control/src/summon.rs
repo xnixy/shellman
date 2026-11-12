@@ -58,7 +58,7 @@ pub struct Shared {
     /// Counts showings, so the window notices a new one.
     shown: AtomicU32,
     /// The monitor the panel shows on, `(left, top, right, bottom)` in pixels, and its scale.
-    monitor: Mutex<Option<((i32, i32, i32, i32), f32)>>,
+    monitor: Mutex<Option<Monitor>>,
     /// The content's height in points, as last laid out (f32 bits).
     height: AtomicU32,
     /// When a click outside last closed the panel.
@@ -84,6 +84,9 @@ impl Shared {
         f32::from_bits(self.height.load(Ordering::Relaxed))
     }
 }
+
+/// A monitor's rectangle `(left, top, right, bottom)` in pixels, and its scale.
+type Monitor = ((i32, i32, i32, i32), f32);
 
 /// The mutex and event names, with the instance's suffix.
 fn names(instance: Option<&str>) -> (String, String) {

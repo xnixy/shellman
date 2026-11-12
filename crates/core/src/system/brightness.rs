@@ -75,7 +75,8 @@ impl Drop for BrightnessWatch {
 }
 
 enum Control {
-    Ddc { monitor: PHYSICAL_MONITOR, max: u32 },
+    /// Boxed: the monitor record carries its 256-byte description.
+    Ddc { monitor: Box<PHYSICAL_MONITOR>, max: u32 },
     Builtin(Backlight),
 }
 
@@ -104,7 +105,7 @@ impl Panel {
         if let Control::Ddc { monitor, .. } = self.control {
             // SAFETY: opened by GetPhysicalMonitorsFromHMONITOR, closed once.
             unsafe {
-                let _ = DestroyPhysicalMonitors(&[monitor]);
+                let _ = DestroyPhysicalMonitors(&[*monitor]);
             }
         }
     }
@@ -140,7 +141,7 @@ fn run(rx: Receiver<Cmd>, out: Arc<Mailbox<Vec<Screen>>>, wake: Wake) {
         let name = names.get(&device).map(|n| n.trim().to_string()).filter(|n| !n.is_empty());
         let name = name.unwrap_or_else(|| "Display".into());
         let screen = Screen { id: device, name, percent: to_percent(now, max) };
-        panels.push(Panel { screen, control: Control::Ddc { monitor, max }, debounce: Debounce::default() });
+        panels.push(Panel { screen, control: Control::Ddc { monitor: Box::new(monitor), max }, debounce: Debounce::default() });
         publish(&panels);
     }
     publish(&panels);

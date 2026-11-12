@@ -228,35 +228,27 @@ mod tests {
         }
     }
 
-    /// Nudges the real volume by two points and puts it back; run by hand with `--ignored`.
+    /// Nudges the real volume by two points and puts it back, once through the watch and once
+    /// elsewhere (the one-shot call the top bar uses), which the watch must hear through
+    /// Windows' callback. One test, so the two never race over the level; by hand only.
     #[test]
     #[ignore]
     fn nudge_the_volume_and_put_it_back() {
         let watch = SoundWatch::start(Arc::new(|| {}));
         let was = wait_for(&watch, |s| s.volume.is_some()).unwrap().volume.unwrap().level;
         let to = nudged(was);
+        let at = |level: f32| move |s: &Sound| s.volume.is_some_and(|v| (v.level - level).abs() < 0.005);
         watch.set_volume(to);
-        let moved = wait_for(&watch, |s| s.volume.is_some_and(|v| (v.level - to).abs() < 0.005));
+        let moved = wait_for(&watch, at(to));
         watch.set_volume(was);
-        let back = wait_for(&watch, |s| s.volume.is_some_and(|v| (v.level - was).abs() < 0.005));
-        println!("volume {was} -> {to}: moved {}, back {}", moved.is_some(), back.is_some());
-        assert!(moved.is_some() && back.is_some());
-    }
-
-    /// A change made elsewhere (here: the one-shot call the top bar uses) reaches the watch
-    /// through Windows' callback, with no command of its own; run by hand with `--ignored`.
-    #[test]
-    #[ignore]
-    fn hears_changes_made_elsewhere() {
-        let watch = SoundWatch::start(Arc::new(|| {}));
-        let was = wait_for(&watch, |s| s.volume.is_some()).unwrap().volume.unwrap().level;
-        let to = nudged(was);
+        let back = wait_for(&watch, at(was));
         audio::set_volume(to);
-        let heard = wait_for(&watch, |s| s.volume.is_some_and(|v| (v.level - to).abs() < 0.005));
+        let heard = wait_for(&watch, at(to));
         audio::set_volume(was);
-        let back = wait_for(&watch, |s| s.volume.is_some_and(|v| (v.level - was).abs() < 0.005));
-        println!("heard {}, back {}", heard.is_some(), back.is_some());
-        assert!(heard.is_some() && back.is_some());
+        let heard_back = wait_for(&watch, at(was));
+        println!("volume {was} -> {to}: moved {}, back {}", moved.is_some(), back.is_some());
+        println!("heard {}, back {}", heard.is_some(), heard_back.is_some());
+        assert!(moved.is_some() && back.is_some() && heard.is_some() && heard_back.is_some());
     }
 
     /// Makes another output the default, then the old one again within a second; by hand only.

@@ -95,4 +95,13 @@ mod tests {
         crate::system::live::init_mta();
         assert_eq!(decode(b"not a picture", 32), None);
     }
+
+    #[test]
+    fn a_wide_picture_becomes_a_square() {
+        crate::system::live::init_mta();
+        let png = include_bytes!("../../../../assets/icons/preview-accents.png");
+        let art = decode(png, 48).expect("decodes");
+        assert_eq!(art.side, 48);
+        assert_eq!(art.rgba.len(), 48 * 48 * 4);
+    }
 }
