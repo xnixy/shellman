@@ -39,6 +39,8 @@ pub struct FormatSpec {
     /// Not sound samples but an encoded stream passed through (Dolby, DTS over HDMI or S/PDIF).
     /// Shown, but never offered or built.
     pub encoded: bool,
+    /// Which encoding, when `encoded`: the first field of the format's subtype GUID. 0 otherwise.
+    pub codec: u32,
 }
 
 /// The speaker layouts a device is tried with: the common ones, as the classic dialog offers for
@@ -48,16 +50,31 @@ const LAYOUTS: [(u16, u32); 3] = [(2, 0x3), (6, 0x3F), (8, 0x63F)];
 impl FormatSpec {
     /// PCM at `rate` and depth `bits` with the layout of `like`.
     pub fn pcm(like: &FormatSpec, rate: u32, bits: u16) -> Self {
-        Self { rate, bits, valid_bits: bits, channels: like.channels, mask: like.mask, float: false, encoded: false }
+        Self { rate, bits, valid_bits: bits, channels: like.channels, mask: like.mask, float: false, encoded: false, codec: 0 }
     }
 
     /// The label with the channels in front, as the classic dialog words it for a device that
     /// takes several layouts: "2 channel, 24 bit, 48000 Hz (Studio Quality)".
     pub fn full_label(&self) -> String {
         if self.encoded {
-            return format!("Encoded stream, {} channel, {} Hz", self.channels, self.rate);
+            return format!("{}, {} channel, {} Hz", self.codec_name(), self.channels, self.rate);
         }
         format!("{} channel, {}", self.channels, self.label())
+    }
+
+    /// The name of the encoding of an encoded stream (the IEC 61937 subtypes of ksmedia.h).
+    pub fn codec_name(&self) -> &'static str {
+        match self.codec {
+            0x92 => "Dolby Digital",
+            0x0A => "Dolby Digital Plus",
+            0x0C => "Dolby MAT (TrueHD, Atmos)",
+            0x10C => "Dolby MAT 2.0 (Atmos)",
+            0x30C => "Dolby MAT 2.1 (Atmos)",
+            0x08 => "DTS",
+            0x0B => "DTS-HD",
+            0x10B | 0x30B => "DTS:X",
+            _ => "Encoded stream",
+        }
     }
 
     /// As the classic dialog words it: "24 bit, 48000 Hz (Studio Quality)".
@@ -110,21 +127,22 @@ impl FormatSpec {
         let u32_at = |i: usize| b.get(i..i + 4).map(|s| u32::from_le_bytes([s[0], s[1], s[2], s[3]]));
         let tag = u16_at(0)?;
         let (channels, rate, bits) = (u16_at(2)?, u32_at(4)?, u16_at(14)?);
-        let (valid_bits, mask, float, encoded) = match tag {
-            1 => (bits, 0, false, false),
-            3 => (bits, 0, true, false),
+        let (valid_bits, mask, float, encoded, codec) = match tag {
+            1 => (bits, 0, false, false, 0),
+            3 => (bits, 0, true, false, 0),
             WAVE_FORMAT_EXTENSIBLE if b.len() >= EXT_LEN => {
                 let sub = b.get(24..28)?;
                 let float = sub == SUBTYPE_FLOAT.data1.to_le_bytes();
                 let pcm = sub == SUBTYPE_PCM.data1.to_le_bytes();
-                (u16_at(18)?, u32_at(20)?, float, !float && !pcm)
+                let encoded = !float && !pcm;
+                (u16_at(18)?, u32_at(20)?, float, encoded, if encoded { u32_at(24)? } else { 0 })
             }
             _ => return None,
         };
         if channels == 0 || rate == 0 || bits == 0 {
             return None;
         }
-        Some(Self { rate, bits, valid_bits, channels, mask, float, encoded })
+        Some(Self { rate, bits, valid_bits, channels, mask, float, encoded, codec })
     }
 }
 
@@ -250,7 +268,7 @@ mod tests {
     use super::*;
 
     fn stereo() -> FormatSpec {
-        FormatSpec { rate: 48_000, bits: 16, valid_bits: 16, channels: 2, mask: 3, float: false, encoded: false }
+        FormatSpec { rate: 48_000, bits: 16, valid_bits: 16, channels: 2, mask: 3, float: false, encoded: false, codec: 0 }
     }
 
     #[test]
@@ -326,7 +344,7 @@ mod tests {
         let bytes: Vec<u8> = (0..hex.len()).step_by(2).map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap()).collect();
         let f = FormatSpec::parse(&bytes).unwrap();
         assert!(f.encoded && f.channels == 8 && f.rate == 192_000);
-        assert_eq!(f.full_label(), "Encoded stream, 8 channel, 192000 Hz");
+        assert_eq!(f.full_label(), "Dolby MAT (TrueHD, Atmos), 8 channel, 192000 Hz");
         assert!(candidates(&f).iter().all(|c| !c.encoded));
         assert_eq!(candidates(&f).len(), RATES.len() * DEPTHS.len() * LAYOUTS.len());
     }
