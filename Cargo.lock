@@ -1939,6 +1939,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "shellman-session"
+version = "0.1.0"
+dependencies = [
+ "dirs",
+ "windows",
+ "winresource",
+]
+
+[[package]]
 name = "shellman-settings"
 version = "0.1.0"
 dependencies = [

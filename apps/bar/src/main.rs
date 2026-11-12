@@ -80,7 +80,9 @@ fn main() -> eframe::Result {
                 (false, false) => Mode::Explorer,
             };
             let minimized = (mode == Mode::Shell).then(workarea::HiddenMinimized::start);
-            if mode == Mode::Shell {
+            // When shellman-session runs this bar (it sets SHELLMAN_SESSION), the session owns the
+            // residents and restarts them; started by hand, the bar still brings them up itself.
+            if mode == Mode::Shell && std::env::var_os("SHELLMAN_SESSION").is_none() {
                 // The launcher and control centre live on as resident processes, hidden. A
                 // `--background` start while one runs already does nothing.
                 std::thread::spawn(|| {

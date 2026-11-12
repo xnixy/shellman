@@ -1,0 +1,15 @@
+[package]
+name = "shellman-session"
+version = "0.1.0"
+edition.workspace = true
+description = "Shellman's session: the shell process that starts and supervises the other apps"
+license.workspace = true
+publish = false
+
+# Deliberately small: no egui and no shellman-core, so it builds fast and has little to go wrong.
+[dependencies]
+dirs.workspace = true
+windows.workspace = true
+
+[build-dependencies]
+winresource.workspace = true
