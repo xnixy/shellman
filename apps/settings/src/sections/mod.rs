@@ -7,6 +7,14 @@ mod bar;
 mod display;
 mod display_map;
 mod dock;
+mod fonts;
+mod fonts_list;
+mod fonts_load;
+mod fonts_logic;
+mod fonts_preview;
+mod fonts_tabs;
+mod fonts_view;
+mod fonts_worker;
 mod launcher;
 mod sound;
 mod sound_mixer;
@@ -15,6 +23,7 @@ mod startup;
 
 pub use apps::AppsView;
 pub use display::DisplayView;
+pub use fonts_view::FontsView;
 pub use sound::SoundView;
 pub use startup::StartupView;
 use crate::state::State;
@@ -27,6 +36,7 @@ pub enum Section {
     Display,
     Apps,
     Startup,
+    Fonts,
     Dock,
     TopBar,
     Launcher,
@@ -34,12 +44,13 @@ pub enum Section {
 }
 
 impl Section {
-    pub const ALL: [Section; 9] = [
+    pub const ALL: [Section; 10] = [
         Section::Appearance,
         Section::Sound,
         Section::Display,
         Section::Apps,
         Section::Startup,
+        Section::Fonts,
         Section::Dock,
         Section::TopBar,
         Section::Launcher,
@@ -53,6 +64,7 @@ impl Section {
             Section::Display => "Display",
             Section::Apps => "Apps",
             Section::Startup => "Startup apps",
+            Section::Fonts => "Fonts",
             Section::Dock => "Dock",
             Section::TopBar => "Top bar",
             Section::Launcher => "Launcher",
@@ -67,6 +79,8 @@ impl Section {
             Section::Display => glyph::DESKTOP,
             Section::Apps => '\u{E71D}',
             Section::Startup => '\u{E7E8}',
+            // Segoe Fluent Icons' Font glyph.
+            Section::Fonts => '\u{E8D2}',
             Section::Dock => glyph::APP,
             Section::TopBar => glyph::DESKTOP,
             Section::Launcher => glyph::SEARCH,
@@ -81,6 +95,7 @@ impl Section {
             Section::Display => display::show(ui, state),
             Section::Apps => apps::show(ui, state),
             Section::Startup => startup::show(ui, state),
+            Section::Fonts => fonts::show(ui, state),
             Section::Dock => dock::show(ui, state),
             Section::TopBar => bar::show(ui, state),
             Section::Launcher => launcher::show(ui, state),
@@ -100,6 +115,7 @@ impl Section {
                 | Section::Display
                 | Section::Apps
                 | Section::Startup
+                | Section::Fonts
                 | Section::Dock
                 | Section::TopBar
                 | Section::Launcher
@@ -115,6 +131,7 @@ impl Section {
             Section::Display => "display",
             Section::Apps => "apps",
             Section::Startup => "startup",
+            Section::Fonts => "fonts",
             Section::Dock => "dock",
             Section::TopBar => "top-bar",
             Section::Launcher => "launcher",

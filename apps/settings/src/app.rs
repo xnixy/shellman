@@ -280,8 +280,14 @@ impl SettingsApp {
                 if self.section != Section::Apps {
                     self.st.apps.stop();
                 }
+                if self.section != Section::Fonts {
+                    self.st.fonts.stop();
+                }
             });
         });
+        if let Some(section) = self.st.goto.take() {
+            self.section = section;
+        }
         list.extend(page::take_groups().into_iter().map(|r| Island::new(r, page::GROUP_RADIUS)));
     }
 }

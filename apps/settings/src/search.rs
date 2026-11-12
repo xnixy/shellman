@@ -33,6 +33,14 @@ const ENTRIES: &[Entry] = &[
     e(Section::Apps, "Uninstall", "remove modify change programs"),
     e(Section::Startup, "", "autostart login sign in boot"),
     e(Section::Startup, "Starts when you sign in", "autorun run at startup apps"),
+    e(Section::Fonts, "", "system font typeface segoe ui windows text fontman"),
+    e(Section::Fonts, "Windows uses", "status restart restore segoe ui current font"),
+    e(Section::Fonts, "Fonts", "installed families add font file typeface"),
+    e(Section::Fonts, "Preview", "explorer message box sample"),
+    e(Section::Fonts, "Weights", "bold semibold light italic face"),
+    e(Section::Fonts, "Tune", "glyph size line height slant italics window text title bar menu tooltip"),
+    e(Section::Fonts, "Coverage", "window text apps file explorer windows 11 shell old dialogs ms shell dlg"),
+    e(Section::Fonts, "Backups", "restore segoe ui use again restore file reg sign in check"),
     e(Section::Dock, "", "taskbar"),
     e(Section::Dock, "Icon size", "big small zoom"),
     e(Section::Dock, "Show the dock on", "monitors screens"),
@@ -147,6 +155,14 @@ mod tests {
     fn an_empty_query_finds_nothing() {
         assert!(find("").is_empty());
         assert!(find("   ").is_empty());
+    }
+
+    #[test]
+    fn the_fonts_page_and_its_tabs_are_found() {
+        assert_eq!(find("fonts")[0], Hit { section: Section::Fonts, group: "" });
+        assert!(find("restore segoe").iter().any(|h| h.section == Section::Fonts));
+        assert!(find("line height").iter().any(|h| *h == Hit { section: Section::Fonts, group: "Tune" }));
+        assert!(find("old dialogs").iter().any(|h| *h == Hit { section: Section::Fonts, group: "Coverage" }));
     }
 
     #[test]

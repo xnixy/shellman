@@ -11,6 +11,9 @@ eframe.workspace = true
 egui.workspace = true
 raw-window-handle.workspace = true
 shellman-core.workspace = true
+shellman-pick.workspace = true
+# The system font (the Fonts page): Fontman's logic.
+shellman-sysfont = { path = "../../crates/sysfont" }
 shellman-ui.workspace = true
 windows.workspace = true
 

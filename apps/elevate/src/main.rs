@@ -53,6 +53,22 @@ mod tests {
     }
 
     #[test]
+    fn system_font_steps_take_only_a_generation() {
+        let never = |_: &ops::Op| -> bool { panic!("must not run") };
+        assert_eq!(decide(&args(&["sysfont-apply", "C:\\Temp\\plan.json"]), true, never), exit::BAD_ARGS);
+        assert_eq!(decide(&args(&["sysfont-apply", "tob9y0", "x"]), true, never), exit::BAD_ARGS);
+        assert_eq!(decide(&args(&["sysfont-restore", "x"]), true, never), exit::BAD_ARGS);
+        assert_eq!(decide(&args(&["sysfont-apply", "tob9y0"]), false, never), exit::NOT_ELEVATED);
+        let seen = std::cell::RefCell::new(None);
+        let record = |op: &ops::Op| {
+            *seen.borrow_mut() = Some(op.clone());
+            true
+        };
+        assert_eq!(decide(&args(&["sysfont-reuse", "tob9y0"]), true, record), exit::DONE);
+        assert_eq!(*seen.borrow(), Some(ops::Op::SysfontReuse { generation: "tob9y0".into() }));
+    }
+
+    #[test]
     fn elevated_runs_and_reports() {
         assert_eq!(decide(&args(&["sound-device", "disable", ID]), true, |_| true), exit::DONE);
         assert_eq!(decide(&args(&["sound-device", "disable", ID]), true, |_| false), exit::FAILED);

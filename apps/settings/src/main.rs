@@ -19,10 +19,18 @@ use shellman_ui::{theme, window};
 
 fn main() -> eframe::Result {
     // `--page sound` opens on that page; a window already open is brought to it.
-    let page = std::env::args()
+    let mut page = std::env::args()
         .skip_while(|a| a != "--page")
         .nth(1)
         .and_then(|slug| sections::Section::from_slug(&slug));
+    // `--check-fonts`, at sign-in: window text comes back if a theme reset it, and the window
+    // opens on the Fonts page only if a Windows update put Segoe UI back.
+    if std::env::args().any(|a| a == shellman_sysfont::autostart::CHECK_FLAG) {
+        if !shellman_sysfont::check::at_signin().segoe_back {
+            return Ok(());
+        }
+        page = Some(sections::Section::Fonts);
+    }
     let first = match instance::claim(page) {
         instance::Claim::Signalled => return Ok(()),
         instance::Claim::First(first) => first,
