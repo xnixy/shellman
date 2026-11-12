@@ -294,7 +294,9 @@ impl Launcher {
         self.follow_window(ctx);
         self.keys(ctx);
 
-        theme::set_light(ctx.theme() == egui::Theme::Light);
+        // SHELLMAN_FORCE_LIGHT: look at the light palette without changing Windows' setting.
+        let force_light = std::env::var_os("SHELLMAN_FORCE_LIGHT").is_some();
+        theme::set_light(force_light || ctx.theme() == egui::Theme::Light);
         let c = colors();
         let screen = ctx.screen_rect();
 
