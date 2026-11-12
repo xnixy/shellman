@@ -4,12 +4,33 @@
 
 use super::hover::Anchor;
 use super::layout::DOCK_GAP;
-use windows::Win32::Foundation::{HWND, RECT};
+use windows::Win32::Foundation::{HWND, POINT, RECT};
 use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST};
 use windows::Win32::UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI};
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetWindowRect, IsWindowVisible, ShowWindow, SW_HIDE, SW_SHOWNOACTIVATE,
+    GetCursorPos, GetForegroundWindow, GetWindowRect, IsWindowVisible, ShowWindow, SW_HIDE, SW_SHOWNOACTIVATE,
 };
+
+/// Where the cursor is, in physical pixels.
+pub fn cursor() -> Option<(i32, i32)> {
+    let mut p = POINT::default();
+    unsafe { GetCursorPos(&mut p).ok().map(|_| (p.x, p.y)) }
+}
+
+/// A window's rectangle, if it still exists.
+pub fn rect_of(hwnd: isize) -> Option<RECT> {
+    let mut r = RECT::default();
+    unsafe { GetWindowRect(HWND(hwnd as *mut _), &mut r).ok().map(|_| r) }
+}
+
+/// Exists and is shown (cloaked windows count as shown).
+pub fn is_shown(hwnd: isize) -> bool {
+    unsafe { IsWindowVisible(HWND(hwnd as *mut _)).as_bool() }
+}
+
+pub fn foreground() -> isize {
+    unsafe { GetForegroundWindow().0 as isize }
+}
 
 /// Where the panel goes for an icon whose centre is `center_x` points from the left of the dock
 /// window `dock`, over glass whose top is `top` points down from the window's top, drawn at `ppp`

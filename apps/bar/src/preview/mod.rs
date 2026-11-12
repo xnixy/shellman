@@ -17,6 +17,7 @@
 //! Pieces: `hover` (when to open and close), `layout` (tile and panel geometry), `draw` (painting),
 //! `window` (Win32). This file ties them to the window and the live pictures.
 
+mod close;
 mod draw;
 mod hover;
 mod layout;
@@ -80,6 +81,9 @@ pub fn builder() -> egui::ViewportBuilder {
 pub fn step_aside() {
     let panel = PANEL.load(Ordering::Acquire);
     if panel != 0 && foreground_covers_monitor_of(panel) {
+        // Out of sight now, whatever the host does next; the host frame then closes it properly.
+        glass::cloak(panel, true);
+        window::hide(panel);
         COVERED.store(true, Ordering::Release);
         host::request_frame();
     }
@@ -99,6 +103,16 @@ pub struct Preview {
     dirty: bool,
     /// Frames drawn since the panel was shown, while it is still cloaked.
     warm: Option<u8>,
+    /// The hovered icon's dock window, for the watchdog.
+    dock: Option<isize>,
+    /// The panel has been shown (so being invisible later means it was hidden from outside).
+    shown: bool,
+    /// Since when the cursor has been outside the dock and the panel.
+    outside: close::Outside,
+    /// The foreground window when the panel opened.
+    fg_at_open: isize,
+    /// How many windows the app had at the last look; `None` before the first.
+    app_windows: Option<usize>,
 }
 
 impl Preview {
@@ -112,6 +126,11 @@ impl Preview {
             thumbs: Vec::new(),
             dirty: false,
             warm: None,
+            dock: None,
+            shown: false,
+            outside: close::Outside::default(),
+            fg_at_open: 0,
+            app_windows: None,
         }
     }
 
@@ -126,6 +145,7 @@ impl Preview {
         let (was_open, epoch) = (self.machine.is_open(), self.machine.epoch());
         match hover.target {
             Some(target) => {
+                self.dock = Some(dock);
                 let key = Key { device: device.to_owned(), app_id: target.app_id };
                 if hover.dismiss {
                     self.machine.dismiss(Some(key));
@@ -176,12 +196,54 @@ impl Preview {
         let open = self.machine.is_open();
         if open && !was_open {
             self.dirty = true;
+            self.fg_at_open = window::foreground();
+            self.outside.reset();
+            self.app_windows = None;
         }
+        // The authoritative check, on its own timer: it does not depend on any pointer event or
+        // on a frame of a window that may be hidden.
+        let open = open && !self.watchdog(now);
         if !open {
             self.release();
         }
         self.schedule(now);
+        if open {
+            // Only while a panel is open; a closed one costs nothing.
+            self.ctx.request_repaint_after_for(close::WATCH_PERIOD, ViewportId::ROOT);
+        }
         open
+    }
+
+    /// Read the facts and close the panel if they say so. True if it was closed.
+    fn watchdog(&mut self, now: Instant) -> bool {
+        if !self.machine.is_open() {
+            return false;
+        }
+        let dock_shown = self.dock.is_some_and(window::is_shown);
+        let mut zones = Vec::with_capacity(2);
+        zones.extend(self.dock.and_then(window::rect_of));
+        if self.shown {
+            zones.extend(self.hwnd.and_then(window::rect_of));
+        }
+        let outside_for = match window::cursor() {
+            Some(p) => self.outside.update(now, close::inside(&zones, p)),
+            None => None,
+        };
+        let fg = window::foreground();
+        let monitor_of = self.dock.filter(|_| dock_shown).or(self.hwnd).unwrap_or(0);
+        let facts = close::Facts {
+            outside_for,
+            dock_hidden: !dock_shown,
+            covered: monitor_of != 0 && foreground_covers_monitor_of(monitor_of),
+            windows_gone: self.app_windows == Some(0),
+            foreground_changed: fg != 0 && self.fg_at_open != 0 && fg != self.fg_at_open,
+            panel_hidden: self.shown && !self.hwnd.is_some_and(window::is_shown),
+        };
+        if close::decide(&facts, hover::GRACE).is_none() {
+            return false;
+        }
+        self.machine.dismiss(None);
+        true
     }
 
     /// Let go of the window and the pictures; the host is about to stop declaring the viewport.
@@ -196,6 +258,8 @@ impl Preview {
             window::hide(hwnd);
         }
         PANEL.store(0, Ordering::Release);
+        self.shown = false;
+        self.dock = None;
         self.windows.clear();
         self.layout = Layout::default();
         self.warm = None;
@@ -226,6 +290,7 @@ impl Preview {
     /// so it cannot lay itself out.
     pub fn update(&mut self, mut windows: Vec<AppWindow>) {
         windows.truncate(MAX_WINDOWS);
+        self.app_windows = Some(windows.len());
         if windows.is_empty() {
             // The app's last window is gone.
             let (was_open, epoch) = (self.machine.is_open(), self.machine.epoch());
@@ -334,6 +399,7 @@ impl Preview {
             }
         }
         window::show(hwnd);
+        self.shown = true;
         self.ctx.request_repaint_of(id());
     }
 }
