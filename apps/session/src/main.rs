@@ -7,30 +7,107 @@
 //! Winlogon after `--install`.
 
 mod apps;
+mod cli;
+mod fallback;
+mod find;
 mod log;
 mod policy;
 mod proc;
-mod find;
+mod registry;
+mod safety;
 mod shutdown;
 mod single;
+mod startup;
 mod supervisor;
+mod swap;
 mod window;
 
+use cli::Mode;
+use std::time::Duration;
+
 fn main() {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let startup = match cli::parse(&args) {
+        Mode::Run { startup } => startup,
+        Mode::DryRun => return print_mode(startup::dry_run),
+        Mode::Install => return print_mode(install),
+        Mode::Uninstall => return print_mode(uninstall),
+        Mode::Help => return print_mode(cli::help),
+    };
     // Held until exit; a second session in this logon session does nothing.
     let Some(_single) = single::claim() else { return };
-    let (apps, _test) = apps::load();
-    log::line(&format!("session starts, {} apps", apps.len()));
+    let (apps, test) = apps::load();
+    // The safety net is for the real shell. A test run may switch it on to try it.
+    let safety = !test || std::env::var("SHELLMAN_SESSION_SAFETY").is_ok_and(|v| v == "on");
+    log::line(&format!("session starts, {} apps{}", apps.len(), if test { " (test list)" } else { "" }));
     let Some(_window) = window::create() else {
         log::line("could not create the session window, stopping");
         return;
     };
-    let mut fleet = supervisor::Fleet::new(apps);
+    // Shift at start is the user's way out: Explorer, and no shellman apps at all.
+    if safety && fallback::shift_held() {
+        log::line(&format!("falling back to Explorer: {}", safety::Reason::Shift.text()));
+        fallback::start_explorer(test);
+        run(supervisor::Fleet::new(Vec::new()), false, test, true);
+        return;
+    }
+    let fleet = supervisor::Fleet::new(apps);
+    if startup && !test {
+        startup::start(fleet.adopted());
+    }
+    run(fleet, safety, test, false);
+}
+
+/// The message loop: supervise until the window closes.
+fn run(mut fleet: supervisor::Fleet, safety: bool, test: bool, park: bool) {
+    if park {
+        fleet.park();
+    }
+    let mut deadline_passed = false;
     loop {
         fleet.step();
-        if !fleet.wait(None) {
+        if safety && !fleet.parked() {
+            let seen = safety::Seen {
+                shift: false,
+                bar_lost: fleet.bar_lost(),
+                bar_alive: fleet.bar_alive(),
+                tray_up: fallback::tray_up(),
+                since_start: fleet.since_start(),
+            };
+            deadline_passed |= seen.since_start >= safety::DEADLINE;
+            if let Some(reason) = safety::decide(&seen) {
+                log::line(&format!("falling back to Explorer: {}", reason.text()));
+                fallback::start_explorer(test);
+                fleet.park();
+            }
+        }
+        // Until the deadline, wake for it; the bar's exits wake the loop by themselves.
+        let extra = (safety && !deadline_passed && !fleet.parked())
+            .then(|| safety::DEADLINE.saturating_sub(fleet.since_start()) + Duration::from_millis(50));
+        if !fleet.wait(extra) {
             break;
         }
     }
+    shutdown::stop();
     log::line("session ends");
+}
+
+fn print_mode(f: impl FnOnce()) {
+    cli::attach_console();
+    f();
+}
+
+fn install() {
+    let exe = std::env::current_exe().unwrap_or_default();
+    match swap::install(&registry::Real, &exe, &|p| p.exists()) {
+        Ok(done) => println!("installed: {done:?}. Takes effect at the next sign-in. Undo: shellman-session --uninstall"),
+        Err(e) => println!("not installed: {e}"),
+    }
+}
+
+fn uninstall() {
+    match swap::uninstall(&registry::Real) {
+        Ok(done) => println!("uninstalled: {done:?}. Explorer is the shell again at the next sign-in."),
+        Err(e) => println!("nothing changed: {e}"),
+    }
 }

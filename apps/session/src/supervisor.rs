@@ -29,13 +29,14 @@ pub struct Fleet {
     slots: Vec<Slot>,
     t0: Instant,
     adopted: usize,
+    parked: bool,
 }
 
 impl Fleet {
     /// Adopt apps that already run (a session that crashed left them), schedule the rest in order.
     pub fn new(apps: Vec<App>) -> Fleet {
         let t0 = Instant::now();
-        let mut fleet = Fleet { slots: Vec::new(), t0, adopted: 0 };
+        let mut fleet = Fleet { slots: Vec::new(), t0, adopted: 0, parked: false };
         for (i, app) in apps.into_iter().enumerate() {
             let mut slot =
                 Slot { app, proc: None, crashes: Crashes::default(), due: None, started: t0 };
@@ -61,6 +62,23 @@ impl Fleet {
             .filter(|pid| !held.contains(pid))
             .find_map(Proc::open)
             .filter(|p| p.exit_code().is_none())
+    }
+
+    /// Stop supervising and leave everything as it is: Explorer took over (see `safety`).
+    pub fn park(&mut self) {
+        self.parked = true;
+        for s in &mut self.slots {
+            s.due = None;
+        }
+        shutdown::stop();
+    }
+
+    pub fn parked(&self) -> bool {
+        self.parked
+    }
+
+    pub fn since_start(&self) -> Duration {
+        self.t0.elapsed()
     }
 
     fn publish(&self) {
@@ -142,6 +160,9 @@ impl Fleet {
 
     /// One pass over what happened: exits first, then anything due to start.
     pub fn step(&mut self) {
+        if self.parked {
+            return;
+        }
         for i in 0..self.slots.len() {
             if let Some(code) = self.slots[i].proc.as_ref().and_then(Proc::exit_code) {
                 self.exited(i, code);
@@ -160,6 +181,9 @@ impl Fleet {
 
     /// Handles to wait on, and the time until the nearest start (None: no limit).
     fn waits(&self) -> (Vec<HANDLE>, Option<Duration>) {
+        if self.parked {
+            return (Vec::new(), None);
+        }
         let handles = self.slots.iter().filter_map(|s| s.proc.as_ref().map(|p| p.handle)).take(63).collect();
         let now = Instant::now();
         let due = self.slots.iter().filter_map(|s| s.due).min().map(|d| d.saturating_duration_since(now));

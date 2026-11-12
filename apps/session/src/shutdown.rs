@@ -6,7 +6,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use windows::core::BOOL;
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
-use windows::Win32::System::Threading::WaitForMultipleObjects;
+use windows::Win32::Foundation::{HANDLE, WAIT_TIMEOUT};
+use windows::Win32::System::Threading::{CreateEventW, SetEvent, WaitForMultipleObjects, WaitForSingleObject};
 use windows::Win32::UI::WindowsAndMessaging::{
     EnumWindows, GetWindowThreadProcessId, PostMessageW, WM_CLOSE,
 };
@@ -58,8 +59,29 @@ pub fn close_windows(pids: &[u32]) -> usize {
     ctx.posted
 }
 
-pub fn run(why: &str) {
+/// Signalled when the session is ending, so a thread that sleeps (the startup items) wakes at once.
+fn stop_event() -> HANDLE {
+    static EVENT: std::sync::OnceLock<isize> = std::sync::OnceLock::new();
+    HANDLE(*EVENT.get_or_init(|| unsafe { CreateEventW(None, true, false, None).map_or(0, |h| h.0 as isize) }) as *mut _)
+}
+
+/// Sleep for `d`; false when the session ended before that.
+pub fn sleep(d: std::time::Duration) -> bool {
+    if STOPPING.load(Ordering::SeqCst) {
+        return false;
+    }
+    unsafe { WaitForSingleObject(stop_event(), d.as_millis().min(u32::MAX as u128 - 1) as u32) == WAIT_TIMEOUT }
+}
+
+pub fn stop() {
     STOPPING.store(true, Ordering::SeqCst);
+    unsafe {
+        let _ = SetEvent(stop_event());
+    }
+}
+
+pub fn run(why: &str) {
+    stop();
     let pids = PIDS.lock().map(|p| p.clone()).unwrap_or_default();
     let posted = close_windows(&pids);
     log::line(&format!("{why}: closing {} apps ({posted} windows asked)", pids.len()));
