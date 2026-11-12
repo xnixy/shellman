@@ -1,6 +1,7 @@
 //! The window: tabs and a toolbar across the top, places on the left, the folder in the middle.
 
 mod actions;
+mod bin;
 mod dialogs;
 mod footer;
 mod grid;
@@ -18,6 +19,7 @@ mod toolbar;
 use actions::{Dialog, Rename};
 use egui::Vec2;
 use shellman_core::fsops::{self, Drive, Entry, Op};
+use shellman_core::recycle_bin::{BinItem, BinState};
 use shellman_core::thumbs::Thumbs;
 use shellman_ui::theme::{self, colors, AccentChoice};
 use std::path::{Path, PathBuf};
@@ -36,6 +38,17 @@ enum Msg {
         gen: u64,
         result: Result<Vec<Entry>, String>,
     },
+    /// The Recycle Bin's items, and the folders that change when it does.
+    Bin {
+        tab: u64,
+        gen: u64,
+        dirs: Vec<PathBuf>,
+        result: Result<Vec<BinItem>, String>,
+    },
+    /// What `SHQueryRecycleBin` said, before asking to empty it.
+    BinState(Option<BinState>),
+    /// A restore, delete or empty finished: the message to show, or why it failed.
+    BinDone(Result<String, String>),
     Drives(Vec<Drive>),
     OpDone {
         what: &'static str,
@@ -76,6 +89,10 @@ pub(crate) struct FileMan {
     thumbs: Thumbs,
     /// Columns in the grid as last drawn, for moving the cursor up and down a line.
     grid_cols: usize,
+    /// The Recycle Bin's folders, followed while a tab shows the bin.
+    bin_dirs: Vec<PathBuf>,
+    /// Whether the window had focus last frame, to re-list the bin when it comes back.
+    had_focus: bool,
 }
 
 impl FileMan {
@@ -83,7 +100,7 @@ impl FileMan {
         ctx: egui::Context,
         settings: crate::settings::Settings,
         look: shellman_ui::appearance::Appearance,
-        arg: Option<PathBuf>,
+        start: crate::args::Start,
         hwnd: isize,
         glass: bool,
     ) -> Self {
@@ -94,8 +111,10 @@ impl FileMan {
             .filter(|p| p.is_dir())
             .map(|p| Loc::Dir(p.clone()))
             .collect();
-        if let Some(a) = arg {
-            locs = vec![Loc::Dir(a)];
+        match start {
+            crate::args::Start::Saved => {}
+            crate::args::Start::Folder(dir) => locs = vec![Loc::Dir(dir)],
+            crate::args::Start::RecycleBin => locs = vec![Loc::Bin],
         }
         if locs.is_empty() {
             locs.push(dirs::home_dir().map_or(Loc::Pc, Loc::Dir));
@@ -134,6 +153,8 @@ impl FileMan {
             caption: None,
             thumbs,
             grid_cols: 1,
+            bin_dirs: Vec::new(),
+            had_focus: true,
         };
         for loc in locs {
             app.push_tab(loc);
@@ -148,6 +169,7 @@ impl FileMan {
         self.next_id += 1;
         self.tabs.push(Tab::new(id, loc));
         let i = self.tabs.len() - 1;
+        self.bin_sort(i);
         self.load(i);
         i
     }
@@ -165,6 +187,9 @@ impl FileMan {
         tab.gen += 1;
         tab.loading = true;
         tab.error = None;
+        if tab.loc == Loc::Bin {
+            return self.load_bin(i);
+        }
         let Some(dir) = tab.loc.dir().map(Path::to_path_buf) else {
             tab.loading = false;
             tab.entries.clear();
@@ -240,6 +265,18 @@ impl FileMan {
                         }
                     }
                 }
+                Msg::Bin { tab, gen, dirs, result } => {
+                    self.bin_dirs = dirs;
+                    self.bin_loaded(tab, gen, result);
+                }
+                Msg::BinState(state) => self.bin_state_arrived(state),
+                Msg::BinDone(result) => {
+                    match result {
+                        Ok(done) => self.toast(done),
+                        Err(e) => self.toast(format!("Recycle Bin: {e}")),
+                    }
+                    self.reload_bins();
+                }
                 Msg::Drives(d) => self.drives = d,
                 Msg::OpDone { what, result } => {
                     match result {
@@ -264,6 +301,11 @@ impl FileMan {
                 }
             }
         }
+        // The bin's own folders, so a delete from anywhere shows up in an open bin tab.
+        if self.tabs.iter().any(|t| t.loc == Loc::Bin) {
+            let extra: Vec<PathBuf> = self.bin_dirs.iter().filter(|d| !dirs.contains(d)).cloned().collect();
+            dirs.extend(extra);
+        }
         if dirs != self.watched {
             self.watcher.set_dirs(dirs.clone());
             self.watched = dirs;
@@ -279,6 +321,9 @@ impl FileMan {
             if matches!(&self.tabs[i].loc, Loc::Dir(p) if changed.contains(p)) {
                 self.load(i);
             }
+        }
+        if changed.iter().any(|d| self.bin_dirs.contains(d)) {
+            self.reload_bins();
         }
     }
 
@@ -345,6 +390,12 @@ impl eframe::App for FileMan {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.drain();
         self.watch_tabs();
+        // The bin is also re-listed when the window is brought back, in case a change slipped by.
+        let focused = ctx.input(|i| i.focused);
+        if focused && !self.had_focus {
+            self.reload_bins();
+        }
+        self.had_focus = focused;
         self.track_system(ctx);
         shellman_ui::app_icon::sync_window_icon(ctx, shellman_ui::app_icon::Kind::Files);
         let show_hidden = self.settings.show_hidden;

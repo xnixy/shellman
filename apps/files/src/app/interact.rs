@@ -103,14 +103,23 @@ pub(super) fn empty_state(ui: &mut Ui, tab: &Tab) -> bool {
     if !tab.view.is_empty() || tab.loading {
         return false;
     }
-    ui.add_space(40.0);
+    let bin = tab.loc == super::tab::Loc::Bin;
+    ui.add_space(if bin { 80.0 } else { 40.0 });
     ui.vertical_centered(|ui| {
-        let msg = if tab.filter.is_empty() {
-            "This folder is empty"
-        } else {
-            "Nothing matches"
+        let msg = match (bin, tab.filter.is_empty()) {
+            (true, true) => "Recycle Bin is empty",
+            (_, true) => "This folder is empty",
+            _ => "Nothing matches",
         };
-        ui.label(theme::muted(msg));
+        if bin && tab.filter.is_empty() {
+            let c = colors();
+            ui.label(theme::icon(glyph::DELETE, 34.0).color(theme::with_alpha(c.muted, 140)));
+            ui.add_space(10.0);
+            ui.label(RichText::new(msg).size(16.0).color(c.text));
+            ui.label(theme::muted("Deleted files show up here until you empty it."));
+        } else {
+            ui.label(theme::muted(msg));
+        }
     });
     true
 }
@@ -135,6 +144,10 @@ pub(super) fn folder_backdrop(
     if shell_click(ui, &bg) {
         tab.selected.clear();
         actions.push(Action::ShellMenu { extended: true });
+        return;
+    }
+    if tab.loc == super::tab::Loc::Bin {
+        bg.context_menu(|ui| super::bin::backdrop_menu(ui, tab.view.is_empty(), actions));
         return;
     }
     bg.context_menu(|ui| {

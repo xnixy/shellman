@@ -94,11 +94,12 @@ impl super::FileMan {
             });
     }
 
-    /// This PC, or the folder in the chosen view.
+    /// This PC, or the folder in the chosen view. The bin is always a list: its columns (original
+    /// location, date deleted) have no place on a tile.
     fn folder_body(&mut self, ui: &mut Ui, actions: &mut Vec<Action>) {
         if self.tabs[self.active].loc == Loc::Pc {
             self.pc_page(ui, actions);
-        } else if self.settings.view == ViewMode::Grid {
+        } else if self.settings.view == ViewMode::Grid && self.tabs[self.active].loc != Loc::Bin {
             self.file_grid(ui, actions);
         } else {
             self.file_list(ui, actions);

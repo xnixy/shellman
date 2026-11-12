@@ -2,6 +2,7 @@
 
 use super::tab::Loc;
 use shellman_core::fsops::{self, Entry, Op};
+use shellman_core::recycle_bin::{BinState, Handle};
 use std::path::{Path, PathBuf};
 
 #[derive(Debug)]
@@ -35,6 +36,12 @@ pub(super) enum Action {
     },
     /// Explorer's Properties sheet for the selected item, or the folder.
     Properties,
+    /// In the Recycle Bin: put the selection back.
+    BinRestore,
+    /// In the Recycle Bin: delete the selection for good, after asking.
+    BinDelete,
+    /// In the Recycle Bin: delete everything for good, after asking.
+    BinEmpty,
 }
 
 pub(super) struct Rename {
@@ -44,13 +51,24 @@ pub(super) struct Rename {
 }
 
 pub(super) enum Dialog {
-    ConfirmRecycle(Vec<PathBuf>),
+    Recycle(Vec<PathBuf>),
+    /// Items to delete for good, and their names for the question.
+    BinDelete(Vec<Handle>, Vec<String>),
+    /// Emptying the whole bin, with what is in it.
+    BinEmpty(BinState),
 }
 
 impl super::FileMan {
     pub(super) fn apply(&mut self, action: Action) {
         let show_hidden = self.settings.show_hidden;
+        if self.tabs[self.active].loc == Loc::Bin && super::bin::blocked(&action) {
+            return;
+        }
         match action {
+            Action::BinRestore => self.bin_restore(),
+            Action::BinDelete => self.bin_ask_delete(),
+            Action::BinEmpty => self.bin_ask_empty(),
+            Action::CopyPath if self.tabs[self.active].loc == Loc::Bin => self.bin_copy_paths(),
             Action::Navigate(loc) => self.navigate(loc),
             Action::NewTab(loc) => {
                 self.active = self.push_tab(loc);
@@ -139,7 +157,7 @@ impl super::FileMan {
                     .map(|e| e.path)
                     .collect();
                 if !paths.is_empty() {
-                    self.dialog = Some(Dialog::ConfirmRecycle(paths));
+                    self.dialog = Some(Dialog::Recycle(paths));
                 }
             }
             Action::Clip(op) => {
@@ -266,6 +284,7 @@ impl super::FileMan {
     pub(super) fn arrive(&mut self) {
         let tab = &mut self.tabs[self.active];
         tab.entries.clear();
+        tab.bin.clear();
         tab.view.clear();
         tab.selected.clear();
         tab.cursor = None;
@@ -273,6 +292,7 @@ impl super::FileMan {
         tab.filter.clear();
         tab.list_offset = 0.0;
         self.thumbs.cancel_pending();
+        self.bin_sort(self.active);
         self.rename = None;
         self.editing_path = None;
         self.save_pending = true;

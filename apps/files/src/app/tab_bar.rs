@@ -30,10 +30,10 @@ impl super::FileMan {
                     ui.painter()
                         .rect_filled(rect, CornerRadius::same(8), c.control);
                 }
-                let g = if loc == Loc::Pc {
-                    glyph::PC
-                } else {
-                    glyph::FOLDER
+                let g = match loc {
+                    Loc::Pc => glyph::PC,
+                    Loc::Bin => glyph::DELETE,
+                    Loc::Dir(_) => glyph::FOLDER,
                 };
                 ui.painter().text(
                     egui::pos2(rect.left() + 14.0, rect.center().y),

@@ -1,6 +1,7 @@
 //! One tab: where it is, what it lists, and what is selected.
 
 use shellman_core::fsops::{self, Entry};
+use shellman_core::recycle_bin::BinItem;
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -9,12 +10,15 @@ use std::path::{Path, PathBuf};
 pub(super) enum Loc {
     Pc,
     Dir(PathBuf),
+    /// The Recycle Bin: a place of its own, not a folder, so it has no path.
+    Bin,
 }
 
 impl Loc {
     pub(super) fn title(&self) -> String {
         match self {
             Loc::Pc => "This PC".into(),
+            Loc::Bin => "Recycle Bin".into(),
             Loc::Dir(p) => p
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
@@ -24,14 +28,14 @@ impl Loc {
 
     pub(super) fn dir(&self) -> Option<&Path> {
         match self {
-            Loc::Pc => None,
+            Loc::Pc | Loc::Bin => None,
             Loc::Dir(p) => Some(p),
         }
     }
 
     pub(super) fn parent(&self) -> Option<Loc> {
         match self {
-            Loc::Pc => None,
+            Loc::Pc | Loc::Bin => None,
             Loc::Dir(p) => Some(p.parent().map_or(Loc::Pc, |q| Loc::Dir(q.to_path_buf()))),
         }
     }
@@ -68,6 +72,11 @@ pub(super) struct Tab {
     pub(super) list_height: f32,
     /// After the next load, select this item, and maybe start renaming it.
     pub(super) select_after_load: Option<(PathBuf, bool)>,
+    /// The Recycle Bin's items by their stored path, for the original location and the handles
+    /// restore and delete need. Empty in every other place.
+    pub(super) bin: HashMap<PathBuf, BinItem>,
+    /// The sort to go back to when the tab leaves the bin, which opens newest first.
+    pub(super) sort_before_bin: Option<(SortKey, bool)>,
     /// Every entry index, sorted by `sorted_for`. Typing in the filter only walks this, so a
     /// keystroke never re-sorts. Hidden items stay in it and are skipped while filtering.
     order: Vec<usize>,
@@ -105,6 +114,8 @@ impl Tab {
             list_offset: 0.0,
             list_height: 0.0,
             select_after_load: None,
+            bin: HashMap::new(),
+            sort_before_bin: None,
             order: Vec::new(),
             sorted_for: None,
             entries_sig: (0, 0),

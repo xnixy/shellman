@@ -2,6 +2,7 @@
 
 use super::actions::Action;
 use super::grid::GRID_LINE_H;
+use super::tab::Loc;
 use super::ROW_H;
 use crate::settings::ViewMode;
 use egui::{Key, Modifiers, PointerButton};
@@ -83,7 +84,12 @@ impl super::FileMan {
                 actions.push(Action::Rename);
             }
             if key(Modifiers::NONE, Key::Delete) {
-                actions.push(Action::Recycle);
+                // In the bin, Del is the final delete (asked about first), not another recycle.
+                actions.push(if self.tabs[self.active].loc == Loc::Bin {
+                    Action::BinDelete
+                } else {
+                    Action::Recycle
+                });
             }
             if key(Modifiers::CTRL, Key::A) {
                 actions.push(Action::SelectAll);

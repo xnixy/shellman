@@ -41,6 +41,13 @@ impl super::FileMan {
                 actions.push(Action::NewTab(loc));
             }
         }
+        let bin = nav_row(ui, glyph::DELETE, "Recycle Bin", current == Loc::Bin);
+        if bin.clicked() {
+            actions.push(Action::Navigate(Loc::Bin));
+        }
+        if bin.middle_clicked() {
+            actions.push(Action::NewTab(Loc::Bin));
+        }
         section_label(ui, "Drives");
         if nav_row(ui, glyph::PC, "This PC", current == Loc::Pc).clicked() {
             actions.push(Action::Navigate(Loc::Pc));
