@@ -31,6 +31,19 @@ pub struct AppWindow {
     pub minimized: bool,
 }
 
+impl AppWindow {
+    /// Where the window's app icon comes from: the program file's own icon, as Explorer's
+    /// taskbar shows it. Only without one, the app's entry in the Apps folder (whose Store icons
+    /// come on a plate).
+    pub fn icon_source(&self) -> Option<PathBuf> {
+        let is_path = self.app_id.contains('\\');
+        self.exe.clone().or_else(|| {
+            (!is_path && !self.app_id.is_empty())
+                .then(|| PathBuf::from(format!("shell:AppsFolder\\{}", self.app_id)))
+        })
+    }
+}
+
 /// The app windows, with each window's identity remembered so a refresh only asks Windows about
 /// windows it has not seen before.
 #[derive(Default)]
