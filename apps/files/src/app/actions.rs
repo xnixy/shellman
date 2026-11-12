@@ -5,7 +5,7 @@ use shellman_core::fsops::{self, Entry, Op};
 use shellman_core::recycle_bin::{BinState, Handle};
 use std::path::{Path, PathBuf};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(super) enum Action {
     Navigate(Loc),
     NewTab(Loc),
@@ -29,11 +29,15 @@ pub(super) enum Action {
     /// Ctrl+H, as in Explorer: show or hide hidden files.
     ToggleHidden,
     SetView(crate::settings::ViewMode),
-    /// The full Windows menu for the selection, or for the folder when nothing is selected.
-    /// `extended` adds the entries Explorer shows with Shift held.
-    ShellMenu {
-        extended: bool,
-    },
+    /// The right button went down on a row (or the background, None): start reading its menu.
+    MenuPress(Option<usize>),
+    /// A right click on a row (or the background, None) at this point: open its menu. With
+    /// Shift held, the extra entries Explorer shows then are asked for too.
+    MenuOpen(Option<usize>, egui::Pos2),
+    /// Shift+F10: the menu for the selection, or the folder.
+    MenuKey,
+    /// Go to the folder `path` is in and select it there ("Open file location").
+    Reveal(PathBuf),
     /// Explorer's Properties sheet for the selected item, or the folder.
     Properties,
     /// In the Recycle Bin: put the selection back.
@@ -239,7 +243,24 @@ impl super::FileMan {
                     .map(|&i| tab.entries[i].path.clone())
                     .collect();
             }
-            Action::ShellMenu { extended } => self.shell_menu(extended),
+            Action::MenuPress(row) => {
+                if let Some(t) = self.menu_target(row) {
+                    self.menu.warm(&t);
+                }
+            }
+            Action::MenuOpen(row, pos) => self.open_menu(row, pos),
+            Action::MenuKey => {
+                let tab = &self.tabs[self.active];
+                let row = tab.cursor.filter(|&c| tab.selected.contains(&tab.entry(c).path));
+                let pos = self.ctx.input(|i| i.pointer.latest_pos()).unwrap_or_else(|| self.ctx.screen_rect().center());
+                self.open_menu(row, pos);
+            }
+            Action::Reveal(path) => {
+                if let Some(parent) = path.parent().filter(|p| p.is_dir()) {
+                    self.navigate(Loc::Dir(parent.to_path_buf()));
+                    self.tabs[self.active].select_after_load = Some((path, false));
+                }
+            }
             Action::Properties => {
                 let tab = &self.tabs[self.active];
                 let target = match tab.selection().first() {
@@ -290,30 +311,33 @@ impl super::FileMan {
         self.load(self.active);
     }
 
-    /// Run the Windows menu where the pointer is. It is modal, like any Windows menu; what it
-    /// changes on disk comes back through the folder watcher.
-    fn shell_menu(&mut self, extended: bool) {
+    /// What the menu for `row` (or the background) acts on: the selection when the row is in it,
+    /// else just the row. Shift held asks for the extra entries.
+    pub(super) fn menu_target(&self, row: Option<usize>) -> Option<shellman_core::shell_menu::Target> {
         let tab = &self.tabs[self.active];
-        let Some(dir) = tab.loc.dir().map(Path::to_path_buf) else {
-            return;
-        };
-        let items: Vec<PathBuf> = tab.selection().into_iter().map(|e| e.path).collect();
-        use shellman_core::shell_menu::Picked;
-        match shellman_core::shell_menu::show(self.hwnd, &dir, &items, extended) {
-            Picked::Rename => self.apply(Action::Rename),
-            // The shell would hand these folders to Explorer; open them here.
-            Picked::OpenFolders => self.apply(Action::OpenSelected),
-            Picked::OpenFoldersInTabs => {
-                if items.is_empty() {
-                    self.apply(Action::NewTab(Loc::Dir(dir)));
-                } else {
-                    for path in items {
-                        self.apply(Action::NewTab(Loc::Dir(path)));
-                    }
-                }
+        let folder = tab.loc.dir()?.to_path_buf();
+        let items: Vec<PathBuf> = match row {
+            None => Vec::new(),
+            Some(r) if r >= tab.view.len() => return None,
+            Some(r) if tab.selected.contains(&tab.entry(r).path) => {
+                tab.selection().into_iter().map(|e| e.path).collect()
             }
-            Picked::Nothing | Picked::Done => {}
+            Some(r) => vec![tab.entry(r).path.clone()],
+        };
+        let extended = self.ctx.input(|i| i.modifiers.shift);
+        Some(shellman_core::shell_menu::Target { folder, items, extended })
+    }
+
+    /// Open the menu for `row` (or the background) at `pos`. Files' own entries show this frame;
+    /// the shell's join them as they arrive.
+    fn open_menu(&mut self, row: Option<usize>, pos: egui::Pos2) {
+        let Some(target) = self.menu_target(row) else { return };
+        let background = row.is_none();
+        if background {
+            self.tabs[self.active].selected.clear();
         }
+        let has_clip = self.clipboard.is_some();
+        self.menu.open(&self.ctx, pos, target, background, has_clip);
     }
 
     fn open_entry(&mut self, e: &Entry, many: bool) {

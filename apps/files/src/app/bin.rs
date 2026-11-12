@@ -43,7 +43,9 @@ pub(super) fn blocked(action: &Action) -> bool {
             | Action::Clip(_)
             | Action::Paste
             | Action::NewFolder
-            | Action::ShellMenu { .. }
+            | Action::MenuPress(_)
+            | Action::MenuOpen(..)
+            | Action::MenuKey
             | Action::Properties
     )
 }
@@ -310,7 +312,7 @@ mod tests {
         for a in [Action::OpenSelected, Action::OpenRow(0), Action::Rename, Action::Paste, Action::NewFolder] {
             assert!(blocked(&a), "{a:?}");
         }
-        assert!(blocked(&Action::ShellMenu { extended: false }) && blocked(&Action::Properties));
+        assert!(blocked(&Action::MenuKey) && blocked(&Action::MenuPress(None)) && blocked(&Action::Properties));
         for a in [Action::Refresh, Action::SelectAll, Action::BinDelete, Action::BinRestore, Action::BinEmpty, Action::CopyPath] {
             assert!(!blocked(&a), "{a:?}");
         }

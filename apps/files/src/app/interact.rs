@@ -3,9 +3,9 @@
 
 use super::actions::{Action, Rename};
 use super::tab::Tab;
-use egui::{Color32, Id, Key, Modifiers, Rect, RichText, ScrollArea, Sense, Ui, Vec2};
+use egui::{Color32, Id, Key, Modifiers, PointerButton, Rect, RichText, ScrollArea, Sense, Ui, Vec2};
 use shellman_ui::theme::{self, colors, glyph};
-use shellman_ui::widgets::{menu_item, select_range};
+use shellman_ui::widgets::select_range;
 use std::path::Path;
 
 /// What happened to items this frame, applied after drawing so the tab is not borrowed twice.
@@ -33,9 +33,6 @@ impl ItemEvents {
         }
         if resp.secondary_clicked() {
             self.secondary = Some(r);
-            if shell_click(ui, resp) {
-                actions.push(Action::ShellMenu { extended: true });
-            }
         }
     }
 
@@ -64,21 +61,28 @@ impl ItemEvents {
     }
 }
 
-/// Shift+right-click: skip shellman's menu and open the full Windows one, as in Windows 11.
-pub(super) fn shell_click(ui: &Ui, resp: &egui::Response) -> bool {
-    resp.secondary_clicked() && ui.input(|i| i.modifiers.shift)
+/// The right-click menu of item `r`. In the bin, its own short menu; elsewhere Files' menu with
+/// the shell's entries, whose walk starts as soon as the button goes down.
+pub(super) fn item_menu(ui: &Ui, resp: &egui::Response, actions: &mut Vec<Action>, r: usize, bin: bool) {
+    if bin {
+        resp.context_menu(|ui| super::bin::item_menu(ui, actions));
+    } else {
+        menu_clicks(ui, resp, actions, Some(r));
+    }
 }
 
-/// Our own menu for an item, unless Shift is held, when the Windows one opens instead.
-pub(super) fn item_menu(
-    ui: &Ui,
-    resp: &egui::Response,
-    actions: &mut Vec<Action>,
-    is_dir: bool,
-    loc: &super::tab::Loc,
-) {
-    if !ui.input(|i| i.modifiers.shift) {
-        resp.context_menu(|ui| super::rows::row_menu(ui, actions, is_dir, loc));
+/// Right button down on `resp`: read its menu ahead. Right click: open it.
+fn menu_clicks(ui: &Ui, resp: &egui::Response, actions: &mut Vec<Action>, row: Option<usize>) {
+    let pressed = ui.input(|i| i.pointer.button_pressed(PointerButton::Secondary));
+    if pressed && resp.hovered() {
+        actions.push(Action::MenuPress(row));
+    }
+    if resp.secondary_clicked() {
+        let pos = resp
+            .interact_pointer_pos()
+            .or_else(|| ui.input(|i| i.pointer.latest_pos()))
+            .unwrap_or(resp.rect.center());
+        actions.push(Action::MenuOpen(row, pos));
     }
 }
 
@@ -129,7 +133,6 @@ pub(super) fn empty_state(ui: &mut Ui, tab: &Tab) -> bool {
 pub(super) fn folder_backdrop(
     ui: &mut Ui,
     tab: &mut Tab,
-    has_clip: bool,
     actions: &mut Vec<Action>,
 ) {
     let bg = ui.interact(
@@ -141,43 +144,11 @@ pub(super) fn folder_backdrop(
         tab.selected.clear();
         tab.cursor = None;
     }
-    if shell_click(ui, &bg) {
-        tab.selected.clear();
-        actions.push(Action::ShellMenu { extended: true });
-        return;
-    }
     if tab.loc == super::tab::Loc::Bin {
         bg.context_menu(|ui| super::bin::backdrop_menu(ui, tab.view.is_empty(), actions));
         return;
     }
-    bg.context_menu(|ui| {
-        if menu_item(ui, glyph::NEW_FOLDER, "New folder", "Ctrl+Shift+N") {
-            actions.push(Action::NewFolder);
-            ui.close_menu();
-        }
-        if has_clip && menu_item(ui, glyph::PASTE, "Paste", "Ctrl+V") {
-            actions.push(Action::Paste);
-            ui.close_menu();
-        }
-        ui.separator();
-        if menu_item(ui, glyph::REFRESH, "Refresh", "F5") {
-            actions.push(Action::Refresh);
-            ui.close_menu();
-        }
-        if menu_item(ui, glyph::COPY, "Copy folder path", "") {
-            tab.selected.clear();
-            actions.push(Action::CopyPath);
-            ui.close_menu();
-        }
-        if let Some(dir) = tab.loc.dir() {
-            if menu_item(ui, glyph::ADD, "Open in new tab", "") {
-                actions.push(Action::NewTab(super::tab::Loc::Dir(dir.to_path_buf())));
-                ui.close_menu();
-            }
-        }
-        ui.separator();
-        super::rows::more_options(ui, actions);
-    });
+    menu_clicks(ui, &bg, actions, None);
 }
 
 /// The text box for renaming an item in place. The name is selected without its extension.

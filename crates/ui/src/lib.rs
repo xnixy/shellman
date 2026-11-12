@@ -5,6 +5,7 @@ pub mod appearance;
 pub mod font_atlas;
 pub mod glass;
 pub mod look_controls;
+pub mod menu;
 pub mod nav;
 pub mod theme;
 pub mod widgets;

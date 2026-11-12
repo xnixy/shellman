@@ -154,15 +154,6 @@ pub fn parse_label(raw: &str) -> (String, Option<char>, String) {
     (out.trim().to_string(), mnemonic, shortcut)
 }
 
-/// Counts every entry in a tree, submenus included, separators not.
-pub fn count(items: &[Item]) -> usize {
-    items
-        .iter()
-        .filter(|i| !i.separator)
-        .map(|i| 1 + count(&i.submenu))
-        .sum()
-}
-
 /// The entry at `path` (indices from the top level down).
 pub fn at<'a>(items: &'a [Item], path: &[usize]) -> Option<&'a Item> {
     let (&first, rest) = path.split_first()?;
@@ -251,6 +242,5 @@ mod tests {
         assert_eq!(at(&fresh, &[2, 1]).map(|i| i.id), Some(8));
         assert_eq!(find_like(&fresh, &[&leaf("x", Some("7zip"), 0)]), Some(vec![0]));
         assert_eq!(find_like(&fresh, &[&leaf("Gone", None, 0)]), None);
-        assert_eq!(count(&fresh), 4);
     }
 }

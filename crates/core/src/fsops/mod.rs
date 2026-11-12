@@ -4,12 +4,14 @@
 //! conflict, and undo handling. They run on a worker thread so the window never blocks.
 
 mod drives;
+mod link;
 mod listing;
 mod names;
 mod shell;
 pub(crate) mod time;
 
 pub use drives::{drives, Drive};
+pub use link::link_target;
 pub use listing::{list_dir, Entry};
 pub use names::{check_name, natural_cmp, unique_child};
 pub use shell::{open, shell_op, Op};

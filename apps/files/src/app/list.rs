@@ -89,7 +89,6 @@ impl Columns {
 impl super::FileMan {
     pub(super) fn file_list(&mut self, ui: &mut Ui, actions: &mut Vec<Action>) {
         let c = colors();
-        let has_clip = self.clipboard.is_some();
         let cut: &[std::path::PathBuf] = match &self.clipboard {
             Some((Op::Move, paths)) => paths,
             _ => &[],
@@ -106,7 +105,7 @@ impl super::FileMan {
         let bin = tab.loc == Loc::Bin;
         let cols = Columns::fit(width, bin);
         header(ui, tab, &cols, width);
-        interact::folder_backdrop(ui, tab, has_clip, actions);
+        interact::folder_backdrop(ui, tab, actions);
         if interact::empty_state(ui, tab) {
             return;
         }
@@ -207,10 +206,7 @@ impl super::FileMan {
                 }
 
                 ev.record(ui, &resp, r, actions);
-                // The menu's location is where Open would go; the bin opens nothing.
-                let loc = if bin { Loc::Bin } else { Loc::Dir(e.path.clone()) };
-                let is_dir = e.is_dir && !bin;
-                interact::item_menu(ui, &resp, actions, is_dir, &loc);
+                interact::item_menu(ui, &resp, actions, r, bin);
             }
         });
         tab.list_offset = out.state.offset.y;
