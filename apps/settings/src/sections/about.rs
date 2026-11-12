@@ -8,26 +8,30 @@ use shellman_ui::widgets::switch;
 pub fn show(ui: &mut egui::Ui, st: &mut State) {
     page::heading(ui, "About", "shellman replaces everything Explorer does, in one style.");
 
-    ui.label(
-        egui::RichText::new("shellman Settings")
-            .size(15.0)
-            .strong()
-            .color(colors().text),
-    );
-    ui.label(theme::muted(format!("Version {}", env!("CARGO_PKG_VERSION"))));
+    page::group(ui, "", |ui| {
+        ui.label(
+            egui::RichText::new("shellman Settings")
+                .size(15.0)
+                .strong()
+                .color(colors().text),
+        );
+        ui.label(theme::muted(format!("Version {}", env!("CARGO_PKG_VERSION"))));
+    });
 
-    page::gap(ui);
-    page::label(ui, "Windows apps");
-    if switch(ui, &mut st.shell.modern_apps, "Keep Settings, Calculator and the Store working").changed() {
-        st.save_shell();
-    }
-    // Without Explorer these apps only open while Windows' own host for them runs; the desktop
-    // starts and watches it (`app_host`). One window lookup, so asked every frame.
-    let now = if shellman_core::app_host::modern_apps_available() { "They can open now." } else { "They cannot open right now." };
-    ui.label(theme::muted(format!("Runs Windows' own host for them while Explorer is not running. {now}")).size(12.0));
+    page::group(ui, "Windows apps", |ui| {
+        if switch(ui, &mut st.shell.modern_apps, "Keep Settings, Calculator and the Store working").changed() {
+            st.save_shell();
+        }
+        // Without Explorer these apps only open while Windows' own host for them runs; the
+        // desktop starts and watches it (`app_host`). One window lookup, so asked every frame.
+        let now = if shellman_core::app_host::modern_apps_available() { "They can open now." } else { "They cannot open right now." };
+        ui.label(theme::muted(format!("Runs Windows' own host for them while Explorer is not running. {now}")).size(12.0));
+    });
 
-    page::gap(ui);
-    page::label(ui, "Settings folder");
+    page::group(ui, "Settings folder", folder);
+}
+
+fn folder(ui: &mut egui::Ui) {
     match shellman_core::config::config_dir() {
         Some(dir) => {
             ui.label(egui::RichText::new(dir.display().to_string()).color(colors().text));

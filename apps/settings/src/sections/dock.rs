@@ -23,22 +23,25 @@ enum Edit {
 pub fn show(ui: &mut egui::Ui, st: &mut State) {
     page::heading(ui, "Dock", "The icons at the bottom of the screen.");
 
-    page::label(ui, "Icon size");
-    let options = IconSize::ALL.map(|s| (s, s.label()));
-    if page::segmented(ui, &mut st.dock.icon_size, &options) {
-        st.save_dock();
-    }
+    page::group(ui, "Icon size", |ui| {
+        let options = IconSize::ALL.map(|s| (s, s.label()));
+        if page::segmented(ui, &mut st.dock.icon_size, &options) {
+            st.save_dock();
+        }
+    });
 
-    page::gap(ui);
-    page::label(ui, "Show the dock on");
-    // Kept with the bar's settings, since it decides which bar windows each monitor gets.
-    let options = Docks::ALL.map(|d| (d, d.label()));
-    if page::segmented(ui, &mut st.bar.docks, &options) {
-        st.save_bar();
-    }
+    page::group(ui, "Show the dock on", |ui| {
+        // Kept with the bar's settings, since it decides which bar windows each monitor gets.
+        let options = Docks::ALL.map(|d| (d, d.label()));
+        if page::segmented(ui, &mut st.bar.docks, &options) {
+            st.save_bar();
+        }
+    });
 
-    page::gap(ui);
-    page::label(ui, "Pinned apps");
+    page::group(ui, "Pinned apps", |ui| pinned(ui, st));
+}
+
+fn pinned(ui: &mut egui::Ui, st: &mut State) {
     if st.dock.pins.is_empty() {
         ui.label(theme::muted(
             "Nothing is pinned. Right-click an app in the dock and choose Pin to dock.",
