@@ -7,6 +7,27 @@ use egui::{Align2, CornerRadius, FontId, Rect, RichText, Sense, Ui, Vec2};
 /// A row in a sidebar. The open one gets a soft lift and a small accent bar rather than a loud
 /// accent fill, so the sidebar stays quiet next to the page.
 pub fn nav_row(ui: &mut Ui, g: char, label: &str, active: bool) -> egui::Response {
+    nav_row_with(ui, label, active, false, |p, slot, active| {
+        let c = colors();
+        p.text(
+            egui::pos2(slot.left(), slot.center().y),
+            Align2::LEFT_CENTER,
+            g,
+            icon_font(14.0),
+            if active { c.accent_text } else { c.muted },
+        );
+    })
+}
+
+/// A sidebar row whose icon is drawn by the caller into a 16 point square (an app's own icon, a
+/// bitmap). `dim` fades the row, for a place that is not there. The glyph rows use this too.
+pub fn nav_row_with(
+    ui: &mut Ui,
+    label: &str,
+    active: bool,
+    dim: bool,
+    icon: impl FnOnce(&egui::Painter, Rect, bool),
+) -> egui::Response {
     let c = colors();
     let (rect, resp) =
         ui.allocate_exact_size(Vec2::new(ui.available_width(), 30.0), Sense::click());
@@ -21,22 +42,18 @@ pub fn nav_row(ui: &mut Ui, g: char, label: &str, active: bool) -> egui::Respons
     } else if resp.hovered() {
         p.rect_filled(rect, CornerRadius::same(8), theme::with_alpha(c.text, 10));
     }
-    p.text(
-        egui::pos2(rect.left() + 12.0, rect.center().y),
-        Align2::LEFT_CENTER,
-        g,
-        icon_font(14.0),
-        if active { c.accent_text } else { c.muted },
+    let slot = Rect::from_center_size(
+        egui::pos2(rect.left() + 12.0 + 8.0, rect.center().y),
+        Vec2::splat(16.0),
     );
+    icon(p, slot, active);
     let text_rect = Rect::from_min_max(egui::pos2(rect.left() + 36.0, rect.top()), rect.max);
-    draw_text(
-        ui,
-        text_rect,
-        label,
-        FontId::proportional(13.5),
-        c.text,
-        false,
-    );
+    let text = if dim {
+        theme::with_alpha(c.text, 90)
+    } else {
+        c.text
+    };
+    draw_text(ui, text_rect, label, FontId::proportional(13.5), text, false);
     resp
 }
 

@@ -11,6 +11,8 @@ mod layout;
 mod list;
 mod menu;
 mod pc;
+mod pins;
+mod places;
 mod rows;
 mod sidebar;
 mod tab;
@@ -99,6 +101,10 @@ pub(crate) struct FileMan {
     /// The selection's fingerprint when the menu target to read ahead was last worked out.
     menu_sig: Option<(u64, u64, usize, Option<usize>)>,
     menu_settle_target: Option<shellman_core::shell_menu::Target>,
+    /// The places other apps registered for the navigation pane, followed live.
+    apps: places::Registered,
+    /// Which pinned folders are still there.
+    pin_exists: pins::Exists,
 }
 
 impl FileMan {
@@ -132,6 +138,7 @@ impl FileMan {
             look_watch.set_dirs(vec![dir]);
         }
         let menu = menu::ContextMenu::new(&ctx, hwnd);
+        let ctx_for_apps = ctx.clone();
         let mut app = Self {
             watcher: shellman_core::watch::Watcher::new(ctx.clone()),
             watched: Vec::new(),
@@ -165,6 +172,8 @@ impl FileMan {
             menu,
             menu_sig: None,
             menu_settle_target: None,
+            apps: places::Registered::new(&ctx_for_apps),
+            pin_exists: pins::Exists::default(),
         };
         for loc in locs {
             app.push_tab(loc);
@@ -444,6 +453,7 @@ impl eframe::App for FileMan {
             }
         }
         self.thumbs.poll(ctx);
+        self.apps.poll(ctx);
         let mut actions = Vec::new();
         self.keyboard(ctx, &mut actions);
         self.take_dropped_files(ctx);

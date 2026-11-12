@@ -46,6 +46,11 @@ pub(super) enum Action {
     BinDelete,
     /// In the Recycle Bin: delete everything for good, after asking.
     BinEmpty,
+    /// Pin a folder to the sidebar, or unpin it when it is pinned.
+    TogglePin(PathBuf),
+    /// Hide, or bring back, an app's entry in the sidebar, by its id.
+    HidePlace(String),
+    ShowPlace(String),
 }
 
 pub(super) struct Rename {
@@ -69,6 +74,9 @@ impl super::FileMan {
             return;
         }
         match action {
+            Action::TogglePin(p) => self.toggle_pin(p),
+            Action::HidePlace(id) => self.set_place_hidden(&id, true),
+            Action::ShowPlace(id) => self.set_place_hidden(&id, false),
             Action::BinRestore => self.bin_restore(),
             Action::BinShowOriginal => self.bin_show_original(),
             Action::BinDelete => self.bin_ask_delete(),

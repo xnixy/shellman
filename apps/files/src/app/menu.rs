@@ -114,7 +114,7 @@ impl ContextMenu {
             self.open = None;
             return notice;
         }
-        let mut rows = native_rows(open);
+        let mut rows = native_rows(ctx, open);
         if let Some(view) = self.loader.view(&open.target) {
             let shell = shell_rows(ctx, &mut self.textures, view.items, &[]);
             if !shell.is_empty() {
@@ -187,7 +187,7 @@ fn chain<'a>(items: &'a [Item], path: &[usize]) -> Vec<&'a Item> {
 }
 
 /// Files' own entries.
-fn native_rows(open: &Open) -> Vec<Row<Pick>> {
+fn native_rows(ctx: &Context, open: &Open) -> Vec<Row<Pick>> {
     let act = |g, label: &str, key: &str, a: Action| Row::action(Icon::Glyph(g), label, key, Pick::Native(a));
     let mut rows = Vec::new();
     if open.background {
@@ -204,7 +204,8 @@ fn native_rows(open: &Open) -> Vec<Row<Pick>> {
         rows.push(act(glyph::OPEN_EXTERNAL, "Open", "Enter", Action::OpenSelected));
         if open.is_dir {
             let dir: PathBuf = open.target.items[0].clone();
-            rows.push(act(glyph::ADD, "Open in new tab", "", Action::NewTab(Loc::Dir(dir))));
+            rows.push(act(glyph::ADD, "Open in new tab", "", Action::NewTab(Loc::Dir(dir.clone()))));
+            rows.push(act(glyph::PIN, super::pins::menu_label(ctx, &dir), "", Action::TogglePin(dir)));
         }
         rows.push(Row::separator());
         rows.push(act(glyph::CUT, "Cut", "Ctrl+X", Action::Clip(Op::Move)));
