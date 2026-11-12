@@ -23,8 +23,8 @@ pub(super) enum Action {
     Paste,
     NewFolder,
     CopyPath,
-    Reveal,
-    ExplorerHere,
+    /// In the Recycle Bin: go to the folder the selected item came from and select it there.
+    BinShowOriginal,
     SelectAll,
     /// Ctrl+H, as in Explorer: show or hide hidden files.
     ToggleHidden,
@@ -66,6 +66,7 @@ impl super::FileMan {
         }
         match action {
             Action::BinRestore => self.bin_restore(),
+            Action::BinShowOriginal => self.bin_show_original(),
             Action::BinDelete => self.bin_ask_delete(),
             Action::BinEmpty => self.bin_ask_empty(),
             Action::CopyPath if self.tabs[self.active].loc == Loc::Bin => self.bin_copy_paths(),
@@ -223,16 +224,6 @@ impl super::FileMan {
                     self.toast("Path copied");
                 }
             }
-            Action::Reveal => {
-                if let Some(e) = self.tabs[self.active].selection().first() {
-                    fsops::reveal_in_explorer(&e.path);
-                }
-            }
-            Action::ExplorerHere => {
-                if let Some(d) = self.tabs[self.active].loc.dir() {
-                    fsops::open_in_explorer(d);
-                }
-            }
             Action::ToggleHidden => {
                 self.settings.show_hidden = !self.settings.show_hidden;
                 for t in &mut self.tabs {
@@ -307,10 +298,21 @@ impl super::FileMan {
             return;
         };
         let items: Vec<PathBuf> = tab.selection().into_iter().map(|e| e.path).collect();
-        if let shellman_core::shell_menu::Picked::Rename =
-            shellman_core::shell_menu::show(self.hwnd, &dir, &items, extended)
-        {
-            self.apply(Action::Rename);
+        use shellman_core::shell_menu::Picked;
+        match shellman_core::shell_menu::show(self.hwnd, &dir, &items, extended) {
+            Picked::Rename => self.apply(Action::Rename),
+            // The shell would hand these folders to Explorer; open them here.
+            Picked::OpenFolders => self.apply(Action::OpenSelected),
+            Picked::OpenFoldersInTabs => {
+                if items.is_empty() {
+                    self.apply(Action::NewTab(Loc::Dir(dir)));
+                } else {
+                    for path in items {
+                        self.apply(Action::NewTab(Loc::Dir(path)));
+                    }
+                }
+            }
+            Picked::Nothing | Picked::Done => {}
         }
     }
 
