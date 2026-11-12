@@ -133,7 +133,7 @@ impl FileMan {
         }
         let thumbs = Thumbs::new(ctx.clone());
         // Follow the look live: the settings app saves it when you change the accent or glass.
-        let look_watch = shellman_core::watch::Watcher::new(ctx.clone());
+        let look_watch = shellman_core::watch::Watcher::quick(ctx.clone());
         if let Some(dir) = shellman_ui::appearance::file().and_then(|f| f.parent().map(Path::to_path_buf)) {
             look_watch.set_dirs(vec![dir]);
         }

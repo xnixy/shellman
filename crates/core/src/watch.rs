@@ -43,6 +43,7 @@ struct Shared {
     dirs: Mutex<Vec<PathBuf>>,
     ready: Mutex<Vec<PathBuf>>,
     stop: AtomicBool,
+    quiet: Duration,
 }
 
 pub struct Watcher {
@@ -53,10 +54,21 @@ pub struct Watcher {
 
 impl Watcher {
     pub fn new(ctx: egui::Context) -> Self {
+        Self::with_quiet(ctx, QUIET)
+    }
+
+    /// For a folder of small settings files, where a change should show at once (a slider being
+    /// dragged in another app) and there is no flood of files to wait out.
+    pub fn quick(ctx: egui::Context) -> Self {
+        Self::with_quiet(ctx, Duration::from_millis(40))
+    }
+
+    fn with_quiet(ctx: egui::Context, quiet: Duration) -> Self {
         let shared = Arc::new(Shared {
             dirs: Mutex::new(Vec::new()),
             ready: Mutex::new(Vec::new()),
             stop: AtomicBool::new(false),
+            quiet,
         });
         // Manual reset: it stays signaled until the thread has seen it, so a `set_dirs` that lands
         // while the thread is busy is not lost.
@@ -165,7 +177,7 @@ fn run(shared: &Shared, wake: Wake, ctx: &egui::Context) {
         }
         let timeout = pending
             .values()
-            .map(|t| (*t + QUIET).saturating_duration_since(Instant::now()))
+            .map(|t| (*t + shared.quiet).saturating_duration_since(Instant::now()))
             .min()
             .map_or(INFINITE, |d| d.as_millis() as u32 + 1);
         let mut handles = vec![wake.handle()];
@@ -195,7 +207,7 @@ fn run(shared: &Shared, wake: Wake, ctx: &egui::Context) {
         let now = Instant::now();
         let due: Vec<PathBuf> = pending
             .iter()
-            .filter(|(_, t)| now.duration_since(**t) >= QUIET)
+            .filter(|(_, t)| now.duration_since(**t) >= shared.quiet)
             .map(|(d, _)| d.clone())
             .collect();
         if !due.is_empty() {

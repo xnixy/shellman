@@ -52,7 +52,7 @@ fn main() -> eframe::Result {
             let look = Appearance::load_or(Appearance::default());
             look.apply(&cc.egui_ctx);
             // Follow the look live: Files saves it when you change the accent or glass.
-            let look_watch = shellman_core::watch::Watcher::new(cc.egui_ctx.clone());
+            let look_watch = shellman_core::watch::Watcher::quick(cc.egui_ctx.clone());
             if let Some(dir) = appearance::file().and_then(|f| f.parent().map(|p| p.to_path_buf())) {
                 look_watch.set_dirs(vec![dir]);
             }

@@ -21,8 +21,13 @@ pub fn show(ui: &mut egui::Ui, st: &mut State) {
     if resp.changed() {
         theme::set_glass(ui.ctx(), st.look.glass);
     }
-    // Shared once the slider is let go, not on every step of a drag.
-    if resp.drag_stopped() || (resp.changed() && !resp.dragged()) {
+    // Shared while it is dragged, so the other apps follow the slider, but not on every frame.
+    let id = egui::Id::new("glass last shared");
+    let now = ui.input(|i| i.time);
+    let last: f64 = ui.data(|d| d.get_temp(id)).unwrap_or(f64::MIN);
+    let due = resp.changed() && now - last >= 0.08;
+    if resp.drag_stopped() || due {
+        ui.data_mut(|d| d.insert_temp(id, now));
         st.save_look();
     }
 }
