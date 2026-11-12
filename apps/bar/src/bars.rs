@@ -118,8 +118,11 @@ impl Bars {
     /// Match the bars to a new plan, made with `sizes`. Monitors are matched by device name, so a monitor that was
     /// moved or rescaled keeps its windows and is only placed again; one that went away has its
     /// windows closed (they are no longer declared) and its space given back.
-    pub fn update(&mut self, slots: Vec<Slot>, sizes: Sizes) {
+    /// With `reassert`, monitors whose space is unchanged get their work areas put back if
+    /// someone else changed them (the host's work-area timer decided it is time).
+    pub fn update(&mut self, slots: Vec<Slot>, sizes: Sizes, reassert: bool) {
         self.sizes = sizes;
+        let mut put_back = false;
         let mut old = std::mem::take(&mut self.sets);
         for slot in slots {
             let set = match old.iter().position(|s| s.slot.device == slot.device) {
@@ -134,10 +137,9 @@ impl Bars {
                             set.dock = Some(View::new(Kind::Dock, &slot.device));
                         }
                         set.slot = slot;
-                    } else if let Some(r) = &set.reservation {
-                        // Same monitor, same space: a layout came from a work-area change,
-                        // possibly someone else's.
-                        r.reassert();
+                    } else if let (true, Some(r)) = (reassert, &set.reservation) {
+                        // Same monitor, same space, and someone else changed its work area.
+                        put_back |= r.reassert();
                     }
                     set
                 }
@@ -146,6 +148,12 @@ impl Bars {
             self.sets.push(set);
         }
         // Whatever is left in `old` is dropped here, releasing its space.
+        if put_back {
+            crate::workarea::trace("work areas put back");
+            if let Ok(mut k) = crate::workarea::KEEPER.lock() {
+                k.reasserted(std::time::Instant::now());
+            }
+        }
     }
 
     /// Every bar window, with the monitor it is on and whether that is the primary.

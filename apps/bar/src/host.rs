@@ -8,14 +8,19 @@
 //! It also hears what changes the monitors, without polling: monitors added, removed or
 //! re-arranged and resolution changes (`WM_DISPLAYCHANGE`), work-area changes
 //! (`WM_SETTINGCHANGE`), and scale changes (`WM_DPICHANGED`, which bar windows forward here).
+//!
+//! Work-area changes and Explorer's `TaskbarCreated` also start a timer: once things are quiet
+//! and no Explorer taskbar runs, shellman's work areas are put back (`workarea::Keeper`).
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::OnceLock;
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_CLOAK};
 use windows::Win32::UI::Shell::{DefSubclassProc, SetWindowSubclass};
+use windows::core::w;
 use windows::Win32::UI::WindowsAndMessaging::{
-    SPI_SETWORKAREA, WM_DISPLAYCHANGE, WM_DPICHANGED, WM_SETTINGCHANGE,
+    KillTimer, RegisterWindowMessageW, SetTimer, SPI_SETWORKAREA, WM_DISPLAYCHANGE, WM_DPICHANGED,
+    WM_SETTINGCHANGE, WM_TIMER,
 };
 
 static CTX: OnceLock<egui::Context> = OnceLock::new();
@@ -23,6 +28,13 @@ static CTX: OnceLock<egui::Context> = OnceLock::new();
 static LAYOUT: AtomicBool = AtomicBool::new(true);
 /// Explorer said app bar positions changed: ask it again where the bars may go.
 static REQUERY: AtomicBool = AtomicBool::new(false);
+/// The work areas are to be put back (if someone else changed them) on the next layout.
+static REASSERT: AtomicBool = AtomicBool::new(false);
+/// The registered "TaskbarCreated" message: an Explorer taskbar just started (or a shell host
+/// was replaced and the tray re-announced).
+static TASKBAR_CREATED: AtomicU32 = AtomicU32::new(0);
+/// The work-area timer's id on the host window.
+const WORK_AREA_TIMER: usize = 0x5741;
 
 /// Make `hwnd`, eframe's main window, the host: never shown, never focused, and listening.
 pub fn start(hwnd: isize, ctx: egui::Context) {
@@ -33,6 +45,7 @@ pub fn start(hwnd: isize, ctx: egui::Context) {
         let on: u32 = 1;
         let _ = DwmSetWindowAttribute(hwnd, DWMWA_CLOAK, (&raw const on).cast(), 4);
         let _ = SetWindowSubclass(hwnd, Some(host_proc), 2, 0);
+        TASKBAR_CREATED.store(RegisterWindowMessageW(w!("TaskbarCreated")), Ordering::Release);
     }
     crate::fullscreen::start(hwnd.0 as isize);
 }
@@ -68,6 +81,36 @@ pub fn take_requery() -> bool {
     REQUERY.swap(false, Ordering::AcqRel)
 }
 
+/// True once after the work-area timer decided the work areas are to be put back.
+pub fn take_reassert() -> bool {
+    REASSERT.swap(false, Ordering::AcqRel)
+}
+
+/// (Re)start the work-area timer: it fires `after` the last call.
+fn watch_work_area(hwnd: HWND, after: std::time::Duration) {
+    unsafe { SetTimer(Some(hwnd), WORK_AREA_TIMER, after.as_millis() as u32, None) };
+}
+
+/// The work-area timer fired: decide, and either ask for a layout that puts the work areas back,
+/// or look again while an Explorer taskbar runs.
+fn work_area_timer(hwnd: HWND) {
+    use crate::workarea::{self, Verdict};
+    unsafe {
+        let _ = KillTimer(Some(hwnd), WORK_AREA_TIMER);
+    }
+    let explorer = workarea::explorer_taskbar();
+    let verdict = workarea::KEEPER.lock().map(|mut k| k.decide(explorer, std::time::Instant::now()));
+    workarea::trace(&format!("quiet; Explorer taskbar: {explorer}; {verdict:?}"));
+    match verdict {
+        Ok(Verdict::Reassert) => {
+            REASSERT.store(true, Ordering::Release);
+            request_layout();
+        }
+        Ok(Verdict::Wait) => watch_work_area(hwnd, workarea::WHILE_EXPLORER),
+        _ => {}
+    }
+}
+
 unsafe extern "system" fn host_proc(
     hwnd: HWND,
     msg: u32,
@@ -82,7 +125,19 @@ unsafe extern "system" fn host_proc(
             return LRESULT(0);
         }
         WM_DISPLAYCHANGE | WM_DPICHANGED => request_layout(),
-        WM_SETTINGCHANGE if wparam.0 == SPI_SETWORKAREA.0 as usize => request_layout(),
+        WM_SETTINGCHANGE if wparam.0 == SPI_SETWORKAREA.0 as usize => {
+            crate::workarea::trace("work area changed");
+            watch_work_area(hwnd, crate::workarea::QUIET);
+            request_layout();
+        }
+        WM_TIMER if wparam.0 == WORK_AREA_TIMER => {
+            work_area_timer(hwnd);
+            return LRESULT(0);
+        }
+        m if m != 0 && m == TASKBAR_CREATED.load(Ordering::Acquire) => {
+            crate::workarea::trace("TaskbarCreated");
+            watch_work_area(hwnd, crate::workarea::QUIET);
+        }
         _ => {}
     }
     DefSubclassProc(hwnd, msg, wparam, lparam)

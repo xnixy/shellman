@@ -164,9 +164,10 @@ impl eframe::App for Host {
         shared.dock.catch_up(ctx);
         // The dock's height follows its icon size, and its reserved band with it.
         let sizes = bars::sizes(shared.dock.height());
-        if layout_needed || sizes != shared.bars.sizes() {
+        let reassert = host::take_reassert();
+        if layout_needed || reassert || sizes != shared.bars.sizes() {
             let slots = layout::plan(&monitors::all(), self.settings.docks, &sizes);
-            shared.bars.update(slots, sizes);
+            shared.bars.update(slots, sizes, reassert);
         }
         if host::take_requery() {
             shared.bars.requery();
