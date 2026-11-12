@@ -4,6 +4,7 @@
 mod app;
 mod fsops;
 mod settings;
+mod shell_menu;
 mod theme;
 mod thumbs;
 mod watch;

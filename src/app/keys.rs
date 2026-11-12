@@ -55,6 +55,12 @@ impl super::FileMan {
             if key(Modifiers::CTRL | Modifiers::SHIFT, Key::N) {
                 actions.push(Action::NewFolder);
             }
+            if key(Modifiers::SHIFT, Key::F10) {
+                actions.push(Action::ShellMenu { extended: false });
+            }
+            if key(Modifiers::ALT, Key::Enter) {
+                actions.push(Action::Properties);
+            }
             if key(Modifiers::CTRL, Key::Num1) {
                 actions.push(Action::SetView(ViewMode::List));
             }

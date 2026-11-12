@@ -2,7 +2,7 @@
 
 use super::actions::Action;
 use super::interact::{self, ItemEvents};
-use super::rows::{list_icon, row_menu};
+use super::rows::list_icon;
 use super::tab::{Loc, SortKey, Tab};
 use super::widgets::draw_text;
 use super::ROW_H;
@@ -171,7 +171,7 @@ impl super::FileMan {
 
                 ev.record(ui, &resp, r, actions);
                 let (is_dir, loc) = (e.is_dir, Loc::Dir(e.path.clone()));
-                resp.context_menu(|ui| row_menu(ui, actions, is_dir, &loc));
+                interact::item_menu(ui, &resp, actions, is_dir, &loc);
             }
         });
         tab.list_offset = out.state.offset.y;

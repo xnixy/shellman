@@ -36,6 +36,8 @@ pub mod glyph {
     pub const SORT_UP: char = '\u{E70E}';
     pub const SORT_DOWN: char = '\u{E70D}';
     pub const CHECK: char = '\u{E73E}';
+    pub const MORE: char = '\u{E712}';
+    pub const INFO: char = '\u{E946}';
     pub const VIEW_LIST: char = '\u{E8FD}';
     pub const VIEW_GRID: char = '\u{F0E2}';
     pub const FOLDER_FILL: char = '\u{E8D5}';

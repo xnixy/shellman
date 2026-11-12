@@ -46,6 +46,20 @@ pub(super) fn row_menu(ui: &mut Ui, actions: &mut Vec<Action>, is_dir: bool, loc
         actions.push(Action::Recycle);
         ui.close_menu();
     }
+    ui.separator();
+    more_options(ui, actions);
+}
+
+/// The last entries of every menu: Properties, and the full Windows menu.
+pub(super) fn more_options(ui: &mut Ui, actions: &mut Vec<Action>) {
+    if menu_item(ui, glyph::INFO, "Properties", "Alt+Enter") {
+        actions.push(Action::Properties);
+        ui.close_menu();
+    }
+    if menu_item(ui, glyph::MORE, "Show more options", "Shift+F10") {
+        actions.push(Action::ShellMenu { extended: false });
+        ui.close_menu();
+    }
 }
 
 /// A glyph and color for a file, by its type.

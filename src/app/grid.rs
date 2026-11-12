@@ -5,7 +5,7 @@
 
 use super::actions::Action;
 use super::interact::{self, ItemEvents};
-use super::rows::{file_icon, row_menu};
+use super::rows::file_icon;
 use super::tab::Loc;
 use super::widgets;
 use crate::fsops::Op;
@@ -154,7 +154,7 @@ impl super::FileMan {
 
                     ev.record(ui, &resp, r, actions);
                     let (is_dir, loc) = (e.is_dir, Loc::Dir(e.path.clone()));
-                    resp.context_menu(|ui| row_menu(ui, actions, is_dir, &loc));
+                    interact::item_menu(ui, &resp, actions, is_dir, &loc);
                 }
             }
         });

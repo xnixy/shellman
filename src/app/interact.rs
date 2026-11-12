@@ -27,6 +27,9 @@ impl ItemEvents {
         }
         if resp.secondary_clicked() {
             self.secondary = Some(r);
+            if shell_click(ui, resp) {
+                actions.push(Action::ShellMenu { extended: true });
+            }
         }
     }
 
@@ -52,6 +55,18 @@ impl ItemEvents {
                 tab.select_only(r);
             }
         }
+    }
+}
+
+/// Shift+right-click: skip fileman's menu and open the full Windows one, as in Windows 11.
+pub(super) fn shell_click(ui: &Ui, resp: &egui::Response) -> bool {
+    resp.secondary_clicked() && ui.input(|i| i.modifiers.shift)
+}
+
+/// Our own menu for an item, unless Shift is held, when the Windows one opens instead.
+pub(super) fn item_menu(ui: &Ui, resp: &egui::Response, actions: &mut Vec<Action>, is_dir: bool, loc: &super::tab::Loc) {
+    if !ui.input(|i| i.modifiers.shift) {
+        resp.context_menu(|ui| super::rows::row_menu(ui, actions, is_dir, loc));
     }
 }
 
@@ -92,6 +107,11 @@ pub(super) fn folder_backdrop(ui: &mut Ui, tab: &mut Tab, has_clip: bool, action
         tab.selected.clear();
         tab.cursor = None;
     }
+    if shell_click(ui, &bg) {
+        tab.selected.clear();
+        actions.push(Action::ShellMenu { extended: true });
+        return;
+    }
     bg.context_menu(|ui| {
         if menu_item(ui, glyph::NEW_FOLDER, "New folder", "Ctrl+Shift+N") {
             actions.push(Action::NewFolder);
@@ -115,6 +135,8 @@ pub(super) fn folder_backdrop(ui: &mut Ui, tab: &mut Tab, has_clip: bool, action
             actions.push(Action::ExplorerHere);
             ui.close_menu();
         }
+        ui.separator();
+        super::rows::more_options(ui, actions);
     });
 }
 

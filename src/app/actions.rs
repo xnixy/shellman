@@ -27,6 +27,11 @@ pub(super) enum Action {
     SelectAll,
     Settings,
     SetView(crate::settings::ViewMode),
+    /// The full Windows menu for the selection, or for the folder when nothing is selected.
+    /// `extended` adds the entries Explorer shows with Shift held.
+    ShellMenu { extended: bool },
+    /// Explorer's Properties sheet for the selected item, or the folder.
+    Properties,
 }
 
 pub(super) struct Rename {
@@ -217,6 +222,17 @@ impl super::FileMan {
                     .collect();
             }
             Action::Settings => self.dialog = Some(Dialog::Settings),
+            Action::ShellMenu { extended } => self.shell_menu(extended),
+            Action::Properties => {
+                let tab = &self.tabs[self.active];
+                let target = match tab.selection().first() {
+                    Some(e) => Some(e.path.clone()),
+                    None => tab.loc.dir().map(Path::to_path_buf),
+                };
+                if let Some(p) = target {
+                    crate::shell_menu::properties(self.hwnd, &p);
+                }
+            }
             Action::SetView(view) => {
                 self.settings.view = view;
                 self.tabs[self.active].scroll_to_cursor = true;
@@ -253,6 +269,19 @@ impl super::FileMan {
         self.editing_path = None;
         self.save_pending = true;
         self.load(self.active);
+    }
+
+    /// Run the Windows menu where the pointer is. It is modal, like any Windows menu; what it
+    /// changes on disk comes back through the folder watcher.
+    fn shell_menu(&mut self, extended: bool) {
+        let tab = &self.tabs[self.active];
+        let Some(dir) = tab.loc.dir().map(Path::to_path_buf) else {
+            return;
+        };
+        let items: Vec<PathBuf> = tab.selection().into_iter().map(|e| e.path).collect();
+        if let crate::shell_menu::Picked::Rename = crate::shell_menu::show(self.hwnd, &dir, &items, extended) {
+            self.apply(Action::Rename);
+        }
     }
 
     fn open_entry(&mut self, e: &Entry, many: bool) {

@@ -139,6 +139,9 @@ unsafe extern "system" fn frame_proc(
     _id: usize,
     glass: usize,
 ) -> LRESULT {
+    if let Some(result) = crate::shell_menu::forward(msg, wparam, lparam) {
+        return result;
+    }
     if glass != 0 {
         let mut handled = LRESULT(0);
         if DwmDefWindowProc(hwnd, msg, wparam, lparam, &mut handled).as_bool() {
