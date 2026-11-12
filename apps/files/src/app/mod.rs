@@ -326,6 +326,14 @@ impl FileMan {
 }
 
 impl eframe::App for FileMan {
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        // Remember where the window is; a maximized one keeps the earlier spot.
+        if let Some(rect) = crate::placement::window_rect(self.hwnd) {
+            self.settings.window = Some(rect);
+            crate::settings::save_settings(&self.settings);
+        }
+    }
+
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
         if self.glass {
             [0.0, 0.0, 0.0, 0.0]
