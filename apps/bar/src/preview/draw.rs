@@ -1,16 +1,16 @@
-//! Painting the preview panel: the dock's glass, one tile per window with its title under the
+//! Painting the preview panel: on the dock's glass, one tile per window with its title under the
 //! picture, and a close button on the tile the pointer is over. The live pictures are drawn by the
 //! compositor on top of the window, so the close button sits in the title row, beside them.
 
 use super::layout::Layout;
-use crate::shape::SYSTEM_RADIUS as RADIUS;
 use egui::{Context, TextureId, Vec2};
 use shellman_core::winlist::AppWindow;
-use shellman_ui::theme::{colors, glyph, icon_font};
+use shellman_ui::theme::{colors, glyph, icon_font, mix, with_alpha};
 use shellman_ui::widgets::draw_text;
 use std::path::Path;
 
-const TILE_RADIUS: u8 = 6;
+/// Concentric with the panel's corner, a tile's padding in.
+const TILE_RADIUS: u8 = 10;
 const BIG_ICON: f32 = 48.0;
 const SMALL_ICON: f32 = 18.0;
 
@@ -22,7 +22,8 @@ pub struct View<'a> {
     pub layout: &'a Layout,
     /// Which tiles have a live picture over them; the others show the app's icon on a plate.
     pub live: &'a [bool],
-    pub glass: bool,
+    /// Glass is composed under the window; if not, the panel paints its own surface.
+    pub composed: bool,
     /// The layout's points to this window's points: the monitor's scale over the scale the window
     /// is drawn at, which differ for a frame or two after a move to a monitor of another scale.
     pub k: f32,
@@ -41,28 +42,28 @@ pub fn draw(ctx: &Context, view: &View, icons: Icons) -> Option<Action> {
     egui::CentralPanel::default().frame(egui::Frame::new()).show(ctx, |ui| {
         let c = colors();
         let full = ui.max_rect();
-        let radius = egui::CornerRadius::same(RADIUS as u8);
-        // The same surfaces as the dock.
-        if view.glass {
-            ui.painter().rect_filled(full, radius, c.shell);
-            ui.painter().rect_filled(full, radius, c.sheet);
-        } else {
-            ui.painter().rect_filled(full, radius, c.bg);
+        if !view.composed {
+            let f = shellman_ui::glass::content_frame(false, &super::style());
+            ui.painter().rect(full, f.corner_radius, f.fill, f.stroke, egui::StrokeKind::Inside);
         }
-        ui.painter().rect_stroke(full.shrink(0.5), radius, egui::Stroke::new(1.0_f32, c.hairline), egui::StrokeKind::Inside);
         let tile_radius = egui::CornerRadius::same(TILE_RADIUS);
+        // Nearly opaque shades of the glass's own tint: Windows blends the window over its glass
+        // in linear light, where a faint translucent white comes out far brighter than drawn.
+        let base = super::style().tint.to_opaque();
+        let shade = |t: f32, a: u8| with_alpha(mix(base, c.text, t), a);
+        let (hover, plate, pressable) = (shade(0.10, 200), shade(0.07, 220), shade(0.2, 230));
         for (i, (window, tile)) in view.windows.iter().zip(&view.layout.tiles).enumerate() {
             let outer = at(tile.outer);
             let over = ui.rect_contains_pointer(outer);
             let resp = ui.interact(outer, egui::Id::new(("preview tile", window.hwnd)), egui::Sense::click());
             if over {
-                ui.painter().rect_filled(outer, tile_radius, c.control_hover);
+                ui.painter().rect_filled(outer, tile_radius, hover);
             }
             let icon = window.icon_source().and_then(|p| icons(ui.ctx(), &p));
             let picture = at(tile.preview);
             if !view.live.get(i).copied().unwrap_or(false) {
                 // Minimized, or one the compositor won't show: the app's icon on a plate.
-                ui.painter().rect_filled(picture, tile_radius, c.control);
+                ui.painter().rect_filled(picture, tile_radius, plate);
                 paint_icon(ui, icon, picture.center(), BIG_ICON.min(picture.height() * 0.6));
             }
             let label = at(tile.label);
@@ -78,7 +79,7 @@ pub fn draw(ctx: &Context, view: &View, icons: Icons) -> Option<Action> {
             if over {
                 let button = ui.interact(close, egui::Id::new(("preview close", window.hwnd)), egui::Sense::click());
                 if button.hovered() {
-                    ui.painter().circle_filled(close.center(), close.width() / 2.0, c.control);
+                    ui.painter().circle_filled(close.center(), close.width() / 2.0, pressable);
                 }
                 ui.painter().text(
                     close.center(),

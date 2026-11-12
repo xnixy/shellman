@@ -54,7 +54,7 @@ impl Shared {
         let Some(app) = self.preview.app_id() else { return };
         let windows = self.dock.windows_of(&app);
         let dock = &mut self.dock;
-        match self.preview.frame(ctx, windows, self.glass, &mut |ctx, path| dock.icon(ctx, path)) {
+        match self.preview.frame(ctx, windows, &mut |ctx, path| dock.icon(ctx, path)) {
             Some(preview::Action::Show(hwnd)) => {
                 dock::Dock::show_window(hwnd);
                 self.preview.dismiss();
@@ -183,7 +183,7 @@ impl eframe::App for Host {
         // New windows exist only after this frame; look again on the next one.
         let dock_style = shared.dock.style();
         let bars_ready = shared.bars.adopt(glass, dock_style);
-        let preview_ready = shared.preview.adopt(glass);
+        let preview_ready = shared.preview.adopt();
         shared.update_preview();
         if !(bars_ready && preview_ready) {
             ctx.request_repaint();

@@ -24,6 +24,7 @@ mod window;
 
 pub use draw::Action;
 use crate::dock::Hover as DockHover;
+use crate::shape::surface;
 use crate::{host, place, shape};
 use egui::ViewportId;
 use hover::{Key, Machine};
@@ -31,10 +32,9 @@ use layout::{Layout, MAX_WINDOWS};
 use shellman_core::live_thumb::{fit, LiveThumb, PxRect};
 use shellman_core::winlist::fullscreen::foreground_covers_monitor_of;
 use shellman_core::winlist::AppWindow;
-use shellman_ui::window::frost_window;
+use shellman_ui::glass::{self, Style};
 use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
 use std::time::Instant;
-use windows::Win32::Foundation::HWND;
 
 const TITLE: &str = "shellman preview";
 /// Frames drawn before a newly shown panel is uncloaked: the first is complete, the second is
@@ -43,6 +43,13 @@ const WARM_FRAMES: u8 = 2;
 const WARM_CAP: u8 = 20;
 /// Space kept free at the monitor's sides, in points.
 const EDGE: f32 = 8.0;
+/// The panel's corner radius: a little tighter than the dock's, it is a smaller surface.
+pub const RADIUS: f32 = 18.0;
+
+/// The panel's glass in the current theme.
+pub fn style() -> Style {
+    Style::from_theme(RADIUS)
+}
 
 /// The open panel's window, for the fullscreen check; 0 when there is none.
 static PANEL: AtomicIsize = AtomicIsize::new(0);
@@ -185,6 +192,7 @@ impl Preview {
         // Pictures first: they are registered with the window that is about to go.
         self.thumbs.clear();
         if let Some(hwnd) = self.hwnd.take() {
+            surface::detach(hwnd);
             window::hide(hwnd);
         }
         PANEL.store(0, Ordering::Release);
@@ -194,18 +202,17 @@ impl Preview {
     }
 
     /// In the host's frame, after it declared the panel: find the window once it exists and give
-    /// it its looks. False while it is still to come.
-    pub fn adopt(&mut self, glass: bool) -> bool {
+    /// it its looks (the same glass as the dock). False while it is still to come.
+    pub fn adopt(&mut self) -> bool {
         if !self.machine.is_open() || self.hwnd.is_some() {
             return true;
         }
         let Some(hwnd) = shape::own_window(TITLE) else { return false };
-        // Cloaked from the first moment: it is shown only once drawn.
-        window::cloak(hwnd, true);
-        if glass {
-            frost_window(HWND(hwnd as *mut _));
-        }
+        // Cloaked from the first moment, glass and all: it is shown only once drawn.
+        glass::cloak(hwnd, true);
         shape::never_activate(hwnd);
+        shape::see_through(hwnd);
+        surface::attach(hwnd, style());
         self.hwnd = Some(hwnd);
         PANEL.store(hwnd, Ordering::Release);
         self.warm = Some(0);
@@ -239,7 +246,6 @@ impl Preview {
         &mut self,
         ctx: &egui::Context,
         windows: Vec<AppWindow>,
-        glass: bool,
         icons: draw::Icons,
     ) -> Option<Action> {
         let now = Instant::now();
@@ -253,7 +259,10 @@ impl Preview {
         }
         let live: Vec<bool> = self.windows.iter().map(|w| self.thumb_of(w).is_some()).collect();
         let k = anchor.scale / ctx.pixels_per_point();
-        let view = draw::View { windows: &self.windows, layout: &self.layout, live: &live, glass, k };
+        let hwnd = self.hwnd.unwrap_or(0);
+        surface::set_style(hwnd, style());
+        let composed = surface::composed(hwnd);
+        let view = draw::View { windows: &self.windows, layout: &self.layout, live: &live, composed, k };
         let action = draw::draw(ctx, &view, icons);
         self.warm_up(ctx, (k - 1.0).abs() < 0.001);
         action
@@ -263,7 +272,7 @@ impl Preview {
     fn warm_up(&mut self, ctx: &egui::Context, scaled: bool) {
         let (Some(n), Some(hwnd)) = (self.warm, self.hwnd) else { return };
         if n + 1 >= WARM_FRAMES && (scaled || n >= WARM_CAP) {
-            window::cloak(hwnd, false);
+            glass::cloak(hwnd, false);
             self.warm = None;
         } else {
             self.warm = Some(n + 1);

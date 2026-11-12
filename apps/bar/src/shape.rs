@@ -1,8 +1,8 @@
 //! The bar windows' behaviour and outline.
 //!
-//! Windows paints a glass backdrop over the whole window rectangle, rounded only by its own
-//! window corners; a window region does not clip it (tried and measured). So the dock's pill uses
-//! exactly Windows' corner radius, which keeps real blur and smooth, anti-aliased corners.
+//! Their surfaces are `shellman_ui::glass` panels (kept in `surface`): Windows' own backdrop
+//! paints the whole window rectangle and goes flat on a window that is never active, which these
+//! never are, while the glass module's composed backdrop blurs at any radius.
 
 pub mod surface;
 
@@ -20,9 +20,6 @@ use windows::Win32::UI::WindowsAndMessaging::{
     WS_CAPTION, WS_EX_APPWINDOW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_MAXIMIZEBOX,
     WS_MINIMIZEBOX, WS_SYSMENU, WS_THICKFRAME,
 };
-
-/// Windows 11's rounded window corner radius, in points.
-pub const SYSTEM_RADIUS: f32 = 8.0;
 
 /// Clicking the dock must not take focus from the app in front, or "minimize the app in front"
 /// would always see the dock instead. The dock draws its own hairline, so Windows' window border
