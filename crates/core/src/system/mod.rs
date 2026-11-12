@@ -19,6 +19,7 @@ pub mod media_art;
 pub mod netlist;
 pub mod power;
 pub mod radios;
+pub mod sound_choices;
 pub mod sound_dev;
 pub mod sound_enable;
 pub mod sound_format;

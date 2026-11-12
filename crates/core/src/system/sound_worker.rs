@@ -219,7 +219,10 @@ impl Worker {
                 }
                 Cmd::Format(id, spec) => {
                     if let (Some(d), Some(m)) = (format::device_format(&id), format::mix_format(&id)) {
-                        if format::set_device_format(&id, &spec) {
+                        // An encoded format follows spatial sound; a PCM pick would knock the
+                        // device out of Dolby/DTS. The page does not offer it; this is the guard.
+                        let encoded = d.spec().is_some_and(|s| s.encoded);
+                        if !encoded && format::set_device_format(&id, &spec) {
                             self.undo.insert(id, (d, m));
                         }
                     }
