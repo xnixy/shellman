@@ -102,7 +102,8 @@ pub(super) fn paint<T>(ui: &Ui, rect: Rect, r: &Row<T>, lit: bool, open: bool) {
         _ => {}
     }
     if lit && r.enabled {
-        let fill = ui.visuals().widgets.hovered.weak_bg_fill;
+        // The text colour, faint: never the accent, which may be black.
+        let fill = theme::with_alpha(c.text, if c.light { 18 } else { 12 });
         p.rect_filled(rect.shrink2(Vec2::new(0.0, 1.0)), CornerRadius::same(6), fill);
     }
     let fg = if r.enabled { c.text } else { theme::with_alpha(c.muted, 150) };

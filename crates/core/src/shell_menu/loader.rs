@@ -321,6 +321,7 @@ impl Loader {
     }
 
     fn invoke(&mut self, gen: u64, id: u32, point: (i32, i32)) {
+        self.trace_line(&format!("invoke gen={gen} id={id} at={point:?}\n"));
         if let Some(w) = self.worker.take() {
             w.send(Request::Invoke { gen, id, hwnd: self.hwnd, point });
         }
@@ -363,7 +364,7 @@ impl Loader {
     /// With SHELLMAN_MENU_TRACE set to a file, one line per walk: what for, when the top level
     /// and the rest arrived, and each submenu's time.
     fn write_trace(&self) {
-        let (Some(path), Some(c)) = (&self.trace, &self.current) else { return };
+        let (Some(_), Some(c)) = (&self.trace, &self.current) else { return };
         let fills: Vec<String> = c.fills.iter().map(|(k, ms)| format!("{k}={ms}ms")).collect();
         let line = format!(
             "{key} items={n} top={top:?}ms done={done}ms failed={f} fills=[{fills}]\n",
@@ -374,6 +375,11 @@ impl Loader {
             f = c.failed,
             fills = fills.join(", "),
         );
+        self.trace_line(&line);
+    }
+
+    fn trace_line(&self, line: &str) {
+        let Some(path) = &self.trace else { return };
         if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
             let _ = f.write_all(line.as_bytes());
         }

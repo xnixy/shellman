@@ -119,10 +119,7 @@ fn run(
     let mut held: Option<Held> = None;
     // Requests read early, while a walk was still filling submenus.
     let mut stash: VecDeque<Request> = VecDeque::new();
-    'outer: loop {
-        let Some(req) = stash.pop_front().or_else(|| next(&rx, &wake)) else {
-            break;
-        };
+    'outer: while let Some(req) = stash.pop_front().or_else(|| next(&rx, &wake)) {
         match req {
             Request::Load { gen, target, hwnd, plan, palette } => {
                 // A newer walk is already wanted: skip this one.

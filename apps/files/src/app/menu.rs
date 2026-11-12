@@ -129,13 +129,6 @@ impl ContextMenu {
                 rows.push(Row::note(note));
             }
         }
-        if let Some(p) = std::env::var_os("SHELLMAN_MENU_DEBUG") {
-            use std::io::Write;
-            let names: Vec<&str> = rows.iter().map(|r| r.label.as_str()).collect();
-            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(p) {
-                let _ = writeln!(f, "{} rows: {names:?}", rows.len());
-            }
-        }
         let event = self.menu.show(ctx, egui::Id::new("files-context-menu"), &rows);
         match event {
             Some(Event::Picked(Pick::Native(a))) => actions.push(a),
