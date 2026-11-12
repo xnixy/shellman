@@ -1886,6 +1886,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "shellman-switcher"
+version = "0.1.0"
+dependencies = [
+ "eframe",
+ "egui",
+ "raw-window-handle",
+ "shellman-core",
+ "shellman-ui",
+ "windows",
+]
+
+[[package]]
 name = "shellman-ui"
 version = "0.1.0"
 dependencies = [
