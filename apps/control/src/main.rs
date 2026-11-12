@@ -56,7 +56,9 @@ fn main() -> eframe::Result {
             }
             let shared = Arc::new(summon::Shared::default());
             instance.serve(hwnd, cc.egui_ctx.clone(), shared.clone());
-            if !background {
+            if background {
+                summon::park(hwnd);
+            } else {
                 instance.summon();
             }
             let look_watch = shellman_core::watch::Watcher::new(cc.egui_ctx.clone());

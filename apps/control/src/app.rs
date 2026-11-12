@@ -92,7 +92,7 @@ impl Control {
 
     /// Out of sight, and nothing left running.
     fn hide(&mut self) {
-        summon::hide(self.hwnd);
+        summon::hide(self.hwnd, &self.shared);
         outside::stop();
         self.live = None;
         self.power = PowerMenu::default();

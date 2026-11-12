@@ -13,7 +13,10 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use windows::core::HSTRING;
 use windows::Win32::Foundation::{GetLastError, ERROR_ALREADY_EXISTS, HANDLE, HWND, POINT, RECT};
-use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, MonitorFromPoint, MONITORINFO, MONITOR_DEFAULTTONEAREST};
+use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_CLOAK};
+use windows::Win32::Graphics::Gdi::{
+    GetMonitorInfoW, MonitorFromPoint, RedrawWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST, RDW_INTERNALPAINT,
+};
 use windows::Win32::System::Threading::{CreateEventW, CreateMutexW, SetEvent, WaitForSingleObject, INFINITE};
 use windows::Win32::UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
@@ -21,9 +24,9 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     AllowSetForegroundWindow, GetCursorPos, GetForegroundWindow, GetWindowLongPtrW, GetWindowRect,
-    IsWindowVisible, SetForegroundWindow, SetWindowLongPtrW, SetWindowPos, ShowWindow, ASFW_ANY,
-    GWL_STYLE, HWND_TOPMOST, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOZORDER, SWP_SHOWWINDOW,
-    SW_HIDE, WS_CAPTION, WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_SYSMENU, WS_THICKFRAME,
+    SetForegroundWindow, SetWindowLongPtrW, SetWindowPos, ShowWindow, ASFW_ANY, GWL_STYLE,
+    HWND_TOPMOST, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOZORDER, SWP_SHOWWINDOW, SW_HIDE,
+    SW_SHOWNOACTIVATE, WS_CAPTION, WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_SYSMENU, WS_THICKFRAME,
 };
 
 /// The environment variable that names a separate instance, for testing.
@@ -49,6 +52,8 @@ pub struct Instance {
 /// What the window and the signal thread tell each other.
 #[derive(Default)]
 pub struct Shared {
+    /// Whether the panel is showing (it is never truly hidden: see `park`).
+    showing: AtomicBool,
     hide_requested: AtomicBool,
     /// Counts showings, so the window notices a new one.
     shown: AtomicU32,
@@ -138,7 +143,7 @@ impl Instance {
                     .ok()
                     .and_then(|mut at| at.take())
                     .is_some_and(|at| at.elapsed() < CLICK_CLOSE_GRACE);
-                if unsafe { IsWindowVisible(hwnd) }.as_bool() {
+                if shared.showing.load(Ordering::Acquire) {
                     shared.hide_requested.store(true, Ordering::Release);
                 } else if !just_closed {
                     show(hwnd, &shared);
@@ -150,10 +155,33 @@ impl Instance {
     }
 }
 
-/// Hide the window. Called by the window itself.
-pub fn hide(hwnd: isize) {
+/// Put the panel out of sight. Called by the window itself.
+pub fn hide(hwnd: isize, shared: &Shared) {
+    shared.showing.store(false, Ordering::Release);
+    park(hwnd);
+}
+
+/// Out of sight, yet never truly hidden. Windows sends a hidden window no paint messages, and
+/// the window library then retries a frame it was asked for (by the last click, say) without
+/// pause, a core spinning for as long as the panel is hidden. So the window is hidden (which
+/// hands the focus back to the window below), then turned on again cloaked: the compositor
+/// leaves it out and clicks pass it by, but it still paints, so pending frames finish and the
+/// UI goes idle.
+pub fn park(hwnd: isize) {
+    let hwnd = HWND(hwnd as *mut _);
     unsafe {
-        let _ = ShowWindow(HWND(hwnd as *mut _), SW_HIDE);
+        let _ = ShowWindow(hwnd, SW_HIDE);
+        cloak(hwnd, true);
+        let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+        // A frame asked for while hidden was dropped; ask again.
+        let _ = RedrawWindow(Some(hwnd), None, None, RDW_INTERNALPAINT);
+    }
+}
+
+fn cloak(hwnd: HWND, on: bool) {
+    let value = u32::from(on);
+    unsafe {
+        let _ = DwmSetWindowAttribute(hwnd, DWMWA_CLOAK, (&raw const value).cast(), 4);
     }
 }
 
@@ -178,6 +206,8 @@ fn show(hwnd: HWND, shared: &Shared) {
         let r = place::panel_rect(rect, scale, shared.height());
         strip_frame(hwnd);
         let _ = SetWindowPos(hwnd, Some(HWND_TOPMOST), r.x, r.y, r.w, r.h, SWP_SHOWWINDOW | SWP_FRAMECHANGED);
+        cloak(hwnd, false);
+        shared.showing.store(true, Ordering::Release);
         outside::set_rect(r.x, r.y, r.w, r.h);
         take_foreground(hwnd);
     }
