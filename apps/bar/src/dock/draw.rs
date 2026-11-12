@@ -89,15 +89,26 @@ pub fn paint(ui: &mut egui::Ui, scene: &Scene, thumbs: &mut Thumbs) -> Events {
     let ink = ink(scene.tint);
     let mut events = Events::default();
     let glass = scene.glass;
+    // Icons that were not there last frame: they start in their place, faded out.
+    let shown_id = Id::new(("dock shown", scene.salt));
+    let before: Vec<String> = ctx.data(|d| d.get_temp(shown_id)).unwrap_or_default();
+    let fresh: Vec<bool> = scene.items.iter().map(|i| !before.contains(&i.app_id)).collect();
+    ctx.data_mut(|d| d.insert_temp(shown_id, scene.items.iter().map(|i| i.app_id.clone()).collect::<Vec<_>>()));
     // Each icon's left edge, eased towards its place, from the glass's centre: when an app comes
     // or goes the others slide over while the glass grows or shrinks around them.
     let lefts: Vec<f32> = scene
         .items
         .iter()
         .zip(scene.xs)
-        .map(|(item, &x)| {
+        .zip(&fresh)
+        .map(|((item, &x), &fresh)| {
             let id = Id::new(("dock x", scene.salt, &item.app_id));
-            glass.center().x + ctx.animate_value_with_time(id, x - scene.width / 2.0, MOVE)
+            let target = x - scene.width / 2.0;
+            if fresh {
+                // An app that comes back must not slide in from where it was before.
+                ctx.animate_value_with_time(id, target, 0.0);
+            }
+            glass.center().x + ctx.animate_value_with_time(id, target, MOVE)
         })
         .collect();
     let top = glass.bottom() - m.pad - m.icon;
@@ -117,7 +128,7 @@ pub fn paint(ui: &mut egui::Ui, scene: &Scene, thumbs: &mut Thumbs) -> Events {
         let cell = Rect::from_x_y_ranges(icon.x_range().expand(4.0), glass.y_range());
         let id = Id::new(("dock icon", scene.salt, &item.app_id));
         let resp = ui.interact(cell, id, egui::Sense::click());
-        let appear = appear(&ctx, id.with("appear"));
+        let appear = appear(&ctx, id.with("appear"), fresh[i]);
         let hover = ctx.animate_bool_with_time(id.with("hover"), resp.hovered(), EASE);
         let press = ctx.animate_bool_with_time(id.with("press"), resp.is_pointer_button_down_on(), EASE * 0.6);
         if hover > 0.0 {
@@ -155,13 +166,12 @@ pub fn paint(ui: &mut egui::Ui, scene: &Scene, thumbs: &mut Thumbs) -> Events {
     events
 }
 
-/// 0 for an icon seen for the first time, easing to 1: new icons fade in.
-fn appear(ctx: &egui::Context, id: Id) -> f32 {
-    if !ctx.data(|d| d.get_temp::<()>(id).is_some()) {
-        ctx.data_mut(|d| d.insert_temp(id, ()));
-        ctx.animate_bool_with_time(id, false, MOVE);
+/// 0 for an icon that was not there last frame, easing to 1: new icons fade in.
+fn appear(ctx: &egui::Context, id: Id, fresh: bool) -> f32 {
+    if fresh {
+        ctx.animate_value_with_time(id, 0.0, 0.0);
     }
-    ctx.animate_bool_with_time(id, true, MOVE)
+    ctx.animate_value_with_time(id, 1.0, MOVE)
 }
 
 fn lerp_color(a: Color32, b: Color32, t: f32) -> Color32 {

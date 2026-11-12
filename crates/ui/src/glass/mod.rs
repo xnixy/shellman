@@ -36,8 +36,9 @@
 //!
 //! The surface fills the window unless [`GlassPanel::set_shape`] puts it on a part of it. A
 //! window whose surface changes size often (the dock, as apps come and go) can stay one size and
-//! move the shape instead: resizing a window shows its old content for a frame, moving the shape
-//! does not.
+//! change the shape instead: a resized window shows its old content for a frame, and a resized
+//! backdrop window shows its old visuals, while a shape changed inside both windows reaches the
+//! screen with the window's next frame.
 
 mod backdrop;
 mod cloak;
@@ -247,14 +248,21 @@ impl Inner {
             let shape = (area.right - area.left, area.bottom - area.top);
             let dpi = GetDpiForWindow(self.target).max(96);
             let style = self.style.get();
-            let geo = Geometry::new(shape, dpi as f32 / 96.0, &style);
+            let mut geo = Geometry::new(shape, dpi as f32 / 96.0, &style);
+            // The backdrop window covers the whole served window (and the shadow's room around
+            // it), and the shape moves inside it. So a shape that changes every frame (the dock
+            // growing as an app opens) only changes the visuals, which land on screen together
+            // with the window's own next frame; moving the backdrop window as well would show it
+            // a frame ahead of them.
+            geo.left += area.left;
+            geo.top += area.top;
+            geo.right += window.0 - area.right;
+            geo.bottom += window.1 - area.bottom;
             let layout = Layout { window, shape: area, also: self.also.get(), dpi };
             let before = self.laid_out.replace(Some(layout));
             if before != Some(layout) {
-                let resized = before.is_none_or(|b| {
-                    (b.shape.right - b.shape.left, b.shape.bottom - b.shape.top) != shape || b.dpi != dpi
-                });
-                if let Some(composed) = self.composed.as_ref().filter(|_| resized) {
+                let moved = before.is_none_or(|b| (b.window, b.shape, b.dpi) != (window, area, dpi));
+                if let Some(composed) = self.composed.as_ref().filter(|_| moved) {
                     let _ = composed.tree.apply(&geo, &style, self.effects.get());
                 }
                 // This sends the window another move message, which finds the layout done.
@@ -272,8 +280,8 @@ impl Inner {
                 let _ = SetWindowPos(
                     composed.window,
                     Some(self.target),
-                    rc.left + area.left - geo.left,
-                    rc.top + area.top - geo.top,
+                    rc.left - (geo.left - area.left),
+                    rc.top - (geo.top - area.top),
                     w,
                     h,
                     SWP_SHOWWINDOW | SWP_NOACTIVATE,
