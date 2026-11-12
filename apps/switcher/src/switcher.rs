@@ -15,9 +15,7 @@ use shellman_core::winlist::{self, AppWindow, WindowList, WindowWatcher};
 use shellman_ui::theme;
 use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant};
-use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_MENU};
-use windows::Win32::UI::WindowsAndMessaging::IsWindowVisible;
 
 /// How long Alt+Tab is held before the panel shows. A tap is quicker, so it never flashes.
 const DELAY: Duration = Duration::from_millis(120);
@@ -33,6 +31,8 @@ pub struct Switcher {
     list: WindowList,
     icons: Thumbs,
     open: Option<Open>,
+    /// A second frame was asked for, to hide the window the library shows after the first.
+    primed: bool,
 }
 
 struct Open {
@@ -62,11 +62,15 @@ impl Switcher {
             keys,
             list: WindowList::default(),
             open: None,
+            primed: false,
         }
     }
 
     pub fn frame(&mut self, ctx: &egui::Context) {
         theme::set_light(ctx.theme() == egui::Theme::Light);
+        if !std::mem::replace(&mut self.primed, true) {
+            ctx.request_repaint();
+        }
         self.icons.poll(ctx);
         while let Ok(key) = self.keys.try_recv() {
             self.on_key(key);
@@ -95,8 +99,8 @@ impl Switcher {
                 }
             }
         }
-        let shown = self.open.as_ref().is_some_and(|o| o.shown.is_some());
-        if !shown && unsafe { IsWindowVisible(HWND(self.hwnd as *mut _)) }.as_bool() {
+        // Asleep whenever closed, including after the library's own first show.
+        if self.open.is_none() && shape::is_on(self.hwnd) {
             shape::hide(self.hwnd);
         }
         let Some(open) = &self.open else { return };
@@ -233,9 +237,7 @@ impl Switcher {
 
     /// Hide the panel and let go of its previews.
     fn close(&mut self) {
-        if self.open.as_ref().is_some_and(|o| o.shown.is_some()) {
-            shape::hide(self.hwnd);
-        }
+        shape::hide(self.hwnd);
         self.open = None;
     }
 }

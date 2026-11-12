@@ -142,9 +142,11 @@ fn run(ready: std::sync::mpsc::Sender<bool>) {
     }
 }
 
-/// Apps open their menu bar when Alt is pressed and released with no key in between, and the
-/// Tab in between was swallowed. A press of an unused key in between keeps them out of it.
-fn send_mask() {
+/// One press of a key no keyboard has and no app uses. Apps open their menu bar when Alt is
+/// pressed and released with no key in between, and the Tab in between was swallowed; this keeps
+/// them out of it. Sending it also makes this process the last input's sender, which lets it
+/// bring a window to front (`activate`).
+pub fn send_mask() {
     let key = |flags| INPUT {
         r#type: INPUT_KEYBOARD,
         Anonymous: INPUT_0 {

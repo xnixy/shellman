@@ -65,6 +65,11 @@ fn main() -> eframe::Result {
             let wake = cc.egui_ctx.clone();
             let hooked = keys::start(move |key| {
                 let _ = tx.send(key);
+                // A hidden window is never painted, so asking for a frame is not enough to open.
+                // Other keys only matter once it is open, and so awake.
+                if matches!(key, keys::Key::Next | keys::Key::Prev) {
+                    shape::post_wake(hwnd);
+                }
                 wake.request_repaint();
             });
             if !hooked {
