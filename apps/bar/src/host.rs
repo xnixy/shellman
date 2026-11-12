@@ -45,6 +45,14 @@ pub fn request_layout() {
     }
 }
 
+/// Run the host's next frame without laying anything out (it opens or closes the preview panel).
+/// Safe from any thread.
+pub fn request_frame() {
+    if let Some(ctx) = CTX.get() {
+        ctx.request_repaint_of(egui::ViewportId::ROOT);
+    }
+}
+
 /// Ask Explorer again where the app bars may go, on the next host frame.
 pub fn request_requery() {
     REQUERY.store(true, Ordering::Release);
