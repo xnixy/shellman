@@ -1,0 +1,104 @@
+<!doctype html><meta charset="utf-8">
+<style>
+.stage:not(:target){display:none}
+*{box-sizing:border-box;margin:0}
+body{font:14px "Segoe UI Variable Text","Segoe UI",sans-serif;color:#eef1f6;background:#000}
+.stage{width:1600px;height:1000px;position:relative;overflow:hidden;
+ background:radial-gradient(900px 600px at 78% 12%,#2d6cff55,transparent 70%),radial-gradient(800px 700px at 12% 88%,#ff4f8b44,transparent 70%),radial-gradient(700px 500px at 55% 60%,#22d3a833,transparent 70%),linear-gradient(135deg,#0a0d18,#121627 60%,#0b0e1a)}
+.tag{position:absolute;left:28px;top:20px;font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:#ffffff99}
+.glass{background:rgba(22,26,38,.58);backdrop-filter:blur(40px) saturate(1.5);border:1px solid #ffffff1f;box-shadow:0 30px 80px #0009,inset 0 1px 0 #ffffff14}
+.soft{background:#ffffff0d;border:1px solid #ffffff12}
+.mut{color:#aab3c5}.dim{color:#7d879b}
+.pill{border-radius:999px}.r{border-radius:22px}
+.row{display:flex;align-items:center;gap:10px}
+.ic{width:18px;height:18px;border-radius:5px;flex:none}
+.fold{width:54px;height:42px;border-radius:9px;position:relative;background:linear-gradient(#7db4ff,#4f8df5)}
+.fold:before{content:"";position:absolute;left:0;top:-7px;width:24px;height:12px;border-radius:6px 8px 0 0;background:#6aa5fb}
+.chip{padding:5px 11px;border-radius:999px;font-size:12px}
+.kbd{font-size:11px;padding:2px 7px;border-radius:6px;background:#ffffff14;color:#c9d0de}
+.acc{background:#3b82f6}.b{font-weight:600}
+h1{font:600 30px "Segoe UI Variable Display","Segoe UI";letter-spacing:-.01em}
+.thumb{border-radius:14px;background-size:cover}
+.t1{background:linear-gradient(135deg,#ff7a59,#ffcb6b)}.t2{background:linear-gradient(135deg,#5b8cff,#b06bff)}.t3{background:linear-gradient(135deg,#1fd1a5,#2f7bff)}.t4{background:linear-gradient(160deg,#111827,#6b7280)}.t5{background:linear-gradient(135deg,#f43f8e,#7c3aed)}.t6{background:linear-gradient(135deg,#0ea5e9,#22d3ee)}
+.doc{background:linear-gradient(#f6f7fb,#dfe4ee);position:relative}.doc:after{content:"";position:absolute;left:18%;right:18%;top:22%;height:56%;background:repeating-linear-gradient(#9aa4b8 0 3px,transparent 3px 12px);opacity:.7}
+.dot{width:8px;height:8px;border-radius:50%}
+</style>
+
+<!-- A: Islands -->
+<div class="stage" id="a"><div class="tag">A · Islands — no window frame, floating pieces</div>
+ <div class="glass pill" style="position:absolute;left:60px;top:150px;width:64px;padding:14px 0;display:flex;flex-direction:column;align-items:center;gap:16px" id="a-rail"></div>
+ <div class="glass pill row" style="position:absolute;left:150px;top:70px;right:420px;height:56px;padding:0 10px 0 20px">
+  <span class="dim">‹ ›</span><span class="chip soft">Home</span><span class="dim">/</span><span class="chip soft">Projects</span><span class="dim">/</span><span class="chip acc b">shellman</span>
+  <span style="flex:1"></span><span class="mut">Search or type a command</span><span class="kbd">Ctrl K</span>
+  <span class="chip soft">Gallery ▾</span></div>
+ <div class="glass pill row" style="position:absolute;right:60px;top:70px;height:56px;padding:0 20px;gap:18px"><span class="mut">Sort</span><span class="mut">Group</span><span class="mut">Filter</span><span class="dim">— ▢ ✕</span></div>
+ <div style="position:absolute;left:150px;top:150px;right:420px;bottom:110px;display:grid;grid-template-columns:repeat(4,1fr);grid-auto-rows:1fr;gap:18px" id="a-grid"></div>
+ <div class="glass r" style="position:absolute;right:60px;top:150px;width:336px;bottom:110px;padding:20px">
+  <div class="thumb t2" style="height:200px"></div>
+  <div class="b" style="font-size:18px;margin-top:16px">dock-redesign.png</div><div class="mut" style="margin-top:4px">PNG image · 3840 × 2160 · 4.2 MB</div>
+  <div class="row" style="margin-top:14px;flex-wrap:wrap"><span class="chip soft">design</span><span class="chip soft">shellman</span><span class="chip soft dim">+ tag</span></div>
+  <div style="margin-top:20px;display:grid;grid-template-columns:90px 1fr;row-gap:10px" class="mut"><span class="dim">Modified</span><span>Today, 12:24</span><span class="dim">Created</span><span>11 Nov 2026</span><span class="dim">Where</span><span>Projects › shellman</span><span class="dim">Opens with</span><span>Photos</span></div>
+  <div class="row" style="position:absolute;left:20px;right:20px;bottom:20px"><span class="chip acc b" style="flex:1;text-align:center;padding:10px">Open</span><span class="chip soft" style="padding:10px 16px">Share</span><span class="chip soft" style="padding:10px 14px">⋯</span></div></div>
+ <div class="glass pill row" style="position:absolute;left:50%;transform:translateX(-50%);bottom:36px;height:54px;padding:0 10px 0 22px;gap:16px"><span class="b">3 selected</span><span class="dim">12.8 MB</span><span class="chip soft">Copy</span><span class="chip soft">Move to…</span><span class="chip soft">Rename</span><span class="chip soft">Compress</span><span class="chip" style="background:#ef444433;color:#fca5a5">Delete</span></div>
+</div>
+
+<!-- B: Columns -->
+<div class="stage" id="b"><div class="tag">B · Flow — columns that slide, with a live preview</div>
+ <div class="glass r" style="position:absolute;inset:64px 60px 50px;display:flex;flex-direction:column;overflow:hidden">
+  <div class="row" style="height:58px;padding:0 20px;border-bottom:1px solid #ffffff12"><span class="dot" style="background:#3b82f6"></span><span class="b">Files</span>
+   <span class="chip soft" style="margin-left:18px">shellman ✕</span><span class="chip dim">Downloads</span><span class="chip dim">Photos 2026</span><span class="dim">＋</span>
+   <span style="flex:1"></span><span class="soft pill row" style="padding:7px 16px;width:330px"><span class="mut">Search this folder and below</span><span style="flex:1"></span><span class="kbd">/</span></span><span class="dim" style="margin-left:14px">— ▢ ✕</span></div>
+  <div style="flex:1;display:flex;min-height:0">
+   <div style="width:210px;padding:16px 12px;border-right:1px solid #ffffff10" id="b-side"></div>
+   <div style="width:250px;padding:12px 8px;border-right:1px solid #ffffff10" id="b-c1"></div>
+   <div style="width:270px;padding:12px 8px;border-right:1px solid #ffffff10" id="b-c2"></div>
+   <div style="width:290px;padding:12px 8px;border-right:1px solid #ffffff10" id="b-c3"></div>
+   <div style="flex:1;padding:22px;display:flex;flex-direction:column">
+    <div class="thumb t4" style="flex:1;position:relative;overflow:hidden"><pre style="position:absolute;inset:18px;font:13px/1.7 Consolas,monospace;color:#cbd5e1">
+<span style="color:#93c5fd">pub fn</span> <span style="color:#fcd34d">set_glass</span>(ctx: &amp;Context, amount: f32) {
+    GLASS.store(amount.clamp(0.0, 1.0).to_bits(),
+        Ordering::Relaxed);
+    ctx.request_repaint();
+}
+
+<span style="color:#64748b">/// The colors for the mode and accent
+/// the window has now.</span>
+<span style="color:#93c5fd">pub fn</span> <span style="color:#fcd34d">colors</span>() -> Colors {
+    Colors::new(LIGHT.load(Relaxed), accent())
+}</pre></div>
+    <div class="row" style="margin-top:16px"><div><div class="b" style="font-size:17px">mod.rs</div><div class="mut">Rust source · 348 lines · edited 4 min ago</div></div><span style="flex:1"></span><span class="chip soft">Open in Zed</span><span class="chip soft">Copy path</span><span class="chip soft">History</span></div></div>
+  </div>
+  <div class="row" style="height:40px;padding:0 20px;border-top:1px solid #ffffff10" ><span class="dim">X: › Projects › shellman › crates › ui › src › theme › </span><span class="b">mod.rs</span><span style="flex:1"></span><span class="dim">main ✓ clean</span><span class="dim">·</span><span class="dim">212 GB free</span></div>
+ </div></div>
+
+<!-- C: Home -->
+<div class="stage" id="c"><div class="tag">C · Home — opens on what you were doing, not on a folder tree</div>
+ <div class="glass r" style="position:absolute;inset:64px 60px 50px;padding:34px 44px;overflow:hidden">
+  <div class="row"><h1>Good afternoon</h1><span style="flex:1"></span><span class="dim">— ▢ ✕</span></div>
+  <div class="soft pill row" style="margin-top:20px;height:56px;padding:0 22px;font-size:16px"><span class="mut">Find a file, folder or app — try “pdf from last week” or “>move to Documents”</span><span style="flex:1"></span><span class="kbd">Ctrl K</span></div>
+  <div class="row" style="margin-top:26px"><span class="b mut">Pinned</span></div>
+  <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:14px;margin-top:12px" id="c-pins"></div>
+  <div class="row" style="margin-top:26px"><span class="b mut">Jump back in</span><span style="flex:1"></span><span class="dim">Today</span></div>
+  <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:14px;margin-top:12px" id="c-recent"></div>
+  <div style="display:grid;grid-template-columns:1.25fr 1fr;gap:18px;margin-top:26px">
+   <div><div class="b mut">Drives</div><div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:12px" id="c-drives"></div></div>
+   <div><div class="b mut">Happening now</div><div class="soft r" style="margin-top:12px;padding:16px 18px">
+    <div class="row"><span>Copying 1,204 items to Data (D:)</span><span style="flex:1"></span><span class="mut">64% · 2 min left</span></div>
+    <div style="height:6px;border-radius:3px;background:#ffffff14;margin-top:10px"><div class="acc" style="width:64%;height:6px;border-radius:3px"></div></div>
+    <div class="row mut" style="margin-top:14px"><span>Recycle Bin · 38 items, 2.1 GB</span><span style="flex:1"></span><span class="chip soft">Empty</span></div></div></div>
+  </div></div></div>
+
+<script>
+const q=(s)=>document.querySelector(s), T=['t1','t2','t3','t4','t5','t6'];
+q('#a-rail').innerHTML=['#3b82f6','#ffffff55','#ffffff55','#ffffff55','#ffffff55','#ffffff22','#f59e0b','#22c55e'].map((c,i)=>`<div style="width:${i==0?40:22}px;height:${i==0?40:22}px;border-radius:${i==0?14:7}px;background:${c}"></div>`).join('');
+const A=[['Screenshots','f'],['dock-redesign.png','t2',1],['glass-probe.png','t3',1],['PLAN.md','doc'],['crates','f'],['wallpaper.jpg','t5'],['session.log','doc'],['settings-dark.png','t4',1],['apps','f'],['demo.mp4','t1'],['icons.svg','t6'],['README.md','doc']];
+q('#a-grid').innerHTML=A.map(([n,k,s])=>`<div class="r" style="padding:10px;display:flex;flex-direction:column;${s?'background:#3b82f633;outline:2px solid #60a5fa':'background:#ffffff0a;border:1px solid #ffffff10'}"><div class="thumb ${k=='f'?'':k}" style="flex:1;${k=='f'?'display:grid;place-items:center;background:#ffffff08':''}">${k=='f'?'<div class="fold" style="transform:scale(1.5)"></div>':''}</div><div class="row" style="padding:10px 6px 2px"><span class="b" style="font-size:13px">${n}</span><span style="flex:1"></span><span class="dim" style="font-size:12px">${k=='f'?'24 items':'Today'}</span></div></div>`).join('');
+const li=(n,sel,c='#ffffff44',sub='')=>`<div class="row" style="padding:8px 10px;border-radius:10px;${sel?'background:#3b82f6;color:#fff':''}"><span class="ic" style="background:${sel?'#fff':c}"></span><span>${n}</span><span style="flex:1"></span><span class="${sel?'':'dim'}" style="font-size:12px">${sub}</span></div>`;
+q('#b-side').innerHTML='<div class="dim" style="font-size:12px;padding:4px 10px">Places</div>'+['Home','Desktop','Downloads','Documents','Pictures'].map(n=>li(n)).join('')+'<div class="dim" style="font-size:12px;padding:16px 10px 4px">Tags</div>'+[['Work','#f59e0b'],['Design','#ec4899'],['Later','#22c55e']].map(([n,c])=>`<div class="row" style="padding:8px 10px"><span class="dot" style="background:${c}"></span>${n}</div>`).join('')+'<div class="dim" style="font-size:12px;padding:16px 10px 4px">Drives</div>'+li('Windows (C:)',0,'#ffffff44','61%')+li('Data (D:)',0,'#ffffff44','34%')+li('X (X:)',1,'','18%');
+q('#b-c1').innerHTML=['apps','crates','docs','target','.claude','Cargo.toml','Cargo.lock','README.md'].map((n,i)=>li(n,i==1,i<5?'#6aa5fb':'#ffffff44',i<5?'›':'')).join('');
+q('#b-c2').innerHTML=['core','icons','ui'].map((n,i)=>li(n,i==2,'#6aa5fb','›')).join('')+'<div class="dim" style="padding:14px 10px;font-size:12px">3 folders</div>';
+q('#b-c3').innerHTML=['glass','menu','theme'].map((n,i)=>li(n,0,'#6aa5fb','›')).join('')+['appearance.rs','app_icon.rs','lib.rs','look_controls.rs','mod.rs','nav.rs','widgets.rs','window.rs'].map((n,i)=>li(n,i==4,'#fb923c',i==4?'4 min':'')).join('');
+q('#c-pins').innerHTML=[['Projects','#6aa5fb','14 folders'],['Downloads','#22c55e','20 items'],['Screenshots','#ec4899','312 photos'],['Documents','#f59e0b','86 items'],['iCloud Drive','#38bdf8','synced'],['Game clips','#a78bfa','41 videos']].map(([n,c,s])=>`<div class="soft r" style="padding:16px"><div style="width:38px;height:38px;border-radius:12px;background:${c}"></div><div class="b" style="margin-top:14px">${n}</div><div class="dim" style="font-size:12px;margin-top:3px">${s}</div></div>`).join('');
+q('#c-recent').innerHTML=[['dock-redesign.png','t2','Edited 4 min ago'],['PLAN.md','doc','Opened 1 h ago'],['demo.mp4','t1','Downloaded 2 h ago'],['wallpaper.jpg','t5','Saved this morning'],['settings-dark.png','t4','Screenshot · 9:12']].map(([n,k,s])=>`<div class="soft r" style="padding:10px"><div class="thumb ${k}" style="height:120px"></div><div class="b" style="margin:10px 6px 0;font-size:13px">${n}</div><div class="dim" style="font-size:12px;margin:3px 6px 4px">${s}</div></div>`).join('');
+q('#c-drives').innerHTML=[['Windows (C:)',61,'362 GB free'],['Data (D:)',34,'1.3 TB free'],['X (X:)',18,'212 GB free']].map(([n,p,s])=>`<div class="soft r row" style="padding:14px 16px;gap:14px"><div style="width:46px;height:46px;border-radius:50%;background:conic-gradient(#3b82f6 ${p}%,#ffffff18 0);display:grid;place-items:center"><div style="width:34px;height:34px;border-radius:50%;background:#1a1f2e;display:grid;place-items:center;font-size:11px">${p}%</div></div><div><div class="b">${n}</div><div class="dim" style="font-size:12px;margin-top:3px">${s}</div></div></div>`).join('');
+</script>

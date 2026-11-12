@@ -1,0 +1,74 @@
+<!doctype html><meta charset="utf-8">
+<style>
+*{box-sizing:border-box;margin:0}
+body{font:14px "Segoe UI Variable Text","Segoe UI",sans-serif;color:#eef1f6;background:#000}
+.stage{width:1920px;height:1080px;position:relative;overflow:hidden;
+ background:radial-gradient(1000px 700px at 78% 12%,#2d6cff66,transparent 70%),radial-gradient(900px 800px at 10% 90%,#ff4f8b55,transparent 70%),radial-gradient(800px 600px at 55% 60%,#22d3a83d,transparent 70%),linear-gradient(135deg,#0a0d18,#121627 60%,#0b0e1a)}
+.glass{background:rgba(22,26,38,.58);backdrop-filter:blur(40px) saturate(1.5);border:1px solid #ffffff1f;box-shadow:0 24px 60px #0008,inset 0 1px 0 #ffffff14;position:absolute}
+.soft{background:#ffffff0d;border:1px solid #ffffff12}
+.mut{color:#aab3c5}.dim{color:#7d879b}.b{font-weight:600}
+.pill{border-radius:999px}.r{border-radius:22px}
+.row{display:flex;align-items:center;gap:10px}
+.chip{padding:5px 11px;border-radius:999px;font-size:12px}
+.acc{background:#3b82f6}
+.ic{width:16px;height:16px;border-radius:5px;background:#ffffff66;flex:none}
+.app{width:46px;height:46px;border-radius:13px}
+.sw{width:38px;height:22px;border-radius:11px;background:#3b82f6;position:relative;flex:none}.sw:after{content:"";position:absolute;right:3px;top:3px;width:16px;height:16px;border-radius:50%;background:#fff}
+.sw.off{background:#ffffff22}.sw.off:after{right:auto;left:3px}
+.tile{border-radius:18px;padding:14px;height:74px}
+.sl{height:6px;border-radius:3px;background:#ffffff1c;flex:1;position:relative}.sl i{position:absolute;left:0;top:0;bottom:0;border-radius:3px;background:#3b82f6}.sl b{position:absolute;top:-6px;width:18px;height:18px;border-radius:50%;background:#fff}
+.note{position:absolute;font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:#ffffffaa}
+</style>
+<div class="stage" id="s">
+ <!-- top bar as three islands -->
+ <div class="glass pill row" style="left:16px;top:12px;height:40px;padding:0 16px"><span class="ic" style="background:#3b82f6"></span><span class="b">Files</span><span class="dim">shellman</span></div>
+ <div class="glass pill row" style="left:50%;transform:translateX(-50%);top:12px;height:40px;padding:0 18px"><span class="b">Thu 12 Nov</span><span class="mut">12:41</span></div>
+ <div class="glass pill row" style="right:16px;top:12px;height:40px;padding:0 14px;gap:12px"><span class="ic"></span><span class="ic"></span><span class="ic"></span><span class="ic"></span><span class="dim">|</span><span class="ic" style="border-radius:50%"></span><span class="ic" style="border-radius:50%"></span><span class="mut">80%</span></div>
+ <div class="note" style="left:230px;top:25px">← app · clock · tray: three islands instead of one strip</div>
+
+ <!-- settings as islands -->
+ <div class="glass pill" style="left:90px;top:130px;width:60px;padding:14px 0;display:flex;flex-direction:column;align-items:center;gap:15px">
+  <div style="width:36px;height:36px;border-radius:12px;background:#3b82f6"></div><div class="ic" style="width:20px;height:20px"></div><div class="ic" style="width:20px;height:20px"></div><div class="ic" style="width:20px;height:20px"></div><div class="ic" style="width:20px;height:20px"></div><div class="ic" style="width:20px;height:20px"></div><div class="ic" style="width:20px;height:20px"></div></div>
+ <div class="glass pill row" style="left:170px;top:76px;width:640px;height:46px;padding:0 10px 0 20px"><span class="b">Settings</span><span class="dim">/</span><span class="chip acc b">Sound</span><span style="flex:1"></span><span class="mut">Search settings</span><span class="dim" style="margin-left:14px">— ▢ ✕</span></div>
+ <div class="glass r" style="left:170px;top:134px;width:640px;height:250px;padding:20px 22px">
+  <div class="dim" style="font-size:12px">Output</div>
+  <div class="row" style="margin-top:12px"><div class="app" style="background:#3b82f6;width:40px;height:40px"></div><div><div class="b">ROG GJALLAR</div><div class="mut" style="font-size:12px">Default · Dolby MAT (TrueHD, Atmos), 8 channel</div></div><span style="flex:1"></span><span class="chip soft">Test</span></div>
+  <div class="row" style="margin-top:20px"><span class="mut" style="width:70px">Volume</span><div class="sl"><i style="width:62%"></i><b style="left:60%"></b></div><span class="mut">62</span></div>
+  <div class="row" style="margin-top:22px"><span class="mut" style="width:70px">Spatial</span><span class="chip soft">Dolby Atmos for home theater ▾</span></div>
+  <div class="row" style="margin-top:14px"><span class="mut" style="width:70px">Format</span><span class="chip soft">8 channel, 192000 Hz ▾</span></div></div>
+ <div class="glass r" style="left:170px;top:400px;width:312px;height:170px;padding:18px 20px"><div class="dim" style="font-size:12px">Input</div>
+  <div class="b" style="margin-top:10px">Microphone (Brio)</div><div class="mut" style="font-size:12px;margin-top:3px">Default</div>
+  <div class="row" style="margin-top:22px"><div class="sl"><i style="width:80%"></i><b style="left:78%"></b></div><span class="mut">80</span></div>
+  <div style="height:5px;border-radius:3px;margin-top:20px;background:linear-gradient(90deg,#22c55e 0 46%,#ffffff1c 46%)"></div></div>
+ <div class="glass r" style="left:498px;top:400px;width:312px;height:170px;padding:18px 20px"><div class="dim" style="font-size:12px">Apps</div>
+  <div class="row" style="margin-top:12px"><span class="ic" style="background:#f97316"></span><span>Firefox</span><div class="sl"><i style="width:70%"></i></div></div>
+  <div class="row" style="margin-top:16px"><span class="ic" style="background:#6366f1"></span><span>Discord</span><div class="sl"><i style="width:45%"></i></div></div>
+  <div class="row" style="margin-top:16px"><span class="ic" style="background:#0ea5e9"></span><span>Steam</span><div class="sl"><i style="width:90%"></i></div></div></div>
+ <div class="note" style="left:170px;top:590px">Settings: rail + title pill + one island per group</div>
+
+ <!-- launcher -->
+ <div class="glass pill row" style="left:890px;top:300px;width:520px;height:58px;padding:0 24px;font-size:17px"><span class="mut">Search apps, files, settings</span></div>
+ <div class="glass r" style="left:890px;top:372px;width:520px;padding:10px">
+  <div class="row r" style="padding:12px 14px;background:#3b82f6"><div class="app" style="width:34px;height:34px;background:#fff"></div><div><div class="b">Firefox</div><div style="font-size:12px;opacity:.85">App</div></div><span style="flex:1"></span><span style="font-size:12px;opacity:.85">Enter</span></div>
+  <div class="row" style="padding:12px 14px"><div class="app" style="width:34px;height:34px;background:#6aa5fb"></div><div><div class="b">Files</div><div class="dim" style="font-size:12px">App</div></div></div>
+  <div class="row" style="padding:12px 14px"><div class="app" style="width:34px;height:34px;background:#fb923c"></div><div><div class="b">fontman.exe</div><div class="dim" style="font-size:12px">Downloads</div></div></div></div>
+ <div class="note" style="left:890px;top:590px">Launcher: search pill + results island</div>
+
+ <!-- control center as stacked islands -->
+ <div style="position:absolute;right:16px;top:64px;width:360px">
+  <div class="glass r" style="position:relative;padding:14px;display:grid;grid-template-columns:1fr 1fr;gap:10px">
+   <div class="tile acc"><div class="b">Wi-Fi</div><div style="font-size:12px;opacity:.85;margin-top:4px">Home 5G</div></div>
+   <div class="tile acc"><div class="b">Bluetooth</div><div style="font-size:12px;opacity:.85;margin-top:4px">2 devices</div></div>
+   <div class="tile soft"><div class="b">Focus</div><div class="dim" style="font-size:12px;margin-top:4px">Off</div></div>
+   <div class="tile soft"><div class="b">Night light</div><div class="dim" style="font-size:12px;margin-top:4px">Off</div></div></div>
+  <div class="glass r" style="position:relative;margin-top:12px;padding:18px 20px"><div class="row"><span class="mut" style="width:74px">Sound</span><div class="sl"><i style="width:62%"></i><b style="left:60%"></b></div></div><div class="row" style="margin-top:22px"><span class="mut" style="width:74px">Brightness</span><div class="sl"><i style="width:80%"></i><b style="left:78%"></b></div></div></div>
+  <div class="glass r row" style="position:relative;margin-top:12px;padding:12px;gap:14px"><div class="app" style="background:linear-gradient(135deg,#f43f8e,#7c3aed);width:54px;height:54px"></div><div><div class="b">Midnight City</div><div class="mut" style="font-size:12px;margin-top:3px">M83 · Firefox</div></div><span style="flex:1"></span><span class="mut" style="font-size:18px;letter-spacing:6px">⏮⏯⏭</span></div>
+  <div class="note" style="position:relative;margin-top:14px;text-align:right">Control Center: stacked islands</div></div>
+
+ <!-- dock: apps island + running/bin island -->
+ <div class="glass row" style="left:50%;transform:translateX(-50%);bottom:18px;height:70px;border-radius:24px;padding:0 12px;gap:10px">
+  <div class="app" style="background:#3b82f6"></div><div class="app" style="background:#6aa5fb"></div><div class="app" style="background:linear-gradient(135deg,#f97316,#facc15)"></div><div class="app" style="background:#6366f1"></div><div class="app" style="background:#334155"></div><div class="app" style="background:#0f172a;border:1px solid #ffffff22"></div><div class="app" style="background:#4f46e5"></div></div>
+ <div class="glass row" style="left:calc(50% + 232px);bottom:18px;height:70px;border-radius:24px;padding:0 12px"><div class="app" style="background:#e2e8f0"></div></div>
+ <div class="glass pill row" style="left:calc(50% - 420px);bottom:30px;height:46px;padding:0 16px"><span class="ic" style="background:#f59e0b"></span><span class="mut">Copying · 64%</span></div>
+ <div class="note" style="left:50%;transform:translateX(-50%);bottom:100px">Dock: apps island · bin island · live activity pill when something runs</div>
+</div>
