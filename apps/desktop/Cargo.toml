@@ -1,0 +1,10 @@
+[package]
+name = "shellman-desktop"
+version = "0.1.0"
+edition.workspace = true
+description = "Shellman's desktop: the wallpaper window"
+license.workspace = true
+publish = false
+
+[dependencies]
+windows.workspace = true
