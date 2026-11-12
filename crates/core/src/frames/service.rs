@@ -244,7 +244,7 @@ fn consider(hwnd: HWND, front: isize) -> bool {
         }
         let exe = exe_of(hwnd);
         let own = exe.as_ref().is_some_and(|e| is_own_exe(e, &st.own_dirs));
-        let full = WindowFacts { cloaked: is_cloaked(hwnd), own_process: own, fullscreen: is_fullscreen(hwnd, facts.style), ..basic };
+        let full = WindowFacts { cloaked: is_cloaked(hwnd) || frame_off(hwnd), own_process: own, fullscreen: is_fullscreen(hwnd, facts.style), ..basic };
         if !eligible(&full) {
             return None;
         }
@@ -296,6 +296,17 @@ impl Facts {
             ex_style: unsafe { GetWindowLongPtrW(hwnd, GWL_EXSTYLE) } as u32,
             class: String::from_utf16_lossy(&buf[..n]),
         })
+    }
+}
+
+/// Whether the window has turned Windows' frame drawing off. Such a window draws its own shape
+/// (Firefox under the Islands theme is separate glass pieces): a border colour would put a
+/// rectangle round it, so it is left alone like a cloaked one.
+fn frame_off(hwnd: HWND) -> bool {
+    use windows::Win32::Graphics::Dwm::DWMWA_NCRENDERING_ENABLED;
+    let mut on = 1i32;
+    unsafe {
+        DwmGetWindowAttribute(hwnd, DWMWA_NCRENDERING_ENABLED, (&raw mut on).cast(), size_of::<i32>() as u32).is_ok() && on == 0
     }
 }
 
