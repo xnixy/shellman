@@ -114,7 +114,23 @@ mod real {
         }
 
         fn set_text(&self, hive: Hive, key: &str, name: &str, text: &str) -> Result<(), String> {
-            let hk = open(hive, key, KEY_SET_VALUE).ok_or("cannot open the key")?;
+            // The key may not be there yet (shellman's own key on a first install), so create it.
+            let mut hk = HKEY::default();
+            unsafe {
+                RegCreateKeyExW(
+                    root(hive),
+                    &HSTRING::from(key),
+                    None,
+                    PCWSTR::null(),
+                    REG_OPTION_NON_VOLATILE,
+                    KEY_SET_VALUE,
+                    None,
+                    &mut hk,
+                    None,
+                )
+            }
+            .ok()
+            .map_err(|e| format!("cannot open the key ({e})"))?;
             let wide: Vec<u8> = text.encode_utf16().chain([0]).flat_map(u16::to_le_bytes).collect();
             let r = unsafe { RegSetValueExW(hk, &HSTRING::from(name), None, REG_SZ, Some(&wide)) };
             unsafe {
