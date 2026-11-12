@@ -123,8 +123,8 @@ impl Preview {
                 if hover.dismiss {
                     self.machine.dismiss(Some(key));
                 } else {
-                    let center = target.center_x;
-                    self.machine.hover(now, key, target.has_windows, || window::anchor(dock, center, ppp));
+                    let (center, top) = (target.center_x, target.top);
+                    self.machine.hover(now, key, target.has_windows, || window::anchor(dock, center, top, ppp));
                 }
             }
             None if !hover.inside => self.machine.leave_dock(now, device),

@@ -12,8 +12,9 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 /// Where the panel goes for an icon whose centre is `center_x` points from the left of the dock
-/// window `dock`, which is drawn at `ppp` pixels per point. In the dock's monitor's pixels.
-pub fn anchor(dock: isize, center_x: f32, ppp: f32) -> Anchor {
+/// window `dock`, over glass whose top is `top` points down from the window's top, drawn at `ppp`
+/// pixels per point. In the dock's monitor's pixels.
+pub fn anchor(dock: isize, center_x: f32, top: f32, ppp: f32) -> Anchor {
     let dock = HWND(dock as *mut _);
     let mut at = RECT::default();
     let mut info = MONITORINFO { cbSize: size_of::<MONITORINFO>() as u32, ..Default::default() };
@@ -29,7 +30,7 @@ pub fn anchor(dock: isize, center_x: f32, ppp: f32) -> Anchor {
     let scale = dpi as f32 / 96.0;
     Anchor {
         center_x: at.left + (center_x * ppp).round() as i32,
-        bottom: at.top - (DOCK_GAP * scale).round() as i32,
+        bottom: at.top + (top * ppp).round() as i32 - (DOCK_GAP * scale).round() as i32,
         monitor: info.rcMonitor,
         scale,
     }

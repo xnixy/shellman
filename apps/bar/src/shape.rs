@@ -4,6 +4,8 @@
 //! window corners; a window region does not clip it (tried and measured). So the dock's pill uses
 //! exactly Windows' corner radius, which keeps real blur and smooth, anti-aliased corners.
 
+pub mod surface;
+
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::UI::Shell::{DefSubclassProc, SetWindowSubclass};
 use windows::Win32::Graphics::Dwm::{

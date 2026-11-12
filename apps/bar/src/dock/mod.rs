@@ -1,4 +1,5 @@
-//! The dock: the Launcher, Files, pinned apps, running apps and the Recycle Bin, on a floating glass pill.
+//! The dock: the Launcher, Files, pinned apps, running apps and the Recycle Bin, on a floating
+//! shelf of glass (`shellman_ui::glass`) with large rounded corners, real blur and a soft shadow.
 //!
 //! One model, several views: there is one `Dock` (window list, pins, icon cache) and a dock window
 //! per monitor drawing it, so every dock shows the same apps in the same order. A click on any of
@@ -7,17 +8,23 @@
 mod draw;
 mod items;
 mod menu;
+mod metrics;
+
+pub use metrics::ABOVE;
 
 use crate::fullscreen;
+use crate::shape::surface;
 use crate::wake::Wake;
 use items::{Item, Section};
+use metrics::Metrics;
+use shellman_ui::glass::{self, Style};
 use shellman_core::settings::dock::{DockSettings as Pins, Pin};
 use shellman_core::thumbs::Thumbs;
 use shellman_core::winlist::{self, AppWindow, WindowList, WindowWatcher};
 use shellman_ui::theme;
-use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
+use windows::Win32::Foundation::{HWND, LPARAM, RECT, WPARAM};
 use windows::Win32::UI::WindowsAndMessaging::{
-    IsIconic, PostMessageW, SetForegroundWindow, ShowWindow, SW_MINIMIZE, SW_RESTORE, WM_CLOSE,
+    GetClientRect, IsIconic, PostMessageW, SetForegroundWindow, ShowWindow, SW_MINIMIZE, SW_RESTORE, WM_CLOSE,
 };
 
 /// Wheel movement, in points, that counts as one step through an app's windows. A notch is more
@@ -25,7 +32,6 @@ use windows::Win32::UI::WindowsAndMessaging::{
 const SCROLL_STEP: f32 = 30.0;
 
 pub struct Dock {
-    glass: bool,
     /// Repaints every dock and top bar.
     wake: Wake,
     list: WindowList,
@@ -44,7 +50,9 @@ pub struct Dock {
 }
 
 impl Dock {
-    pub fn new(ctx: egui::Context, glass: bool, wake: Wake) -> Self {
+    /// `_glass` (whether Windows can frost a window) is not needed: each dock window's glass
+    /// says for itself whether it is composed.
+    pub fn new(ctx: egui::Context, _glass: bool, wake: Wake) -> Self {
         let bars = wake.clone();
         let watcher = WindowWatcher::start(move || {
             bars.bars();
@@ -53,11 +61,11 @@ impl Dock {
         });
         watcher.on_front_moved(fullscreen::request_check);
         let mut dock = Self {
-            glass,
             wake,
             list: WindowList::default(),
             watcher,
-            thumbs: Thumbs::new(ctx),
+            // Cropped 256 px images, drawn crisp at any dock size and scale.
+            thumbs: Thumbs::icons(ctx),
             pins: Pins::load(),
             files: items::files_pin(),
             items: Vec::new(),
@@ -104,14 +112,23 @@ impl Dock {
             .collect();
     }
 
-    /// The dock's width in points, which every dock window takes on.
-    pub fn width(&self) -> f32 {
-        draw::layout(&self.items, self.pins.icon_size).1
+    fn metrics(&self) -> Metrics {
+        Metrics::new(self.pins.icon_size)
     }
 
-    /// The dock's height in points, which follows the icon size.
+    /// The glass's height in points, which follows the icon size.
     pub fn height(&self) -> f32 {
-        self.pins.icon_size.height()
+        self.metrics().height
+    }
+
+    /// The look of the dock's glass in the current theme.
+    pub fn style(&self) -> Style {
+        let mut style = Style::from_theme(self.metrics().radius);
+        // A shelf near the screen's edge: a shorter, tighter shadow than a floating panel's, so
+        // little of it falls on the windows above.
+        style.shadow.offset_y = 4.0;
+        style.shadow.blur = 18.0;
+        style
     }
 
     /// Bring a window forward, restoring it if minimized.
@@ -208,15 +225,16 @@ impl Dock {
         shellman_ui::app_icon::get(ctx, source, true, &mut self.thumbs)
     }
 
-    fn draw(&mut self, ui: &mut egui::Ui, hwnd: isize) -> Hover {
-        let events = draw::paint(ui, self.glass, self.pins.icon_size, &mut self.thumbs, &self.items, self.front);
+    /// Act on what the pointer did this frame, and say what it is over for the preview panel.
+    fn act(&mut self, events: &draw::Events, hwnd: isize, inside: bool, glass_top: f32) -> Hover {
         let hover = Hover {
             target: events.hovered.map(|(i, center_x)| Target {
                 app_id: self.items[i].app_id.clone(),
                 has_windows: !self.items[i].windows.is_empty(),
                 center_x,
+                top: glass_top,
             }),
-            inside: ui.ctx().pointer_hover_pos().is_some(),
+            inside,
             dismiss: events.clicked.is_some() || events.middle.is_some() || events.menu.is_some(),
         };
         if let Some(i) = events.clicked {
@@ -260,8 +278,10 @@ pub struct Hover {
 pub struct Target {
     pub app_id: String,
     pub has_windows: bool,
-    /// The icon cell's centre, in points from the dock window's left edge.
+    /// The icon's centre, in points from the dock window's left edge.
     pub center_x: f32,
+    /// The top of the dock's glass, in points from the dock window's top edge.
+    pub top: f32,
 }
 
 impl Dock {
@@ -290,12 +310,47 @@ impl Dock {
     /// One frame of one dock window: `hwnd` is that window, and `salt` (its monitor) keeps its
     /// icons' hover state apart from the other docks'.
     pub fn frame(&mut self, ctx: &egui::Context, hwnd: isize, salt: &str) -> Hover {
-        theme::set_light(ctx.theme() == egui::Theme::Light);
+        theme::set_light(crate::app::light(ctx));
         self.catch_up(ctx);
-        egui::CentralPanel::default()
+        let m = self.metrics();
+        let style = self.style();
+        surface::set_style(hwnd, style);
+        let scale = ctx.pixels_per_point();
+        let (xs, width) = metrics::layout(&self.items, &m);
+        // The glass eases to its new width as the icons slide (see `draw`).
+        let shown = ctx.animate_value_with_time(egui::Id::new(("dock width", salt)), width, draw::MOVE);
+        let rect = metrics::glass_rect(client_size(hwnd), shown, &m, scale);
+        let glass = egui::Rect::from_min_max(
+            egui::pos2(rect.left as f32, rect.top as f32) / scale,
+            egui::pos2(rect.right as f32, rect.bottom as f32) / scale,
+        );
+        let composed = surface::composed(hwnd);
+        let events = egui::CentralPanel::default()
             .frame(egui::Frame::new())
-            .show(ctx, |ui| ui.push_id(salt, |ui| self.draw(ui, hwnd)))
-            .inner
-            .inner
+            .show(ctx, |ui| {
+                if !composed {
+                    // No composed glass: the surface is painted here, without blur or shadow.
+                    let f = glass::content_frame(false, &style);
+                    ui.painter().rect(glass, f.corner_radius, f.fill, f.stroke, egui::StrokeKind::Inside);
+                }
+                let scene = draw::Scene { items: &self.items, front: self.front, metrics: m, xs: &xs, width, glass, salt };
+                draw::paint(ui, &scene, &mut self.thumbs)
+            })
+            .inner;
+        // The glass, and the label while it shows, are all of the window that is drawn and
+        // clicked; the rest lets the desktop through.
+        let label = events.label.map(|l| metrics::label_region(l, scale));
+        surface::set_shape(hwnd, Some(rect), label);
+        let inside = ctx.pointer_hover_pos().is_some_and(|p| glass.contains(p));
+        self.act(&events, hwnd, inside, glass.top())
     }
+}
+
+/// A window's client size, in pixels.
+fn client_size(hwnd: isize) -> (i32, i32) {
+    let mut rc = RECT::default();
+    unsafe {
+        let _ = GetClientRect(HWND(hwnd as *mut _), &mut rc);
+    }
+    (rc.right - rc.left, rc.bottom - rc.top)
 }

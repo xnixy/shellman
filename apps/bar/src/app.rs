@@ -18,6 +18,12 @@ use shellman_ui::{font_atlas, theme};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
+/// Whether the bars draw in light mode: Windows' app mode, or `SHELLMAN_FORCE_LIGHT` to look at
+/// the light palette without changing Windows' setting.
+pub fn light(ctx: &egui::Context) -> bool {
+    std::env::var_os("SHELLMAN_FORCE_LIGHT").is_some() || ctx.theme() == egui::Theme::Light
+}
+
 pub struct Shared {
     pub dock: dock::Dock,
     pub top: topbar::TopBar,
@@ -28,7 +34,7 @@ pub struct Shared {
 
 impl Shared {
     fn top_frame(&mut self, ctx: &egui::Context, primary: bool) {
-        theme::set_light(ctx.theme() == egui::Theme::Light);
+        theme::set_light(light(ctx));
         self.dock.catch_up(ctx);
         let front = self.dock.front_window().cloned();
         self.top.frame(ctx, front.as_ref(), self.glass, primary);
@@ -43,7 +49,7 @@ impl Shared {
 
     /// A frame of the preview panel: the hovered app's windows, drawn, and what was clicked.
     fn preview_frame(&mut self, ctx: &egui::Context) {
-        theme::set_light(ctx.theme() == egui::Theme::Light);
+        theme::set_light(light(ctx));
         self.dock.catch_up(ctx);
         let Some(app) = self.preview.app_id() else { return };
         let windows = self.dock.windows_of(&app);
@@ -62,8 +68,6 @@ impl Shared {
         let Some(hwnd) = self.bars.dock_hwnd(device) else { return };
         let hover = self.dock.frame(ctx, hwnd, device);
         self.preview.hover_dock(device, hover, hwnd, ctx.pixels_per_point());
-        // Icons came or went: every dock takes the new width.
-        self.bars.place_docks(self.dock.width());
     }
 }
 
@@ -173,14 +177,14 @@ impl eframe::App for Host {
         self.declare(ctx, &shared.bars, preview_open);
         let glass = shared.glass;
         // New windows exist only after this frame; look again on the next one.
-        let bars_ready = shared.bars.adopt(glass);
+        let dock_style = shared.dock.style();
+        let bars_ready = shared.bars.adopt(glass, dock_style);
         let preview_ready = shared.preview.adopt(glass);
         shared.update_preview();
         if !(bars_ready && preview_ready) {
             ctx.request_repaint();
         }
-        let width = shared.dock.width();
-        shared.bars.settle(width);
+        shared.bars.settle();
         drop(shared);
         // The host wakes for changes every bar shows (the look, icons, the tray).
         self.wake.bars();

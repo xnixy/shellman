@@ -42,23 +42,14 @@ impl IconSize {
         }
     }
 
-    /// The icon's side, in points. Medium is the original 40.
+    /// The icon's side, in points. The dock's spacing and height follow from it (see the bar's
+    /// `dock::metrics`).
     pub fn icon(self) -> f32 {
         match self {
-            IconSize::Small => 32.0,
-            IconSize::Medium => 40.0,
-            IconSize::Large => 48.0,
+            IconSize::Small => 40.0,
+            IconSize::Medium => 48.0,
+            IconSize::Large => 56.0,
         }
-    }
-
-    /// The width of one icon's cell, which leaves room for the hover tint and the running dots.
-    pub fn cell(self) -> f32 {
-        self.icon() + 12.0
-    }
-
-    /// The dock's height.
-    pub fn height(self) -> f32 {
-        self.cell() + 4.0
     }
 }
 
@@ -202,9 +193,8 @@ mod tests {
     }
 
     #[test]
-    fn medium_is_the_original_size() {
-        let m = IconSize::Medium;
-        assert_eq!((m.icon(), m.cell(), m.height()), (40.0, 52.0, 56.0));
-        assert!(IconSize::Small.height() < m.height() && m.height() < IconSize::Large.height());
+    fn sizes_grow_in_steps() {
+        let [s, m, l] = IconSize::ALL.map(IconSize::icon);
+        assert_eq!((s, m, l), (40.0, 48.0, 56.0));
     }
 }

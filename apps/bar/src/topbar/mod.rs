@@ -11,7 +11,6 @@
 mod left;
 mod right;
 
-pub use left::paint_launcher_mark;
 
 use crate::tray::{demo, view::TrayTextures, Tray, TrayIcon};
 use shellman_core::settings::bar::BarSettings;

@@ -8,7 +8,9 @@
 
 use crate::monitors::layout::{self, Sizes, Slot};
 use crate::reserve::{Mode, Reservation};
-use crate::{fullscreen, place, shape, topbar};
+use crate::shape::surface;
+use crate::{dock, fullscreen, place, shape, topbar};
+use shellman_ui::glass;
 use shellman_ui::window;
 use windows::Win32::Foundation::HWND;
 
@@ -20,6 +22,7 @@ pub fn sizes(dock_height: f32) -> Sizes {
     Sizes {
         top: topbar::HEIGHT,
         dock: dock_height,
+        above: dock::ABOVE,
         gap: GAP,
     }
 }
@@ -59,8 +62,6 @@ struct Set {
     top: View,
     dock: Option<View>,
     reservation: Option<Reservation>,
-    /// The dock width (points) it was last placed for.
-    dock_width: Option<f32>,
 }
 
 impl Set {
@@ -70,7 +71,6 @@ impl Set {
             dock: slot.dock_band.is_some().then(|| View::new(Kind::Dock, &slot.device)),
             slot,
             reservation: None,
-            dock_width: None,
         }
     }
 
@@ -79,12 +79,12 @@ impl Set {
         self.top.hwnd.is_some() && self.dock.as_ref().is_none_or(|d| d.hwnd.is_some())
     }
 
-    fn place_dock(&mut self, width: f32, sizes: &Sizes) {
+    /// The dock window spans its band (free when it is there already); its glass, inside it,
+    /// follows the icons on its own.
+    fn place_dock(&self, sizes: &Sizes) {
         let (Some(dock), Some(r)) = (&self.dock, &self.reservation) else { return };
-        let (Some(hwnd), Some(band)) = (dock.hwnd, r.band) else { return };
-        if self.dock_width != Some(width) {
-            self.dock_width = Some(width);
-            place::put(hwnd, layout::dock_rect(band, width, self.slot.scale, sizes));
+        if let (Some(hwnd), Some(band)) = (dock.hwnd, r.band) {
+            place::put(hwnd, layout::dock_rect(band, self.slot.scale, sizes));
         }
     }
 }
@@ -118,7 +118,6 @@ impl Bars {
                     if set.slot != slot {
                         // Give the old space back before the new is taken.
                         set.reservation = None;
-                        set.dock_width = None;
                         if slot.dock_band.is_none() {
                             set.dock = None;
                         } else if set.dock.is_none() {
@@ -153,9 +152,10 @@ impl Bars {
         self.sets.iter().find(|s| s.slot.device == device)?.dock.as_ref()?.hwnd
     }
 
-    /// Find windows that were just created and give them their looks. True when every bar
-    /// window exists.
-    pub fn adopt(&mut self, glass: bool) -> bool {
+    /// Find windows that were just created and give them their looks: docks get glass in
+    /// `dock_style`. True when every bar window exists.
+    pub fn adopt(&mut self, glass: bool, dock_style: glass::Style) -> bool {
+        surface::prune();
         let mut all = true;
         for set in &mut self.sets {
             for view in std::iter::once(&mut set.top).chain(set.dock.as_mut()) {
@@ -167,13 +167,18 @@ impl Bars {
                     continue;
                 };
                 view.hwnd = Some(hwnd);
-                if glass {
-                    window::frost_window(HWND(hwnd as *mut _));
-                }
-                if view.kind == Kind::Top {
-                    shape::square_corners(hwnd);
-                }
                 shape::never_activate(hwnd);
+                match view.kind {
+                    Kind::Top => {
+                        if glass {
+                            window::frost_window(HWND(hwnd as *mut _));
+                        }
+                        shape::square_corners(hwnd);
+                    }
+                    Kind::Dock => {
+                        surface::attach(hwnd, dock_style);
+                    }
+                }
             }
         }
         all
@@ -181,17 +186,16 @@ impl Bars {
 
     /// Reserve space and place windows where that is still to do, then show what is ready
     /// (unless a fullscreen app covers its monitor).
-    pub fn settle(&mut self, dock_width: f32) {
+    pub fn settle(&mut self) {
         for set in self.sets.iter_mut().filter(|s| s.ready()) {
             if set.reservation.is_none() {
                 let dock = set.dock.as_ref().and_then(|d| d.hwnd);
                 set.reservation = Some(Reservation::new(self.mode, &set.slot, set.top.hwnd.unwrap_or(0), dock, &self.sizes));
-                set.dock_width = None;
             }
             if let (Some(hwnd), Some(r)) = (set.top.hwnd, &set.reservation) {
                 place::put(hwnd, r.top);
             }
-            set.place_dock(dock_width, &self.sizes);
+            set.place_dock(&self.sizes);
         }
         let groups = self
             .sets
@@ -202,20 +206,12 @@ impl Bars {
         fullscreen::set_groups(groups);
     }
 
-    /// The dock's width changed: fit every dock window to it.
-    pub fn place_docks(&mut self, width: f32) {
-        for set in &mut self.sets {
-            set.place_dock(width, &self.sizes);
-        }
-    }
-
     /// Explorer said app bar positions changed; ask again and move what moved.
     pub fn requery(&mut self) {
         for set in &mut self.sets {
             if let Some(r) = &mut set.reservation {
-                if r.requery(&set.slot, &self.sizes) {
-                    set.dock_width = None;
-                }
+                // What moved is placed again by the next `settle`.
+                r.requery(&set.slot, &self.sizes);
             }
         }
     }
