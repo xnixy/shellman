@@ -339,7 +339,7 @@ impl FileMan {
                 repaint_frame = true;
             }
         }
-        repaint_frame |= theme::set_light(ctx.theme() == egui::Theme::Light);
+        repaint_frame |= theme::set_light(std::env::var_os("SHELLMAN_FORCE_LIGHT").is_some() || ctx.theme() == egui::Theme::Light);
         let now = ctx.input(|i| i.time);
         if self.look.accent == AccentChoice::System && now - self.last_accent_check > 2.0 {
             self.last_accent_check = now;

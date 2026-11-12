@@ -185,6 +185,8 @@ impl Colors {
             (tint(16, 0.06), tint(240, 0.03), mix(accent, Color32::WHITE, 0.4))
         };
         let accent_fill = legible(accent, bg, text, FILL_CONTRAST);
+        // The text colour is far brighter than a dim accent, so its wash is fainter.
+        let fell_back = accent_fill != accent;
         let accent_text = legible(text_base, bg, text, TEXT_CONTRAST);
         let on_accent = if luminance(accent_fill) > 0.4 {
             Color32::from_rgb(20, 16, 20)
@@ -204,7 +206,7 @@ impl Colors {
                 muted: tint(110, 0.08),
                 warn: Color32::from_rgb(160, 96, 0),
                 row_hover: Color32::from_black_alpha(14),
-                row_selected: with_alpha(accent_fill, 48),
+                row_selected: with_alpha(accent_fill, if fell_back { 10 } else { 48 }),
                 hairline: Color32::from_black_alpha(16),
                 well: Color32::from_black_alpha(12),
                 track: tint(188, 0.06),
@@ -240,7 +242,7 @@ impl Colors {
                 muted: tint(150, 0.08),
                 warn: Color32::from_rgb(230, 186, 120),
                 row_hover: Color32::from_rgba_unmultiplied(255, 255, 255, 14),
-                row_selected: with_alpha(accent_fill, 64),
+                row_selected: with_alpha(accent_fill, if fell_back { 8 } else { 64 }),
                 hairline: Color32::from_rgba_unmultiplied(255, 255, 255, 16),
                 well: Color32::from_rgba_unmultiplied(255, 255, 255, 12),
                 track: tint(66, 0.1),

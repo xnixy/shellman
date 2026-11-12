@@ -48,7 +48,7 @@ fn main() -> eframe::Result {
             // Before the window is subclassed, so no message reaches `frame_proc` unseen.
             window::set_message_hook(shellman_core::shell_menu::forward);
             theme::install_fonts(&cc.egui_ctx);
-            theme::set_light(cc.egui_ctx.theme() == egui::Theme::Light);
+            theme::set_light(std::env::var_os("SHELLMAN_FORCE_LIGHT").is_some() || cc.egui_ctx.theme() == egui::Theme::Light);
             // The shared look, which the settings app edits; Files only follows it.
             let look = shellman_ui::appearance::Appearance::load_or(Default::default());
             look.apply(&cc.egui_ctx);
