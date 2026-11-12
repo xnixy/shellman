@@ -19,6 +19,7 @@ fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("Files")
+            .with_icon(egui::IconData { rgba: include_bytes!("../../../assets/icons/files-64.rgba").to_vec(), width: 64, height: 64 })
             .with_inner_size([1100.0, 700.0])
             .with_min_inner_size([640.0, 400.0])
             .with_transparent(true)

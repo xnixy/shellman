@@ -1,0 +1,12 @@
+[package]
+name = "icongen"
+version = "0.1.0"
+edition = "2021"
+description = "Draws shellman's app icons and writes them as multi-size .ico files"
+publish = false
+
+# Its own workspace, so `cargo build` at the repo root never builds this tool.
+[workspace]
+
+[dependencies]
+png = "0.17"
