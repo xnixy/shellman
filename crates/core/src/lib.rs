@@ -6,6 +6,8 @@ pub mod config;
 pub mod foreground;
 pub mod fsops;
 pub mod live_thumb;
+pub mod places;
+pub mod places_reg;
 pub mod recycle_bin;
 pub mod settings;
 pub mod shell_menu;
