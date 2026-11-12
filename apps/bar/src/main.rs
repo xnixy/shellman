@@ -85,7 +85,6 @@ fn main() -> eframe::Result {
                 top: topbar::TopBar::new(tray, test),
                 bars: bars::Bars::new(mode),
                 preview: preview::Preview::new(cc.egui_ctx.clone()),
-                glass,
             };
             Ok(Box::new(app::Host::new(shared, wake, look, look_watch, minimized)))
         }),

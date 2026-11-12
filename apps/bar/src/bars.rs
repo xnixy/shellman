@@ -10,12 +10,22 @@ use crate::monitors::layout::{self, Sizes, Slot};
 use crate::reserve::{Mode, Reservation};
 use crate::shape::surface;
 use crate::{dock, fullscreen, place, shape, topbar};
-use shellman_ui::glass;
-use shellman_ui::window;
-use windows::Win32::Foundation::HWND;
+use shellman_ui::glass::{self, Shadow, Style};
 
 /// Space between the dock and the edge of the screen (or Explorer's taskbar) below it, in points.
 const GAP: f32 = 8.0;
+
+/// The top bar's glass: the same tint and blur as the dock, so the two read as one material, as
+/// a flush strip: square, and no shadow (it would fall on the windows below). Its one line along
+/// the bottom is the bar's own (`topbar::paint_edge`), not the glass's rim, which runs all round.
+pub fn top_style() -> Style {
+    let style = Style::from_theme(0.0);
+    Style {
+        rim: egui::Color32::TRANSPARENT,
+        shadow: Shadow { offset_y: 0.0, blur: 0.0, color: egui::Color32::TRANSPARENT },
+        ..style
+    }
+}
 
 /// The bars' sizes for a dock `dock_height` points tall (it follows the icon size).
 pub fn sizes(dock_height: f32) -> Sizes {
@@ -147,14 +157,19 @@ impl Bars {
         self.views().map(|(v, _, _)| v.id).collect()
     }
 
+    /// The top bar window on `device`, once it exists.
+    pub fn top_hwnd(&self, device: &str) -> Option<isize> {
+        self.sets.iter().find(|s| s.slot.device == device)?.top.hwnd
+    }
+
     /// The dock window on `device`, once it exists.
     pub fn dock_hwnd(&self, device: &str) -> Option<isize> {
         self.sets.iter().find(|s| s.slot.device == device)?.dock.as_ref()?.hwnd
     }
 
-    /// Find windows that were just created and give them their looks: docks get glass in
-    /// `dock_style`. True when every bar window exists.
-    pub fn adopt(&mut self, glass: bool, dock_style: glass::Style) -> bool {
+    /// Find windows that were just created and give them their looks: glass under each, the
+    /// dock's in `dock_style`. True when every bar window exists.
+    pub fn adopt(&mut self, dock_style: glass::Style) -> bool {
         surface::prune();
         let mut all = true;
         for set in &mut self.sets {
@@ -168,18 +183,12 @@ impl Bars {
                 };
                 view.hwnd = Some(hwnd);
                 shape::never_activate(hwnd);
-                match view.kind {
-                    Kind::Top => {
-                        if glass {
-                            window::frost_window(HWND(hwnd as *mut _));
-                        }
-                        shape::square_corners(hwnd);
-                    }
-                    Kind::Dock => {
-                        shape::see_through(hwnd);
-                        surface::attach(hwnd, dock_style);
-                    }
-                }
+                shape::see_through(hwnd);
+                let style = match view.kind {
+                    Kind::Top => top_style(),
+                    Kind::Dock => dock_style,
+                };
+                surface::attach(hwnd, style);
             }
         }
         all

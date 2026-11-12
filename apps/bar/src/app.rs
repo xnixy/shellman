@@ -9,6 +9,7 @@
 
 use crate::bars::{self, Bars, Kind};
 use crate::monitors::{self, layout};
+use crate::shape::surface;
 use crate::wake::Wake;
 use crate::workarea::HiddenMinimized;
 use crate::{dock, host, preview, stress, topbar};
@@ -29,15 +30,16 @@ pub struct Shared {
     pub top: topbar::TopBar,
     pub bars: Bars,
     pub preview: preview::Preview,
-    pub glass: bool,
 }
 
 impl Shared {
-    fn top_frame(&mut self, ctx: &egui::Context, primary: bool) {
+    fn top_frame(&mut self, ctx: &egui::Context, device: &str, primary: bool) {
         theme::set_light(light(ctx));
         self.dock.catch_up(ctx);
         let front = self.dock.front_window().cloned();
-        self.top.frame(ctx, front.as_ref(), self.glass, primary);
+        let hwnd = self.bars.top_hwnd(device).unwrap_or(0);
+        surface::set_style(hwnd, bars::top_style());
+        self.top.frame(ctx, front.as_ref(), surface::composed(hwnd), primary);
     }
 
     /// Lay the open preview panel out for its app's current windows.
@@ -117,7 +119,7 @@ impl Host {
             ctx.show_viewport_deferred(view.id, builder, move |ctx, _| {
                 let mut shared = shared.lock().unwrap();
                 match kind {
-                    Kind::Top => shared.top_frame(ctx, primary),
+                    Kind::Top => shared.top_frame(ctx, &device, primary),
                     Kind::Dock => shared.dock_frame(ctx, &device),
                 }
                 stress::glyphs(ctx);
@@ -179,10 +181,9 @@ impl eframe::App for Host {
         }
         self.wake.set(ids);
         self.declare(ctx, &shared.bars, preview_open);
-        let glass = shared.glass;
         // New windows exist only after this frame; look again on the next one.
         let dock_style = shared.dock.style();
-        let bars_ready = shared.bars.adopt(glass, dock_style);
+        let bars_ready = shared.bars.adopt(dock_style);
         let preview_ready = shared.preview.adopt();
         shared.update_preview();
         if !(bars_ready && preview_ready) {

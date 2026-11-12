@@ -73,12 +73,13 @@ impl TopBar {
     }
 
     fn draw(&mut self, ctx: &egui::Context, front: Option<&AppWindow>, glass: bool, with_tray: bool) {
-        theme::set_light(ctx.theme() == egui::Theme::Light);
+        theme::set_light(crate::app::light(ctx));
         let c = colors();
-        // Real glass shows the blurred desktop through a light tint; without it, a solid bar.
-        let fill = if glass { c.bar } else { c.bg };
+        // Over composed glass (the dock's material, under the window) nothing is filled here;
+        // without it, the bar paints a solid surface.
+        let surface = shellman_ui::glass::content_frame(glass, &crate::bars::top_style()).corner_radius(0);
         egui::CentralPanel::default()
-            .frame(egui::Frame::new().fill(fill))
+            .frame(surface)
             .show(ctx, |ui| {
                 let bar = ui.max_rect();
                 paint_edge(ui, bar, &c);

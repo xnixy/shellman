@@ -9,11 +9,9 @@ pub mod surface;
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::UI::Shell::{DefSubclassProc, SetWindowSubclass};
 use windows::Win32::UI::Controls::MARGINS;
-use windows::Win32::Graphics::Dwm::{
-    DwmExtendFrameIntoClientArea, DwmSetWindowAttribute, DWMWA_BORDER_COLOR, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DONOTROUND,
-};
+use windows::Win32::Graphics::Dwm::{DwmExtendFrameIntoClientArea, DwmSetWindowAttribute, DWMWA_BORDER_COLOR};
 use windows::core::BOOL;
-use windows::Win32::UI::WindowsAndMessaging::{SendMessageW, WM_NCACTIVATE, EnumWindows, GetWindowTextW, GetWindowThreadProcessId};
+use windows::Win32::UI::WindowsAndMessaging::{EnumWindows, GetWindowTextW, GetWindowThreadProcessId};
 use windows::Win32::UI::WindowsAndMessaging::{
     GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos, GWL_EXSTYLE, GWL_STYLE, STYLESTRUCT,
     SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, WM_DPICHANGED, WM_STYLECHANGING,
@@ -22,8 +20,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 /// Clicking the dock must not take focus from the app in front, or "minimize the app in front"
-/// would always see the dock instead. The dock draws its own hairline, so Windows' window border
-/// (which follows the accent color) is turned off.
+/// would always see the dock instead. Windows' window border (which follows the accent color) is
+/// turned off: the glass draws the edge.
 ///
 /// The window library re-applies its own styles on resizes, so the styles are enforced as they
 /// change, in a subclass, rather than set once.
@@ -34,8 +32,6 @@ pub fn never_activate(hwnd: isize) {
         let none: u32 = 0xFFFF_FFFE;
         let _ = DwmSetWindowAttribute(hwnd, DWMWA_BORDER_COLOR, (&raw const none).cast(), 4);
         let _ = SetWindowSubclass(hwnd, Some(dock_proc), 1, 0);
-        // A new window starts inactive; say it is active now (the subclass keeps it so).
-        SendMessageW(hwnd, WM_NCACTIVATE, Some(WPARAM(1)), Some(LPARAM(-1)));
         let ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
         SetWindowLongPtrW(hwnd, GWL_EXSTYLE, fix_ex_style(ex as u32) as isize);
         let style = GetWindowLongPtrW(hwnd, GWL_STYLE);
@@ -68,9 +64,6 @@ unsafe extern "system" fn dock_proc(
     const MA_NOACTIVATE: isize = 3;
     match msg {
         WM_MOUSEACTIVATE => LRESULT(MA_NOACTIVATE),
-        // These windows are never active, and Windows swaps an inactive window's acrylic for a
-        // flat colour. Telling the frame it is active keeps the real backdrop.
-        WM_NCACTIVATE => DefSubclassProc(hwnd, msg, WPARAM(1), lparam),
         // The monitor's scale changed, or the window was moved onto one with another scale: the
         // window library resizes it by the scale, and the bars are then laid out again.
         WM_DPICHANGED => {
@@ -105,19 +98,6 @@ pub fn see_through(hwnd: isize) {
     let margins = MARGINS { cxLeftWidth: -1, cxRightWidth: -1, cyTopHeight: -1, cyBottomHeight: -1 };
     unsafe {
         let _ = DwmExtendFrameIntoClientArea(HWND(hwnd as *mut _), &margins);
-    }
-}
-
-/// Square corners, for a bar that runs flush along a screen edge.
-pub fn square_corners(hwnd: isize) {
-    let value = DWMWCP_DONOTROUND.0;
-    unsafe {
-        let _ = DwmSetWindowAttribute(
-            HWND(hwnd as *mut _),
-            DWMWA_WINDOW_CORNER_PREFERENCE,
-            (&raw const value).cast(),
-            4,
-        );
     }
 }
 
