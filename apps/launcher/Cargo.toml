@@ -1,0 +1,16 @@
+[package]
+name = "shellman-launcher"
+version = "0.1.0"
+edition.workspace = true
+description = "Shellman's launcher: the Start menu and search"
+license.workspace = true
+publish = false
+
+[dependencies]
+eframe.workspace = true
+egui.workspace = true
+raw-window-handle.workspace = true
+serde.workspace = true
+shellman-core.workspace = true
+shellman-ui.workspace = true
+windows.workspace = true

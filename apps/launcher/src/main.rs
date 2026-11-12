@@ -1,0 +1,100 @@
+#![windows_subsystem = "windows"]
+//! Launcher: shellman's Start menu and search, a floating glass panel.
+//!
+//! Run once, it stays resident with its window hidden; run again (the top bar's launcher button
+//! does), it tells the resident one to show or hide, and exits. `--background` starts the
+//! resident process without showing the panel.
+
+mod app;
+mod grid;
+mod icon;
+mod rank;
+mod results;
+mod summon;
+mod usage;
+
+use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+use shellman_ui::appearance::{self, Appearance};
+use shellman_ui::{theme, window};
+use std::sync::Arc;
+use windows::Win32::Foundation::HWND;
+
+fn main() -> eframe::Result {
+    let background = std::env::args().any(|a| a == "--background");
+    let instance = match summon::claim() {
+        summon::Claim::Signalled => return Ok(()),
+        summon::Claim::Resident(instance) => instance,
+    };
+    let options = eframe::NativeOptions {
+        viewport: egui::ViewportBuilder::default()
+            .with_title("shellman launcher")
+            .with_inner_size([summon::WIDTH, summon::HEIGHT])
+            .with_visible(false)
+            .with_decorations(false)
+            .with_transparent(true)
+            .with_resizable(false)
+            .with_always_on_top()
+            .with_taskbar(false),
+        ..Default::default()
+    };
+    eframe::run_native(
+        "shellman-launcher",
+        options,
+        Box::new(move |cc| {
+            theme::install_fonts(&cc.egui_ctx);
+            theme::set_light(cc.egui_ctx.theme() == egui::Theme::Light);
+            theme::apply(&cc.egui_ctx);
+            let look = Appearance::load_or(Appearance::default());
+            look.apply(&cc.egui_ctx);
+            let mut hwnd = 0isize;
+            let mut glass = false;
+            if let Ok(handle) = cc.window_handle() {
+                if let RawWindowHandle::Win32(win32) = handle.as_raw() {
+                    hwnd = win32.hwnd.get();
+                    glass = window::frost_window(HWND(hwnd as *mut _));
+                }
+            }
+            let shared = Arc::new(summon::Shared::default());
+            instance.serve(hwnd, cc.egui_ctx.clone(), shared.clone());
+            if !background {
+                instance.summon();
+            }
+            let look_watch = shellman_core::watch::Watcher::new(cc.egui_ctx.clone());
+            if let Some(dir) = appearance::file().and_then(|f| f.parent().map(|p| p.to_path_buf())) {
+                look_watch.set_dirs(vec![dir]);
+            }
+            Ok(Box::new(Launcher {
+                inner: app::Launcher::new(cc.egui_ctx.clone(), hwnd, glass, shared),
+                look,
+                look_watch,
+                _instance: instance,
+            }))
+        }),
+    )
+}
+
+/// The window's shell: follows the shared look live, and hands each frame to the launcher.
+struct Launcher {
+    inner: app::Launcher,
+    look: Appearance,
+    look_watch: shellman_core::watch::Watcher,
+    /// Holds the single-instance mutex for as long as the process runs.
+    _instance: summon::Instance,
+}
+
+impl eframe::App for Launcher {
+    fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
+        [0.0, 0.0, 0.0, 0.0]
+    }
+
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if !self.look_watch.poll().is_empty() {
+            let look = Appearance::load_or(self.look);
+            if look != self.look {
+                self.look = look;
+                look.apply(ctx);
+            }
+        }
+        self.inner.frame(ctx);
+    }
+}
