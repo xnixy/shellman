@@ -29,6 +29,35 @@ pub struct Item {
     pub delete_after: bool,
 }
 
+impl Item {
+    /// The StartupApproved key that governs this item; None for RunOnce and policy items, which
+    /// have no on/off switch.
+    pub fn area(&self) -> Option<Area> {
+        match &self.origin {
+            Origin::Folder { .. } => Some(Area::StartupFolder),
+            Origin::Run { .. } if self.once => None,
+            Origin::Run { key, .. } => {
+                let k = key.to_ascii_lowercase();
+                if k.contains("policies") {
+                    None
+                } else if k.contains("wow6432node") {
+                    Some(Area::Run32)
+                } else {
+                    Some(Area::Run)
+                }
+            }
+        }
+    }
+
+    /// Whether the item is for everyone on the machine, so its approval is kept under HKLM.
+    pub fn machine_wide(&self) -> bool {
+        match &self.origin {
+            Origin::Run { hive, .. } => *hive == Hive::Hklm,
+            Origin::Folder { common, .. } => *common,
+        }
+    }
+}
+
 /// A file found in a Startup folder.
 pub struct FolderFile {
     pub common: bool,
@@ -155,6 +184,25 @@ mod tests {
         assert!(!items[2].enabled);
         assert_eq!(items[2].command, "C:\\x\\a.exe");
         assert!(items[3].enabled);
+    }
+
+    #[test]
+    fn only_run_and_folder_items_have_a_switch() {
+        let reg = Fake::default();
+        reg.put(Hive::Hkcu, &format!("{CV}\\Run"), "A", text("a.exe"));
+        reg.put(Hive::Hklm, &format!("{CV}\\Run"), "B", text("b.exe"));
+        reg.put(Hive::Hklm, "Software\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Run", "C", text("c.exe"));
+        reg.put(Hive::Hkcu, &format!("{CV}\\RunOnce"), "O", text("o.exe"));
+        reg.put(Hive::Hkcu, &format!("{CV}\\Policies\\Explorer\\Run"), "P", text("p.exe"));
+        let files = [FolderFile { common: true, path: PathBuf::from("C:\\C\\t.lnk") }];
+        let items = collect(&reg, &files, &|s| s.to_string(), true);
+        let by = |n: &str| items.iter().find(|i| i.name == n).unwrap();
+        assert_eq!((by("A").area(), by("A").machine_wide()), (Some(Area::Run), false));
+        assert_eq!((by("B").area(), by("B").machine_wide()), (Some(Area::Run), true));
+        assert_eq!((by("C").area(), by("C").machine_wide()), (Some(Area::Run32), true));
+        assert_eq!((by("t.lnk").area(), by("t.lnk").machine_wide()), (Some(Area::StartupFolder), true));
+        assert_eq!(by("O").area(), None);
+        assert_eq!(by("P").area(), None);
     }
 
     #[test]

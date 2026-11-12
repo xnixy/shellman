@@ -1,34 +1,16 @@
-//! The Win32 side of startup items: expanding `%VARS%`, finding the Startup folders, knowing
-//! whether the session is elevated, and starting an item.
+//! The session's Win32 side of startup items: knowing whether it is elevated, and starting an
+//! item. (Expanding `%VARS%` and finding the Startup folders are shared, in core.)
 
-use super::items::{FolderFile, Item, Origin};
+use super::items::{Item, Origin};
 use super::runner::Launcher;
 use windows::core::{HSTRING, PCWSTR, PWSTR};
 use windows::Win32::Foundation::{CloseHandle, HANDLE};
 use windows::Win32::Security::{GetTokenInformation, TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY};
-use windows::Win32::System::Com::CoTaskMemFree;
-use windows::Win32::System::Environment::ExpandEnvironmentStringsW;
 use windows::Win32::System::Threading::{
     CreateProcessW, GetCurrentProcess, OpenProcessToken, CREATE_NEW_PROCESS_GROUP, PROCESS_INFORMATION, STARTUPINFOW,
 };
-use windows::Win32::UI::Shell::{
-    FOLDERID_CommonStartup, FOLDERID_Startup, SHGetKnownFolderPath, ShellExecuteExW, KF_FLAG_DEFAULT,
-    SEE_MASK_FLAG_NO_UI, SEE_MASK_NOASYNC, SHELLEXECUTEINFOW,
-};
+use windows::Win32::UI::Shell::{ShellExecuteExW, SEE_MASK_FLAG_NO_UI, SEE_MASK_NOASYNC, SHELLEXECUTEINFOW};
 use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
-
-pub fn expand(s: &str) -> String {
-    let src = HSTRING::from(s);
-    unsafe {
-        let need = ExpandEnvironmentStringsW(&src, None);
-        if need == 0 {
-            return s.to_string();
-        }
-        let mut buf = vec![0u16; need as usize];
-        let got = ExpandEnvironmentStringsW(&src, Some(&mut buf));
-        String::from_utf16_lossy(&buf[..(got as usize).saturating_sub(1)])
-    }
-}
 
 pub fn is_elevated() -> bool {
     unsafe {
@@ -42,29 +24,6 @@ pub fn is_elevated() -> bool {
         let _ = CloseHandle(token);
         ok.is_ok() && e.TokenIsElevated != 0
     }
-}
-
-/// The files in the per-user and the common Startup folders, per-user last (Explorer's order is
-/// common first).
-pub fn startup_files() -> Vec<FolderFile> {
-    let mut out = Vec::new();
-    for (common, id) in [(true, &FOLDERID_CommonStartup), (false, &FOLDERID_Startup)] {
-        let dir = unsafe {
-            match SHGetKnownFolderPath(id, KF_FLAG_DEFAULT, None) {
-                Ok(p) => {
-                    let s = p.to_string().unwrap_or_default();
-                    CoTaskMemFree(Some(p.0 as *const _));
-                    s
-                }
-                Err(_) => continue,
-            }
-        };
-        let Ok(rd) = std::fs::read_dir(&dir) else { continue };
-        let mut files: Vec<_> = rd.flatten().filter(|e| e.path().is_file()).map(|e| e.path()).collect();
-        files.sort();
-        out.extend(files.into_iter().map(|path| FolderFile { common, path }));
-    }
-    out
 }
 
 /// Starts items for real. Never used by `--dry-run`.

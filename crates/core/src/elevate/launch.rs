@@ -20,8 +20,8 @@ pub fn run(op: &Op) -> Outcome {
         return Outcome::HelperMissing;
     }
     let file: Vec<u16> = exe.to_string_lossy().encode_utf16().chain(Some(0)).collect();
-    // Every word was validated when the Op was made, so the line needs no quoting.
-    let params: Vec<u16> = op.to_args().join(" ").encode_utf16().chain(Some(0)).collect();
+    // Every word was validated when the Op was made; the line quotes only names with spaces.
+    let params: Vec<u16> = op.command_line().encode_utf16().chain(Some(0)).collect();
     let mut info = SHELLEXECUTEINFOW {
         cbSize: std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,
         fMask: SEE_MASK_NOCLOSEPROCESS,

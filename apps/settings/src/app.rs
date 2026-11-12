@@ -190,6 +190,9 @@ impl SettingsApp {
                             if self.section != Section::Display {
                                 self.st.display.stop();
                             }
+                            if self.section != Section::Startup {
+                                self.st.startup.stop();
+                            }
                             ui.add_space(24.0);
                         });
                     });

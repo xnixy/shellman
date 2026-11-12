@@ -2,11 +2,17 @@
 //! no paths, commands or registry keys are ever taken from it. To add an operation: one variant
 //! here, its words in `parse` and `to_args`, and one arm in the helper's handler.
 
+use crate::startup::approved::Area;
+
 /// One thing the helper will do as administrator.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Op {
     /// Turn a sound device on or off (`sound-device <enable|disable> <endpoint-id>`).
     SoundDevice { enable: bool, id: String },
+    /// Record a machine-wide startup item as on or off, in
+    /// `HKLM\...\Explorer\StartupApproved\<Run|Run32|StartupFolder>`
+    /// (`startup-approve <enable|disable> <run|run32|folder> <name>`). Only that one value.
+    StartupApprove { enable: bool, area: Area, name: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -27,21 +33,44 @@ pub fn is_endpoint_id(s: &str) -> bool {
         && groups.iter().zip([8, 4, 4, 4, 12]).all(|(g, n)| g.len() == n && g.bytes().all(|b| b.is_ascii_hexdigit()))
 }
 
+/// Whether `s` can be the name of a startup item: a Run value's name or a Startup folder file's
+/// name. Not empty, at most 256 characters, no leading or trailing space, and no backslash,
+/// slash, quote or control character, so it is one plain registry value name and never a path.
+pub fn is_item_name(s: &str) -> bool {
+    !s.is_empty()
+        && s.chars().count() <= 256
+        && s.trim() == s
+        && !s.chars().any(|c| c.is_control() || matches!(c, '\\' | '/' | '"'))
+}
+
+fn state_word(state: &str) -> Result<bool, BadArgs> {
+    match state {
+        "enable" => Ok(true),
+        "disable" => Ok(false),
+        _ => Err(BadArgs("expected enable or disable")),
+    }
+}
+
 /// The operation a command line (without the program name) asks for.
 pub fn parse(args: &[String]) -> Result<Op, BadArgs> {
     let words: Vec<&str> = args.iter().map(String::as_str).collect();
     match words.as_slice() {
         ["sound-device", state, id] => {
-            let enable = match *state {
-                "enable" => true,
-                "disable" => false,
-                _ => return Err(BadArgs("expected enable or disable")),
-            };
+            let enable = state_word(state)?;
             if !is_endpoint_id(id) {
                 return Err(BadArgs("not an audio endpoint id"));
             }
             Ok(Op::SoundDevice { enable, id: (*id).to_owned() })
         }
+        ["startup-approve", state, area, name] => {
+            let enable = state_word(state)?;
+            let area = Area::from_word(area).ok_or(BadArgs("area must be run, run32 or folder"))?;
+            if !is_item_name(name) {
+                return Err(BadArgs("not a startup item name"));
+            }
+            Ok(Op::StartupApprove { enable, area, name: (*name).to_owned() })
+        }
+        ["startup-approve", ..] => Err(BadArgs("startup-approve takes exactly a state, an area and a name")),
         ["sound-device", ..] => Err(BadArgs("sound-device takes exactly a state and an endpoint id")),
         [] => Err(BadArgs("no operation")),
         _ => Err(BadArgs("unknown operation")),
@@ -56,7 +85,22 @@ impl Op {
             Op::SoundDevice { enable, id } => {
                 vec!["sound-device".into(), if *enable { "enable" } else { "disable" }.into(), id.clone()]
             }
+            Op::StartupApprove { enable, area, name } => {
+                vec!["startup-approve".into(), if *enable { "enable" } else { "disable" }.into(), area.word().into(), name.clone()]
+            }
         }
+    }
+
+    /// `to_args` as one command line. A word with a space (an item name) is quoted; no word can
+    /// contain a quote or a backslash, so that is all the quoting there is.
+    pub fn command_line(&self) -> String {
+        let quote = |w: String| if w.contains(' ') { format!("\"{w}\"") } else { w };
+        self.to_args().into_iter().map(quote).collect::<Vec<_>>().join(" ")
+    }
+
+    /// The operation for a startup item, or None when `name` is not a plain item name.
+    pub fn startup_approve(enable: bool, area: Area, name: &str) -> Option<Op> {
+        is_item_name(name).then(|| Op::StartupApprove { enable, area, name: name.to_owned() })
     }
 
     /// The operation for a sound device, or None when `id` is not an endpoint id.
@@ -113,6 +157,49 @@ mod tests {
         assert!(parse(&args(&[])).is_err());
         assert!(parse(&args(&["run", "cmd.exe"])).is_err());
         assert!(parse(&args(&["--sound-device", "enable", ID])).is_err());
+    }
+
+    #[test]
+    fn startup_approve_parses_strictly() {
+        let ok = |a: &[&str]| parse(&args(a));
+        assert_eq!(
+            ok(&["startup-approve", "disable", "run32", "Microsoft Teams"]),
+            Ok(Op::StartupApprove { enable: false, area: Area::Run32, name: "Microsoft Teams".into() })
+        );
+        assert!(ok(&["startup-approve", "enable", "folder", "a.lnk"]).is_ok());
+        for bad in [
+            &["startup-approve", "enable", "hklm", "x"][..],
+            &["startup-approve", "enable", "Run", "x"],
+            &["startup-approve", "toggle", "run", "x"],
+            &["startup-approve", "enable", "run"],
+            &["startup-approve", "enable", "run", "x", "y"],
+            &["startup-approve", "enable", "run", ""],
+            &["startup-approve", "enable", "run", "a\\b"],
+            &["startup-approve", "enable", "run", "..\\x"],
+            &["startup-approve", "enable", "run", "a/b"],
+            &["startup-approve", "enable", "run", "a\"b"],
+            &["startup-approve", "enable", "run", "a\nb"],
+            &["startup-approve", "enable", "run", " lead"],
+            &["startup-approve", "enable", "run", "trail "],
+        ] {
+            assert!(ok(bad).is_err(), "{bad:?}");
+        }
+        assert!(ok(&["startup-approve", "enable", "run", &"x".repeat(256)]).is_ok());
+        assert!(ok(&["startup-approve", "enable", "run", &"x".repeat(257)]).is_err());
+    }
+
+    #[test]
+    fn startup_approve_round_trips_and_quotes_spaces() {
+        for area in Area::ALL {
+            for enable in [true, false] {
+                let op = Op::StartupApprove { enable, area, name: "OneDrive Sync".into() };
+                assert_eq!(parse(&op.to_args()), Ok(op.clone()));
+            }
+        }
+        let op = Op::startup_approve(false, Area::Run, "Microsoft Teams").unwrap();
+        assert_eq!(op.command_line(), "startup-approve disable run \"Microsoft Teams\"");
+        assert_eq!(Op::SoundDevice { enable: true, id: ID.into() }.command_line(), format!("sound-device enable {ID}"));
+        assert!(Op::startup_approve(true, Area::Run, "a\\b").is_none());
     }
 
     #[test]

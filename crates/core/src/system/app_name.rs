@@ -82,7 +82,7 @@ fn shell_name(app_id: &str) -> Option<String> {
     }
 }
 
-fn file_description(exe: &Path) -> Option<String> {
+pub fn file_description(exe: &Path) -> Option<String> {
     let wide: Vec<u16> = exe.as_os_str().encode_wide().chain(Some(0)).collect();
     let path = PCWSTR(wide.as_ptr());
     // SAFETY: `path` outlives the calls; `data` is sized by the API; query results point into `data`.
