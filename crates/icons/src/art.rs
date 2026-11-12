@@ -59,23 +59,80 @@ fn mix(a: f32, b: f32, t: f32) -> f32 {
     a + (b - a) * t
 }
 
-/// Straight-alpha RGBA of one point of the icon; each channel is 0..1.
-fn sample(small: bool, glyph: &[Layer], accent: [f32; 3], ink: [f32; 3], x: f32, y: f32) -> [f32; 4] {
-    if PLATE.dist(x, y) > 0.0 {
-        return [0.0; 4];
+/// Plate luminance is kept inside this band so the plate separates from a dark (#1c1c1e) or a
+/// light (#f3f3f3) surface whatever the accent.
+pub(crate) const MIN_LUM: f32 = 0.17;
+pub(crate) const MAX_LUM: f32 = 0.86;
+
+pub(crate) fn luminance(c: [f32; 3]) -> f32 {
+    0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
+}
+
+/// The plate's base color: the accent, shifted evenly (so hue and saturation survive) just
+/// enough to bring its luminance inside `MIN_LUM..=MAX_LUM`. Black becomes graphite.
+pub(crate) fn plate_base(accent: [f32; 3]) -> [f32; 3] {
+    let lum = luminance(accent);
+    let shift = if lum < MIN_LUM {
+        MIN_LUM - lum
+    } else if lum > MAX_LUM {
+        MAX_LUM - lum
+    } else {
+        0.0
+    };
+    // A touch of blue in lifted greys, as Windows' own dark chrome has.
+    let tint = if shift > 0.0 { 0.012 * (shift / MIN_LUM).min(1.0) } else { 0.0 };
+    let mut c = [accent[0] + shift, accent[1] + shift, accent[2] + shift + tint].map(|v| v.clamp(0.0, 1.0));
+    // Clamping a channel can move the luminance again; settle it with a mix toward white or black.
+    let l = luminance(c);
+    if l < MIN_LUM {
+        let t = (MIN_LUM - l) / (1.0 - l);
+        c = c.map(|v| mix(v, 1.0, t));
+    } else if l > MAX_LUM {
+        let t = (l - MAX_LUM) / l;
+        c = c.map(|v| mix(v, 0.0, t));
     }
-    // Top is lifted toward white, bottom sinks toward black, both gently.
-    let t = ((y - 0.04) / 0.92).clamp(0.0, 1.0);
-    let mut c = accent.map(|v| {
+    c
+}
+
+/// The plate's color at depth `t` (0 top, 1 bottom) before rim and glyph: lifted toward white
+/// at the top, sinking toward black at the bottom.
+pub(crate) fn plate_color(base: [f32; 3], t: f32) -> [f32; 3] {
+    base.map(|v| {
         if t < 0.5 {
             mix(mix(v, 1.0, 0.16), v, t * 2.0)
         } else {
-            mix(v, v * 0.82, (t - 0.5) * 2.0)
+            mix(v, v * 0.78, (t - 0.5) * 2.0)
         }
-    });
+    })
+}
+
+/// Straight-alpha RGBA of one point of the icon; each channel is 0..1. `px` is one pixel in
+/// canvas units, so the rim stays 1 px at every size.
+fn sample(small: bool, glyph: &[Layer], base: [f32; 3], ink: [f32; 3], px: f32, x: f32, y: f32) -> [f32; 4] {
+    let dist = PLATE.dist(x, y);
+    if dist > 0.0 {
+        return [0.0; 4];
+    }
+    let t = ((y - 0.04) / 0.92).clamp(0.0, 1.0);
+    let mut c = plate_color(base, t);
+    let light_plate = luminance(base) > 0.6;
+    let inset = -dist / px; // pixels in from the plate's edge
+    // A faint shade gathering at the bottom, inside the plate.
+    let shade = ((t - 0.8) / 0.2).clamp(0.0, 1.0);
+    c = c.map(|v| v * (1.0 - 0.07 * shade));
+    // The rim: a light 1 px line (strongest on top, fading down the sides) on dark and mid
+    // plates, a darker one all round on light plates so they hold their shape.
+    let w = (1.0 - inset).clamp(0.0, 1.0);
+    if light_plate {
+        let a = 0.16 * w * (0.8 + 0.2 * t);
+        c = c.map(|v| mix(v, 0.0, a));
+    } else {
+        let a = 0.14 * w * (1.0 - t).powf(1.3);
+        c = c.map(|v| mix(v, 1.0, a));
+    }
     // A soft shadow under a white glyph lifts it off the plate (big sizes only).
     if !small && ink[0] == 1.0 && glyph.iter().any(|l| union_dist(&l.shapes, x, y - 0.02) < 0.0) {
-        c = c.map(|v| v * 0.82);
+        c = c.map(|v| v * 0.8);
     }
     for l in glyph {
         if union_dist(&l.shapes, x, y) < 0.0 {
@@ -91,9 +148,9 @@ fn sample(small: bool, glyph: &[Layer], accent: [f32; 3], ink: [f32; 3], x: f32,
 /// premultiplied alpha. Straight RGBA out, `size * size * 4` bytes.
 pub fn render(icon: Kind, size: u32, accent: [u8; 3]) -> Vec<u8> {
     let accent = accent.map(|v| v as f32 / 255.0);
-    // Perceived brightness picks a white or a dark glyph; the default rose is well on the white side.
-    let lum = 0.2126 * accent[0] + 0.7152 * accent[1] + 0.0722 * accent[2];
-    let ink = if lum > 0.6 { accent.map(|v| v * 0.15) } else { [1.0; 3] };
+    let base = plate_base(accent);
+    // The plate's brightness picks a white or a dark glyph; the default rose is well on the white side.
+    let ink = if luminance(base) > 0.6 { base.map(|v| v * 0.15) } else { [1.0; 3] };
     let small = size < 32;
     let glyph = layers(icon, small);
     let n = 8u32;
@@ -105,7 +162,7 @@ pub fn render(icon: Kind, size: u32, accent: [u8; 3]) -> Vec<u8> {
                 for sx in 0..n {
                     let x = (px as f32 + (sx as f32 + 0.5) / n as f32) / size as f32;
                     let y = (py as f32 + (sy as f32 + 0.5) / n as f32) / size as f32;
-                    let s = sample(small, &glyph, accent, ink, x, y);
+                    let s = sample(small, &glyph, base, ink, 1.0 / size as f32, x, y);
                     for k in 0..3 {
                         acc[k] += s[k] * s[3];
                     }

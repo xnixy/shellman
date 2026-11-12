@@ -14,8 +14,20 @@ use std::{fs, path::Path};
 
 const SIZES: [u32; 8] = [16, 20, 24, 32, 40, 48, 64, 256];
 const KINDS: [(&str, Kind); 3] = [("shellman", Kind::Shellman), ("files", Kind::Files), ("settings", Kind::Settings)];
-const ACCENTS: [[u8; 3]; 6] =
-    [DEFAULT_ACCENT, [0, 103, 192], [28, 138, 76], [136, 64, 200], [204, 132, 0], [255, 220, 80]];
+const ACCENTS: [[u8; 3]; 12] = [
+    DEFAULT_ACCENT,
+    [0, 103, 192],
+    [28, 138, 76],
+    [136, 64, 200],
+    [204, 132, 0],
+    [255, 220, 80],
+    [0, 0, 0],
+    [26, 26, 26],
+    [128, 128, 128],
+    [255, 255, 255],
+    [16, 24, 80],
+    [244, 244, 246],
+];
 
 fn main() {
     let dir = Path::new("assets/icons");
