@@ -7,6 +7,7 @@ use super::sound_mixer;
 use super::sound_rows::{device_row, disabled_row, link_row, meter_bar, volume_row};
 use crate::page;
 use crate::state::State;
+use shellman_core::system::sound_choices::{self, Choices, FormatControl};
 use shellman_core::system::sound_dev::{self, Device, Flow};
 use shellman_core::system::sound_page::{Detail, Page, Role, Section, SoundPage};
 use shellman_ui::theme;
@@ -184,15 +185,16 @@ fn details(ui: &mut egui::Ui, h: &SoundPage, flow: Flow, dev: &Device, detail: &
             });
         }
     }
-    format_picker(ui, h, dev, detail);
+    let choices = sound_choices::decide(detail.format.as_ref(), detail.spatial.as_ref());
+    format_picker(ui, h, dev, detail, &choices);
     if output {
-        spatial_picker(ui, h, dev, detail);
+        spatial_picker(ui, h, dev, detail, &choices);
     }
 }
 
 /// Spatial sound: Off plus what the device takes right now, the active one selected. The page
 /// follows Windows' own change event, so a choice shows once Windows has taken it.
-fn spatial_picker(ui: &mut egui::Ui, h: &SoundPage, dev: &Device, detail: &Detail) {
+fn spatial_picker(ui: &mut egui::Ui, h: &SoundPage, dev: &Device, detail: &Detail, choices: &Choices) {
     ui.add_space(10.0);
     page::label(ui, "Spatial sound");
     let Some(sp) = detail.spatial.as_ref().filter(|s| s.supported) else {
@@ -216,12 +218,15 @@ fn spatial_picker(ui: &mut egui::Ui, h: &SoundPage, dev: &Device, detail: &Detai
             }
         }
     });
+    if let Some(hint) = &choices.spatial_hint {
+        ui.label(theme::muted(hint).size(12.0));
+    }
     if let Some(e) = &detail.spatial_error {
         ui.label(theme::muted(e).size(12.0));
     }
 }
 
-fn format_picker(ui: &mut egui::Ui, h: &SoundPage, dev: &Device, detail: &Detail) {
+fn format_picker(ui: &mut egui::Ui, h: &SoundPage, dev: &Device, detail: &Detail, choices: &Choices) {
     ui.add_space(10.0);
     page::label(ui, "Format");
     let Some(now) = detail.format else {
@@ -231,6 +236,12 @@ fn format_picker(ui: &mut egui::Ui, h: &SoundPage, dev: &Device, detail: &Detail
     // Several layouts in the list (stereo, 5.1, 7.1) need the channels said.
     let layouts = detail.supported.iter().any(|f| f.channels != now.channels);
     let text = |f: &shellman_core::system::sound_format::FormatSpec| if layouts || f.encoded { f.full_label() } else { f.label() };
+    if let FormatControl::Locked { by } = &choices.format {
+        // Spatial sound decides this one: shown, not offered, so a PCM pick cannot knock it out.
+        ui.add_enabled(false, egui::Button::new(text(&now)).min_size(egui::vec2(300.0, 0.0)));
+        ui.label(theme::muted(sound_choices::locked_note(by)).size(12.0));
+        return;
+    }
     if detail.supported.is_empty() {
         ui.label(theme::muted(format!("{} (this device offers no other formats)", text(&now))));
         return;
