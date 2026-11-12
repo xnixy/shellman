@@ -4,7 +4,7 @@ use crate::theme;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-#[derive(Clone, Serialize, Deserialize, Default)]
+#[derive(Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
     pub accent: theme::AccentChoice,
@@ -12,6 +12,20 @@ pub struct Settings {
     /// Folders open in tabs when the window last closed.
     pub tabs: Vec<PathBuf>,
     pub view: ViewMode,
+    /// How much of the window's acrylic shows through, from 0 (solid) to 1 (nearly clear).
+    pub glass: f32,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            accent: Default::default(),
+            show_hidden: false,
+            tabs: Vec::new(),
+            view: ViewMode::default(),
+            glass: theme::DEFAULT_GLASS,
+        }
+    }
 }
 
 /// How a folder's items are shown.

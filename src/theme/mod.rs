@@ -146,6 +146,9 @@ impl Colors {
         };
         // Neutral greys with a little of the accent mixed in.
         let tint = |grey: u8, amount: f32| mix(Color32::from_gray(grey), accent, amount);
+        // How much of the window's acrylic shows through: 0 solid, 1 nearly clear.
+        let g = glass();
+        let see = |solid: u8, clear: u8| (solid as f32 + (clear as f32 - solid as f32) * g).round() as u8;
         if light {
             let bg = tint(242, 0.05);
             Self {
@@ -170,9 +173,9 @@ impl Colors {
                 sidebar_glass: with_alpha(tint(230, 0.05), 170),
                 sidebar_solid: tint(230, 0.05),
                 page_glass: with_alpha(tint(248, 0.03), 120),
-                shell: with_alpha(tint(238, 0.06), 150),
+                shell: with_alpha(tint(238, 0.06), see(225, 110)),
                 // Translucent, so the window's acrylic shows through the sheet as well.
-                sheet: with_alpha(tint(255, 0.01), 120),
+                sheet: with_alpha(tint(255, 0.01), see(240, 60)),
                 control: with_alpha(tint(255, 0.02), 150),
                 control_hover: with_alpha(tint(255, 0.03), 210),
                 control_active: with_alpha(tint(255, 0.0), 245),
@@ -200,9 +203,9 @@ impl Colors {
                 sidebar_glass: with_alpha(tint(10, 0.06), 178),
                 sidebar_solid: tint(12, 0.06),
                 page_glass: with_alpha(tint(16, 0.06), 140),
-                shell: with_alpha(tint(10, 0.06), 150),
+                shell: with_alpha(tint(10, 0.06), see(225, 110)),
                 // Translucent, so the window's acrylic shows through the sheet as well.
-                sheet: with_alpha(tint(30, 0.06), 95),
+                sheet: with_alpha(tint(30, 0.06), see(240, 40)),
                 // Deep tinted fills, not translucent white: over glass, white lifts toward grey.
                 control: with_alpha(tint(34, 0.07), 200),
                 control_hover: with_alpha(tint(44, 0.09), 215),
@@ -214,6 +217,21 @@ impl Colors {
 
 static LIGHT: AtomicBool = AtomicBool::new(false);
 static ACCENT: AtomicU32 = AtomicU32::new(0xC4364E);
+/// The glass amount, as `f32` bits.
+static GLASS: AtomicU32 = AtomicU32::new(DEFAULT_GLASS.to_bits());
+
+/// The glass amount a fresh install starts with.
+pub const DEFAULT_GLASS: f32 = 0.72;
+
+fn glass() -> f32 {
+    f32::from_bits(GLASS.load(Ordering::Relaxed))
+}
+
+/// Set how much of the acrylic shows through the window, from 0 (solid) to 1 (nearly clear).
+pub fn set_glass(ctx: &egui::Context, amount: f32) {
+    GLASS.store(amount.clamp(0.0, 1.0).to_bits(), Ordering::Relaxed);
+    ctx.request_repaint();
+}
 
 fn accent() -> Color32 {
     let v = ACCENT.load(Ordering::Relaxed);

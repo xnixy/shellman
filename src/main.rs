@@ -37,6 +37,7 @@ fn main() -> eframe::Result {
             theme::install_fonts(&cc.egui_ctx);
             theme::set_light(cc.egui_ctx.theme() == egui::Theme::Light);
             theme::set_accent(&cc.egui_ctx, settings.accent.resolve());
+            theme::set_glass(&cc.egui_ctx, settings.glass);
             theme::apply(&cc.egui_ctx);
             let mut hwnd = 0isize;
             let mut glass = false;

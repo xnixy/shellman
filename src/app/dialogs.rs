@@ -8,6 +8,29 @@ use egui::widgets::color_picker::{color_picker_color32, Alpha};
 use egui::{Align, Align2, Color32, Id, Key, Layout, RichText, Sense, Stroke, Ui, Vec2};
 
 impl super::FileMan {
+    /// How much of the acrylic shows through, applied as the slider moves. Without system
+    /// backdrops (Windows 10) there is no glass to show, so the slider is shown but disabled.
+    fn glass_slider(&mut self, ui: &mut Ui) {
+        let c = colors();
+        ui.label(RichText::new("Glass").size(12.0).color(c.muted));
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Solid").size(11.5).color(c.muted));
+            ui.spacing_mut().slider_width = 240.0;
+            let slider = egui::Slider::new(&mut self.settings.glass, 0.0..=1.0)
+                .show_value(false)
+                .trailing_fill(true);
+            let resp = ui.add_enabled(self.glass, slider);
+            ui.label(RichText::new("Clear").size(11.5).color(c.muted));
+            if resp.changed() {
+                theme::set_glass(ui.ctx(), self.settings.glass);
+                self.save_pending = true;
+            }
+            if !self.glass {
+                resp.on_disabled_hover_text("Needs Windows 11");
+            }
+        });
+    }
+
     pub(super) fn dialogs(&mut self, ctx: &egui::Context) {
         let Some(dialog) = self.dialog.take() else {
             return;
@@ -133,6 +156,8 @@ impl super::FileMan {
                         if let Some(p) = pick {
                             self.set_accent(p);
                         }
+                        ui.add_space(14.0);
+                        self.glass_slider(ui);
                         ui.add_space(14.0);
                         if switch(ui, &mut self.settings.show_hidden, "Show hidden files").changed()
                         {
