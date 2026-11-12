@@ -5,7 +5,7 @@ use windows::core::HSTRING;
 use windows::Win32::Foundation::{HWND, POINT, WPARAM, LPARAM};
 use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreatePopupMenu, DestroyMenu, GetCursorPos, GetForegroundWindow, PostMessageW,
-    SetForegroundWindow, TrackPopupMenuEx, MF_STRING, TPM_BOTTOMALIGN, TPM_LEFTALIGN,
+    SetForegroundWindow, TrackPopupMenuEx, MF_GRAYED, MF_STRING, TPM_BOTTOMALIGN, TPM_LEFTALIGN,
     TPM_RETURNCMD, TPM_RIGHTBUTTON, WM_NULL,
 };
 
@@ -15,6 +15,8 @@ pub enum Choice {
     TogglePin,
     Close,
     Settings,
+    OpenBin,
+    EmptyBin,
 }
 
 /// Which icon the menu is for.
@@ -24,11 +26,15 @@ pub enum Kind {
     /// An app. `pinned` is `None` for icons that cannot be pinned or unpinned; `windows` is how
     /// many windows it has open.
     App { pinned: Option<bool>, windows: usize },
+    /// The Recycle Bin. Emptying is offered only when `can_empty`.
+    Bin { can_empty: bool },
 }
 
 const PIN: usize = 1;
 const CLOSE: usize = 2;
 const SETTINGS: usize = 3;
+const OPEN_BIN: usize = 4;
+const EMPTY_BIN: usize = 5;
 
 /// Show the menu at the pointer, opening upwards. Blocks until it closes.
 pub fn show(hwnd: isize, kind: Kind) -> Choice {
@@ -40,6 +46,11 @@ pub fn show(hwnd: isize, kind: Kind) -> Choice {
         match kind {
             Kind::Launcher => {
                 let _ = AppendMenuW(menu, MF_STRING, SETTINGS, &HSTRING::from("Settings"));
+            }
+            Kind::Bin { can_empty } => {
+                let _ = AppendMenuW(menu, MF_STRING, OPEN_BIN, &HSTRING::from("Open"));
+                let state = if can_empty { MF_STRING } else { MF_STRING | MF_GRAYED };
+                let _ = AppendMenuW(menu, state, EMPTY_BIN, &HSTRING::from("Empty Recycle Bin"));
             }
             Kind::App { pinned, windows } => {
                 if let Some(pinned) = pinned {
@@ -78,6 +89,8 @@ pub fn show(hwnd: isize, kind: Kind) -> Choice {
             PIN => Choice::TogglePin,
             CLOSE => Choice::Close,
             SETTINGS => Choice::Settings,
+            OPEN_BIN => Choice::OpenBin,
+            EMPTY_BIN => Choice::EmptyBin,
             _ => Choice::Nothing,
         }
     }
