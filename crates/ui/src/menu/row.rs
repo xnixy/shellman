@@ -106,7 +106,7 @@ pub(super) fn paint<T>(ui: &Ui, rect: Rect, r: &Row<T>, lit: bool, open: bool) {
         let fill = theme::with_alpha(c.text, if c.light { 18 } else { 12 });
         p.rect_filled(rect.shrink2(Vec2::new(0.0, 1.0)), CornerRadius::same(6), fill);
     }
-    let fg = if r.enabled { c.text } else { theme::with_alpha(c.muted, 150) };
+    let fg = if r.enabled { c.text } else { theme::with_alpha(c.muted, if c.light { 205 } else { 150 }) };
     if let Kind::Picture(tex, size, _) = &r.kind {
         let at = Rect::from_min_size(egui::pos2(rect.left() + 8.0, rect.center().y - size.y / 2.0), *size);
         let tint = if r.enabled { Color32::WHITE } else { Color32::from_white_alpha(120) };

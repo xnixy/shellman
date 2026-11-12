@@ -114,6 +114,10 @@ pub struct Menu {
     rects: Vec<Rect>,
     opened_frame: u64,
     scroll_to_hot: bool,
+    /// The height the last menu of this kind ended up with, to place this one once.
+    height_hint: Option<f32>,
+    /// Whether the position was settled (kept inside the window) on the first frame.
+    placed: bool,
 }
 
 impl Menu {
@@ -125,6 +129,17 @@ impl Menu {
             opened_frame: ctx.cumulative_pass_nr(),
             ..Default::default()
         };
+    }
+
+    /// The height a menu of this kind is expected to have, from the last one. Call after
+    /// `open_at`; the menu is then placed once, so entries arriving later do not move it.
+    pub fn expect_height(&mut self, height: Option<f32>) {
+        self.height_hint = height;
+    }
+
+    /// The first level's height as last drawn.
+    pub fn height(&self) -> Option<f32> {
+        self.rects.first().map(|r| r.height())
     }
 
     pub fn close(&mut self) {
@@ -146,6 +161,16 @@ impl Menu {
         }
         let mut event = self.keyboard(ctx, rows);
         let mut level_rows: &[Row<T>] = rows;
+        if !self.placed {
+            self.placed = true;
+            let screen = ctx.screen_rect();
+            let max_h = (screen.height() - 16.0).max(ROW_H * 3.0);
+            let own = (row::content_height(rows) + 2.0 * row::PAD).min(max_h);
+            let h = self.height_hint.unwrap_or(0.0).max(own).min(max_h);
+            if self.pos.y + h > screen.bottom() - 4.0 {
+                self.pos.y = (screen.bottom() - 4.0 - h).max(screen.top() + 4.0);
+            }
+        }
         let mut pos = self.pos;
         let mut rects = Vec::new();
         let mut parent: Option<Rect> = None;

@@ -10,7 +10,7 @@ use shellman_core::fsops::Op;
 use shellman_core::shell_menu::{Cascade, Item, Loader, Palette, Route, Target};
 use shellman_ui::menu::{Event, Icon, Kind, Menu, Row};
 use shellman_ui::theme::{colors, glyph};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -45,6 +45,11 @@ pub(super) struct ContextMenu {
     textures: HashMap<u64, TextureHandle>,
     /// The target last seen, since when, and whether its walk was asked for yet.
     settling: Option<(Target, f64, bool)>,
+    /// The height the last menu of each kind had, so the next is placed once.
+    heights: HashMap<(bool, bool), f32>,
+    /// A New entry was picked: the folder, what was in it, and when to stop looking for the file
+    /// it makes (0 until the next frame sets it).
+    made: Option<(PathBuf, HashSet<PathBuf>, f64)>,
 }
 
 impl ContextMenu {
@@ -56,6 +61,8 @@ impl ContextMenu {
             open: None,
             textures: HashMap::new(),
             settling: None,
+            heights: HashMap::new(),
+            made: None,
         }
     }
 
@@ -98,6 +105,7 @@ impl ContextMenu {
         let is_dir = target.items.len() == 1 && target.items[0].is_dir();
         self.loader.refresh(&target);
         self.menu.open_at(ctx, pos);
+        self.menu.expect_height(self.heights.get(&(background, is_dir)).copied());
         self.open = Some(Open { target, is_dir, background, has_clip });
     }
 
@@ -109,6 +117,7 @@ impl ContextMenu {
         self.loader.set_palette(Palette { text: rgb(c.text), background: rgb(c.popup) });
         self.loader.poll();
         let notice = self.loader.take_notice();
+        self.find_made(ctx, actions);
         let Some(open) = &self.open else { return notice };
         if !self.menu.is_open() {
             self.open = None;
@@ -142,10 +151,35 @@ impl ContextMenu {
             }
             _ => {}
         }
+        if let (Some(h), Some(open)) = (self.menu.height(), &self.open) {
+            self.heights.insert((open.background, open.is_dir), h);
+        }
         if !self.menu.is_open() {
             self.open = None;
         }
         notice
+    }
+
+    /// After a New entry: the first file that appears in the folder is selected and renamed, as
+    /// Explorer does. The shell makes it a moment after the pick, so the folder is looked at
+    /// until it shows up.
+    fn find_made(&mut self, ctx: &Context, actions: &mut Vec<Action>) {
+        let now = ctx.input(|i| i.time);
+        let Some((dir, before, until)) = &mut self.made else { return };
+        if *until == 0.0 {
+            *until = now + 10.0;
+        }
+        let fresh = std::fs::read_dir(&*dir)
+            .ok()
+            .and_then(|d| d.flatten().map(|e| e.path()).find(|p| !before.contains(p)));
+        match fresh {
+            Some(path) => {
+                actions.push(Action::SelectRename(path));
+                self.made = None;
+            }
+            None if now > *until => self.made = None,
+            None => ctx.request_repaint_after(std::time::Duration::from_millis(120)),
+        }
     }
 
     fn pick_shell(&mut self, path: &[usize], actions: &mut Vec<Action>) {
@@ -153,6 +187,16 @@ impl ContextMenu {
         let Some(view) = self.loader.view(&open.target) else { return };
         let fresh = view.fresh;
         let owned: Vec<Item> = chain(view.items, path).into_iter().cloned().collect();
+        // Entries of the New submenu carry the file type as their verb (".txt"), or "newlink".
+        let makes_file = open.background
+            && owned.len() > 1
+            && owned.last().and_then(|i| i.verb.as_deref()).is_some_and(|v| v.starts_with('.') || v == "newlink");
+        if makes_file {
+            let before: HashSet<PathBuf> = std::fs::read_dir(&open.target.folder)
+                .map(|d| d.flatten().map(|e| e.path()).collect())
+                .unwrap_or_default();
+            self.made = Some((open.target.folder.clone(), before, 0.0));
+        }
         let refs: Vec<&Item> = owned.iter().collect();
         let point = cursor();
         match self.loader.pick(&open.target, &refs, fresh, point) {
@@ -192,9 +236,13 @@ fn native_rows(open: &Open) -> Vec<Row<Pick>> {
     let mut rows = Vec::new();
     if open.background {
         rows.push(act(glyph::NEW_FOLDER, "New folder", "Ctrl+Shift+N", Action::NewFolder));
-        if open.has_clip {
-            rows.push(act(glyph::PASTE, "Paste", "Ctrl+V", Action::Paste));
-        }
+        // Always there, so the entry does not come and go; only usable with something to paste.
+        let mut paste = act(glyph::PASTE, "Paste", "Ctrl+V", Action::Paste);
+        paste.enabled = open.has_clip;
+        rows.push(paste);
+        let mut link = act(glyph::COPY, "Paste shortcut", "", Action::PasteShortcut);
+        link.enabled = open.has_clip;
+        rows.push(link);
         rows.push(Row::separator());
         rows.push(act(glyph::REFRESH, "Refresh", "F5", Action::Refresh));
         rows.push(act(glyph::COPY, "Copy folder path", "", Action::CopyPath));
