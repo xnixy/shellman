@@ -16,6 +16,8 @@ serde_json = "1"
 shellman-core = { path = "crates/core" }
 shellman-icons = { path = "crates/icons" }
 shellman-ui = { path = "crates/ui" }
+# The `implement` and `interface` macros (COM callbacks, IPolicyConfig) name this crate directly.
+windows-core = "0.61"
 # Embeds each app's icon as its exe's Win32 icon resource (see each app's build.rs).
 winresource = "0.1"
 windows = { version = "0.61", features = [
@@ -48,6 +50,20 @@ windows = { version = "0.61", features = [
     "Win32_System_Power",
     "Win32_Globalization",
     "Win32_Graphics_Imaging",
+    "Win32_Devices_Display",
+    "Win32_Devices_FunctionDiscovery",
+    "Win32_NetworkManagement_IpHelper",
+    "Win32_NetworkManagement_Ndis",
+    "Win32_NetworkManagement_WiFi",
+    "Win32_Networking_WinSock",
+    "Win32_System_IO",
+    "Win32_System_Shutdown",
+    "Devices_Radios",
+    "Foundation",
+    "Foundation_Collections",
+    "Media_Control",
+    "Storage_Streams",
+    "UI_Shell",
 ] }
 
 [profile.release]
