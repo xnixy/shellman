@@ -20,8 +20,9 @@ pub struct Classic {
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Kind {
     Classic(Classic),
-    /// A Store (MSIX) app, removed by its package full name.
-    Packaged { full_name: String },
+    /// A Store (MSIX) app, removed by its package full name. `removable` is false for the
+    /// system components Windows does not let a person remove.
+    Packaged { full_name: String, removable: bool },
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -43,7 +44,8 @@ impl App {
     /// What Uninstall does, or None when the program cannot be removed from here.
     pub fn uninstall(&self) -> Option<Action> {
         match &self.kind {
-            Kind::Packaged { full_name } => Some(Action::RemovePackage(full_name.clone())),
+            Kind::Packaged { removable: false, .. } => None,
+            Kind::Packaged { full_name, .. } => Some(Action::RemovePackage(full_name.clone())),
             Kind::Classic(c) if c.no_remove => None,
             Kind::Classic(Classic { msi: Some(product), .. }) => Some(Action::Launch(cmdline::msi_uninstall(product))),
             Kind::Classic(c) => {
@@ -142,9 +144,11 @@ pub mod tests {
     #[test]
     fn packaged_apps_are_removed_by_full_name() {
         let mut a = classic("A", Classic::default());
-        a.kind = Kind::Packaged { full_name: "Pub.App_1.0_x64__abc".into() };
+        a.kind = Kind::Packaged { full_name: "Pub.App_1.0_x64__abc".into(), removable: true };
         assert_eq!(line(&a).unwrap(), "remove Pub.App_1.0_x64__abc");
         assert_eq!(a.modify(), None);
+        a.kind = Kind::Packaged { full_name: "X_1".into(), removable: false };
+        assert_eq!(a.uninstall(), None);
     }
 
     #[test]

@@ -41,8 +41,30 @@ fn read(p: &Package, exists: &dyn Fn(&Path) -> bool) -> Option<App> {
         size_kb: None,
         date: p.InstalledDate().ok().and_then(|d| format::date_from_ticks(d.UniversalTime)),
         icon: p.Logo().ok().and_then(|uri| uri.Path().ok()).and_then(|path| logo_file(&path.to_string(), exists)),
-        kind: Kind::Packaged { full_name },
+        kind: Kind::Packaged { full_name, removable: removable(&id.Name().ok()?.to_string()) },
     })
+}
+
+/// Packages by name (or name prefix) that Windows does not let a person remove: the Store and its
+/// helpers, the runtimes other apps load, and the shell and security components. Windows keeps its
+/// own non-removable list out of reach of a plain read, so this closed list stands in for it.
+const KEEP: [&str; 10] = [
+    "Microsoft.WindowsStore",
+    "Microsoft.StorePurchaseApp",
+    "Microsoft.DesktopAppInstaller",
+    "Microsoft.SecHealthUI",
+    "Microsoft.VCLibs",
+    "Microsoft.UI.Xaml",
+    "Microsoft.NET.Native",
+    "Microsoft.WindowsAppRuntime",
+    "MicrosoftWindows.Client.",
+    "Microsoft.Windows.",
+];
+
+/// Whether Uninstall is offered for a package of this name.
+pub fn removable(package_name: &str) -> bool {
+    let n = package_name.to_ascii_lowercase();
+    !KEEP.iter().any(|k| n.starts_with(&k.to_ascii_lowercase()))
 }
 
 /// The file behind a package's logo URI. The manifest names `Assets\Logo.png`, but the files on
@@ -115,6 +137,16 @@ mod tests {
     fn a_logo_path_that_exists_is_used_as_it_is() {
         let p = logo_file("/C:/Program Files/WindowsApps/X/Assets/Logo.png", &|_| true).unwrap();
         assert_eq!(p, PathBuf::from(r"C:\Program Files\WindowsApps\X\Assets\Logo.png"));
+    }
+
+    #[test]
+    fn system_packages_are_not_removable() {
+        for n in ["Microsoft.WindowsStore", "Microsoft.DesktopAppInstaller", "Microsoft.VCLibs.140.00", "Microsoft.UI.Xaml.2.8", "Microsoft.WindowsAppRuntime.1.6", "MicrosoftWindows.Client.CBS", "Microsoft.Windows.ShellExperienceHost", "Microsoft.SecHealthUI", "microsoft.windowsstore"] {
+            assert!(!removable(n), "{n}");
+        }
+        for n in ["Microsoft.WindowsCalculator", "Microsoft.WindowsTerminal", "Microsoft.Paint", "AgileBits.1Password", "Microsoft.ScreenSketch"] {
+            assert!(removable(n), "{n}");
+        }
     }
 
     #[test]
