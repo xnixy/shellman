@@ -7,6 +7,7 @@
 use crate::fit::Area;
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::sync::Arc;
 use windows::core::w;
 use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
@@ -27,33 +28,31 @@ const CLASS: windows::core::PCWSTR = w!("ShellmanDesktop");
 /// Sent to the controller window when a desktop window is told its DPI changed.
 pub const WM_REFRESH_DISPLAY: u32 = 0x8000 + 2;
 
-/// A decoded picture ready to blit: a GDI bitmap of exactly `dst`'s size.
+/// A GDI bitmap (a DIB section), kept as a number so it can cross threads, and deleted when the
+/// last surface showing it lets go: monitors showing the same picture at the same size share one.
+pub struct Bitmap(pub isize);
+
+impl Drop for Bitmap {
+    fn drop(&mut self) {
+        unsafe {
+            let _ = DeleteObject(HGDIOBJ(self.0 as *mut _));
+        }
+    }
+}
+
+/// A decoded picture ready to blit: a bitmap of exactly `dst`'s size.
+#[derive(Clone)]
 pub struct Image {
-    /// An `HBITMAP` (a DIB section), kept as a number so it can cross threads.
-    pub bitmap: isize,
+    pub bitmap: Arc<Bitmap>,
     pub dst: Area,
     pub tile: bool,
 }
 
+/// What a window shows. Dropping it releases its bitmap (once no other window shows it).
 pub struct Surface {
     /// A COLORREF.
     pub color: u32,
     pub image: Option<Image>,
-}
-
-impl Surface {
-    fn free(&self) {
-        if let Some(image) = &self.image {
-            unsafe {
-                let _ = DeleteObject(HGDIOBJ(image.bitmap as *mut _));
-            }
-        }
-    }
-
-    /// Release the bitmap of a surface that was never shown.
-    pub fn discard(self) {
-        self.free();
-    }
 }
 
 thread_local! {
@@ -101,10 +100,9 @@ pub fn create(area: Area) -> Option<HWND> {
 
 /// Show `surface` in `hwnd`, replacing (and freeing) the previous one.
 pub fn set(hwnd: HWND, surface: Surface) {
+    // The old one is dropped outside the borrow.
     let old = SURFACES.with(|s| s.borrow_mut().insert(hwnd.0 as isize, surface));
-    if let Some(old) = old {
-        old.free();
-    }
+    drop(old);
     unsafe {
         let _ = windows::Win32::Graphics::Gdi::InvalidateRect(Some(hwnd), None, false);
     }
@@ -135,9 +133,8 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPA
             LRESULT(0)
         }
         WM_NCDESTROY => {
-            if let Some(gone) = SURFACES.with(|s| s.borrow_mut().remove(&(hwnd.0 as isize))) {
-                gone.free();
-            }
+            let gone = SURFACES.with(|s| s.borrow_mut().remove(&(hwnd.0 as isize)));
+            drop(gone);
             DefWindowProcW(hwnd, msg, wparam, lparam)
         }
         _ => DefWindowProcW(hwnd, msg, wparam, lparam),
@@ -168,7 +165,7 @@ unsafe fn paint(hwnd: HWND) {
 
 unsafe fn blit(hdc: windows::Win32::Graphics::Gdi::HDC, image: &Image, client: &RECT) {
     let mem = CreateCompatibleDC(Some(hdc));
-    let old = SelectObject(mem, HGDIOBJ(image.bitmap as *mut _));
+    let old = SelectObject(mem, HGDIOBJ(image.bitmap.0 as *mut _));
     let d = image.dst;
     if image.tile {
         let mut y = 0;

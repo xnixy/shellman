@@ -3,6 +3,7 @@
 //!
 //! The rules match what Explorer's taskbar shows, so the same windows appear in the same places.
 
+mod filter;
 pub mod fullscreen;
 mod identity;
 mod watch;
@@ -79,6 +80,8 @@ impl WindowList {
         // Forget windows that are gone, so handles reused later get a fresh identity.
         self.known
             .retain(|h, _| out.iter().any(|w| w.hwnd == *h));
+        // The watcher weighs later events against this list.
+        filter::set_known(out.iter().map(|w| w.hwnd).collect());
         out
     }
 }
@@ -102,9 +105,10 @@ unsafe extern "system" fn collect(hwnd: HWND, lparam: LPARAM) -> BOOL {
 
 /// Explorer's rule for taskbar buttons: shown, on this virtual desktop, a real top-level window
 /// (no owner, not a tool window) unless it explicitly asks to be shown, and titled.
-fn is_app_window(hwnd: HWND) -> bool {
+pub(crate) fn is_app_window(hwnd: HWND) -> bool {
     unsafe {
-        if !IsWindowVisible(hwnd).as_bool() || hwnd == GetShellWindow() || is_cloaked(hwnd) {
+        // Cheapest first: the window watcher asks this about every popup other apps show.
+        if !IsWindowVisible(hwnd).as_bool() || hwnd == GetShellWindow() {
             return false;
         }
         let ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32;
@@ -116,7 +120,7 @@ fn is_app_window(hwnd: HWND) -> bool {
                 return false;
             }
         }
-        if GetWindowTextLengthW(hwnd) == 0 {
+        if is_cloaked(hwnd) || GetWindowTextLengthW(hwnd) == 0 {
             return false;
         }
         !matches!(

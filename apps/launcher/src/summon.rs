@@ -166,6 +166,7 @@ pub fn is_visible(hwnd: isize) -> bool {
 pub fn prepare(hwnd: isize) {
     glass::cloak(hwnd, true);
     tool_window(HWND(hwnd as *mut _));
+    shellman_ui::park::shrink(hwnd);
 }
 
 /// Put the window out of sight. Called by the window itself.
@@ -176,6 +177,8 @@ pub fn prepare(hwnd: isize) {
 /// activation hands the keyboard back to the window behind.
 pub fn hide(hwnd: isize) {
     glass::cloak(hwnd, true);
+    // Out of sight, its buffers go (`park`); `show` sets the size again.
+    shellman_ui::park::shrink(hwnd);
     let hwnd = HWND(hwnd as *mut _);
     unsafe {
         let _ = ShowWindow(hwnd, SW_HIDE);
@@ -220,7 +223,9 @@ fn show(hwnd: HWND) {
             let _ = SetWindowPos(hwnd, Some(HWND_TOPMOST), x, y, w, h, SWP_NOACTIVATE);
         }
         glass::cloak(hwnd.0 as isize, false);
-        take_foreground(hwnd);
+        if test_point().is_none() {
+            take_foreground(hwnd);
+        }
     }
 }
 
@@ -289,6 +294,9 @@ fn panel_rect(work: RECT, scale: f32) -> (i32, i32, i32, i32) {
 /// The monitor under the mouse pointer: where the click that summoned the launcher happened. Only
 /// when the pointer can't be read, the monitor of the window in front.
 unsafe fn front_monitor() -> HMONITOR {
+    if let Some(at) = test_point() {
+        return MonitorFromPoint(at, MONITOR_DEFAULTTONEAREST);
+    }
     let mut at = POINT::default();
     if GetCursorPos(&mut at).is_ok() {
         return MonitorFromPoint(at, MONITOR_DEFAULTTONEAREST);
@@ -298,6 +306,16 @@ unsafe fn front_monitor() -> HMONITOR {
         return MonitorFromWindow(front, MONITOR_DEFAULTTONEAREST);
     }
     MonitorFromPoint(at, MONITOR_DEFAULTTONEAREST)
+}
+
+/// A test copy (`SHELLMAN_INSTANCE` set) can be shown on a chosen monitor with
+/// `SHELLMAN_TEST_AT=x,y` (a point in screen pixels), and then never takes the keyboard from the
+/// window in front, so it can be measured and looked at beside someone's work.
+fn test_point() -> Option<POINT> {
+    std::env::var("SHELLMAN_INSTANCE").ok().filter(|i| !i.is_empty())?;
+    let at = std::env::var("SHELLMAN_TEST_AT").ok()?;
+    let (x, y) = at.split_once(',')?;
+    Some(POINT { x: x.trim().parse().ok()?, y: y.trim().parse().ok()? })
 }
 
 #[cfg(test)]

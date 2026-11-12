@@ -151,6 +151,20 @@ impl Screen {
     }
 }
 
+/// Give the panel its place and size while still out of sight, so the frames drawn before it
+/// shows are drawn at full size and the first frame on screen is complete.
+pub fn presize(hwnd: isize, r: RECT) {
+    let hwnd = HWND(hwnd as *mut _);
+    let (w, h) = (r.right - r.left, r.bottom - r.top);
+    unsafe {
+        let _ = SetWindowPos(hwnd, None, r.left, r.top, w, h, SWP_NOACTIVATE | SWP_NOZORDER);
+        let mut now = RECT::default();
+        if GetWindowRect(hwnd, &mut now).is_ok() && now != r {
+            let _ = SetWindowPos(hwnd, None, r.left, r.top, w, h, SWP_NOACTIVATE | SWP_NOZORDER);
+        }
+    }
+}
+
 /// Place the panel and show it above every window, without activating it. Moving onto a monitor
 /// of another scale makes the window library resize the window to keep its size in points, so
 /// the size is set again once the move is done. It is placed while still cloaked, so it is never
@@ -179,6 +193,8 @@ pub fn show_at(hwnd: isize, r: RECT) {
 pub fn hide(hwnd: isize) {
     let hwnd = HWND(hwnd as *mut _);
     cloak(hwnd, true);
+    // Out of sight, its buffers go (`shellman_ui::park`); `presize` sets the size again.
+    shellman_ui::park::shrink(hwnd.0 as isize);
     unsafe {
         if !IsWindowVisible(hwnd).as_bool() {
             let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);

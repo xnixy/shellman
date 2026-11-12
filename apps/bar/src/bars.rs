@@ -186,10 +186,6 @@ impl Bars {
         })
     }
 
-    pub fn ids(&self) -> Vec<egui::ViewportId> {
-        self.views().map(|(v, _, _)| v.id).collect()
-    }
-
     /// The top bar window on `device`, once it exists.
     pub fn top_hwnd(&self, device: &str) -> Option<isize> {
         self.sets.iter().find(|s| s.slot.device == device)?.top.hwnd

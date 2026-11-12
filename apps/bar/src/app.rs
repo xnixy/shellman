@@ -114,6 +114,10 @@ pub struct Host {
     look_watch: shellman_core::watch::Watcher,
     settings: BarSettings,
     _minimized: Option<HiddenMinimized>,
+    /// The notifications badge the top bars last showed.
+    badge: notify::Badge,
+    /// Bar windows were still being adopted in the last frame.
+    adopting: bool,
 }
 
 impl Host {
@@ -131,6 +135,8 @@ impl Host {
             look_watch,
             settings: BarSettings::load(),
             _minimized: minimized,
+            badge: notify::Badge::default(),
+            adopting: true,
         }
     }
 
@@ -187,23 +193,32 @@ impl eframe::App for Host {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let mut shared = self.shared.lock().unwrap();
         let mut layout_needed = host::take_layout();
+        // Bars repaint only for what they show: this frame runs for many reasons (a window event,
+        // a timer of the preview or the notifications) that change nothing on most bars.
+        let mut wake_all = false;
         if !self.look_watch.poll().is_empty() {
             // The same folder holds the dock's pins and the bar's settings.
             shared.dock.reload_pins();
             shared.top.reload_settings();
+            // Other apps keep files there too (Files saves its state every half minute): only a
+            // changed look or changed settings (the clock, the tray) repaint the bars, each of
+            // which restyles its glass in its own frame. Pins wake the bars themselves.
             let look = Appearance::load_or(self.look);
             if look != self.look {
                 self.look = look;
                 look.apply(ctx);
-                // Each bar restyles its glass in its own frame.
-                self.wake.bars();
+                wake_all = true;
             }
             let settings = BarSettings::load();
             if settings.docks != self.settings.docks {
                 layout_needed = true;
             }
-            self.settings = settings;
+            if settings != self.settings {
+                self.settings = settings;
+                wake_all = true;
+            }
         }
+        // Reads the window list again if it may have changed, and wakes the bars that show it.
         shared.dock.catch_up(ctx);
         // The dock's height follows its icon size, and its reserved band with it.
         let sizes = bars::sizes(shared.dock.height());
@@ -211,23 +226,27 @@ impl eframe::App for Host {
         if layout_needed || reassert || sizes != shared.bars.sizes() {
             let slots = layout::plan(&monitors::all(), self.settings.docks, &sizes);
             shared.bars.update(slots, sizes, reassert);
+            wake_all = true;
         }
         if host::take_requery() {
             shared.bars.requery();
+            wake_all = true;
         }
         let preview_open = shared.preview.tick(Instant::now());
         let covered = shared.bars.primary_top().is_some_and(foreground_covers_monitor_of);
-        let notify_open = shared.notify.tick(Instant::now(), self.settings.do_not_disturb, covered);        // The preview panel is woken with the bars, for when its app's windows change, but only
-        // while it is open: a repaint asked for a viewport nobody declares makes egui open a
-        // blank default window for it ("egui window"), which then spins the event loop.
-        let mut ids = shared.bars.ids();
-        if preview_open {
-            ids.push(preview::id());
+        let notify_open = shared.notify.tick(Instant::now(), self.settings.do_not_disturb, covered);
+        // The badge in the top bars' clock follows the notifications.
+        let badge = shared.notify.badge();
+        if badge != self.badge {
+            self.badge = badge;
+            self.wake.tops();
         }
-        if notify_open {
-            ids.push(notify::id());
-        }
-        self.wake.set(ids);
+        // The preview panel and the notifications window are woken only while they exist: a
+        // repaint asked for a viewport nobody declares makes egui open a blank default window
+        // for it ("egui window"), which then spins the event loop.
+        let (tops, docks) = shared.bars.views().partition::<Vec<_>, _>(|(v, _, _)| v.kind == Kind::Top);
+        self.wake.set(tops.iter().map(|(v, _, _)| v.id).collect(), docks.iter().map(|(v, _, _)| v.id).collect());
+        self.wake.set_others(preview_open.then(preview::id), notify_open.then(notify::id));
         let tray_tops = shared.bars.views().filter(|(v, _, primary)| {
             v.kind == Kind::Top && (*primary || self.settings.tray == TrayMonitors::All)
         });
@@ -244,8 +263,11 @@ impl eframe::App for Host {
         }
         shared.bars.settle();
         drop(shared);
-        // The host wakes for changes every bar shows (the look, icons, the tray).
-        self.wake.bars();
+        // Bar windows being placed and shown get frames until they all are, and one more.
+        let adopting = !bars_ready;
+        if wake_all || adopting || std::mem::replace(&mut self.adopting, adopting) {
+            self.wake.bars();
+        }
         font_atlas::end_frame(ctx);
     }
 }

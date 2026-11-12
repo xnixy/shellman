@@ -154,26 +154,26 @@ fn prepare(generation: u32, monitors: Vec<Area>, ctl: isize) {
     let settings = source::read(&monitors);
     let factory = decode::factory();
     let union = monitors::union(&monitors);
+    let mut rendered = decode::Rendered::default();
     let surfaces: Vec<Surface> = monitors
         .iter()
         .zip(settings)
         .map(|(mon, setting)| {
             let target = Target { mon: *mon, union, fit: setting.fit };
             let image = match (&factory, &setting.path) {
-                (Some(f), Some(path)) => decode::render(f, path, &target),
+                (Some(f), Some(path)) => rendered.render(f, path, &target),
                 _ => None,
             };
             Surface { color: setting.color, image }
         })
         .collect();
+    drop(rendered);
     drop(factory);
     unsafe {
         CoUninitialize();
     }
     let stale = READY.lock().ok().and_then(|mut slot| slot.replace((generation, surfaces)));
-    if let Some((_, old)) = stale {
-        old.into_iter().for_each(Surface::discard);
-    }
+    drop(stale);
     unsafe {
         let _ = PostMessageW(Some(HWND(ctl as *mut _)), WM_READY, WPARAM(generation as usize), LPARAM(0));
     }
@@ -189,7 +189,7 @@ fn install() {
                 surface::set(*hwnd, surface);
             }
         } else {
-            surfaces.into_iter().for_each(Surface::discard);
+            drop(surfaces);
         }
     });
 }

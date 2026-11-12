@@ -9,7 +9,7 @@ mod monitors;
 mod source;
 mod surface;
 
-use windows::core::w;
+use windows::core::HSTRING;
 use windows::Win32::Foundation::{GetLastError, ERROR_ALREADY_EXISTS};
 use windows::Win32::System::Threading::CreateMutexW;
 use windows::Win32::UI::HiDpi::{SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2};
@@ -18,8 +18,13 @@ fn main() {
     unsafe {
         // Real pixels on every monitor, so the picture is scaled to what the screen really has.
         let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
-        // One wallpaper per session: a second copy just exits. The handle lives until exit.
-        let _single = CreateMutexW(None, false, w!("Local\\shellman-desktop"));
+        // One wallpaper per session: a second copy just exits. The handle lives until exit. A test
+        // copy (`SHELLMAN_INSTANCE`) has a name of its own, so it can run beside the real one.
+        let name = match std::env::var("SHELLMAN_INSTANCE").ok().filter(|i| !i.is_empty()) {
+            Some(instance) => HSTRING::from(format!("Local\\shellman-desktop-{instance}")),
+            None => HSTRING::from("Local\\shellman-desktop"),
+        };
+        let _single = CreateMutexW(None, false, &name);
         if GetLastError() == ERROR_ALREADY_EXISTS {
             return;
         }

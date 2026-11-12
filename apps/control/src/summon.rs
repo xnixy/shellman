@@ -173,6 +173,7 @@ pub fn hide(hwnd: isize, shared: &Shared) {
 pub fn prepare(hwnd: isize) {
     glass::cloak(hwnd, true);
     tool_window(HWND(hwnd as *mut _));
+    shellman_ui::park::shrink(hwnd);
 }
 
 /// Out of sight, yet never truly hidden. Windows sends a hidden window no paint messages, and
@@ -182,6 +183,8 @@ pub fn prepare(hwnd: isize) {
 /// window below: it still paints, so pending frames finish and the UI goes idle.
 pub fn park(hwnd: isize) {
     glass::cloak(hwnd, true);
+    // Out of sight, its buffers go (`shellman_ui::park`); `show` sets the size again.
+    shellman_ui::park::shrink(hwnd);
     let hwnd = HWND(hwnd as *mut _);
     unsafe {
         let _ = ShowWindow(hwnd, SW_HIDE);
