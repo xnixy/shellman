@@ -51,9 +51,20 @@ pub struct Shared {
     hide_requested: AtomicBool,
     /// Counts showings, so the window notices a new one.
     shown: AtomicU32,
+    /// Whether the panel is up, as this launcher last set it.
+    showing: AtomicBool,
 }
 
 impl Shared {
+    /// The window hid itself.
+    pub fn mark_hidden(&self) {
+        self.showing.store(false, Ordering::Release);
+    }
+
+    pub fn is_showing(&self) -> bool {
+        self.showing.load(Ordering::Acquire)
+    }
+
     pub fn take_hide_request(&self) -> bool {
         self.hide_requested.swap(false, Ordering::AcqRel)
     }
@@ -118,16 +129,25 @@ impl Instance {
             let hwnd = HWND(hwnd as *mut _);
             // The event wakes this thread, so nothing polls while the launcher is hidden.
             while unsafe { WaitForSingleObject(event, INFINITE) }.0 == 0 {
-                if unsafe { IsWindowVisible(hwnd) }.as_bool() {
+                // Toggle on what this launcher last did, not on `IsWindowVisible`: after a
+                // `--background` start the window library shows the window once by itself.
+                if shared.showing.load(Ordering::Acquire) {
                     shared.hide_requested.store(true, Ordering::Release);
                 } else {
-                    show(hwnd);
+                    // Count the showing first: a frame run by the show itself must already know.
+                    shared.showing.store(true, Ordering::Release);
                     shared.shown.fetch_add(1, Ordering::AcqRel);
+                    show(hwnd);
                 }
                 ctx.request_repaint();
             }
         });
     }
+}
+
+/// Whether the window is on screen right now.
+pub fn is_visible(hwnd: isize) -> bool {
+    unsafe { IsWindowVisible(HWND(hwnd as *mut _)) }.as_bool()
 }
 
 /// Hide the window. Called by the window itself.
@@ -163,6 +183,30 @@ fn show(hwnd: HWND) {
             h,
             SWP_SHOWWINDOW | SWP_FRAMECHANGED,
         );
+        take_foreground(hwnd);
+    }
+}
+
+/// Give `hwnd` the foreground and the keyboard. Windows refuses that to a process that did not
+/// get the last input, and the summoner here is a click on a bar that never activates. So when
+/// the first request is refused, send one press of a key no keyboard has (which makes this
+/// process the last input's sender; the switcher does the same) and ask again.
+fn take_foreground(hwnd: HWND) {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, VIRTUAL_KEY,
+    };
+    unsafe {
+        let _ = SetForegroundWindow(hwnd);
+        if GetForegroundWindow() == hwnd {
+            return;
+        }
+        let key = |flags| INPUT {
+            r#type: INPUT_KEYBOARD,
+            Anonymous: INPUT_0 {
+                ki: KEYBDINPUT { wVk: VIRTUAL_KEY(0xE8), dwFlags: flags, ..Default::default() },
+            },
+        };
+        SendInput(&[key(Default::default()), key(KEYEVENTF_KEYUP)], size_of::<INPUT>() as i32);
         let _ = SetForegroundWindow(hwnd);
     }
 }
@@ -190,13 +234,17 @@ fn panel_rect(work: RECT, scale: f32) -> (i32, i32, i32, i32) {
     (x, y, w, h)
 }
 
+/// The monitor under the mouse pointer: where the click that summoned the launcher happened. Only
+/// when the pointer can't be read, the monitor of the window in front.
 unsafe fn front_monitor() -> HMONITOR {
+    let mut at = POINT::default();
+    if GetCursorPos(&mut at).is_ok() {
+        return MonitorFromPoint(at, MONITOR_DEFAULTTONEAREST);
+    }
     let front = GetForegroundWindow();
     if !front.is_invalid() && !IsIconic(front).as_bool() {
         return MonitorFromWindow(front, MONITOR_DEFAULTTONEAREST);
     }
-    let mut at = POINT::default();
-    let _ = GetCursorPos(&mut at);
     MonitorFromPoint(at, MONITOR_DEFAULTTONEAREST)
 }
 

@@ -23,6 +23,8 @@ const PAD_TOP: f32 = 22.0;
 const APPEAR: Duration = Duration::from_millis(120);
 /// If the window has no keyboard focus this long after appearing, ask for it again.
 const FOCUS_RETRY: Duration = Duration::from_millis(250);
+/// Losing focus this soon after appearing is the window settling, not the user clicking away.
+const FOCUS_GRACE: Duration = Duration::from_millis(400);
 
 pub struct Launcher {
     hwnd: isize,
@@ -113,6 +115,7 @@ impl Launcher {
 
     /// Back to a clean state and out of sight.
     fn hide(&mut self) {
+        self.shared.mark_hidden();
         summon::hide(self.hwnd);
         self.query.clear();
         self.items.clear();
@@ -213,11 +216,19 @@ impl Launcher {
             self.hide();
             return;
         }
+        // After a `--background` start the window library shows the window once by itself.
+        if !self.shared.is_showing() && summon::is_visible(self.hwnd) {
+            summon::hide(self.hwnd);
+        }
         let focused = ctx.input(|i| i.focused);
         if focused {
             self.had_focus = true;
-        } else if self.had_focus {
+        } else if self.had_focus && self.shown_at.elapsed() > FOCUS_GRACE {
             self.hide();
+        } else if self.had_focus {
+            // Focus flickered while the window was settling in: not a click elsewhere.
+            self.had_focus = false;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
         } else if self.shown_at.elapsed() > FOCUS_RETRY && self.shown_at.elapsed() < FOCUS_RETRY * 2 {
             ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
         }
