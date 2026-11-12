@@ -89,6 +89,8 @@ impl eframe::App for Launcher {
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         if !self.look_watch.poll().is_empty() {
+            // The same folder holds the launcher's own file: the settings app can clear its history.
+            self.inner.reload_usage();
             let look = Appearance::load_or(self.look);
             if look != self.look {
                 self.look = look;
