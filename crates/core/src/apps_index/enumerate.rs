@@ -62,6 +62,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "reads this machine's real Apps folder"]
     fn the_apps_folder_lists_apps_with_names_and_ids() {
         let apps = enumerate();
         assert!(!apps.is_empty(), "no apps from shell:AppsFolder");

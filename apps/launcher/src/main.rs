@@ -47,10 +47,11 @@ fn main() -> eframe::Result {
             let look = Appearance::load_or(Appearance::default());
             look.apply(&cc.egui_ctx);
             let mut hwnd = 0isize;
+            let mut glass = false;
             if let Ok(handle) = cc.window_handle() {
                 if let RawWindowHandle::Win32(win32) = handle.as_raw() {
                     hwnd = win32.hwnd.get();
-                    window::frost_window(HWND(hwnd as *mut _));
+                    glass = window::frost_window(HWND(hwnd as *mut _));
                 }
             }
             let shared = Arc::new(summon::Shared::default());
@@ -63,7 +64,7 @@ fn main() -> eframe::Result {
                 look_watch.set_dirs(vec![dir]);
             }
             Ok(Box::new(Launcher {
-                inner: app::Launcher::new(cc.egui_ctx.clone(), hwnd, shared),
+                inner: app::Launcher::new(cc.egui_ctx.clone(), hwnd, glass, shared),
                 look,
                 look_watch,
                 _instance: instance,

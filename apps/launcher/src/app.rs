@@ -21,6 +21,8 @@ const FOCUS_RETRY: Duration = Duration::from_millis(250);
 
 pub struct Launcher {
     hwnd: isize,
+    /// Whether the window has real acrylic; without it the panel is painted opaque.
+    glass: bool,
     shared: Arc<Shared>,
     index: AppIndex,
     apps: Arc<Vec<App>>,
@@ -42,12 +44,13 @@ pub struct Launcher {
 }
 
 impl Launcher {
-    pub fn new(ctx: egui::Context, hwnd: isize, shared: Arc<Shared>) -> Self {
+    pub fn new(ctx: egui::Context, hwnd: isize, glass: bool, shared: Arc<Shared>) -> Self {
         let index = AppIndex::default();
         let repaint = ctx.clone();
         index.refresh(move || repaint.request_repaint());
         let mut me = Self {
             hwnd,
+            glass,
             shared,
             index,
             apps: Arc::default(),
@@ -124,6 +127,7 @@ impl Launcher {
     /// move its caret on Up and Down.
     fn keys(&mut self, ctx: &egui::Context) {
         use egui::{Key, Modifiers};
+        let typing = self.typing();
         let press = |key| ctx.input_mut(|i| i.consume_key(Modifiers::NONE, key));
         if press(Key::Escape) {
             self.hide();
@@ -137,11 +141,12 @@ impl Launcher {
             (Key::ArrowDown, Dir::Down),
         ]
         .into_iter()
+        // While typing, left and right stay with the search box, to move its caret.
+        .filter(|&(_, d)| !typing || matches!(d, Dir::Up | Dir::Down))
         .find(|&(key, _)| press(key))
         .map(|(_, d)| d);
-        if self.typing() {
-            // A list has only up and down; left and right edit the query as usual.
-            if let Some(dir @ (Dir::Up | Dir::Down)) = dir {
+        if typing {
+            if let Some(dir) = dir {
                 let last = self.items.len().saturating_sub(1);
                 self.result_sel = match dir {
                     Dir::Up => self.result_sel.saturating_sub(1),
@@ -174,6 +179,8 @@ impl Launcher {
             self.seen_shown = shown;
             self.had_focus = false;
             self.shown_at = Instant::now();
+            // One wake-up to check that focus arrived; no repeating timer.
+            ctx.request_repaint_after(FOCUS_RETRY + Duration::from_millis(10));
             let repaint = ctx.clone();
             self.index
                 .refresh_if_older(REFRESH_AFTER, move || repaint.request_repaint());
@@ -189,7 +196,6 @@ impl Launcher {
             self.hide();
         } else if self.shown_at.elapsed() > FOCUS_RETRY && self.shown_at.elapsed() < FOCUS_RETRY * 2 {
             ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
-            ctx.request_repaint_after(FOCUS_RETRY);
         }
     }
 
@@ -235,10 +241,15 @@ impl Launcher {
 
         theme::set_light(ctx.theme() == egui::Theme::Light);
         let c = colors();
+        let fill = if self.glass { c.shell } else { c.bg };
         let mut picked = None;
         egui::CentralPanel::default()
-            .frame(egui::Frame::new().fill(c.shell).inner_margin(egui::Margin::same(20)))
+            .frame(egui::Frame::new().fill(fill).inner_margin(egui::Margin::same(20)))
             .show(ctx, |ui| {
+                if self.glass {
+                    // The same surfaces as Files and the dock: the glass tint, then the sheet.
+                    ui.painter().rect_filled(ctx.screen_rect(), 0.0, c.sheet);
+                }
                 self.search_box(ui);
                 let y = ui.cursor().top() + 4.0;
                 ui.painter().hline(ui.max_rect().x_range(), y, egui::Stroke::new(1.0_f32, c.hairline));
