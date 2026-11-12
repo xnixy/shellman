@@ -18,9 +18,9 @@ pub struct Settings {
 #[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default, Debug)]
 pub enum ViewMode {
     /// Rows with columns: name, date, type, size.
-    #[default]
     List,
-    /// Tiles with large previews.
+    /// Tiles with large previews. The default for a fresh install.
+    #[default]
     Grid,
 }
 
