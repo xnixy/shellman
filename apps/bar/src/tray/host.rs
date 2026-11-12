@@ -79,10 +79,13 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPA
         let cds = &*(lparam.0 as *const COPYDATASTRUCT);
         // 1 = tray icons. 0 (app bars) and 3 (icon positions) are answered "no": the bar manages
         // screen space itself, and icon rectangles are not tracked.
-        if cds.dwData != 1 || cds.lpData.is_null() {
+        if cds.lpData.is_null() || !matches!(cds.dwData, 1 | 3) {
             return LRESULT(0);
         }
         let bytes = std::slice::from_raw_parts(cds.lpData as *const u8, cds.cbData as usize);
+        if cds.dwData == 3 {
+            return LRESULT(rect_of(bytes));
+        }
         let Some(n) = data::parse(bytes) else {
             return LRESULT(0);
         };
@@ -93,6 +96,42 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPA
         return LRESULT(ok as isize);
     }
     DefWindowProcW(hwnd, msg, wparam, lparam)
+}
+
+/// Remember where the bar drew an icon (physical screen pixels), for `Shell_NotifyIconGetRect`.
+pub fn set_rect(hwnd: isize, uid: u32, rect: [i32; 4]) {
+    let Some(state) = STATE.get() else { return };
+    let mut state = state.lock().unwrap();
+    if let Some(i) = state.icons.iter_mut().find(|i| i.hwnd == hwnd && i.uid == uid) {
+        if i.rect != Some(rect) {
+            i.rect = Some(rect);
+        }
+    }
+}
+
+/// Answer `Shell_NotifyIconGetRect`: an icon's position or size, or 0 when it is unknown.
+fn rect_of(bytes: &[u8]) -> isize {
+    let Some(req) = data::parse_rect_request(bytes) else { return 0 };
+    let answer = STATE.get().and_then(|state| {
+        let state = state.lock().unwrap();
+        let by_guid = req.guid != [0; 16];
+        state
+            .icons
+            .iter()
+            .find(|i| {
+                (i.hwnd == req.hwnd && i.uid == req.uid) || (by_guid && i.guid == Some(req.guid))
+            })
+            .and_then(|i| i.rect)
+    });
+    let reply = answer.map_or(0, |r| data::rect_answer(req.message, r));
+    super::log::line(&format!(
+        "getrect message={} hwnd={:#x} uid={} guid={} -> rect={answer:?} reply={reply:#x}",
+        req.message,
+        req.hwnd,
+        req.uid,
+        req.guid != [0; 16]
+    ));
+    reply
 }
 
 /// Add, change or remove an icon.
