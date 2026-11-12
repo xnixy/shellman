@@ -97,6 +97,7 @@ impl Dock {
     /// Ask Windows for the windows and the one in front, then lay out the icons.
     fn regroup(&mut self) {
         self.windows = self.list.refresh();
+        self.windows.retain(|w| !is_bar_window(w));
         self.front = winlist::foreground();
         self.rebuild();
     }
@@ -258,6 +259,13 @@ impl Dock {
     }
 }
 
+/// A window of a shellman bar process (this one or another, such as a test bar). The bar has no
+/// app windows; anything of its that looks like one is a fault (an older bar briefly opened blank
+/// "egui window" windows several times a second, and every dock grew and shrank with them).
+fn is_bar_window(w: &AppWindow) -> bool {
+    w.exe.as_deref().and_then(|p| p.file_name()).is_some_and(|n| n.eq_ignore_ascii_case("shellman-bar.exe"))
+}
+
 /// Ask a window to close, as its own close button would.
 pub fn close_window(hwnd: isize) {
     unsafe {
@@ -353,4 +361,22 @@ fn client_size(hwnd: isize) -> (i32, i32) {
         let _ = GetClientRect(HWND(hwnd as *mut _), &mut rc);
     }
     (rc.right - rc.left, rc.bottom - rc.top)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    fn window(exe: Option<&str>) -> AppWindow {
+        AppWindow { hwnd: 1, title: "egui window".into(), app_id: String::new(), exe: exe.map(PathBuf::from), minimized: false }
+    }
+
+    #[test]
+    fn bar_windows_are_never_icons() {
+        assert!(is_bar_window(&window(Some(r"X:\shellman\target\debug\shellman-bar.exe"))));
+        assert!(is_bar_window(&window(Some(r"C:\Apps\SHELLMAN-BAR.EXE"))));
+        assert!(!is_bar_window(&window(Some(r"C:\Apps\shellman-files.exe"))));
+        assert!(!is_bar_window(&window(None)));
+    }
 }
