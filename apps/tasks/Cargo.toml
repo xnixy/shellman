@@ -1,0 +1,18 @@
+[package]
+name = "shellman-tasks"
+version = "0.1.0"
+edition.workspace = true
+description = "Shellman's Task Manager: what runs, what it uses, and ending what hangs"
+license.workspace = true
+publish = false
+
+[dependencies]
+eframe.workspace = true
+egui.workspace = true
+raw-window-handle.workspace = true
+shellman-core.workspace = true
+shellman-ui.workspace = true
+windows.workspace = true
+
+[build-dependencies]
+winresource.workspace = true

@@ -12,6 +12,7 @@ pub mod live_thumb;
 pub mod notify;
 pub mod places;
 pub mod places_reg;
+pub mod procs;
 pub mod recycle_bin;
 pub mod registry;
 pub mod settings;
