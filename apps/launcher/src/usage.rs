@@ -44,7 +44,7 @@ impl Usage {
             .filter(|&(_, n)| n > 0)
             .collect();
         // Stable: ties stay alphabetical, as `apps` is.
-        used.sort_by(|a, b| b.1.cmp(&a.1));
+        used.sort_by_key(|&(_, n)| std::cmp::Reverse(n));
         used.into_iter().take(TOP).map(|(i, _)| i).collect()
     }
 }

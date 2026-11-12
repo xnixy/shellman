@@ -20,8 +20,9 @@ use windows::Win32::System::Threading::{
 use windows::Win32::UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI};
 use windows::Win32::UI::WindowsAndMessaging::{
     AllowSetForegroundWindow, GetCursorPos, GetForegroundWindow, IsIconic, IsWindowVisible,
-    SetForegroundWindow, SetWindowPos, ShowWindow, ASFW_ANY, HWND_TOPMOST, SWP_SHOWWINDOW,
-    SW_HIDE,
+    GetWindowLongPtrW, SetForegroundWindow, SetWindowLongPtrW, SetWindowPos, ShowWindow,
+    ASFW_ANY, GWL_STYLE, HWND_TOPMOST, SWP_FRAMECHANGED, SWP_SHOWWINDOW, SW_HIDE, WS_CAPTION,
+    WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_SYSMENU, WS_THICKFRAME,
 };
 
 /// The panel's size in points, and how far down the screen's work area it starts.
@@ -146,8 +147,29 @@ fn show(hwnd: HWND) {
         let _ = GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &mut dpi_x, &mut dpi_y);
         let scale = dpi_x as f32 / 96.0;
         let (x, y, w, h) = panel_rect(info.rcWork, scale);
-        let _ = SetWindowPos(hwnd, Some(HWND_TOPMOST), x, y, w, h, SWP_SHOWWINDOW);
+        strip_frame(hwnd);
+        let _ = SetWindowPos(
+            hwnd,
+            Some(HWND_TOPMOST),
+            x,
+            y,
+            w,
+            h,
+            SWP_SHOWWINDOW | SWP_FRAMECHANGED,
+        );
         let _ = SetForegroundWindow(hwnd);
+    }
+}
+
+/// No caption, system menu or sizing frame: over glass, Windows would otherwise draw its
+/// minimize, maximize and close buttons into the panel. Done on every showing, since the window
+/// library re-applies its own styles now and then.
+fn strip_frame(hwnd: HWND) {
+    unsafe {
+        let style = GetWindowLongPtrW(hwnd, GWL_STYLE) as u32;
+        let bare = style
+            & !(WS_CAPTION.0 | WS_SYSMENU.0 | WS_THICKFRAME.0 | WS_MINIMIZEBOX.0 | WS_MAXIMIZEBOX.0);
+        SetWindowLongPtrW(hwnd, GWL_STYLE, bare as isize);
     }
 }
 

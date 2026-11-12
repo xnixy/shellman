@@ -249,8 +249,19 @@ fn left_side(ui: &mut egui::Ui, bar: egui::Rect, front: Option<&AppWindow>, limi
     }
 }
 
-/// Until shellman's launcher exists, the button opens Windows' Start, as the Win key does.
+/// Summon shellman's launcher: its exe sits next to the bar's. Running it again signals the
+/// resident one to show or hide, so a click is a toggle. Without the exe, Windows' Start opens,
+/// as the Win key does.
 fn open_start() {
+    let launcher = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(|dir| dir.join("shellman-launcher.exe")))
+        .filter(|path| path.exists());
+    if let Some(path) = launcher {
+        if std::process::Command::new(path).spawn().is_ok() {
+            return;
+        }
+    }
     unsafe {
         keybd_event(VK_LWIN.0 as u8, 0, Default::default(), 0);
         keybd_event(VK_LWIN.0 as u8, 0, KEYEVENTF_KEYUP, 0);
