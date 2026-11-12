@@ -16,6 +16,7 @@ mod place;
 mod preview;
 mod reserve;
 mod shape;
+mod stress;
 mod topbar;
 mod tray;
 mod wake;

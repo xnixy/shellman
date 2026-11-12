@@ -11,10 +11,10 @@ use crate::bars::{self, Bars, Kind};
 use crate::monitors::{self, layout};
 use crate::wake::Wake;
 use crate::workarea::HiddenMinimized;
-use crate::{dock, host, preview, topbar};
+use crate::{dock, host, preview, stress, topbar};
 use shellman_core::settings::bar::BarSettings;
 use shellman_ui::appearance::Appearance;
-use shellman_ui::theme;
+use shellman_ui::{font_atlas, theme};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -116,6 +116,8 @@ impl Host {
                     Kind::Top => shared.top_frame(ctx, primary),
                     Kind::Dock => shared.dock_frame(ctx, &device),
                 }
+                stress::glyphs(ctx);
+                font_atlas::end_frame(ctx);
             });
         }
         // The preview panel exists only while open (see `preview`).
@@ -123,6 +125,8 @@ impl Host {
             let shared = self.shared.clone();
             ctx.show_viewport_deferred(preview::id(), preview::builder(), move |ctx, _| {
                 shared.lock().unwrap().preview_frame(ctx);
+                stress::glyphs(ctx);
+                font_atlas::end_frame(ctx);
             });
         }
     }
@@ -180,6 +184,7 @@ impl eframe::App for Host {
         drop(shared);
         // The host wakes for changes every bar shows (the look, icons, the tray).
         self.wake.bars();
+        font_atlas::end_frame(ctx);
     }
 }
 
