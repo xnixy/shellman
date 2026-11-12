@@ -13,3 +13,4 @@ raw-window-handle.workspace = true
 shellman-core.workspace = true
 shellman-ui.workspace = true
 windows.workspace = true
+serde.workspace = true

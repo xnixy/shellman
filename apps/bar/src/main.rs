@@ -41,15 +41,17 @@ fn main() -> eframe::Result {
                 look_watch.set_dirs(vec![dir]);
             }
             let mut glass = false;
+            let mut dock_hwnd = 0;
             if let Ok(handle) = cc.window_handle() {
                 if let RawWindowHandle::Win32(win32) = handle.as_raw() {
                     let hwnd = win32.hwnd.get();
+                    dock_hwnd = hwnd;
                     glass = window::frost_window(windows::Win32::Foundation::HWND(hwnd as *mut _));
                     shape::never_activate(hwnd);
                 }
             }
             Ok(Box::new(Bar {
-                dock: dock::Dock::new(cc.egui_ctx.clone(), glass),
+                dock: dock::Dock::new(cc.egui_ctx.clone(), glass, dock_hwnd),
                 top: topbar::TopBar::default(),
                 glass,
                 look,
@@ -76,6 +78,8 @@ impl eframe::App for Bar {
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         if !self.look_watch.poll().is_empty() {
+            // The same folder holds the dock's pin file.
+            self.dock.reload_pins();
             let look = Appearance::load_or(self.look);
             if look != self.look {
                 self.look = look;

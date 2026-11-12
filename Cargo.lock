@@ -1854,6 +1854,7 @@ dependencies = [
  "eframe",
  "egui",
  "raw-window-handle",
+ "serde",
  "shellman-core",
  "shellman-ui",
  "windows",
