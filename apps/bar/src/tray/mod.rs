@@ -5,6 +5,7 @@
 
 mod click;
 mod data;
+pub mod demo;
 mod host;
 mod icon;
 pub mod view;

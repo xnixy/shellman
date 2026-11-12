@@ -58,6 +58,20 @@ pub fn icon_font(size: f32) -> egui::FontId {
     egui::FontId::new(size, egui::FontFamily::Name("icons".into()))
 }
 
+/// Whether `install_fonts` found a semibold face.
+static HAS_SEMIBOLD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Text in a semibold weight, for names and headings. The Segoe UI Variable file cannot be
+/// asked for a weight (egui always draws its regular instance), so this uses the separate
+/// Segoe UI Semibold face; without it the text stays regular.
+pub fn semibold_font(size: f32) -> egui::FontId {
+    if HAS_SEMIBOLD.load(std::sync::atomic::Ordering::Relaxed) {
+        egui::FontId::new(size, egui::FontFamily::Name("semibold".into()))
+    } else {
+        egui::FontId::proportional(size)
+    }
+}
+
 pub fn icon(c: char, size: f32) -> RichText {
     RichText::new(c.to_string()).font(icon_font(size))
 }
@@ -81,6 +95,16 @@ pub fn install_fonts(ctx: &egui::Context) {
         if let Some(family) = fonts.families.get_mut(&FontFamily::Proportional) {
             family.insert(0, "segoe".into());
         }
+    }
+    if let Ok(bytes) = std::fs::read(r"C:\Windows\Fonts\seguisb.ttf") {
+        fonts
+            .font_data
+            .insert("semibold".into(), Arc::new(FontData::from_owned(bytes)));
+        // The regular face follows it, for characters Semibold lacks.
+        let mut family = vec!["semibold".to_owned()];
+        family.extend(fonts.families[&FontFamily::Proportional].iter().cloned());
+        fonts.families.insert(FontFamily::Name("semibold".into()), family);
+        HAS_SEMIBOLD.store(true, std::sync::atomic::Ordering::Relaxed);
     }
     for path in [
         r"C:\Windows\Fonts\SegoeIcons.ttf",

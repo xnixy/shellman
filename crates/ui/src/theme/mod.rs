@@ -7,7 +7,7 @@
 mod icons;
 mod style;
 
-pub use icons::{glyph, icon, icon_font, install_fonts};
+pub use icons::{glyph, icon, icon_font, install_fonts, semibold_font};
 pub use style::{apply, danger_button, dialog, muted, primary_button};
 
 use egui::Color32;
@@ -135,6 +135,15 @@ pub struct Colors {
     pub control_hover: Color32,
     /// The active tab.
     pub control_active: Color32,
+    /// The top bar's tint over its glass: dark or light, following the glass amount.
+    pub bar: Color32,
+    /// The top bar's 1 px line along its lower edge.
+    pub bar_edge: Color32,
+    /// Hover and pressed highlights on bar items: the text colour, faint.
+    pub hover_soft: Color32,
+    pub press_soft: Color32,
+    /// A thin divider between groups of bar items.
+    pub separator: Color32,
 }
 
 impl Colors {
@@ -152,6 +161,7 @@ impl Colors {
             |solid: u8, clear: u8| (solid as f32 + (clear as f32 - solid as f32) * g).round() as u8;
         if light {
             let bg = tint(242, 0.05);
+            let text = tint(28, 0.06);
             Self {
                 light,
                 accent,
@@ -159,7 +169,7 @@ impl Colors {
                 accent_text: mix(accent, Color32::BLACK, 0.25),
                 bg,
                 popup: tint(252, 0.02),
-                text: tint(28, 0.06),
+                text,
                 muted: tint(110, 0.08),
                 warn: Color32::from_rgb(160, 96, 0),
                 row_hover: Color32::from_black_alpha(14),
@@ -180,8 +190,14 @@ impl Colors {
                 control: with_alpha(tint(255, 0.02), 150),
                 control_hover: with_alpha(tint(255, 0.03), 210),
                 control_active: with_alpha(tint(255, 0.0), 245),
+                bar: with_alpha(tint(246, 0.03), bar_alpha(0.72, 0.62, g)),
+                bar_edge: Color32::from_black_alpha(20),
+                hover_soft: with_alpha(text, 25),
+                press_soft: with_alpha(text, 38),
+                separator: with_alpha(text, 26),
             }
         } else {
+            let text = tint(240, 0.03);
             Self {
                 light,
                 accent,
@@ -189,7 +205,7 @@ impl Colors {
                 accent_text: mix(accent, Color32::WHITE, 0.4),
                 bg: tint(16, 0.06),
                 popup: tint(34, 0.08),
-                text: tint(240, 0.03),
+                text,
                 muted: tint(150, 0.08),
                 warn: Color32::from_rgb(230, 186, 120),
                 row_hover: Color32::from_rgba_unmultiplied(255, 255, 255, 14),
@@ -211,9 +227,19 @@ impl Colors {
                 control: with_alpha(tint(34, 0.07), 200),
                 control_hover: with_alpha(tint(44, 0.09), 215),
                 control_active: with_alpha(tint(44, 0.08), 240),
+                bar: with_alpha(tint(12, 0.04), bar_alpha(0.66, 0.54, g)),
+                bar_edge: Color32::from_white_alpha(15),
+                hover_soft: with_alpha(text, 25),
+                press_soft: with_alpha(text, 38),
+                separator: with_alpha(text, 26),
             }
         }
     }
+}
+
+/// Opacity (0..=255) of the top bar's tint: `solid` with no glass, `clear` with all of it.
+fn bar_alpha(solid: f32, clear: f32, glass: f32) -> u8 {
+    ((solid + (clear - solid) * glass) * 255.0).round() as u8
 }
 
 static LIGHT: AtomicBool = AtomicBool::new(false);
