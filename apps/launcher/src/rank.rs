@@ -130,9 +130,48 @@ fn fuzzy(name: &[char], starts: &[bool], word: &[char]) -> Option<i32> {
     Some(FUZZY + bonus.min(60) - spread.min(40))
 }
 
+/// For each character of `name`, whether the query's words matched there, to show in the
+/// results. A word marks its first plain substring match, else its letters in order; same
+/// case-insensitive rules as ranking, but only the marks matter here.
+pub fn matched(name: &str, query: &str) -> Vec<bool> {
+    let chars: Vec<char> = name.chars().collect();
+    // Lowercasing one letter to several would shift positions: then mark nothing.
+    let lower: Vec<char> = chars.iter().map(|c| c.to_lowercase().next().unwrap_or(*c)).collect();
+    let mut marks = vec![false; chars.len()];
+    for word in query.split_whitespace() {
+        let word: Vec<char> = word.chars().map(|c| c.to_lowercase().next().unwrap_or(c)).collect();
+        if word.is_empty() || word.len() > lower.len() {
+            continue;
+        }
+        if let Some(at) = (0..=lower.len() - word.len()).find(|&i| lower[i..i + word.len()] == word[..]) {
+            marks[at..at + word.len()].fill(true);
+        } else if word.len() >= 3 {
+            let mut at = 0;
+            for &c in &word {
+                if let Some(found) = (at..lower.len()).find(|&i| lower[i] == c) {
+                    marks[found] = true;
+                    at = found + 1;
+                }
+            }
+        }
+    }
+    marks
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn matched_marks_the_letters_that_matched() {
+        let on = |name: &str, q: &str| -> String {
+            name.chars().zip(matched(name, q)).filter(|(_, m)| *m).map(|(c, _)| c).collect()
+        };
+        assert_eq!(on("Visual Studio Code", "stud"), "Stud");
+        assert_eq!(on("Visual Studio Code", "vis code"), "VisCode");
+        assert_eq!(on("Notepad", "ntp"), "Ntp");
+        assert_eq!(on("Notepad", "zzz"), "");
+    }
 
     fn ranked(names: &[&str], query: &str) -> Vec<String> {
         rank(names, &|_| 0, query, 50)

@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 /// Apps in the "most used" row.
-pub const TOP: usize = 7;
+pub const TOP: usize = 6;
 
 #[derive(Default)]
 pub struct Usage {

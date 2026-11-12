@@ -19,9 +19,10 @@ pub fn enumerate() -> Vec<App> {
     apps
 }
 
-/// Uninstallers are in the folder like any shortcut, but nobody searches for them to launch.
+/// Nameless entries are of no use anywhere. (Help links and uninstallers are kept: they only
+/// stay out of the launcher grid, see `App::is_listed`.)
 fn is_noise(name: &str) -> bool {
-    name.trim().is_empty() || name.to_lowercase().starts_with("uninstall ")
+    name.trim().is_empty()
 }
 
 unsafe fn walk() -> Option<Vec<App>> {
@@ -73,8 +74,8 @@ mod tests {
     }
 
     #[test]
-    fn uninstallers_are_noise() {
-        assert!(is_noise("Uninstall Foo"));
+    fn only_nameless_entries_are_noise() {
+        assert!(is_noise("  "));
         assert!(!is_noise("Foo"));
     }
 }

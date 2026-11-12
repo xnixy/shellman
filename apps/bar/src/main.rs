@@ -13,6 +13,7 @@ mod fullscreen;
 mod host;
 mod monitors;
 mod place;
+mod preview;
 mod reserve;
 mod shape;
 mod topbar;
@@ -80,8 +81,9 @@ fn main() -> eframe::Result {
             let minimized = (mode == Mode::Shell).then(workarea::HiddenMinimized::start);
             let shared = app::Shared {
                 dock: dock::Dock::new(cc.egui_ctx.clone(), glass, wake.clone()),
-                top: topbar::TopBar::new(tray),
+                top: topbar::TopBar::new(tray, test),
                 bars: bars::Bars::new(mode),
+                preview: preview::Preview::new(cc.egui_ctx.clone()),
                 glass,
             };
             Ok(Box::new(app::Host::new(shared, wake, look, look_watch, minimized)))

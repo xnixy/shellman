@@ -42,6 +42,8 @@ pub struct Events {
     pub menu: Option<usize>,
     /// Scrolled over an icon: its index and the wheel's vertical delta.
     pub scrolled: Option<(usize, f32)>,
+    /// The icon under the pointer, and its cell's centre in points from the window's left.
+    pub hovered: Option<(usize, f32)>,
 }
 
 /// The Launcher's icon: an accent plate with the launcher's mark, as in the top bar. Kept in one
@@ -127,12 +129,14 @@ pub fn paint(
             }
         }
         if resp.hovered() {
+            events.hovered = Some((i, cell.center().x - pill.min.x));
             let delta = ui.input(|i| i.raw_scroll_delta.y);
             if delta != 0.0 {
                 events.scrolled = Some((i, delta));
             }
         }
-        let resp = resp.on_hover_text(item.name());
+        // An icon with windows shows their previews instead; the tooltip would fight the panel.
+        let resp = if item.windows.is_empty() { resp.on_hover_text(item.name()) } else { resp };
         if resp.clicked() {
             events.clicked = Some(i);
         }

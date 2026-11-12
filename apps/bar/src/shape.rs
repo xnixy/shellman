@@ -10,7 +10,7 @@ use windows::Win32::Graphics::Dwm::{
     DwmSetWindowAttribute, DWMWA_BORDER_COLOR, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DONOTROUND,
 };
 use windows::core::BOOL;
-use windows::Win32::UI::WindowsAndMessaging::{EnumWindows, GetWindowTextW, GetWindowThreadProcessId};
+use windows::Win32::UI::WindowsAndMessaging::{SendMessageW, WM_NCACTIVATE, EnumWindows, GetWindowTextW, GetWindowThreadProcessId};
 use windows::Win32::UI::WindowsAndMessaging::{
     GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos, GWL_EXSTYLE, GWL_STYLE, STYLESTRUCT,
     SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, WM_DPICHANGED, WM_STYLECHANGING,
@@ -34,6 +34,8 @@ pub fn never_activate(hwnd: isize) {
         let none: u32 = 0xFFFF_FFFE;
         let _ = DwmSetWindowAttribute(hwnd, DWMWA_BORDER_COLOR, (&raw const none).cast(), 4);
         let _ = SetWindowSubclass(hwnd, Some(dock_proc), 1, 0);
+        // A new window starts inactive; say it is active now (the subclass keeps it so).
+        SendMessageW(hwnd, WM_NCACTIVATE, Some(WPARAM(1)), Some(LPARAM(-1)));
         let ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
         SetWindowLongPtrW(hwnd, GWL_EXSTYLE, fix_ex_style(ex as u32) as isize);
         let style = GetWindowLongPtrW(hwnd, GWL_STYLE);
@@ -66,6 +68,9 @@ unsafe extern "system" fn dock_proc(
     const MA_NOACTIVATE: isize = 3;
     match msg {
         WM_MOUSEACTIVATE => LRESULT(MA_NOACTIVATE),
+        // These windows are never active, and Windows swaps an inactive window's acrylic for a
+        // flat colour. Telling the frame it is active keeps the real backdrop.
+        WM_NCACTIVATE => DefSubclassProc(hwnd, msg, WPARAM(1), lparam),
         // The monitor's scale changed, or the window was moved onto one with another scale: the
         // window library resizes it by the scale, and the bars are then laid out again.
         WM_DPICHANGED => {

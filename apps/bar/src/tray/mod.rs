@@ -5,11 +5,14 @@
 
 mod click;
 mod data;
+pub mod demo;
 mod host;
 mod icon;
+mod log;
 pub mod view;
 
 pub use click::Click;
+pub use host::set_rect;
 
 use std::sync::{Arc, Mutex};
 use windows::core::w;
@@ -30,6 +33,9 @@ pub struct TrayIcon {
     pub image: Option<Arc<egui::ColorImage>>,
     /// Bumped whenever the image changes, so the bar re-uploads only changed icons.
     pub rev: u64,
+    /// Where the bar last drew it: left, top, right, bottom in physical screen pixels. Answers
+    /// `Shell_NotifyIconGetRect`, which many apps (Tauri, `tray-icon`) need before reacting.
+    pub rect: Option<[i32; 4]>,
 }
 
 #[derive(Default)]

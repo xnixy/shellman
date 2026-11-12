@@ -115,7 +115,7 @@ impl Dock {
     }
 
     /// Bring a window forward, restoring it if minimized.
-    fn show_window(hwnd: isize) {
+    pub fn show_window(hwnd: isize) {
         let hwnd = HWND(hwnd as *mut _);
         unsafe {
             if IsIconic(hwnd).as_bool() {
@@ -190,17 +190,35 @@ impl Dock {
             }
             menu::Choice::Close => {
                 for &w in &item.windows {
-                    unsafe {
-                        let _ = PostMessageW(Some(HWND(w as *mut _)), WM_CLOSE, WPARAM(0), LPARAM(0));
-                    }
+                    close_window(w);
                 }
             }
             menu::Choice::Nothing => {}
         }
     }
 
-    fn draw(&mut self, ui: &mut egui::Ui, hwnd: isize) {
+    /// The windows of an app's icon, front-most first, for its preview.
+    pub fn windows_of(&self, app_id: &str) -> Vec<AppWindow> {
+        let Some(item) = self.items.iter().find(|i| i.app_id == app_id) else { return Vec::new() };
+        item.windows.iter().filter_map(|h| self.windows.iter().find(|w| w.hwnd == *h).cloned()).collect()
+    }
+
+    /// An app's icon, once the shell has it.
+    pub fn icon(&mut self, ctx: &egui::Context, source: &std::path::Path) -> Option<(egui::TextureId, egui::Vec2)> {
+        shellman_ui::app_icon::get(ctx, source, true, &mut self.thumbs)
+    }
+
+    fn draw(&mut self, ui: &mut egui::Ui, hwnd: isize) -> Hover {
         let events = draw::paint(ui, self.glass, self.pins.icon_size, &mut self.thumbs, &self.items, self.front);
+        let hover = Hover {
+            target: events.hovered.map(|(i, center_x)| Target {
+                app_id: self.items[i].app_id.clone(),
+                has_windows: !self.items[i].windows.is_empty(),
+                center_x,
+            }),
+            inside: ui.ctx().pointer_hover_pos().is_some(),
+            dismiss: events.clicked.is_some() || events.middle.is_some() || events.menu.is_some(),
+        };
         if let Some(i) = events.clicked {
             self.activate(&self.items[i]);
         }
@@ -218,7 +236,32 @@ impl Dock {
         if let Some(i) = events.menu {
             self.context_menu(i, hwnd);
         }
+        hover
     }
+}
+
+/// Ask a window to close, as its own close button would.
+pub fn close_window(hwnd: isize) {
+    unsafe {
+        let _ = PostMessageW(Some(HWND(hwnd as *mut _)), WM_CLOSE, WPARAM(0), LPARAM(0));
+    }
+}
+
+/// What the pointer is over in a dock window, for the preview panel.
+pub struct Hover {
+    /// The icon under the pointer.
+    pub target: Option<Target>,
+    /// The pointer is over this dock window at all (also between icons).
+    pub inside: bool,
+    /// An icon was clicked this frame: whatever was previewed should go.
+    pub dismiss: bool,
+}
+
+pub struct Target {
+    pub app_id: String,
+    pub has_windows: bool,
+    /// The icon cell's centre, in points from the dock window's left edge.
+    pub center_x: f32,
 }
 
 impl Dock {
@@ -246,11 +289,13 @@ impl Dock {
 
     /// One frame of one dock window: `hwnd` is that window, and `salt` (its monitor) keeps its
     /// icons' hover state apart from the other docks'.
-    pub fn frame(&mut self, ctx: &egui::Context, hwnd: isize, salt: &str) {
+    pub fn frame(&mut self, ctx: &egui::Context, hwnd: isize, salt: &str) -> Hover {
         theme::set_light(ctx.theme() == egui::Theme::Light);
         self.catch_up(ctx);
         egui::CentralPanel::default()
             .frame(egui::Frame::new())
-            .show(ctx, |ui| ui.push_id(salt, |ui| self.draw(ui, hwnd)));
+            .show(ctx, |ui| ui.push_id(salt, |ui| self.draw(ui, hwnd)))
+            .inner
+            .inner
     }
 }

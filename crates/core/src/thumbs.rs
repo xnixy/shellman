@@ -25,6 +25,8 @@ use windows::Win32::UI::Shell::{
 /// preview, each enough at 250% scale.
 const SMALL_PX: i32 = 64;
 const LARGE_PX: i32 = 224;
+/// The jumbo size the shell offers, for program icons shown large (see `Thumbs::icons`).
+const JUMBO_PX: i32 = 256;
 const WORKERS: usize = 2;
 /// Past this many, the cache is cleared rather than grown.
 const MAX_CACHED: usize = 4000;
@@ -96,11 +98,23 @@ pub fn is_program(name: &str) -> bool {
 
 impl Thumbs {
     pub fn new(ctx: egui::Context) -> Self {
+        Self::build(ctx, false)
+    }
+
+    /// For showing programs' icons large and crisp: every image is asked for at 256 px and
+    /// cropped to its opaque bounds, so an old 32 px icon the shell centred in a big transparent
+    /// canvas comes back as the 32 px it really is. The texture's size is then the icon's true
+    /// pixel size.
+    pub fn icons(ctx: egui::Context) -> Self {
+        Self::build(ctx, true)
+    }
+
+    fn build(ctx: egui::Context, trim: bool) -> Self {
         let queue: Queue = Arc::new((Mutex::new(Vec::new()), Condvar::new()));
         let (tx, rx) = channel();
         for _ in 0..WORKERS {
             let (queue, tx, ctx) = (queue.clone(), tx.clone(), ctx.clone());
-            std::thread::spawn(move || worker(queue, tx, ctx));
+            std::thread::spawn(move || worker(queue, tx, ctx, trim));
         }
         Self {
             cache: HashMap::new(),
@@ -160,7 +174,7 @@ impl Thumbs {
     }
 }
 
-fn worker(queue: Queue, tx: Sender<(Key, Option<ColorImage>)>, ctx: egui::Context) {
+fn worker(queue: Queue, tx: Sender<(Key, Option<ColorImage>)>, ctx: egui::Context, trim: bool) {
     // Shell thumbnail providers expect a single-threaded apartment.
     unsafe {
         let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
@@ -176,8 +190,12 @@ fn worker(queue: Queue, tx: Sender<(Key, Option<ColorImage>)>, ctx: egui::Contex
                 q = cv.wait(q).unwrap();
             }
         };
-        let px = if key.1 { LARGE_PX } else { SMALL_PX };
-        let image = shell_image(&key.0, px);
+        let px = match (trim, key.1) {
+            (true, _) => JUMBO_PX,
+            (false, true) => LARGE_PX,
+            (false, false) => SMALL_PX,
+        };
+        let image = shell_image(&key.0, px).map(|i| if trim { crop_to_opaque(i) } else { i });
         if tx.send((key, image)).is_err() {
             return;
         }
@@ -200,6 +218,31 @@ fn shell_image(path: &Path, px: i32) -> Option<ColorImage> {
         let _ = DeleteObject(HGDIOBJ(hbmp.0));
         image
     }
+}
+
+/// The image cut down to the box around its visible pixels (alpha above a faint threshold).
+/// Unchanged when it has no transparency at all, or nothing visible.
+fn crop_to_opaque(img: ColorImage) -> ColorImage {
+    let [w, h] = img.size;
+    let (mut x0, mut y0, mut x1, mut y1) = (w, h, 0, 0);
+    for y in 0..h {
+        for x in 0..w {
+            if img.pixels[y * w + x].a() > 12 {
+                x0 = x0.min(x);
+                y0 = y0.min(y);
+                x1 = x1.max(x + 1);
+                y1 = y1.max(y + 1);
+            }
+        }
+    }
+    if x1 <= x0 || (x0, y0, x1, y1) == (0, 0, w, h) {
+        return img;
+    }
+    let mut pixels = Vec::with_capacity((x1 - x0) * (y1 - y0));
+    for y in y0..y1 {
+        pixels.extend_from_slice(&img.pixels[y * w + x0..y * w + x1]);
+    }
+    ColorImage { size: [x1 - x0, y1 - y0], pixels }
 }
 
 /// Copy a 32-bit bitmap out as RGBA. Shell bitmaps are premultiplied BGRA, and photo previews
@@ -269,6 +312,19 @@ mod tests {
         assert!(wants_thumb("setup.exe"));
         assert!(!wants_thumb("notes.txt"));
         assert!(!wants_thumb("Makefile"));
+    }
+
+    #[test]
+    fn crop_keeps_only_the_visible_box() {
+        use egui::Color32;
+        let mut img = ColorImage::new([8, 8], Color32::TRANSPARENT);
+        for (x, y) in [(2, 3), (4, 5)] {
+            img.pixels[y * 8 + x] = Color32::from_rgb(200, 0, 0);
+        }
+        let cropped = crop_to_opaque(img);
+        assert_eq!(cropped.size, [3, 3]);
+        let blank = crop_to_opaque(ColorImage::new([4, 4], Color32::TRANSPARENT));
+        assert_eq!(blank.size, [4, 4]);
     }
 
     #[test]
