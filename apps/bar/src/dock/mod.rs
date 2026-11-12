@@ -1,10 +1,15 @@
 //! The dock: the Launcher, Files, pinned apps, running apps and the Recycle Bin, on a floating glass pill.
+//!
+//! One model, several views: there is one `Dock` (window list, pins, icon cache) and a dock window
+//! per monitor drawing it, so every dock shows the same apps in the same order. A click on any of
+//! them brings the window forward wherever it is.
 
 mod draw;
 mod items;
 mod menu;
 
-use crate::{fullscreen, place};
+use crate::fullscreen;
+use crate::wake::Wake;
 use items::{Item, Section};
 use shellman_core::settings::dock::{DockSettings as Pins, Pin};
 use shellman_core::thumbs::Thumbs;
@@ -15,16 +20,14 @@ use windows::Win32::UI::WindowsAndMessaging::{
     IsIconic, PostMessageW, SetForegroundWindow, ShowWindow, SW_MINIMIZE, SW_RESTORE, WM_CLOSE,
 };
 
-pub use draw::HEIGHT;
-
 /// Wheel movement, in points, that counts as one step through an app's windows. A notch is more
 /// than this; a touchpad adds up to it.
 const SCROLL_STEP: f32 = 30.0;
 
 pub struct Dock {
     glass: bool,
-    /// The dock's own window, which owns the right-click menu.
-    hwnd: isize,
+    /// Repaints every dock and top bar.
+    wake: Wake,
     list: WindowList,
     watcher: WindowWatcher,
     thumbs: Thumbs,
@@ -36,24 +39,22 @@ pub struct Dock {
     /// The latest window list, front to back, for the top bar.
     windows: Vec<AppWindow>,
     front: Option<isize>,
-    /// Size last given to the window, in points, so it is only resized when it changes.
-    placed: Option<egui::Vec2>,
     /// Wheel movement not yet enough for a step, and the icon it happened over.
     scroll: (usize, f32),
 }
 
 impl Dock {
-    pub fn new(ctx: egui::Context, glass: bool, hwnd: isize) -> Self {
-        let wake = ctx.clone();
+    pub fn new(ctx: egui::Context, glass: bool, wake: Wake) -> Self {
+        let bars = wake.clone();
         let watcher = WindowWatcher::start(move || {
-            wake.request_repaint();
+            bars.bars();
             // A hidden window gets no repaints, so a fullscreen app ending is noticed by message.
             fullscreen::request_check();
         });
         watcher.on_front_moved(fullscreen::request_check);
         let mut dock = Self {
             glass,
-            hwnd,
+            wake,
             list: WindowList::default(),
             watcher,
             thumbs: Thumbs::new(ctx),
@@ -63,7 +64,6 @@ impl Dock {
             running_order: Vec::new(),
             windows: Vec::new(),
             front: None,
-            placed: None,
             scroll: (0, 0.0),
         };
         dock.rebuild();
@@ -78,9 +78,10 @@ impl Dock {
             let resized = pins.icon_size != self.pins.icon_size;
             self.pins = pins;
             self.rebuild();
+            self.wake.bars();
             if resized {
-                // Make `place` fit the window to the new size.
-                self.placed = None;
+                // The dock's height, and so the space it reserves, follows the icons.
+                crate::host::request_layout();
             }
         }
     }
@@ -103,17 +104,14 @@ impl Dock {
             .collect();
     }
 
-    /// Fit the window to the icons and keep it centred at the bottom.
-    fn place(&mut self, ctx: &egui::Context) {
-        let icons = self.pins.icon_size;
-        let size = egui::vec2(draw::layout(&self.items, icons).1, icons.height());
-        if self.placed == Some(size) {
-            return;
-        }
-        self.placed = Some(size);
-        let ppp = ctx.pixels_per_point();
-        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(size));
-        ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(place::dock_origin(size, ppp)));
+    /// The dock's width in points, which every dock window takes on.
+    pub fn width(&self) -> f32 {
+        draw::layout(&self.items, self.pins.icon_size).1
+    }
+
+    /// The dock's height in points, which follows the icon size.
+    pub fn height(&self) -> f32 {
+        self.pins.icon_size.height()
     }
 
     /// Bring a window forward, restoring it if minimized.
@@ -168,7 +166,7 @@ impl Dock {
     }
 
     /// Right click: the menu for one icon, and what it chose.
-    fn context_menu(&mut self, i: usize) {
+    fn context_menu(&mut self, i: usize, hwnd: isize) {
         let item = self.items[i].clone();
         let kind = if item.section == Section::Launcher {
             menu::Kind::Launcher
@@ -176,7 +174,7 @@ impl Dock {
             let pinned = item.pinnable().then(|| item.section == Section::Pinned);
             menu::Kind::App { pinned, windows: item.windows.len() }
         };
-        match menu::show(self.hwnd, kind) {
+        match menu::show(hwnd, kind) {
             menu::Choice::Settings => {
                 shellman_core::sibling::start("settings");
             }
@@ -188,6 +186,7 @@ impl Dock {
                 }
                 self.pins.save();
                 self.rebuild();
+                self.wake.bars();
             }
             menu::Choice::Close => {
                 for &w in &item.windows {
@@ -200,7 +199,7 @@ impl Dock {
         }
     }
 
-    fn draw(&mut self, ui: &mut egui::Ui) {
+    fn draw(&mut self, ui: &mut egui::Ui, hwnd: isize) {
         let events = draw::paint(ui, self.glass, self.pins.icon_size, &mut self.thumbs, &self.items, self.front);
         if let Some(i) = events.clicked {
             self.activate(&self.items[i]);
@@ -217,7 +216,7 @@ impl Dock {
             self.scroll_step(i, delta);
         }
         if let Some(i) = events.menu {
-            self.context_menu(i);
+            self.context_menu(i, hwnd);
         }
     }
 }
@@ -229,9 +228,9 @@ impl Dock {
         self.windows.iter().find(|w| w.hwnd == front)
     }
 
-    /// One frame of the dock, which is the bar process's main window.
-    pub fn frame(&mut self, ctx: &egui::Context) {
-        theme::set_light(ctx.theme() == egui::Theme::Light);
+    /// Catch up with the window watcher and finished icons. Any bar's frame calls this first,
+    /// so whichever window repaints first brings the shared model up to date for all of them.
+    pub fn catch_up(&mut self, ctx: &egui::Context) {
         self.thumbs.poll(ctx);
         if self.watcher.take_dirty() {
             self.regroup();
@@ -243,9 +242,15 @@ impl Dock {
                 }
             }
         }
-        self.place(ctx);
+    }
+
+    /// One frame of one dock window: `hwnd` is that window, and `salt` (its monitor) keeps its
+    /// icons' hover state apart from the other docks'.
+    pub fn frame(&mut self, ctx: &egui::Context, hwnd: isize, salt: &str) {
+        theme::set_light(ctx.theme() == egui::Theme::Light);
+        self.catch_up(ctx);
         egui::CentralPanel::default()
             .frame(egui::Frame::new())
-            .show(ctx, |ui| self.draw(ui));
+            .show(ctx, |ui| ui.push_id(salt, |ui| self.draw(ui, hwnd)));
     }
 }

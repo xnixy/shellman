@@ -1,34 +1,39 @@
-//! Where the dock sits: centred at the bottom of the primary monitor's work area, which is the
-//! screen minus Explorer's taskbar while it still runs.
+//! Putting a bar window exactly on a rectangle of physical pixels.
+//!
+//! Bars are placed with Windows directly rather than through egui, whose positions are in points
+//! of whichever monitor the window is on *before* the move, which is wrong as soon as monitors
+//! have different scales.
+//!
+//! Moving a window onto a monitor with another scale makes Windows send it `WM_DPICHANGED`, and
+//! the window library answers by resizing the window by the ratio of the two scales, undoing the
+//! size just set. So the rectangle is checked after the move and set once more: the window is on
+//! its monitor by then, and the second move does not change its scale. The window's own frames
+//! then follow the new scale, so the bar draws at its monitor's size.
 
-use windows::Win32::Foundation::RECT;
+use windows::Win32::Foundation::{HWND, RECT};
 use windows::Win32::UI::WindowsAndMessaging::{
-    SystemParametersInfoW, SPI_GETWORKAREA, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS,
+    GetWindowRect, SetWindowPos, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOOWNERZORDER,
 };
 
-/// Gap between the dock and the bottom of the work area, in points.
-const GAP: f32 = 8.0;
-
-/// The work area in physical pixels.
-fn work_area() -> RECT {
-    let mut r = RECT::default();
-    unsafe {
-        let _ = SystemParametersInfoW(
-            SPI_GETWORKAREA,
-            0,
-            Some((&raw mut r).cast()),
-            SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
-        );
+/// Move and size `hwnd` to `rect`, keeping it above other windows. Does nothing if it is
+/// already there.
+pub fn put(hwnd: isize, rect: RECT) {
+    let hwnd = HWND(hwnd as *mut _);
+    for _ in 0..2 {
+        let mut now = RECT::default();
+        if unsafe { GetWindowRect(hwnd, &mut now) }.is_ok() && now == rect {
+            return;
+        }
+        unsafe {
+            let _ = SetWindowPos(
+                hwnd,
+                Some(HWND_TOPMOST),
+                rect.left,
+                rect.top,
+                rect.right - rect.left,
+                rect.bottom - rect.top,
+                SWP_NOACTIVATE | SWP_NOOWNERZORDER,
+            );
+        }
     }
-    r
-}
-
-/// Top-left corner, in points, for a dock of `size` points at `ppp` pixels per point.
-pub fn dock_origin(size: egui::Vec2, ppp: f32) -> egui::Pos2 {
-    let wa = work_area();
-    let (left, right, bottom) = (wa.left as f32 / ppp, wa.right as f32 / ppp, wa.bottom as f32 / ppp);
-    egui::pos2(
-        ((left + right) / 2.0 - size.x / 2.0).round(),
-        (bottom - GAP - size.y).round(),
-    )
 }

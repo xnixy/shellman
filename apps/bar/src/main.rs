@@ -1,36 +1,47 @@
 #![windows_subsystem = "windows"]
-//! Shellman's bar: for now, the dock. The top bar joins it in this process later.
+//! Shellman's bar: a top bar and a dock on every monitor, all windows of this one process, which
+//! keeps one window list, one icon cache and the tray.
+//!
+//! `--no-shell` runs it beside a bar that is already the shell, for testing: no tray, and no
+//! reserved space or work area changes.
 
+mod app;
 mod appbar;
+mod bars;
 mod dock;
 mod fullscreen;
+mod host;
+mod monitors;
 mod place;
+mod reserve;
 mod shape;
 mod topbar;
 mod tray;
+mod wake;
 mod workarea;
 
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+use reserve::Mode;
 use shellman_ui::appearance::{self, Appearance};
 use shellman_ui::{theme, window};
 
 fn main() -> eframe::Result {
+    let test = std::env::args().any(|a| a == "--no-shell");
     let options = eframe::NativeOptions {
+        // The host: one pixel, cloaked, never seen (see `host.rs`).
         viewport: egui::ViewportBuilder::default()
-            .with_title("shellman dock")
-            .with_inner_size([400.0, dock::HEIGHT])
+            .with_title("shellman bar")
+            .with_inner_size([1.0, 1.0])
             .with_decorations(false)
             .with_transparent(true)
             .with_resizable(false)
-            .with_always_on_top()
-            // No taskbar button of its own.
             .with_taskbar(false),
         ..Default::default()
     };
     eframe::run_native(
         "shellman-bar",
         options,
-        Box::new(|cc| {
+        Box::new(move |cc| {
             theme::install_fonts(&cc.egui_ctx);
             theme::set_light(cc.egui_ctx.theme() == egui::Theme::Light);
             theme::apply(&cc.egui_ctx);
@@ -42,57 +53,36 @@ fn main() -> eframe::Result {
                 look_watch.set_dirs(vec![dir]);
             }
             let mut glass = false;
-            let mut dock_hwnd = 0;
             if let Ok(handle) = cc.window_handle() {
                 if let RawWindowHandle::Win32(win32) = handle.as_raw() {
                     let hwnd = win32.hwnd.get();
-                    dock_hwnd = hwnd;
+                    // Whether Windows can frost a window; the host itself is never drawn.
                     glass = window::frost_window(windows::Win32::Foundation::HWND(hwnd as *mut _));
-                    shape::never_activate(hwnd);
-                    fullscreen::start(hwnd);
+                    host::start(hwnd, cc.egui_ctx.clone());
                 }
             }
-            Ok(Box::new(Bar {
-                dock: dock::Dock::new(cc.egui_ctx.clone(), glass, dock_hwnd),
-                top: topbar::TopBar::default(),
+            let wake = wake::Wake::new(cc.egui_ctx.clone());
+            // Become the tray first: without Explorer, app-bar requests then come to shellman,
+            // which declines them, and work areas are set directly instead.
+            let tray = if test {
+                None
+            } else {
+                let wake = wake.clone();
+                tray::Tray::start(move || wake.bars())
+            };
+            let mode = match (test, tray.is_some()) {
+                (true, _) => Mode::Off,
+                (false, true) => Mode::Shell,
+                (false, false) => Mode::Explorer,
+            };
+            let minimized = (mode == Mode::Shell).then(workarea::HiddenMinimized::start);
+            let shared = app::Shared {
+                dock: dock::Dock::new(cc.egui_ctx.clone(), glass, wake.clone()),
+                top: topbar::TopBar::new(tray),
+                bars: bars::Bars::new(mode),
                 glass,
-                look,
-                look_watch,
-            }))
+            };
+            Ok(Box::new(app::Host::new(shared, wake, look, look_watch, minimized)))
         }),
     )
-}
-
-/// The bar process: the dock is its main window, the top bar a second one. Both repaint only on
-/// events (window changes, input) and the top bar's clock minute.
-struct Bar {
-    dock: dock::Dock,
-    top: topbar::TopBar,
-    glass: bool,
-    look: Appearance,
-    look_watch: shellman_core::watch::Watcher,
-}
-
-impl eframe::App for Bar {
-    fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
-        [0.0, 0.0, 0.0, 0.0]
-    }
-
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        if !self.look_watch.poll().is_empty() {
-            // The same folder holds the dock's pin file.
-            self.dock.reload_pins();
-            self.top.reload_settings();
-            let look = Appearance::load_or(self.look);
-            if look != self.look {
-                self.look = look;
-                look.apply(ctx);
-            }
-        }
-        self.dock.frame(ctx);
-        self.top.show(ctx, self.dock.front_window(), self.glass);
-        if let Some(top) = self.top.hwnd() {
-            fullscreen::set_top(top);
-        }
-    }
 }

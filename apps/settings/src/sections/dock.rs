@@ -1,8 +1,9 @@
-//! Dock: the icon size, and the pinned apps with their order.
+//! Dock: the icon size, which monitors have one, and the pinned apps with their order.
 
 use crate::page;
 use crate::state::State;
 use egui::{Align, CornerRadius, FontId, Layout, Sense, UiBuilder, Vec2};
+use shellman_core::settings::bar::Docks;
 use shellman_core::settings::dock::IconSize;
 use shellman_ui::theme::{self, colors, glyph, icon_font};
 use shellman_ui::widgets::{draw_text, round_button};
@@ -26,6 +27,14 @@ pub fn show(ui: &mut egui::Ui, st: &mut State) {
     let options = IconSize::ALL.map(|s| (s, s.label()));
     if page::segmented(ui, &mut st.dock.icon_size, &options) {
         st.save_dock();
+    }
+
+    page::gap(ui);
+    page::label(ui, "Show the dock on");
+    // Kept with the bar's settings, since it decides which bar windows each monitor gets.
+    let options = Docks::ALL.map(|d| (d, d.label()));
+    if page::segmented(ui, &mut st.bar.docks, &options) {
+        st.save_bar();
     }
 
     page::gap(ui);

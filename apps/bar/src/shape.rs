@@ -1,4 +1,4 @@
-//! The dock window's behaviour and outline.
+//! The bar windows' behaviour and outline.
 //!
 //! Windows paints a glass backdrop over the whole window rectangle, rounded only by its own
 //! window corners; a window region does not clip it (tried and measured). So the dock's pill uses
@@ -13,7 +13,7 @@ use windows::core::BOOL;
 use windows::Win32::UI::WindowsAndMessaging::{EnumWindows, GetWindowTextW, GetWindowThreadProcessId};
 use windows::Win32::UI::WindowsAndMessaging::{
     GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos, GWL_EXSTYLE, GWL_STYLE, STYLESTRUCT,
-    SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, WM_STYLECHANGING,
+    SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, WM_DPICHANGED, WM_STYLECHANGING,
     WS_CAPTION, WS_EX_APPWINDOW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_MAXIMIZEBOX,
     WS_MINIMIZEBOX, WS_SYSMENU, WS_THICKFRAME,
 };
@@ -66,8 +66,17 @@ unsafe extern "system" fn dock_proc(
     const MA_NOACTIVATE: isize = 3;
     match msg {
         WM_MOUSEACTIVATE => LRESULT(MA_NOACTIVATE),
-        crate::fullscreen::WM_CHECK => {
-            crate::fullscreen::check();
+        // The monitor's scale changed, or the window was moved onto one with another scale: the
+        // window library resizes it by the scale, and the bars are then laid out again.
+        WM_DPICHANGED => {
+            let result = DefSubclassProc(hwnd, msg, wparam, lparam);
+            crate::host::request_layout();
+            result
+        }
+        crate::appbar::CALLBACK => {
+            if wparam.0 == crate::appbar::POS_CHANGED {
+                crate::host::request_requery();
+            }
             LRESULT(0)
         }
         WM_STYLECHANGING if wparam.0 as i32 == GWL_EXSTYLE.0 => {

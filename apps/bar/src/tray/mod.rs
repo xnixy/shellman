@@ -42,14 +42,15 @@ pub struct Tray {
 }
 
 impl Tray {
-    /// Become the tray, unless another one (Explorer's) is running.
-    pub fn start(ctx: egui::Context) -> Option<Self> {
+    /// Become the tray, unless another one (Explorer's) is running. `wake` is called (from the
+    /// tray's thread) when icons change.
+    pub fn start(wake: impl Fn() + Send + Sync + 'static) -> Option<Self> {
         if unsafe { FindWindowW(w!("Shell_TrayWnd"), None) }.is_ok_and(|h| !h.is_invalid()) {
             return None;
         }
         let state = Arc::new(Mutex::new(TrayState::default()));
         let shared = state.clone();
-        std::thread::spawn(move || host::run(shared, Box::new(move || ctx.request_repaint())));
+        std::thread::spawn(move || host::run(shared, Box::new(wake)));
         Some(Self { state })
     }
 

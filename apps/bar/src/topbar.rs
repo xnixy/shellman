@@ -1,25 +1,22 @@
 //! The top bar: the launcher button and the app in front on the left, status and the clock on
-//! the right. Tray icons join the right side once shellman owns the tray.
+//! the right. Tray icons join the right side once shellman owns the tray, on the primary
+//! monitor's bar only, so they keep stable places.
+//!
+//! Every monitor has a top bar window; they all draw this one `TopBar` (`bars.rs` owns the
+//! windows and their places).
 //!
 //! It repaints when the app in front changes, on its own input, and once a minute for the clock;
 //! otherwise it is idle.
 
-use crate::appbar::AppBar;
 use crate::tray::{view::TrayTextures, Tray};
-use crate::workarea::WorkArea;
-use crate::shape;
 use shellman_core::settings::bar::BarSettings;
 use shellman_core::system::{app_name, clock, status};
 use shellman_core::winlist::AppWindow;
 use shellman_ui::theme::{self, colors, icon_font};
 use shellman_ui::widgets::draw_text;
-use shellman_ui::window;
 use std::time::{Duration, Instant};
-use windows::Win32::Foundation::{HWND, RECT};
 use windows::Win32::UI::Input::KeyboardAndMouse::{keybd_event, KEYEVENTF_KEYUP, VK_LWIN};
-use windows::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN};
 
-pub const TITLE: &str = "shellman top bar";
 pub const HEIGHT: f32 = 32.0;
 /// Status is read again after this long, or right after the user changes it.
 const STATUS_TTL: Duration = Duration::from_secs(30);
@@ -30,15 +27,8 @@ const GLOBE: char = '\u{E774}';
 const LOCAL_NET: char = '\u{E839}';
 const BATTERY: char = '\u{E83F}';
 
-/// Space kept free for the dock below maximized windows, in points: its height and two gaps.
-const DOCK_RESERVE: f32 = 72.0;
-
 #[derive(Default)]
 pub struct TopBar {
-    hwnd: Option<isize>,
-    /// While Explorer runs, it reserves the bar's space; without it, the work area is set here.
-    _appbar: Option<AppBar>,
-    _workarea: Option<WorkArea>,
     status: Option<(Instant, Status)>,
     /// The tray, when shellman owns it (Explorer's taskbar is not running).
     tray: Option<Tray>,
@@ -54,9 +44,8 @@ struct Status {
 }
 
 impl TopBar {
-    /// The bar's window, once it exists.
-    pub fn hwnd(&self) -> Option<isize> {
-        self.hwnd
+    pub fn new(tray: Option<Tray>) -> Self {
+        Self { tray, ..Default::default() }
     }
 
     /// Read the bar's settings again, when something saved them (the settings app).
@@ -64,56 +53,10 @@ impl TopBar {
         self.settings = None;
     }
 
-    /// Show the bar as a second window of the bar process, across the top of the primary screen.
-    pub fn show(&mut self, parent: &egui::Context, front: Option<&AppWindow>, glass: bool) {
-        let ppp = parent.pixels_per_point();
-        let screen_px = unsafe { (GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN)) };
-        let builder = egui::ViewportBuilder::default()
-            .with_title(TITLE)
-            .with_decorations(false)
-            .with_transparent(true)
-            .with_resizable(false)
-            .with_always_on_top()
-            .with_taskbar(false)
-            .with_position([0.0, 0.0])
-            .with_inner_size([screen_px.0 as f32 / ppp, HEIGHT]);
-        parent.show_viewport_immediate(egui::ViewportId::from_hash_of("top-bar"), builder, |ctx, _| {
-            self.adopt_window(ctx, screen_px, glass);
-            self.draw(ctx, front, glass);
-            ctx.request_repaint_after(clock::until_next_minute());
-        });
-    }
-
-    /// Once the window exists: glass, square corners, never focused, and its space reserved.
-    fn adopt_window(&mut self, ctx: &egui::Context, screen_px: (i32, i32), glass: bool) {
-        if self.hwnd.is_some() {
-            return;
-        }
-        let Some(hwnd) = shape::own_window(TITLE) else {
-            ctx.request_repaint();
-            return;
-        };
-        self.hwnd = Some(hwnd);
-        if glass {
-            window::frost_window(HWND(hwnd as *mut _));
-        }
-        shape::square_corners(hwnd);
-        shape::never_activate(hwnd);
-        let screen = RECT {
-            left: 0,
-            top: 0,
-            right: screen_px.0,
-            bottom: screen_px.1,
-        };
-        let height = (HEIGHT * ctx.pixels_per_point()).round() as i32;
-        // Become the tray first: without Explorer, app-bar requests then come to shellman,
-        // which declines them, and the work area is set directly instead.
-        self.tray = Tray::start(ctx.clone());
-        self._appbar = AppBar::top(hwnd, screen, height);
-        if self._appbar.is_none() {
-            let dock = (DOCK_RESERVE * ctx.pixels_per_point()).round() as i32;
-            self._workarea = Some(WorkArea::reserve(height, dock));
-        }
+    /// One frame of one top bar window. `with_tray` is true for the primary monitor's bar.
+    pub fn frame(&mut self, ctx: &egui::Context, front: Option<&AppWindow>, glass: bool, with_tray: bool) {
+        self.draw(ctx, front, glass, with_tray);
+        ctx.request_repaint_after(clock::until_next_minute());
     }
 
     fn status(&mut self) -> &Status {
@@ -129,7 +72,7 @@ impl TopBar {
         &self.status.as_ref().unwrap().1
     }
 
-    fn draw(&mut self, ctx: &egui::Context, front: Option<&AppWindow>, glass: bool) {
+    fn draw(&mut self, ctx: &egui::Context, front: Option<&AppWindow>, glass: bool, with_tray: bool) {
         theme::set_light(ctx.theme() == egui::Theme::Light);
         let c = colors();
         let fill = if glass { c.shell } else { c.bg };
@@ -137,13 +80,13 @@ impl TopBar {
             .frame(egui::Frame::new().fill(fill))
             .show(ctx, |ui| {
                 let bar = ui.max_rect();
-                let right = self.right_side(ui, bar);
+                let right = self.right_side(ui, bar, with_tray);
                 left_side(ui, bar, front, right);
             });
     }
 
     /// Status pill and clock, from the right edge. Returns where they begin.
-    fn right_side(&mut self, ui: &mut egui::Ui, bar: egui::Rect) -> f32 {
+    fn right_side(&mut self, ui: &mut egui::Ui, bar: egui::Rect, with_tray: bool) -> f32 {
         let c = colors();
         let settings = *self.settings.get_or_insert_with(BarSettings::load);
         let clock_text = clock::text(&settings.clock);
@@ -183,7 +126,7 @@ impl TopBar {
         // Soft pills like Files' toolbar: one for the tray, one for status.
         let pill_radius = egui::CornerRadius::same((pill.height() / 2.0) as u8);
         ui.painter().rect_filled(pill, pill_radius, if resp.hovered() { c.control_hover } else { c.control });
-        if let Some(tray) = &self.tray {
+        if let Some(tray) = self.tray.as_ref().filter(|_| with_tray) {
             let icons = tray.icons();
             if !icons.is_empty() {
                 let right = pill.left() - 8.0;

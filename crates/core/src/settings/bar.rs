@@ -1,4 +1,5 @@
-//! The top bar's settings, saved in `%APPDATA%\shellman\bar.json`.
+//! The bar's settings, saved in `%APPDATA%\shellman\bar.json`: the top bar's clock, and which
+//! monitors get a dock.
 
 use serde::{Deserialize, Serialize};
 
@@ -54,6 +55,29 @@ impl Default for ClockSettings {
 #[serde(default)]
 pub struct BarSettings {
     pub clock: ClockSettings,
+    pub docks: Docks,
+}
+
+/// Which monitors get a dock. Every monitor always gets a top bar.
+#[derive(Clone, Copy, Default, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Docks {
+    /// A dock on every monitor, each showing all apps.
+    #[default]
+    All,
+    /// One dock, on the primary monitor.
+    Primary,
+}
+
+impl Docks {
+    pub const ALL: [Docks; 2] = [Docks::All, Docks::Primary];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Docks::All => "Every monitor",
+            Docks::Primary => "Main monitor only",
+        }
+    }
 }
 
 impl BarSettings {
@@ -93,5 +117,13 @@ mod tests {
         assert_eq!(partial.clock.hour_cycle, HourCycle::H24);
         assert!(partial.clock.show_date);
         assert_eq!(serde_json::from_str::<BarSettings>("{}").unwrap(), BarSettings::default());
+    }
+
+    #[test]
+    fn docks_default_to_every_monitor() {
+        let read = |json: &str| serde_json::from_str::<BarSettings>(json).unwrap().docks;
+        assert_eq!(read("{}"), Docks::All);
+        assert_eq!(read(r#"{ "docks": "primary" }"#), Docks::Primary);
+        assert_eq!(read(r#"{ "docks": "all" }"#), Docks::All);
     }
 }

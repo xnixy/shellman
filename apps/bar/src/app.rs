@@ -1,0 +1,151 @@
+//! The bar process's state and its windows' frames.
+//!
+//! One window list, one icon cache, one set of pins (`Shared`), drawn by many windows: a top bar
+//! and a dock per monitor. Each bar window is a deferred egui viewport, so it repaints on its own
+//! (a hover on one dock repaints that dock only); its frame locks the shared state and draws its
+//! part. Viewports are declared by the host's frames, which run only when something changes
+//! (monitors, settings, the look, a woken tray or window watcher), so the host costs nothing at
+//! rest. Every frame runs on the UI thread, one at a time, so the lock never waits.
+
+use crate::bars::{self, Bars, Kind};
+use crate::monitors::{self, layout};
+use crate::wake::Wake;
+use crate::workarea::HiddenMinimized;
+use crate::{dock, host, topbar};
+use shellman_core::settings::bar::BarSettings;
+use shellman_ui::appearance::Appearance;
+use shellman_ui::theme;
+use std::sync::{Arc, Mutex};
+
+pub struct Shared {
+    pub dock: dock::Dock,
+    pub top: topbar::TopBar,
+    pub bars: Bars,
+    pub glass: bool,
+}
+
+impl Shared {
+    fn top_frame(&mut self, ctx: &egui::Context, primary: bool) {
+        theme::set_light(ctx.theme() == egui::Theme::Light);
+        self.dock.catch_up(ctx);
+        let front = self.dock.front_window().cloned();
+        self.top.frame(ctx, front.as_ref(), self.glass, primary);
+    }
+
+    fn dock_frame(&mut self, ctx: &egui::Context, device: &str) {
+        let Some(hwnd) = self.bars.dock_hwnd(device) else { return };
+        self.dock.frame(ctx, hwnd, device);
+        // Icons came or went: every dock takes the new width.
+        self.bars.place_docks(self.dock.width());
+    }
+}
+
+/// The host window's app: it keeps the bar windows matched to the monitors and settings.
+pub struct Host {
+    shared: Arc<Mutex<Shared>>,
+    wake: Wake,
+    look: Appearance,
+    look_watch: shellman_core::watch::Watcher,
+    settings: BarSettings,
+    _minimized: Option<HiddenMinimized>,
+}
+
+impl Host {
+    pub fn new(
+        shared: Shared,
+        wake: Wake,
+        look: Appearance,
+        look_watch: shellman_core::watch::Watcher,
+        minimized: Option<HiddenMinimized>,
+    ) -> Self {
+        Self {
+            shared: Arc::new(Mutex::new(shared)),
+            wake,
+            look,
+            look_watch,
+            settings: BarSettings::load(),
+            _minimized: minimized,
+        }
+    }
+
+    /// Open (or keep open) every bar window. Windows not declared in a host frame are closed.
+    fn declare(&self, ctx: &egui::Context, bars: &Bars) {
+        for (view, device, primary) in bars.views() {
+            let builder = egui::ViewportBuilder::default()
+                .with_title(view.title.clone())
+                .with_decorations(false)
+                .with_transparent(true)
+                .with_resizable(false)
+                .with_always_on_top()
+                .with_taskbar(false)
+                // Shown by `Bars` once placed on its monitor.
+                .with_visible(false);
+            let shared = self.shared.clone();
+            let device = device.to_owned();
+            let kind = view.kind;
+            ctx.show_viewport_deferred(view.id, builder, move |ctx, _| {
+                let mut shared = shared.lock().unwrap();
+                match kind {
+                    Kind::Top => shared.top_frame(ctx, primary),
+                    Kind::Dock => shared.dock_frame(ctx, &device),
+                }
+            });
+        }
+    }
+}
+
+impl eframe::App for Host {
+    fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
+        [0.0, 0.0, 0.0, 0.0]
+    }
+
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        let mut shared = self.shared.lock().unwrap();
+        let mut layout_needed = host::take_layout();
+        if !self.look_watch.poll().is_empty() {
+            // The same folder holds the dock's pins and the bar's settings.
+            shared.dock.reload_pins();
+            shared.top.reload_settings();
+            let look = Appearance::load_or(self.look);
+            if look != self.look {
+                self.look = look;
+                look.apply(ctx);
+            }
+            let settings = BarSettings::load();
+            if settings.docks != self.settings.docks {
+                layout_needed = true;
+            }
+            self.settings = settings;
+        }
+        shared.dock.catch_up(ctx);
+        // The dock's height follows its icon size, and its reserved band with it.
+        let sizes = bars::sizes(shared.dock.height());
+        if layout_needed || sizes != shared.bars.sizes() {
+            let slots = layout::plan(&monitors::all(), self.settings.docks, &sizes);
+            shared.bars.update(slots, sizes);
+            self.wake.set(shared.bars.ids());
+        }
+        if host::take_requery() {
+            shared.bars.requery();
+        }
+        self.declare(ctx, &shared.bars);
+        let glass = shared.glass;
+        // New windows exist only after this frame; look again on the next one.
+        if !shared.bars.adopt(glass) {
+            ctx.request_repaint();
+        }
+        let width = shared.dock.width();
+        shared.bars.settle(width);
+        drop(shared);
+        // The host wakes for changes every bar shows (the look, icons, the tray).
+        self.wake.bars();
+    }
+}
+
+impl Drop for Host {
+    fn drop(&mut self) {
+        if let Ok(mut shared) = self.shared.lock() {
+            shared.bars.release();
+        }
+    }
+}

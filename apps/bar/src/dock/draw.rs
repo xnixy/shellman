@@ -7,8 +7,6 @@ use shellman_core::settings::dock::IconSize;
 use shellman_core::thumbs::Thumbs;
 use shellman_ui::theme::{colors, glyph, icon_font};
 
-/// The medium dock's height, for the window's first size; the settings pick the real one.
-pub const HEIGHT: f32 = 56.0;
 const PAD: f32 = 8.0;
 /// Extra room a divider takes between two sections.
 const DIVIDER: f32 = 13.0;
@@ -94,7 +92,7 @@ pub fn paint(
             pill.min + egui::vec2(xs[i], (size.height() - cell_w) / 2.0),
             egui::vec2(cell_w, cell_w),
         );
-        let resp = ui.interact(cell, egui::Id::new(("dock", &item.app_id)), egui::Sense::click());
+        let resp = ui.interact(cell, ui.make_persistent_id(("dock", &item.app_id)), egui::Sense::click());
         let hover = ui.ctx().animate_bool(resp.id, resp.hovered());
         if hover > 0.0 {
             ui.painter().rect_filled(cell.shrink(3.0), egui::CornerRadius::same(10), c.control_hover.gamma_multiply(hover));
@@ -186,7 +184,6 @@ mod tests {
 
     #[test]
     fn bigger_icons_make_a_bigger_dock() {
-        assert_eq!(HEIGHT, IconSize::Medium.height());
         let items = [item(Section::Launcher), item(Section::Files), item(Section::Bin)];
         let width = |s| layout(&items, s).1;
         assert!(width(IconSize::Small) < width(IconSize::Medium));
