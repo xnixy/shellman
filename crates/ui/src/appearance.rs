@@ -1,6 +1,7 @@
 //! The look every shellman app shares: accent color and glass amount, saved once in
 //! `%APPDATA%\shellman\appearance.json`. Files edits it; the bars follow it live.
 
+use crate::fonts::{self, FontChoice};
 use crate::theme::{self, AccentChoice};
 use serde::{Deserialize, Serialize};
 
@@ -12,6 +13,8 @@ pub struct Appearance {
     pub accent: AccentChoice,
     /// How much of the window's acrylic shows through, from 0 (solid) to 1 (nearly clear).
     pub glass: f32,
+    /// The text font: the default, or an installed family by name.
+    pub font: FontChoice,
 }
 
 impl Default for Appearance {
@@ -19,6 +22,7 @@ impl Default for Appearance {
         Self {
             accent: AccentChoice::System,
             glass: theme::DEFAULT_GLASS,
+            font: FontChoice::Default,
         }
     }
 }
@@ -44,6 +48,16 @@ impl Appearance {
     pub fn apply(&self, ctx: &egui::Context) {
         theme::set_accent(ctx, self.accent.resolve());
         theme::set_glass(ctx, self.glass);
+        // Does nothing when the window already wears this font.
+        fonts::apply(ctx, self.font);
+    }
+}
+
+/// The saved font choice, read without writing anything (the default when nothing is saved).
+pub fn saved_font() -> FontChoice {
+    match file() {
+        Some(path) if path.exists() => shellman_core::config::load::<Appearance>(NAME).font,
+        _ => FontChoice::Default,
     }
 }
 

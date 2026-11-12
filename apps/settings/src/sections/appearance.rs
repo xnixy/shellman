@@ -1,8 +1,8 @@
-//! Appearance: the accent color and the glass amount every shellman app shares.
+//! Appearance: the accent color, the glass amount and the text font every shellman app shares.
 
 use crate::page;
 use crate::state::State;
-use shellman_ui::look_controls;
+use shellman_ui::{font_picker, look_controls};
 use shellman_ui::theme;
 
 pub fn show(ui: &mut egui::Ui, st: &mut State) {
@@ -30,5 +30,14 @@ pub fn show(ui: &mut egui::Ui, st: &mut State) {
             ui.data_mut(|d| d.insert_temp(id, now));
             st.save_look();
         }
+    });
+
+    page::group(ui, "Font", |ui| {
+        if let Some(choice) = font_picker::font_picker(ui, st.look.font) {
+            st.look.font = choice;
+            st.apply_look(ui.ctx());
+            st.save_look();
+        }
+        font_picker::preview(ui);
     });
 }
