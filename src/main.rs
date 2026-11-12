@@ -4,6 +4,8 @@
 mod app;
 mod fsops;
 mod theme;
+mod thumbs;
+mod watch;
 
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use serde::{Deserialize, Serialize};

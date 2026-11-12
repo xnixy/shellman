@@ -2,6 +2,7 @@
 
 use crate::fsops::{self, Drive, Entry, Op};
 use crate::theme::{self, colors, glyph, icon, icon_font, AccentChoice};
+use crate::thumbs::{self, Thumbs};
 use crate::Settings;
 use egui::text::{CCursor, CCursorRange, LayoutJob, TextFormat, TextWrapping};
 use egui::{
@@ -252,6 +253,11 @@ pub struct FileMan {
     title: String,
     /// Size of the Windows caption buttons in points, when Windows draws them over the glass.
     caption: Option<Vec2>,
+    /// Re-lists tabs when their folder changes on disk.
+    watcher: crate::watch::Watcher,
+    /// The folders last handed to the watcher, so it is told only when they change.
+    watched: Vec<PathBuf>,
+    thumbs: Thumbs,
 }
 
 /// The places shown in the sidebar and on This PC.
@@ -291,7 +297,10 @@ impl FileMan {
         if locs.is_empty() {
             locs.push(dirs::home_dir().map_or(Loc::Pc, Loc::Dir));
         }
+        let thumbs = Thumbs::new(ctx.clone());
         let mut app = Self {
+            watcher: crate::watch::Watcher::new(ctx.clone()),
+            watched: Vec::new(),
             ctx,
             settings,
             hwnd,
@@ -313,6 +322,7 @@ impl FileMan {
             save_pending: false,
             title: String::new(),
             caption: None,
+            thumbs,
         };
         for loc in locs {
             app.push_tab(loc);
@@ -381,6 +391,7 @@ impl FileMan {
         tab.anchor = None;
         tab.filter.clear();
         tab.list_offset = 0.0;
+        self.thumbs.cancel_pending();
         self.rename = None;
         self.editing_path = None;
         self.save_pending = true;
@@ -449,6 +460,35 @@ impl FileMan {
                     }
                     self.refresh_all();
                 }
+            }
+        }
+    }
+
+    /// Keep the watcher on the folders the tabs show, and re-list tabs whose folder changed. This
+    /// is a plain `load`, not `arrive`, so selection and scroll position survive.
+    fn watch_tabs(&mut self) {
+        let mut dirs: Vec<PathBuf> = Vec::new();
+        for t in &self.tabs {
+            if let Loc::Dir(p) = &t.loc {
+                if !dirs.contains(p) {
+                    dirs.push(p.clone());
+                }
+            }
+        }
+        if dirs != self.watched {
+            self.watcher.set_dirs(dirs.clone());
+            self.watched = dirs;
+        }
+        let changed = self.watcher.poll();
+        if changed.is_empty() {
+            return;
+        }
+        for dir in &changed {
+            self.thumbs.invalidate_dir(dir);
+        }
+        for i in 0..self.tabs.len() {
+            if matches!(&self.tabs[i].loc, Loc::Dir(p) if changed.contains(p)) {
+                self.load(i);
             }
         }
     }
@@ -1258,6 +1298,7 @@ impl FileMan {
         let has_clip = self.clipboard.is_some();
         let tab = &mut self.tabs[self.active];
         let rename = &mut self.rename;
+        let thumbs = &mut self.thumbs;
         let mut commit = false;
         let mut cancel = false;
 
@@ -1414,10 +1455,28 @@ impl FileMan {
                 let cut = matches!(&self.clipboard, Some((Op::Move, ps)) if ps.contains(&e.path));
                 let dim = |col: Color32| if cut { dim(col).gamma_multiply(0.5) } else { dim(col) };
                 // A soft tile in the file type's color, with its glyph on it.
-                let (g, gcol) = file_icon(e, &c);
+                // Photos, videos and programs show the shell's own preview or icon; everything
+                // else, or anything still loading, gets a soft tile in its type's color.
                 let tile = Rect::from_center_size(egui::pos2(rect.left() + 22.0, rect.center().y), Vec2::splat(24.0));
-                p.rect_filled(tile, CornerRadius::same(7), dim(theme::with_alpha(gcol, if c.light { 36 } else { 46 })));
-                p.text(tile.center(), Align2::CENTER_CENTER, g, icon_font(12.5), dim(gcol));
+                let thumb = if !e.is_dir && thumbs::wants_thumb(&e.name) {
+                    thumbs.get(&e.path).map(|t| (t.id(), t.size_vec2()))
+                } else {
+                    None
+                };
+                if let Some((id, size)) = thumb {
+                    // Fit inside the tile, keeping the aspect ratio.
+                    let scale = (tile.width() / size.x).min(tile.height() / size.y);
+                    let fit = Rect::from_center_size(tile.center(), size * scale);
+                    egui::Image::from_texture((id, size))
+                        .corner_radius(CornerRadius::same(5))
+                        .tint(dim(Color32::WHITE))
+                        .paint_at(ui, fit);
+                } else {
+                    let (g, gcol) = file_icon(e, &c);
+                    let p = ui.painter();
+                    p.rect_filled(tile, CornerRadius::same(7), dim(theme::with_alpha(gcol, if c.light { 36 } else { 46 })));
+                    p.text(tile.center(), Align2::CENTER_CENTER, g, icon_font(12.5), dim(gcol));
+                }
                 let name_rect = Rect::from_min_max(
                     egui::pos2(rect.left() + 46.0, rect.top()),
                     egui::pos2(rect.left() + name_w - 8.0, rect.bottom()),
@@ -1670,6 +1729,7 @@ impl eframe::App for FileMan {
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.drain();
+        self.watch_tabs();
         self.track_system(ctx);
         let show_hidden = self.settings.show_hidden;
         for t in &mut self.tabs {
@@ -1677,6 +1737,7 @@ impl eframe::App for FileMan {
                 t.rebuild_view(show_hidden);
             }
         }
+        self.thumbs.poll(ctx);
         let mut actions = Vec::new();
         self.keyboard(ctx, &mut actions);
         self.take_dropped_files(ctx);
