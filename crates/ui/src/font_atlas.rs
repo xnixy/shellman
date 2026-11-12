@@ -11,11 +11,12 @@
 //! `end_frame` heads that off: when the window has new glyphs and its atlas is not the size of
 //! the texture, it uploads the whole atlas itself, which leaves egui no partial update to make.
 
-use egui::epaint::{textures::TextureOptions, ImageDelta, TextureAtlas};
+use egui::epaint::{ImageDelta, TextureAtlas};
 use egui::TextureId;
 
-/// Call last in every frame of every window of a process that has windows on monitors of
-/// different scales.
+/// Call last in every frame of every window of a process that has several windows (egui
+/// viewports), which can be on monitors of different scales. A single-window app needs none: its
+/// one atlas is always the last uploaded, and a new scale starts a new atlas with a whole upload.
 pub fn end_frame(ctx: &egui::Context) {
     let atlas = ctx.fonts(|f| f.texture_atlas());
     let mut atlas = atlas.lock();
@@ -26,7 +27,7 @@ pub fn end_frame(ctx: &egui::Context) {
         return;
     }
     if atlas.take_delta().is_some() {
-        let options: TextureOptions = TextureAtlas::texture_options();
-        manager.set(TextureId::default(), ImageDelta::full(atlas.image().clone(), options));
+        let full = ImageDelta::full(atlas.image().clone(), TextureAtlas::texture_options());
+        manager.set(TextureId::default(), full);
     }
 }

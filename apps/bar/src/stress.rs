@@ -1,6 +1,9 @@
 //! A test aid: with `SHELLMAN_STRESS_GLYPHS=1`, every bar window lays out a few new glyphs at
 //! random sizes each frame and asks for the next frame, so the font atlases of windows on
 //! monitors of different scales grow fast and at different times. Nothing is drawn.
+//!
+//! While windows keep repainting like this the host's timers barely run, so hovering the dock
+//! seldom opens the preview panel.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
@@ -31,13 +34,12 @@ pub fn glyphs(ctx: &egui::Context) {
         let size = 6.0 + (next() % 220) as f32 * 0.25;
         let font = if lo >= 0xE700 {
             shellman_ui::theme::icon_font(size)
-        } else if next() % 2 == 0 {
+        } else if next().is_multiple_of(2) {
             shellman_ui::theme::semibold_font(size)
         } else {
             egui::FontId::proportional(size)
         };
         ctx.fonts(|f| f.layout_no_wrap(c.to_string(), font, egui::Color32::WHITE));
     }
-    // Not every frame: windows repainting without pause starve the host's timers.
     ctx.request_repaint_after(std::time::Duration::from_millis(25));
 }
