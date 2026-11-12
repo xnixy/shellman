@@ -14,26 +14,43 @@ pub enum Choice {
     Nothing,
     TogglePin,
     Close,
+    Settings,
+}
+
+/// Which icon the menu is for.
+pub enum Kind {
+    /// The Launcher: just a way into the settings.
+    Launcher,
+    /// An app. `pinned` is `None` for icons that cannot be pinned or unpinned; `windows` is how
+    /// many windows it has open.
+    App { pinned: Option<bool>, windows: usize },
 }
 
 const PIN: usize = 1;
 const CLOSE: usize = 2;
+const SETTINGS: usize = 3;
 
-/// Show the menu at the pointer, opening upwards. `pinned` is `None` for icons that cannot be
-/// pinned or unpinned; `windows` is how many windows the app has open. Blocks until it closes.
-pub fn show(hwnd: isize, pinned: Option<bool>, windows: usize) -> Choice {
+/// Show the menu at the pointer, opening upwards. Blocks until it closes.
+pub fn show(hwnd: isize, kind: Kind) -> Choice {
     let hwnd = HWND(hwnd as *mut _);
     unsafe {
         let Ok(menu) = CreatePopupMenu() else {
             return Choice::Nothing;
         };
-        if let Some(pinned) = pinned {
-            let text = if pinned { "Unpin from dock" } else { "Pin to dock" };
-            let _ = AppendMenuW(menu, MF_STRING, PIN, &HSTRING::from(text));
-        }
-        if windows > 0 {
-            let text = if windows == 1 { "Close window" } else { "Close all windows" };
-            let _ = AppendMenuW(menu, MF_STRING, CLOSE, &HSTRING::from(text));
+        match kind {
+            Kind::Launcher => {
+                let _ = AppendMenuW(menu, MF_STRING, SETTINGS, &HSTRING::from("Settings"));
+            }
+            Kind::App { pinned, windows } => {
+                if let Some(pinned) = pinned {
+                    let text = if pinned { "Unpin from dock" } else { "Pin to dock" };
+                    let _ = AppendMenuW(menu, MF_STRING, PIN, &HSTRING::from(text));
+                }
+                if windows > 0 {
+                    let text = if windows == 1 { "Close window" } else { "Close all windows" };
+                    let _ = AppendMenuW(menu, MF_STRING, CLOSE, &HSTRING::from(text));
+                }
+            }
         }
         let mut at = POINT::default();
         let _ = GetCursorPos(&mut at);
@@ -60,6 +77,7 @@ pub fn show(hwnd: isize, pinned: Option<bool>, windows: usize) -> Choice {
         match picked.0 as usize {
             PIN => Choice::TogglePin,
             CLOSE => Choice::Close,
+            SETTINGS => Choice::Settings,
             _ => Choice::Nothing,
         }
     }

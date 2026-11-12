@@ -1,4 +1,4 @@
-//! What the dock shows, in order: Files, pinned apps, running apps that are not pinned, and the
+//! What the dock shows, in order: the Launcher, Files, pinned apps, running apps that are not pinned, and the
 //! Recycle Bin. Pure logic over the window list and the pins, so it can be tested without windows.
 
 use shellman_core::settings::dock::{self as pins, Pin};
@@ -8,6 +8,7 @@ use std::path::PathBuf;
 /// Where an item sits. Dividers go between the sections.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Section {
+    Launcher,
     Files,
     Pinned,
     Running,
@@ -24,14 +25,18 @@ pub struct Item {
 }
 
 pub const BIN: &str = "shell:RecycleBinFolder";
+/// The Launcher's stand-in id: it is not an app with an exe, so nothing else can match it.
+const LAUNCHER: &str = "shellman:launcher";
 
 impl Item {
     fn new(section: Section, app_id: &str, exe: Option<PathBuf>) -> Self {
         Self { section, app_id: app_id.to_owned(), exe, windows: Vec::new() }
     }
 
+    /// None for the Launcher, which `draw` paints itself.
     pub fn icon_source(&self) -> Option<PathBuf> {
         match self.section {
+            Section::Launcher => None,
             Section::Bin => Some(PathBuf::from(BIN)),
             _ => pins::icon_source(&self.app_id, self.exe.as_deref()),
         }
@@ -40,6 +45,7 @@ impl Item {
     /// What a click opens when no window is there to show.
     pub fn launch_target(&self) -> Option<PathBuf> {
         match self.section {
+            Section::Launcher => None,
             Section::Bin => Some(PathBuf::from(BIN)),
             _ => pins::launch_target(&self.app_id, self.exe.as_deref()),
         }
@@ -47,13 +53,14 @@ impl Item {
 
     pub fn name(&self) -> String {
         match self.section {
+            Section::Launcher => "Launcher".into(),
             Section::Files => "Files".into(),
             Section::Bin => "Recycle Bin".into(),
             _ => shellman_core::system::app_name::display_name(&self.app_id, self.exe.as_deref()),
         }
     }
 
-    /// Whether the right-click menu may pin or unpin it. Files and the bin are always there.
+    /// Whether the right-click menu may pin or unpin it. The Launcher, Files and the bin are always there.
     pub fn pinnable(&self) -> bool {
         matches!(self.section, Section::Pinned | Section::Running)
     }
@@ -94,7 +101,7 @@ pub fn build(pins: &[Pin], files: &Pin, windows: &[AppWindow], prev_running: &[S
     }
     // Stable sort: known apps by their old place, new ones after them in window order.
     running.sort_by_key(|i| prev_running.iter().position(|p| p.eq_ignore_ascii_case(&i.app_id)).unwrap_or(usize::MAX));
-    let mut out = vec![files_item];
+    let mut out = vec![Item::new(Section::Launcher, LAUNCHER, None), files_item];
     out.extend(pinned);
     out.extend(running);
     out.push(Item::new(Section::Bin, BIN, None));
@@ -138,7 +145,7 @@ mod tests {
     }
 
     #[test]
-    fn order_is_files_pinned_running_bin() {
+    fn order_is_launcher_files_pinned_running_bin() {
         let files = pin("c:\\files.exe");
         let items = build(
             &[pin("c:\\a.exe"), pin("c:\\b.exe")],
@@ -149,6 +156,7 @@ mod tests {
         assert_eq!(
             ids(&items),
             vec![
+                (Section::Launcher, LAUNCHER, 0),
                 (Section::Files, "c:\\files.exe", 1),
                 (Section::Pinned, "c:\\a.exe", 0),
                 (Section::Pinned, "c:\\b.exe", 2),
@@ -156,7 +164,17 @@ mod tests {
                 (Section::Bin, BIN, 0),
             ]
         );
-        assert_eq!(items[2].windows, vec![2, 4]);
+        assert_eq!(items[3].windows, vec![2, 4]);
+    }
+
+    #[test]
+    fn launcher_is_always_first_and_not_pinnable() {
+        for windows in [vec![], vec![win(1, "c:\\x.exe")]] {
+            let items = build(&[], &pin("f"), &windows, &[]);
+            assert_eq!(items[0].section, Section::Launcher);
+            assert!(items[0].windows.is_empty() && !items[0].pinnable());
+            assert_eq!(items[1].section, Section::Files);
+        }
     }
 
     #[test]
@@ -165,7 +183,7 @@ mod tests {
         let items = build(&[pin("C:\\FILES.exe"), pin("C:\\A.exe")], &files, &[win(1, "c:\\a.exe")], &[]);
         assert_eq!(items.iter().filter(|i| i.section == Section::Files).count(), 1);
         assert_eq!(items.iter().filter(|i| i.section == Section::Pinned).count(), 1);
-        assert_eq!(items[1].windows, vec![1]);
+        assert_eq!(items[2].windows, vec![1]);
     }
 
     #[test]

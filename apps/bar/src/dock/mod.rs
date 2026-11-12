@@ -1,4 +1,4 @@
-//! The dock: Files, pinned apps, running apps and the Recycle Bin, on a floating glass pill.
+//! The dock: the Launcher, Files, pinned apps, running apps and the Recycle Bin, on a floating glass pill.
 
 mod draw;
 mod items;
@@ -130,6 +130,10 @@ impl Dock {
     /// Click: start the app if it has no window; bring it forward; if it is already in front,
     /// minimize it, or with several windows show the next one.
     fn activate(&self, item: &Item) {
+        if item.section == Section::Launcher {
+            crate::topbar::open_start();
+            return;
+        }
         if item.windows.is_empty() {
             if let Some(target) = item.launch_target() {
                 shellman_core::fsops::open(&target);
@@ -166,8 +170,16 @@ impl Dock {
     /// Right click: the menu for one icon, and what it chose.
     fn context_menu(&mut self, i: usize) {
         let item = self.items[i].clone();
-        let pinned = item.pinnable().then(|| item.section == Section::Pinned);
-        match menu::show(self.hwnd, pinned, item.windows.len()) {
+        let kind = if item.section == Section::Launcher {
+            menu::Kind::Launcher
+        } else {
+            let pinned = item.pinnable().then(|| item.section == Section::Pinned);
+            menu::Kind::App { pinned, windows: item.windows.len() }
+        };
+        match menu::show(self.hwnd, kind) {
+            menu::Choice::Settings => {
+                shellman_core::sibling::start("settings");
+            }
             menu::Choice::TogglePin => {
                 if item.section == Section::Pinned {
                     self.pins.remove(&item.app_id);
@@ -193,9 +205,13 @@ impl Dock {
         if let Some(i) = events.clicked {
             self.activate(&self.items[i]);
         }
-        // Middle click opens another window of the app.
-        if let Some(target) = events.middle.and_then(|i| self.items[i].launch_target()) {
-            shellman_core::fsops::open(&target);
+        // Middle click opens another window of the app; for the Launcher, it is a click.
+        if let Some(i) = events.middle {
+            if self.items[i].section == Section::Launcher {
+                crate::topbar::open_start();
+            } else if let Some(target) = self.items[i].launch_target() {
+                shellman_core::fsops::open(&target);
+            }
         }
         if let Some((i, delta)) = events.scrolled {
             self.scroll_step(i, delta);

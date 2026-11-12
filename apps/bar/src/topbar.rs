@@ -237,11 +237,7 @@ fn left_side(ui: &mut egui::Ui, bar: egui::Rect, front: Option<&AppWindow>, limi
         let round = egui::Rect::from_center_size(button.center(), egui::Vec2::splat(HEIGHT - 6.0));
         ui.painter().circle_filled(round.center(), round.width() / 2.0, c.control_hover);
     }
-    // Four small squares: the launcher's mark, drawn so it doesn't depend on a font glyph.
-    for (dx, dy) in [(-3.5, -3.5), (3.5, -3.5), (-3.5, 3.5), (3.5, 3.5)] {
-        let sq = egui::Rect::from_center_size(button.center() + egui::vec2(dx, dy), egui::Vec2::splat(5.5));
-        ui.painter().rect_filled(sq, egui::CornerRadius::same(2), c.accent_text);
-    }
+    paint_launcher_mark(ui.painter(), button.center(), 1.0, c.accent_text);
     if resp.clicked() {
         open_start();
     }
@@ -265,10 +261,19 @@ fn left_side(ui: &mut egui::Ui, bar: egui::Rect, front: Option<&AppWindow>, limi
     }
 }
 
+/// Four small squares: the launcher's mark, drawn so it doesn't depend on a font glyph. `scale`
+/// 1.0 is the size used in the top bar.
+pub fn paint_launcher_mark(painter: &egui::Painter, center: egui::Pos2, scale: f32, color: egui::Color32) {
+    for (dx, dy) in [(-3.5, -3.5), (3.5, -3.5), (-3.5, 3.5), (3.5, 3.5)] {
+        let sq = egui::Rect::from_center_size(center + egui::vec2(dx, dy) * scale, egui::Vec2::splat(5.5 * scale));
+        painter.rect_filled(sq, egui::CornerRadius::same((2.0 * scale).round() as u8), color);
+    }
+}
+
 /// Summon shellman's launcher: its exe sits next to the bar's. Running it again signals the
 /// resident one to show or hide, so a click is a toggle. Without the exe, Windows' Start opens,
 /// as the Win key does.
-fn open_start() {
+pub fn open_start() {
     let launcher = std::env::current_exe()
         .ok()
         .and_then(|exe| exe.parent().map(|dir| dir.join("shellman-launcher.exe")))
