@@ -1905,6 +1905,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "shellman-elevate"
+version = "0.1.0"
+dependencies = [
+ "shellman-core",
+ "windows",
+ "winresource",
+]
+
+[[package]]
 name = "shellman-files"
 version = "0.1.0"
 dependencies = [

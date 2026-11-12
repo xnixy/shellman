@@ -33,6 +33,8 @@ pub struct Detail {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Section {
     pub devices: Vec<Device>,
+    /// Devices that are turned off, listed so they can be turned on again.
+    pub disabled: Vec<Device>,
     /// The device the controls below the list are for: the user's choice, else the default.
     pub selected: Option<String>,
     pub detail: Option<Detail>,
@@ -52,6 +54,9 @@ pub struct Page {
     pub input: Section,
     /// The mixer: sessions of the default output.
     pub sessions: Vec<AppSession>,
+    /// Why the last turning of a device on or off did not happen; None when it did, or the user
+    /// declined the administrator prompt.
+    pub notice: Option<String>,
 }
 
 impl Page {
@@ -93,6 +98,10 @@ pub(crate) enum Cmd {
     Format(String, FormatSpec),
     UndoFormat(String),
     Tone(String),
+    /// Turn a device on (true) or off (false).
+    Enable(String, bool),
+    /// That finished; the text is why not, if it did not work.
+    EnableDone(Option<String>),
     /// The test tone could not start (false) or played (true) on this device.
     ToneDone(String, bool),
     /// Select this spatial format (empty for off).
@@ -163,6 +172,10 @@ impl SoundPage {
     pub fn set_spatial(&self, id: &str, subtype: &str) {
         self.send(Cmd::Spatial(id.to_owned(), subtype.to_owned()));
     }
+    /// Turn the device `id` on or off. May show the Windows administrator prompt.
+    pub fn set_enabled(&self, id: &str, enabled: bool) {
+        self.send(Cmd::Enable(id.to_owned(), enabled));
+    }
     pub fn play_tone(&self, id: &str) {
         self.send(Cmd::Tone(id.to_owned()));
     }
@@ -206,7 +219,7 @@ mod tests {
 
     #[test]
     fn a_section_finds_its_selected_device() {
-        let s = Section { devices: vec![dev("a", true), dev("b", false)], selected: Some("b".into()), detail: None };
+        let s = Section { devices: vec![dev("a", true), dev("b", false)], selected: Some("b".into()), ..Default::default() };
         assert_eq!(s.selected_device().map(|d| d.id.as_str()), Some("b"));
         assert!(Section::default().selected_device().is_none());
     }

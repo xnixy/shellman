@@ -1,0 +1,15 @@
+[package]
+name = "shellman-elevate"
+version = "0.1.0"
+edition.workspace = true
+description = "Shellman's administrator helper: does one fixed operation as administrator, then ends"
+license.workspace = true
+publish = false
+
+# Started only by other shellman apps, through the UAC prompt. Never supervised by the session.
+[dependencies]
+shellman-core.workspace = true
+windows.workspace = true
+
+[build-dependencies]
+winresource.workspace = true

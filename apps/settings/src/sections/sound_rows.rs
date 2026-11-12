@@ -65,6 +65,21 @@ pub fn device_row(ui: &mut Ui, d: &Device, selected: bool) -> Response {
     resp
 }
 
+/// A device that is turned off: muted, with "Enable" at its end; pressing the row turns it on.
+pub fn disabled_row(ui: &mut Ui, d: &Device) -> Response {
+    let c = colors();
+    let (row, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), ROW_H), Sense::click());
+    let fill = if resp.hovered() { c.control_hover } else { c.control };
+    ui.painter().rect_filled(row, CornerRadius::same(10), fill);
+    let icon = egui::pos2(row.left() + 26.0, row.center().y);
+    ui.painter().text(icon, Align2::CENTER_CENTER, kind_glyph(d.kind), icon_font(18.0), c.muted);
+    let name = egui::Rect::from_min_max(egui::pos2(row.left() + 48.0, row.top()), egui::pos2(row.right() - 72.0, row.bottom()));
+    draw_text(ui, name, &d.name, FontId::proportional(14.0), c.muted, false);
+    let tag = egui::Rect::from_min_max(egui::pos2(row.right() - 68.0, row.top()), egui::pos2(row.right() - 12.0, row.bottom()));
+    draw_text(ui, tag, "Enable", FontId::proportional(12.0), c.text, true);
+    resp.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
 /// What a volume row asked for.
 #[derive(Default)]
 pub struct Level {
