@@ -7,7 +7,7 @@ mod drives;
 mod listing;
 mod names;
 mod shell;
-mod time;
+pub(crate) mod time;
 
 pub use drives::{drives, Drive};
 pub use listing::{list_dir, Entry};

@@ -7,7 +7,7 @@ accent color, fast.
 
 | App | Replaces | Status |
 | --- | --- | --- |
-| `apps/files` | File Explorer windows | working: tabs, list/grid, thumbnails, shell menu, auto-refresh, Ctrl+H hides or shows hidden files. No settings UI |
+| `apps/files` | File Explorer windows | working: tabs, list/grid, thumbnails, shell menu, auto-refresh, Ctrl+H hides or shows hidden files, the Recycle Bin as a place (`--recycle-bin`). No settings UI |
 | `apps/bar` | taskbar, tray, clock, Start button (as a top bar and a dock) | working: a top bar and a dock on every monitor, tray, pins, fullscreen step-aside. Next: hover previews, Win keys |
 | `apps/launcher` | Start menu and search | working: Spotlight-style panel, app grid, ranked search, most used. Next: Win key |
 | `apps/switcher` | Alt+Tab, Task View | working: Alt+Tab with live previews. Next: Task View (Win+Tab) |
@@ -72,7 +72,8 @@ Rule: **the top bar is the system, the dock is apps.** Both are windows of one p
   minimizes it. Middle click opens a new window.
 - Hovering shows live DWM previews, and sliding along the dock scrubs them.
 - Right-click on an icon: a native Windows popup with Pin / Unpin and Close. On the Launcher
-  icon: Settings. The dock window is only as tall as its icons, so the menu cannot live in it.
+  icon: Settings. On the Recycle Bin: Open (in Files, never Explorer) and Empty Recycle Bin
+  (grey when empty; a native confirmation first). The dock window is only as tall as its icons, so the menu cannot live in it.
 - No magnification, which would repaint on every mouse move; a short hover lift instead.
 - Holding Win shows 1-9 on icons. Dropping a file on an icon opens it with that app.
 - Slots for progress and overlay badges; Files reports its copy progress directly.

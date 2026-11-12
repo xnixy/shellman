@@ -4,9 +4,14 @@
 /// not start. Apps that keep one window (the launcher, settings) bring the running one forward
 /// instead of opening a second.
 pub fn start(name: &str) -> bool {
+    start_with(name, &[])
+}
+
+/// Like `start`, with command-line arguments (`start_with("files", &["--recycle-bin"])`).
+pub fn start_with(name: &str, args: &[&str]) -> bool {
     std::env::current_exe()
         .ok()
         .and_then(|exe| exe.parent().map(|dir| dir.join(format!("shellman-{name}.exe"))))
         .filter(|path| path.exists())
-        .is_some_and(|path| std::process::Command::new(path).spawn().is_ok())
+        .is_some_and(|path| std::process::Command::new(path).args(args).spawn().is_ok())
 }

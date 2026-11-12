@@ -16,12 +16,12 @@ const FILETIME_EPOCH_SECS: i64 = 11_644_473_600;
 /// a folder of 100 000 files costs one Win32 call per distinct hour they were written in, not two
 /// per file.
 #[derive(Default)]
-pub(super) struct LocalClock {
+pub(crate) struct LocalClock {
     by_hour: HashMap<i64, i64>,
 }
 
 impl LocalClock {
-    pub(super) fn offset_for(&mut self, t: SystemTime) -> i64 {
+    pub(crate) fn offset_for(&mut self, t: SystemTime) -> i64 {
         let Ok(d) = t.duration_since(SystemTime::UNIX_EPOCH) else {
             return 0;
         };
@@ -56,7 +56,7 @@ fn tz_offset_at(utc_secs: i64) -> i64 {
 
 /// Local date and time like "2026-11-11 14:05", from pure arithmetic so a 100k-file listing makes
 /// no per-entry system calls.
-pub(super) fn format_time_at(t: SystemTime, offset_secs: i64) -> String {
+pub(crate) fn format_time_at(t: SystemTime, offset_secs: i64) -> String {
     let Ok(d) = t.duration_since(SystemTime::UNIX_EPOCH) else {
         return String::new();
     };

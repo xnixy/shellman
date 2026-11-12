@@ -4,6 +4,7 @@
 //! per monitor drawing it, so every dock shows the same apps in the same order. A click on any of
 //! them brings the window forward wherever it is.
 
+mod bin;
 mod draw;
 mod items;
 mod menu;
@@ -132,6 +133,10 @@ impl Dock {
             crate::topbar::open_start();
             return;
         }
+        if item.section == Section::Bin {
+            bin::open();
+            return;
+        }
         if item.windows.is_empty() {
             if let Some(target) = item.launch_target() {
                 shellman_core::fsops::open(&target);
@@ -170,6 +175,8 @@ impl Dock {
         let item = self.items[i].clone();
         let kind = if item.section == Section::Launcher {
             menu::Kind::Launcher
+        } else if item.section == Section::Bin {
+            menu::Kind::Bin { can_empty: bin::can_empty() }
         } else {
             let pinned = item.pinnable().then(|| item.section == Section::Pinned);
             menu::Kind::App { pinned, windows: item.windows.len() }
@@ -193,6 +200,10 @@ impl Dock {
                     close_window(w);
                 }
             }
+            menu::Choice::OpenBin => {
+                bin::open();
+            }
+            menu::Choice::EmptyBin => bin::confirm_and_empty(),
             menu::Choice::Nothing => {}
         }
     }
@@ -226,6 +237,8 @@ impl Dock {
         if let Some(i) = events.middle {
             if self.items[i].section == Section::Launcher {
                 crate::topbar::open_start();
+            } else if self.items[i].section == Section::Bin {
+                bin::open();
             } else if let Some(target) = self.items[i].launch_target() {
                 shellman_core::fsops::open(&target);
             }

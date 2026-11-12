@@ -28,6 +28,7 @@ pub mod glyph {
     pub const CHEVRON: char = '\u{E76C}';
     pub const NEW_FOLDER: char = '\u{E8F4}';
     pub const DELETE: char = '\u{E74D}';
+    pub const UNDO: char = '\u{E7A7}';
     pub const RENAME: char = '\u{E8AC}';
     pub const COPY: char = '\u{E8C8}';
     pub const CUT: char = '\u{E8C6}';

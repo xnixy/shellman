@@ -18,7 +18,7 @@ impl super::FileMan {
         let (can_back, can_fwd, can_up) = (
             !tab.back.is_empty(),
             !tab.fwd.is_empty(),
-            tab.loc != Loc::Pc,
+            tab.loc.parent().is_some(),
         );
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 2.0;
@@ -36,13 +36,18 @@ impl super::FileMan {
             }
             ui.add_space(8.0);
             // The path pill gives way; the search box and the toggle keep their size.
-            let (search_w, toggle_w) = (220.0, 76.0);
+            let bin = self.tabs[self.active].loc == Loc::Bin;
+            let (search_w, toggle_w) = (220.0, if bin { super::bin::BUTTONS_W } else { 76.0 });
             let path_w = (ui.available_width() - search_w - toggle_w - 20.0).max(120.0);
             let (rect, _) = ui.allocate_exact_size(Vec2::new(path_w, 32.0), Sense::hover());
             self.path_bar(ui, rect, actions);
             ui.add_space(10.0);
             let (trect, _) = ui.allocate_exact_size(Vec2::new(toggle_w, 32.0), Sense::hover());
-            self.view_toggle(ui, trect, actions);
+            if bin {
+                self.bin_buttons(ui, trect, actions);
+            } else {
+                self.view_toggle(ui, trect, actions);
+            }
             ui.add_space(10.0);
             let (srect, _) = ui.allocate_exact_size(Vec2::new(search_w, 32.0), Sense::hover());
             self.search_box(ui, srect);
@@ -193,7 +198,10 @@ impl super::FileMan {
         if bg.clicked() {
             self.focus_path = true;
         }
-        let mut crumbs: Vec<(String, Loc)> = vec![("This PC".into(), Loc::Pc)];
+        let mut crumbs: Vec<(String, Loc)> = match loc {
+            Loc::Bin => vec![(loc.title(), Loc::Bin)],
+            _ => vec![("This PC".into(), Loc::Pc)],
+        };
         if let Some(dir) = loc.dir() {
             let mut parts: Vec<&Path> = dir.ancestors().collect();
             parts.reverse();

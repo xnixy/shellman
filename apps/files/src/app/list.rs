@@ -20,10 +20,24 @@ struct Columns {
     modified: f32,
     kind: f32,
     size: f32,
+    /// The Recycle Bin's columns: the type slot holds the original location and comes first, and
+    /// the date is the day it was deleted.
+    bin: bool,
 }
 
 impl Columns {
-    fn fit(width: f32) -> Self {
+    fn fit(width: f32, bin: bool) -> Self {
+        if bin {
+            let (size, deleted) = (90.0, 150.0);
+            let origin = if width > 560.0 { (width * 0.36).clamp(180.0, 360.0) } else { 0.0 };
+            return Self {
+                name: (width - size - deleted - origin).max(160.0),
+                modified: deleted,
+                kind: origin,
+                size,
+                bin,
+            };
+        }
         let (size, modified) = (90.0, 140.0);
         let kind = if width > 620.0 { 130.0 } else { 0.0 };
         Self {
@@ -31,15 +45,37 @@ impl Columns {
             modified,
             kind,
             size,
+            bin,
+        }
+    }
+
+    fn x_modified(&self) -> f32 {
+        if self.bin {
+            self.name + self.kind
+        } else {
+            self.name
+        }
+    }
+
+    fn x_kind(&self) -> f32 {
+        if self.bin {
+            self.name
+        } else {
+            self.name + self.modified
         }
     }
 
     /// (sort key, label, x, width) for each column.
     fn each(&self) -> [(SortKey, &'static str, f32, f32); 4] {
+        let (modified, kind) = if self.bin {
+            ("Date deleted", "Original location")
+        } else {
+            ("Date modified", "Type")
+        };
         [
             (SortKey::Name, "Name", 0.0, self.name),
-            (SortKey::Modified, "Date modified", self.name, self.modified),
-            (SortKey::Kind, "Type", self.name + self.modified, self.kind),
+            (SortKey::Modified, modified, self.x_modified(), self.modified),
+            (SortKey::Kind, kind, self.x_kind(), self.kind),
             (
                 SortKey::Size,
                 "Size",
@@ -67,7 +103,8 @@ impl super::FileMan {
             return;
         }
         let width = ui.available_width();
-        let cols = Columns::fit(width);
+        let bin = tab.loc == Loc::Bin;
+        let cols = Columns::fit(width, bin);
         header(ui, tab, &cols, width);
         interact::folder_backdrop(ui, tab, has_clip, actions);
         if interact::empty_state(ui, tab) {
@@ -138,10 +175,9 @@ impl super::FileMan {
                     )
                 };
                 let small = FontId::proportional(12.0);
-                let x_kind = cols.name + cols.modified;
                 draw_text(
                     ui,
-                    col(cols.name, cols.modified),
+                    col(cols.x_modified(), cols.modified),
                     &e.modified_text,
                     small.clone(),
                     dim(c.muted),
@@ -150,18 +186,19 @@ impl super::FileMan {
                 if cols.kind > 0.0 {
                     draw_text(
                         ui,
-                        col(x_kind, cols.kind),
+                        col(cols.x_kind(), cols.kind),
                         &e.kind,
                         small.clone(),
                         dim(c.muted),
                         false,
                     );
                 }
-                if !e.is_dir {
+                // Folders show no size in a listing, but in the bin they have one worth knowing.
+                if !e.is_dir || (bin && e.size > 0) {
                     let size = fsops::format_size(e.size);
                     draw_text(
                         ui,
-                        col(x_kind + cols.kind, cols.size),
+                        col(cols.name + cols.modified + cols.kind, cols.size),
                         &size,
                         small,
                         dim(c.muted),
@@ -170,7 +207,9 @@ impl super::FileMan {
                 }
 
                 ev.record(ui, &resp, r, actions);
-                let (is_dir, loc) = (e.is_dir, Loc::Dir(e.path.clone()));
+                // The menu's location is where Open would go; the bin opens nothing.
+                let loc = if bin { Loc::Bin } else { Loc::Dir(e.path.clone()) };
+                let is_dir = e.is_dir && !bin;
                 interact::item_menu(ui, &resp, actions, is_dir, &loc);
             }
         });

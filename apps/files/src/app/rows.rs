@@ -12,6 +12,9 @@ use std::path::Path;
 
 /// The right-click menu of a file row.
 pub(super) fn row_menu(ui: &mut Ui, actions: &mut Vec<Action>, is_dir: bool, loc: &Loc) {
+    if *loc == Loc::Bin {
+        return super::bin::item_menu(ui, actions);
+    }
     if menu_item(ui, glyph::OPEN_EXTERNAL, "Open", "Enter") {
         actions.push(Action::OpenSelected);
         ui.close_menu();

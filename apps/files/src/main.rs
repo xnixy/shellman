@@ -2,21 +2,18 @@
 //! Files: a file manager in Blurman's frosted style.
 
 mod app;
+mod args;
 mod placement;
 mod settings;
 
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use shellman_ui::{theme, window};
-use std::path::PathBuf;
 use windows::Win32::Foundation::HWND;
 
 fn main() -> eframe::Result {
     let settings = settings::load_settings();
-    // A folder passed on the command line opens in its own tab.
-    let arg = std::env::args_os()
-        .nth(1)
-        .map(PathBuf::from)
-        .filter(|p| p.is_dir());
+    // A folder, or the Recycle Bin, passed on the command line opens in its own tab.
+    let start = args::parse(std::env::args_os().skip(1));
     let mut viewport = egui::ViewportBuilder::default()
         .with_title("Files")
         .with_inner_size([placement::DEFAULT_SIZE.0, placement::DEFAULT_SIZE.1])
@@ -72,7 +69,7 @@ fn main() -> eframe::Result {
                 cc.egui_ctx.clone(),
                 settings,
                 look,
-                arg,
+                start,
                 hwnd,
                 glass,
             )))

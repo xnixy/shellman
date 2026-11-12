@@ -24,7 +24,7 @@ impl super::FileMan {
         ui.horizontal(|ui| {
             let mut text = match &tab.loc {
                 Loc::Pc => format!("{} drives", self.drives.len()),
-                Loc::Dir(_) => {
+                Loc::Dir(_) | Loc::Bin => {
                     let n = tab.view.len();
                     format!("{n} item{}", if n == 1 { "" } else { "s" })
                 }

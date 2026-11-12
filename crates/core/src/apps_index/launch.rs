@@ -16,6 +16,12 @@ pub fn run_text(text: &str) -> bool {
     if text.is_empty() {
         return false;
     }
+    // A folder opens in Files; ShellExecute would hand it to Explorer.
+    if std::path::Path::new(text.trim_matches('"')).is_dir()
+        && crate::sibling::start_with("files", &[text.trim_matches('"')])
+    {
+        return true;
+    }
     if execute(text, None) {
         return true;
     }
