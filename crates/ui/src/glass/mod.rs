@@ -67,7 +67,7 @@ use windows::Win32::UI::Shell::{DefSubclassProc, RemoveWindowSubclass, SetWindow
 use windows::Win32::UI::WindowsAndMessaging::{
     DestroyWindow, GetWindowRect, IsIconic, IsWindowVisible, PostMessageW, RegisterWindowMessageW,
     SetWindowPos, SWP_HIDEWINDOW, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
-    SWP_SHOWWINDOW, WM_DPICHANGED, WM_NCDESTROY, WM_WINDOWPOSCHANGED,
+    SWP_SHOWWINDOW, WM_DPICHANGED, WM_DWMCOMPOSITIONCHANGED, WM_NCDESTROY, WM_WINDOWPOSCHANGED,
 };
 use windows::UI::ViewManagement::UISettings;
 
@@ -359,6 +359,13 @@ unsafe extern "system" fn follow_proc(
             if let Some(composed) = &inner.composed {
                 let _ = DestroyWindow(composed.window);
             }
+            DefSubclassProc(hwnd, msg, wparam, lparam)
+        }
+        // DWM restarted (Windows tells every top-level window): lay the surface out and colour
+        // it again, in case the new DWM missed what was set before.
+        WM_DWMCOMPOSITIONCHANGED => {
+            inner.laid_out.set(None);
+            inner.follow();
             DefSubclassProc(hwnd, msg, wparam, lparam)
         }
         _ if msg == effects_message() => {

@@ -14,7 +14,8 @@ use windows::core::BOOL;
 use windows::Win32::UI::WindowsAndMessaging::{EnumWindows, GetWindowTextW, GetWindowThreadProcessId};
 use windows::Win32::UI::WindowsAndMessaging::{
     GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos, GWL_EXSTYLE, GWL_STYLE, STYLESTRUCT,
-    SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, WM_DPICHANGED, WM_STYLECHANGING,
+    SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, WM_DPICHANGED,
+    WM_DWMCOMPOSITIONCHANGED, WM_STYLECHANGING,
     WS_CAPTION, WS_EX_APPWINDOW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_MAXIMIZEBOX,
     WS_MINIMIZEBOX, WS_SYSMENU, WS_THICKFRAME,
 };
@@ -94,11 +95,40 @@ unsafe extern "system" fn dock_proc(
 /// Let the window's own transparent pixels show what is under it (its glass). A window the
 /// window library made transparent should already, but a bar window's GL surface showed black
 /// there until DWM was told its frame covers the whole window.
+///
+/// DWM forgets this when it restarts (it crashed and restarted nine times in a minute once while
+/// the bar ran, and every bar window started in that minute stayed a black slab), and a call
+/// made while it is down fails. Windows tells every top-level window when DWM is back
+/// (`WM_DWMCOMPOSITIONCHANGED`), so the window says it again then.
 pub fn see_through(hwnd: isize) {
+    extend_frame(HWND(hwnd as *mut _));
+    unsafe {
+        let _ = SetWindowSubclass(HWND(hwnd as *mut _), Some(see_through_proc), SEE_THROUGH, 0);
+    }
+}
+
+/// The subclass id of `see_through`'s handler.
+const SEE_THROUGH: usize = 4;
+
+fn extend_frame(hwnd: HWND) {
     let margins = MARGINS { cxLeftWidth: -1, cxRightWidth: -1, cyTopHeight: -1, cyBottomHeight: -1 };
     unsafe {
-        let _ = DwmExtendFrameIntoClientArea(HWND(hwnd as *mut _), &margins);
+        let _ = DwmExtendFrameIntoClientArea(hwnd, &margins);
     }
+}
+
+unsafe extern "system" fn see_through_proc(
+    hwnd: HWND,
+    msg: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+    _id: usize,
+    _data: usize,
+) -> LRESULT {
+    if msg == WM_DWMCOMPOSITIONCHANGED {
+        extend_frame(hwnd);
+    }
+    DefSubclassProc(hwnd, msg, wparam, lparam)
 }
 
 /// This process's window with the given title. egui creates extra windows (the top bar) without
