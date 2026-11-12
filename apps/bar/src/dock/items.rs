@@ -16,7 +16,7 @@ pub enum Section {
 }
 
 /// One dock icon: an app and its windows (front-most first), which may be none for a pin.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Item {
     pub section: Section,
     pub app_id: String,

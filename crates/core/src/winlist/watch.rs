@@ -2,6 +2,11 @@
 //! window events (shown, hidden, destroyed, renamed, minimized, cloaked, brought to front) and
 //! raises a flag and wakes the UI.
 
+use super::filter::{
+    self, Verdict, EVENT_OBJECT_CLOAKED, EVENT_OBJECT_DESTROY, EVENT_OBJECT_HIDE, EVENT_OBJECT_LOCATIONCHANGE,
+    EVENT_OBJECT_NAMECHANGE, EVENT_OBJECT_UNCLOAKED, EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_MINIMIZEEND,
+    EVENT_SYSTEM_MINIMIZESTART,
+};
 use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::thread::JoinHandle;
@@ -15,16 +20,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
 
 // The event ranges listened to. Narrow on purpose: location changes fire constantly (every cursor
 // and caret move), so they are not in this list. A separate hook hears them from the front
-// window's thread only (see `follow_foreground`).
-const EVENT_SYSTEM_FOREGROUND: u32 = 0x0003;
-const EVENT_SYSTEM_MINIMIZESTART: u32 = 0x0016;
-const EVENT_SYSTEM_MINIMIZEEND: u32 = 0x0017;
-const EVENT_OBJECT_DESTROY: u32 = 0x8001;
-const EVENT_OBJECT_HIDE: u32 = 0x8003;
-const EVENT_OBJECT_LOCATIONCHANGE: u32 = 0x800B;
-const EVENT_OBJECT_NAMECHANGE: u32 = 0x800C;
-const EVENT_OBJECT_CLOAKED: u32 = 0x8017;
-const EVENT_OBJECT_UNCLOAKED: u32 = 0x8018;
+// window's thread only (see `follow_foreground`). Each event is then weighed in the callback
+// (`filter`), so other apps' popups wake nothing.
 const RANGES: [(u32, u32); 5] = [
     (EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND),
     (EVENT_SYSTEM_MINIMIZESTART, EVENT_SYSTEM_MINIMIZEEND),
@@ -192,29 +189,22 @@ unsafe extern "system" fn on_event(
     if hwnd.is_invalid() || id_object != OBJID_WINDOW || id_child != CHILDID_SELF {
         return;
     }
-    if event != EVENT_SYSTEM_FOREGROUND && GetAncestor(hwnd, GA_ROOT) != hwnd {
-        return;
-    }
     if event == EVENT_SYSTEM_FOREGROUND {
         follow_foreground(hwnd);
-    }
-    if event == EVENT_OBJECT_LOCATIONCHANGE {
-        // Windows that are not in front are none of the bars' business.
-        let front = GetForegroundWindow();
-        if !front.is_invalid() && GetAncestor(front, GA_ROOT) == hwnd {
-            notify_moved();
-        }
+    } else if GetAncestor(hwnd, GA_ROOT) != hwnd {
         return;
     }
-    if event == EVENT_OBJECT_NAMECHANGE {
-        // Background windows' titles are not shown anywhere; ignore them without waking the UI.
-        let front = GetForegroundWindow();
-        if front.is_invalid() || GetAncestor(front, GA_ROOT) != hwnd {
-            return;
-        }
-        FRONT_RENAMED.store(true, Ordering::Release);
-    } else {
-        DIRTY.store(true, Ordering::Release);
+    let front = || {
+        let fg = GetForegroundWindow();
+        !fg.is_invalid() && GetAncestor(fg, GA_ROOT) == hwnd
+    };
+    let in_front = matches!(event, EVENT_OBJECT_LOCATIONCHANGE | EVENT_OBJECT_NAMECHANGE) && front();
+    let known = filter::is_known(hwnd.0 as isize);
+    match filter::verdict(event, known, in_front, || super::is_app_window(hwnd)) {
+        Verdict::Ignore => return,
+        Verdict::FrontMoved => return notify_moved(),
+        Verdict::FrontRenamed => FRONT_RENAMED.store(true, Ordering::Release),
+        Verdict::List => DIRTY.store(true, Ordering::Release),
     }
     if let Some(w) = WAKE.get() {
         if let Some(wake) = w.lock().unwrap().as_ref() {

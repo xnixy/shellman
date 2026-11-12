@@ -11,6 +11,7 @@ mod draw;
 mod items;
 mod menu;
 mod metrics;
+mod shown;
 
 pub use metrics::ABOVE;
 
@@ -19,6 +20,7 @@ use crate::shape::surface;
 use crate::wake::Wake;
 use items::{Item, Section};
 use metrics::Metrics;
+use shown::Shown;
 use shellman_ui::glass::{self, Island, Style};
 use shellman_core::settings::dock::{DockSettings as Pins, Pin};
 use shellman_core::thumbs::Thumbs;
@@ -55,9 +57,9 @@ impl Dock {
     /// `_glass` (whether Windows can frost a window) is not needed: each dock window's glass
     /// says for itself whether it is composed.
     pub fn new(ctx: egui::Context, _glass: bool, wake: Wake) -> Self {
-        let bars = wake.clone();
         let watcher = WindowWatcher::start(move || {
-            bars.bars();
+            // The host reads the list again and wakes only the bars whose content changed.
+            crate::host::request_frame();
             // A hidden window gets no repaints, so a fullscreen app ending is noticed by message.
             fullscreen::request_check();
         });
@@ -326,19 +328,38 @@ impl Dock {
         draw::texture(ctx, &item, px, &mut self.thumbs)
     }
 
-    /// Catch up with the window watcher and finished icons. Any bar's frame calls this first,
-    /// so whichever window repaints first brings the shared model up to date for all of them.
+    /// Catch up with the window watcher and finished icons. The host's frame and every bar's
+    /// frame call this first, so whichever runs first brings the shared model up to date, and
+    /// wakes the bars whose picture changed: only those.
     pub fn catch_up(&mut self, ctx: &egui::Context) {
-        self.thumbs.poll(ctx);
-        if self.watcher.take_dirty() {
+        let icons = self.thumbs.poll(ctx);
+        let renamed = self.watcher.take_front_renamed();
+        let dirty = self.watcher.take_dirty();
+        if !(icons || renamed || dirty) {
+            return;
+        }
+        let before = Shown::of(&self.items, self.front, self.front_window());
+        if dirty {
             self.regroup();
-        } else if self.watcher.take_front_renamed() {
+        } else if renamed {
             if let Some(front) = self.front {
                 let title = winlist::title_of(front);
                 if let Some(w) = self.windows.iter_mut().find(|w| w.hwnd == front) {
                     w.title = title;
                 }
             }
+        }
+        let change = before.change(&Shown::of(&self.items, self.front, self.front_window()));
+        // New icons can be on any bar: a dock's, or the top bar's app in front.
+        if icons || change.docks {
+            self.wake.docks();
+        }
+        if icons || change.tops {
+            self.wake.tops();
+        }
+        if change.docks || change.tops {
+            // The preview panel lists an app's windows.
+            self.wake.preview();
         }
     }
 

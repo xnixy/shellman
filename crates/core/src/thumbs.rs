@@ -151,9 +151,11 @@ impl Thumbs {
         }
     }
 
-    /// Turn finished images into textures.
-    pub fn poll(&mut self, ctx: &egui::Context) {
+    /// Turn finished images into textures. True if any arrived (or turned out to be missing).
+    pub fn poll(&mut self, ctx: &egui::Context) -> bool {
+        let mut any = false;
         while let Ok((key, image)) = self.rx.try_recv() {
+            any = true;
             let slot = match image {
                 Some(img) => {
                     let name = format!("thumb:{}:{}", key.1, key.0.display());
@@ -163,6 +165,7 @@ impl Thumbs {
             };
             self.cache.insert(key, slot);
         }
+        any
     }
 
     /// Drop requests nobody is waiting for any more, after leaving a folder.

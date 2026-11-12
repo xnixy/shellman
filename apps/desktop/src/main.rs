@@ -10,7 +10,7 @@ mod monitors;
 mod source;
 mod surface;
 
-use windows::core::w;
+use windows::core::HSTRING;
 use windows::Win32::Foundation::{GetLastError, ERROR_ALREADY_EXISTS};
 use windows::Win32::System::Threading::CreateMutexW;
 use windows::Win32::UI::HiDpi::{SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2};
@@ -29,9 +29,14 @@ fn main() {
         // `--frames-only`: just the frames service, no wallpaper (so a test copy can run next to
         // the real desktop). It has a mutex of its own.
         let frames_only = has("--frames-only");
-        // One wallpaper per session: a second copy just exits. The handle lives until exit.
-        let name = if frames_only { w!("Local\\shellman-desktop-frames") } else { w!("Local\\shellman-desktop") };
-        let _single = CreateMutexW(None, false, name);
+        // One wallpaper per session: a second copy just exits. The handle lives until exit. A test
+        // copy (`SHELLMAN_INSTANCE`) has a name of its own, so it can run beside the real one.
+        let base = if frames_only { "Local\\shellman-desktop-frames" } else { "Local\\shellman-desktop" };
+        let name = match std::env::var("SHELLMAN_INSTANCE").ok().filter(|i| !i.is_empty()) {
+            Some(instance) => HSTRING::from(format!("{base}-{instance}")),
+            None => HSTRING::from(base),
+        };
+        let _single = CreateMutexW(None, false, &name);
         if GetLastError() == ERROR_ALREADY_EXISTS {
             return;
         }

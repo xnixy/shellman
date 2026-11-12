@@ -172,6 +172,11 @@ impl Switcher {
             screen,
             shown: None,
         });
+        // Out of sight it was one pixel (`shape::hide`): the frames drawn before it shows need
+        // its full size.
+        if let Some(open) = &self.open {
+            shape::presize(self.hwnd, panel_rect(open));
+        }
         self.ctx.request_repaint();
     }
 
@@ -231,8 +236,7 @@ impl Switcher {
                 _ => preview.hide(),
             }
         }
-        let size = ((open.layout.w * s).round() as i32, (open.layout.h * s).round() as i32);
-        shape::show_at(self.hwnd, open.screen.centred(size));
+        shape::show_at(self.hwnd, panel_rect(open));
         self.ctx.request_repaint();
     }
 
@@ -243,6 +247,13 @@ impl Switcher {
         // One frame with nothing drawn, so the next showing never starts from this panel's image.
         self.ctx.request_repaint();
     }
+}
+
+/// The panel's rectangle in pixels: its layout's size, centred on its monitor.
+fn panel_rect(open: &Open) -> windows::Win32::Foundation::RECT {
+    let s = open.screen.scale;
+    let size = ((open.layout.w * s).round() as i32, (open.layout.h * s).round() as i32);
+    open.screen.centred(size)
 }
 
 /// Set in a test copy, which has no keyboard: Alt counts as held until Esc.
