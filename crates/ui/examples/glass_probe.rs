@@ -4,6 +4,7 @@
 //! `glass_probe <mode> <x> <y> <w> <h> <radius px> [seconds] [dx]`, all in physical pixels.
 //! Modes:
 //! - `panel`: shellman's `GlassPanel` (composition, host backdrop) under an empty window.
+//!   `PROBE_LIGHT=1`, `PROBE_GLASS=<0..1>` and `PROBE_ACCENT=<r>,<g>,<b>` pick the theme.
 //!   With `dx`, the window moves right by `dx` half-way through, to see the panel follow.
 //! - `accent`: the undocumented accent policy (acrylic blur-behind) plus a rounded window region.
 //! - `system`: DWM's system backdrop (transient/acrylic) plus a rounded window region.
@@ -366,6 +367,13 @@ fn main() {
                     .and_then(|v| v.parse().ok())
                 {
                     theme::set_glass(&egui::Context::default(), g);
+                }
+                // PROBE_ACCENT=<r>,<g>,<b> for the accent (else the theme's default).
+                if let Some([r, g, b]) = std::env::var("PROBE_ACCENT").ok().and_then(|v| {
+                    let c: Vec<u8> = v.split(',').filter_map(|s| s.trim().parse().ok()).collect();
+                    <[u8; 3]>::try_from(c).ok()
+                }) {
+                    theme::set_accent(&egui::Context::default(), egui::Color32::from_rgb(r, g, b));
                 }
                 let style = Style::from_theme(24.0);
                 let panel = GlassPanel::attach(hwnd.0 as isize, style);

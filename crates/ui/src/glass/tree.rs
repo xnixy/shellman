@@ -1,9 +1,11 @@
 //! The composition visuals of one glass surface, from the bottom up: the shadow, the blurred
-//! backdrop, the tint, and the rim. The backdrop and tint are clipped to one rounded rectangle;
-//! the shadow and the rim are shapes of the same rectangle. Everything is in pixels.
+//! backdrop (through the style's luminosity, as acrylic does), the tint, and the rim. The backdrop
+//! and tint are clipped to one rounded rectangle; the shadow and the rim are shapes of the same
+//! rectangle. Everything is in pixels.
 
-use super::style::{Geometry, Style};
-use std::cell::OnceCell;
+use super::effect;
+use super::style::{Geometry, Luminosity, Style};
+use std::cell::{OnceCell, RefCell};
 use windows::core::{Interface, Result};
 use windows::System::{DispatcherQueue, DispatcherQueueController};
 use windows::Win32::Foundation::HWND;
@@ -15,8 +17,8 @@ use windows::UI::Color;
 use windows::UI::Composition::Desktop::DesktopWindowTarget;
 use windows::UI::Composition::{
     CompositionBackdropBrush, CompositionColorBrush, CompositionColorGradientStop,
-    CompositionRoundedRectangleGeometry, CompositionVisualSurface, Compositor, DropShadow,
-    ShapeVisual, SpriteVisual, Visual,
+    CompositionEffectBrush, CompositionRoundedRectangleGeometry, CompositionVisualSurface,
+    Compositor, DropShadow, ShapeVisual, SpriteVisual, Visual,
 };
 use windows_numerics::{Vector2, Vector3};
 
@@ -77,8 +79,12 @@ pub struct Tree {
     mask_visual: ShapeVisual,
     mask: CompositionVisualSurface,
     mask_fill: CompositionColorBrush,
+    compositor: Compositor,
     backdrop: SpriteVisual,
     host_backdrop: CompositionBackdropBrush,
+    /// The host backdrop through the style's luminosity, made again only when that changes. None
+    /// where composition would not build the effect: then the blur shows as it is.
+    lifted: RefCell<Option<(Luminosity, Option<CompositionEffectBrush>)>>,
     solid: CompositionColorBrush,
     tint_visual: SpriteVisual,
     tint: CompositionColorBrush,
@@ -158,8 +164,10 @@ impl Tree {
             mask_visual,
             mask,
             mask_fill,
+            compositor: c.clone(),
             backdrop,
             host_backdrop: c.CreateHostBackdropBrush()?,
+            lifted: RefCell::new(None),
             solid: c.CreateColorBrush()?,
             tint_visual,
             tint,
@@ -210,7 +218,20 @@ impl Tree {
 
         self.solid.SetColor(color(style.solid))?;
         if effects {
-            self.backdrop.SetBrush(&self.host_backdrop)?;
+            let mut lifted = self.lifted.borrow_mut();
+            if lifted.as_ref().is_none_or(|(l, _)| *l != style.luminosity) {
+                let brush = effect::color_matrix_brush(
+                    &self.compositor,
+                    &self.host_backdrop.cast()?,
+                    style.luminosity.matrix(),
+                )
+                .ok();
+                *lifted = Some((style.luminosity, brush));
+            }
+            match lifted.as_ref().and_then(|(_, b)| b.as_ref()) {
+                Some(brush) => self.backdrop.SetBrush(brush)?,
+                None => self.backdrop.SetBrush(&self.host_backdrop)?,
+            }
         } else {
             self.backdrop.SetBrush(&self.solid)?;
         }
