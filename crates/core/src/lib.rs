@@ -9,6 +9,7 @@ pub mod foreground;
 pub mod fsops;
 pub mod installed;
 pub mod live_thumb;
+pub mod notify;
 pub mod places;
 pub mod places_reg;
 pub mod recycle_bin;

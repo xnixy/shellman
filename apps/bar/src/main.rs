@@ -12,6 +12,7 @@ mod dock;
 mod fullscreen;
 mod host;
 mod monitors;
+mod notify;
 mod place;
 mod preview;
 mod reserve;
@@ -26,6 +27,11 @@ use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use reserve::Mode;
 use shellman_ui::appearance::{self, Appearance};
 use shellman_ui::{theme, window};
+
+/// Whether do-not-disturb was left on.
+fn dnd_was_on() -> bool {
+    shellman_core::settings::bar::BarSettings::load().do_not_disturb
+}
 
 fn main() -> eframe::Result {
     let test = std::env::args().any(|a| a == "--no-shell");
@@ -95,6 +101,7 @@ fn main() -> eframe::Result {
                 top: topbar::TopBar::new(tray, test),
                 bars: bars::Bars::new(mode),
                 preview: preview::Preview::new(cc.egui_ctx.clone()),
+                notify: notify::Notify::new(cc.egui_ctx.clone(), dnd_was_on()),
             };
             Ok(Box::new(app::Host::new(shared, wake, look, look_watch, minimized)))
         }),
