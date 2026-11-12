@@ -11,6 +11,8 @@ pub struct Settings {
     /// Folders open in tabs when the window last closed.
     pub tabs: Vec<PathBuf>,
     pub view: ViewMode,
+    /// Where the window was when it last closed, in physical pixels.
+    pub window: Option<crate::placement::Rect>,
 }
 
 /// How a folder's items are shown.
