@@ -9,6 +9,8 @@ publish = false
 # Started only by other shellman apps, through the UAC prompt. Never supervised by the session.
 [dependencies]
 shellman-core.workspace = true
+# The system font step (Settings' Fonts page).
+shellman-sysfont = { path = "../../crates/sysfont" }
 windows.workspace = true
 
 [build-dependencies]

@@ -1,0 +1,30 @@
+[package]
+name = "shellman-sysfont"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "Changing the font Windows uses everywhere: the logic of Fontman, without its window"
+
+[lib]
+name = "shellman_sysfont"
+
+[dependencies]
+dirs.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+windows-core.workspace = true
+# Reading font files, and writing the renamed replacement faces. The same versions Fontman uses.
+read-fonts = "0.45.1"
+skrifa = "0.48.0"
+write-fonts = "0.54.1"
+# Outlines of a variable face drawn out at one weight, or slanted for a missing italic.
+kurbo = "0.13.1"
+# Font files are mapped, not read: a large file costs only what is touched.
+memmap2 = "0.9.12"
+# Whether egui can draw a face (its own font loader panics on one it cannot parse). Already in the
+# workspace through egui.
+ab_glyph = "0.2.32"
+# DirectWrite checks every replacement face; the font cache services are stopped while the cache
+# is cleared.
+windows = { workspace = true, features = ["Win32_Graphics_DirectWrite", "Win32_System_Services"] }

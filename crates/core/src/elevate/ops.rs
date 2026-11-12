@@ -13,6 +13,14 @@ pub enum Op {
     /// `HKLM\...\Explorer\StartupApproved\<Run|Run32|StartupFolder>`
     /// (`startup-approve <enable|disable> <run|run32|folder> <name>`). Only that one value.
     StartupApprove { enable: bool, area: Area, name: String },
+    /// Install the system font replacements built for one generation and point the Segoe UI
+    /// entries at them (`sysfont-apply <generation>`). The helper reads the plan from its own
+    /// fixed place and checks it; only the generation comes from here.
+    SysfontApply { generation: String },
+    /// Point the Segoe UI entries back at Windows' own files (`sysfont-restore`).
+    SysfontRestore,
+    /// Put a system font used before back, from its history folder (`sysfont-reuse <generation>`).
+    SysfontReuse { generation: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -43,6 +51,12 @@ pub fn is_item_name(s: &str) -> bool {
         && !s.chars().any(|c| c.is_control() || matches!(c, '\\' | '/' | '"'))
 }
 
+/// Whether `s` is a system font generation id: base-36 time, lowercase letters and digits, at
+/// most 13 of them. Never a path.
+pub fn is_generation(s: &str) -> bool {
+    !s.is_empty() && s.len() <= 13 && s.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
+}
+
 fn state_word(state: &str) -> Result<bool, BadArgs> {
     match state {
         "enable" => Ok(true),
@@ -70,6 +84,11 @@ pub fn parse(args: &[String]) -> Result<Op, BadArgs> {
             }
             Ok(Op::StartupApprove { enable, area, name: (*name).to_owned() })
         }
+        ["sysfont-apply", generation] if is_generation(generation) => Ok(Op::SysfontApply { generation: (*generation).to_owned() }),
+        ["sysfont-reuse", generation] if is_generation(generation) => Ok(Op::SysfontReuse { generation: (*generation).to_owned() }),
+        ["sysfont-restore"] => Ok(Op::SysfontRestore),
+        ["sysfont-apply" | "sysfont-reuse", ..] => Err(BadArgs("takes exactly one generation id")),
+        ["sysfont-restore", ..] => Err(BadArgs("sysfont-restore takes nothing")),
         ["startup-approve", ..] => Err(BadArgs("startup-approve takes exactly a state, an area and a name")),
         ["sound-device", ..] => Err(BadArgs("sound-device takes exactly a state and an endpoint id")),
         [] => Err(BadArgs("no operation")),
@@ -88,6 +107,9 @@ impl Op {
             Op::StartupApprove { enable, area, name } => {
                 vec!["startup-approve".into(), if *enable { "enable" } else { "disable" }.into(), area.word().into(), name.clone()]
             }
+            Op::SysfontApply { generation } => vec!["sysfont-apply".into(), generation.clone()],
+            Op::SysfontRestore => vec!["sysfont-restore".into()],
+            Op::SysfontReuse { generation } => vec!["sysfont-reuse".into(), generation.clone()],
         }
     }
 
@@ -101,6 +123,16 @@ impl Op {
     /// The operation for a startup item, or None when `name` is not a plain item name.
     pub fn startup_approve(enable: bool, area: Area, name: &str) -> Option<Op> {
         is_item_name(name).then(|| Op::StartupApprove { enable, area, name: name.to_owned() })
+    }
+
+    /// The operation that installs a built system font, or None when `generation` is not an id.
+    pub fn sysfont_apply(generation: &str) -> Option<Op> {
+        is_generation(generation).then(|| Op::SysfontApply { generation: generation.to_owned() })
+    }
+
+    /// The operation that puts a system font used before back, or None when not an id.
+    pub fn sysfont_reuse(generation: &str) -> Option<Op> {
+        is_generation(generation).then(|| Op::SysfontReuse { generation: generation.to_owned() })
     }
 
     /// The operation for a sound device, or None when `id` is not an endpoint id.
@@ -200,6 +232,34 @@ mod tests {
         assert_eq!(op.command_line(), "startup-approve disable run \"Microsoft Teams\"");
         assert_eq!(Op::SoundDevice { enable: true, id: ID.into() }.command_line(), format!("sound-device enable {ID}"));
         assert!(Op::startup_approve(true, Area::Run, "a\\b").is_none());
+    }
+
+    #[test]
+    fn sysfont_ops_parse_strictly() {
+        let ok = |a: &[&str]| parse(&args(a));
+        assert_eq!(ok(&["sysfont-apply", "tob9y0"]), Ok(Op::SysfontApply { generation: "tob9y0".into() }));
+        assert_eq!(ok(&["sysfont-reuse", "t0b9y0"]), Ok(Op::SysfontReuse { generation: "t0b9y0".into() }));
+        assert_eq!(ok(&["sysfont-restore"]), Ok(Op::SysfontRestore));
+        for bad in [
+            &["sysfont-apply"][..],
+            &["sysfont-apply", ""],
+            &["sysfont-apply", "TOB9Y0"],
+            &["sysfont-apply", "..\\plan"],
+            &["sysfont-apply", "C:\\Temp\\plan.json"],
+            &["sysfont-apply", "a b"],
+            &["sysfont-apply", "12345678901234"],
+            &["sysfont-apply", "tob9y0", "extra"],
+            &["sysfont-reuse", "a/b"],
+            &["sysfont-restore", "now"],
+            &["sysfont-install", "tob9y0"],
+        ] {
+            assert!(ok(bad).is_err(), "{bad:?}");
+        }
+        for op in [Op::sysfont_apply("abc123").unwrap(), Op::SysfontRestore, Op::sysfont_reuse("zz9").unwrap()] {
+            assert_eq!(parse(&op.to_args()), Ok(op.clone()));
+        }
+        assert_eq!(Op::sysfont_apply("tob9y0").unwrap().command_line(), "sysfont-apply tob9y0");
+        assert!(Op::sysfont_apply("x/y").is_none());
     }
 
     #[test]
