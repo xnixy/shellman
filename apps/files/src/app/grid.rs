@@ -1,4 +1,6 @@
-//! The icons view: tiles with large previews, laid out in as many columns as fit.
+//! The cards view: each item its own rounded card, with its preview filling the upper part and
+//! its name and a muted detail below, laid out in as many columns as fit. The cards have no
+//! panel behind them; they float on the window's faint glass.
 //!
 //! Only the lines on screen are laid out and drawn, and only their previews are asked for, so a
 //! folder of 100 000 photos scrolls as smoothly as one of ten.
@@ -7,20 +9,62 @@ use super::actions::Action;
 use super::interact::{self, ItemEvents};
 use super::rows::file_icon;
 use super::tab::Loc;
-use egui::text::{LayoutJob, TextFormat, TextWrapping};
-use egui::{Align, Align2, Color32, CornerRadius, FontId, Id, Rect, Sense, Ui, Vec2};
-use shellman_core::fsops::Op;
+use egui::{Align2, Color32, CornerRadius, FontId, Id, Rect, Sense, Stroke, Ui, Vec2};
+use shellman_core::fsops::{self, Entry, Op};
 use shellman_core::thumbs;
-use shellman_ui::theme::{self, colors, icon_font};
-use shellman_ui::widgets;
+use shellman_ui::glass::islands::shows_as;
+use shellman_ui::theme::{self, colors, icon_font, semibold_font, Colors};
+use shellman_ui::widgets::{self, draw_text};
 
-/// Smallest tile width; tiles stretch a little to fill the line exactly.
-const TILE_W: f32 = 112.0;
-const TILE_H: f32 = 128.0;
-const GAP: f32 = 4.0;
-/// Height of one line of tiles, used for scrolling and Page Up/Down.
-pub(super) const GRID_LINE_H: f32 = TILE_H + GAP;
-const PREVIEW: f32 = 80.0;
+/// Smallest card width; cards stretch to fill the line exactly.
+const CARD_MIN_W: f32 = 150.0;
+const GAP: f32 = 14.0;
+/// Around the preview, inside the card.
+const INSET: f32 = 8.0;
+/// Below the preview: the name and the detail lines.
+const TEXT_H: f32 = 50.0;
+const CARD_RADIUS: u8 = super::RADIUS as u8;
+const PREVIEW_RADIUS: u8 = 14;
+
+/// Columns, card width and card height for a line `width` wide.
+pub(super) fn fit(width: f32) -> (usize, f32, f32) {
+    let cols = (((width + GAP) / (CARD_MIN_W + GAP)) as usize).max(1);
+    let card_w = ((width + GAP) / cols as f32 - GAP).max(1.0);
+    let preview_h = ((card_w - INSET * 2.0) * 0.7).round();
+    (cols, card_w, INSET + preview_h + TEXT_H)
+}
+
+/// A card's fill and line, by its state.
+fn card_look(c: &Colors, selected: bool, hovered: bool) -> (Color32, Stroke) {
+    // As the design gives them (CSS colours), converted for the window (see `shows_as`).
+    let css = |r: u8, g: u8, b: u8, a: u8| shows_as(Color32::from_rgba_unmultiplied(r, g, b, a));
+    if selected {
+        let [r, g, b, _] = c.accent_fill.to_array();
+        let fill = css(r, g, b, if c.light { 46 } else { 60 });
+        return (fill, Stroke::new(2.0_f32, c.accent_fill));
+    }
+    let (fill, line) = if c.light {
+        (
+            css(255, 255, 255, if hovered { 170 } else { 120 }),
+            Color32::from_black_alpha(16),
+        )
+    } else {
+        (
+            css(255, 255, 255, if hovered { 18 } else { 10 }),
+            css(255, 255, 255, 18),
+        )
+    };
+    (fill, Stroke::new(1.0_f32, line))
+}
+
+/// The muted line under a card's name.
+fn detail(e: &Entry) -> String {
+    if e.is_dir {
+        "Folder".into()
+    } else {
+        fsops::format_size(e.size)
+    }
+}
 
 impl super::FileMan {
     pub(super) fn file_grid(&mut self, ui: &mut Ui, actions: &mut Vec<Action>) {
@@ -37,7 +81,6 @@ impl super::FileMan {
         if interact::error_state(ui, tab) {
             return;
         }
-        ui.add_space(6.0);
         interact::folder_backdrop(ui, tab, actions);
         if interact::empty_state(ui, tab) {
             return;
@@ -45,113 +88,78 @@ impl super::FileMan {
 
         let bin = tab.loc == Loc::Bin;
         let width = ui.available_width();
-        let cols = (((width + GAP) / (TILE_W + GAP)) as usize).max(1);
-        let tile_w = (width + GAP) / cols as f32 - GAP;
+        let (cols, card_w, card_h) = fit(width);
+        let line_h = card_h + GAP;
         self.grid_cols = cols;
+        self.grid_line_h = line_h;
         let n = tab.view.len();
         let lines = n.div_ceil(cols);
 
-        let scroll = interact::scroll_to_cursor(tab, GRID_LINE_H, cols);
-        let out = scroll.show_rows(ui, GRID_LINE_H, lines, |ui, line_range| {
+        let scroll = interact::scroll_to_cursor(tab, line_h, cols);
+        let out = scroll.show_rows(ui, line_h, lines, |ui, line_range| {
             ui.spacing_mut().item_spacing.y = 0.0;
             for line in line_range {
                 let (line_rect, _) =
-                    ui.allocate_exact_size(Vec2::new(width, GRID_LINE_H), Sense::hover());
+                    ui.allocate_exact_size(Vec2::new(width, line_h), Sense::hover());
                 for col in 0..cols {
                     let r = line * cols + col;
                     if r >= n {
                         break;
                     }
                     let e = &tab.entries[tab.view[r]];
-                    let tile = Rect::from_min_size(
-                        line_rect.min + Vec2::new(col as f32 * (tile_w + GAP), 0.0),
-                        Vec2::new(tile_w, TILE_H),
+                    let card = Rect::from_min_size(
+                        line_rect.min + Vec2::new(col as f32 * (card_w + GAP), 0.0),
+                        Vec2::new(card_w, card_h),
                     );
-                    let resp = ui.interact(tile, Id::new(("tile", r)), Sense::click());
+                    let resp = ui.interact(card, Id::new(("card", r)), Sense::click());
                     let dim = interact::fade(e.hidden, cut.contains(&e.path));
-
-                    // Selection and hover.
                     let selected = tab.selected.contains(&e.path);
-                    if selected {
-                        ui.painter()
-                            .rect_filled(tile, CornerRadius::same(10), c.row_selected);
-                    } else if resp.hovered() {
-                        ui.painter()
-                            .rect_filled(tile, CornerRadius::same(10), c.control);
-                    }
+                    let (fill, stroke) = card_look(&c, selected, resp.hovered());
+                    ui.painter().rect(
+                        card,
+                        CornerRadius::same(CARD_RADIUS),
+                        fill,
+                        stroke,
+                        egui::StrokeKind::Inside,
+                    );
 
-                    // Preview: a folder glyph, the shell's preview, or a large type tile.
-                    let preview = Rect::from_center_size(
-                        egui::pos2(tile.center().x, tile.top() + 10.0 + PREVIEW / 2.0),
-                        Vec2::splat(PREVIEW),
+                    let preview = Rect::from_min_max(
+                        card.min + Vec2::splat(INSET),
+                        egui::pos2(card.right() - INSET, card.bottom() - TEXT_H),
                     );
                     let thumb = (!e.is_dir && thumbs::wants_thumb(&e.name))
                         .then(|| thumbs.get(&e.path, true).map(|t| (t.id(), t.size_vec2())))
                         .flatten();
-                    if e.is_dir {
-                        let icon = Rect::from_center_size(preview.center(), Vec2::new(62.0, 46.0));
-                        widgets::folder_icon(ui.painter(), icon, c.accent_text, &dim);
-                    } else if let Some((id, size)) = thumb {
-                        let program = thumbs::is_program(&e.name);
-                        // Program icons are small and unframed; photos are fitted into a wider
-                        // box and sit on its bottom edge so every name hangs at the same distance.
-                        let max = if program {
-                            Vec2::splat(56.0)
-                        } else {
-                            Vec2::new(80.0, 60.0)
-                        };
-                        let size = size * (max.x / size.x).min(max.y / size.y);
-                        let at = if program {
-                            Rect::from_center_size(preview.center(), size)
-                        } else {
-                            Rect::from_min_size(
-                                egui::pos2(
-                                    preview.center().x - size.x / 2.0,
-                                    preview.bottom() - size.y,
-                                ),
-                                size,
-                            )
-                        };
-                        let radius = if program { 0 } else { 8 };
-                        egui::Image::from_texture((id, size))
-                            .corner_radius(CornerRadius::same(radius))
-                            .tint(dim(Color32::WHITE))
-                            .paint_at(ui, at);
-                    } else {
-                        let (g, gcol) = file_icon(e, &c);
-                        let square = Rect::from_center_size(preview.center(), Vec2::splat(64.0));
-                        let alpha = if c.light { 36 } else { 46 };
-                        let p = ui.painter();
-                        p.rect_filled(
-                            square,
-                            CornerRadius::same(16),
-                            dim(theme::with_alpha(gcol, alpha)),
-                        );
-                        p.text(
-                            square.center(),
-                            Align2::CENTER_CENTER,
-                            g,
-                            icon_font(26.0),
-                            dim(gcol),
-                        );
-                    }
+                    paint_preview(ui, preview, e, thumb, &c, &dim);
 
-                    // Name, up to two lines, or the rename box.
-                    let name_rect = Rect::from_min_max(
-                        egui::pos2(tile.left() + 6.0, preview.bottom() + 8.0),
-                        egui::pos2(tile.right() - 6.0, tile.bottom() - 4.0),
+                    // Name and detail, or the rename box.
+                    let name = Rect::from_min_max(
+                        egui::pos2(card.left() + 14.0, preview.bottom() + 6.0),
+                        egui::pos2(card.right() - 12.0, preview.bottom() + 26.0),
                     );
                     match rename.as_mut().filter(|rn| rn.path == e.path) {
                         Some(rn) => {
                             let field = Rect::from_min_size(
-                                name_rect.min,
-                                Vec2::new(name_rect.width(), 24.0),
+                                egui::pos2(card.left() + 8.0, name.top()),
+                                Vec2::new(card_w - 16.0, 24.0),
                             );
                             interact::rename_box(ui, field, rn, e.is_dir, &mut ev);
                         }
-                        None => centered_name(ui, name_rect, &e.name, dim(c.text)),
+                        None => {
+                            draw_text(ui, name, &e.name, semibold_font(13.0), dim(c.text), false)
+                        }
                     }
+                    let below = name.translate(Vec2::new(0.0, 17.0));
+                    draw_text(
+                        ui,
+                        below,
+                        &detail(e),
+                        FontId::proportional(11.5),
+                        dim(c.muted),
+                        false,
+                    );
 
+                    let resp = resp.on_hover_text_at_pointer(&e.name);
                     ev.record(ui, &resp, r, actions);
                     interact::item_menu(ui, &resp, actions, r, bin);
                 }
@@ -164,25 +172,114 @@ impl super::FileMan {
     }
 }
 
-/// A name centered under its preview, wrapped to two lines and cut with an ellipsis after that.
-fn centered_name(ui: &Ui, rect: Rect, name: &str, color: Color32) {
-    let mut job = LayoutJob::single_section(
-        name.to_owned(),
-        TextFormat {
-            font_id: FontId::proportional(12.0),
-            color,
-            ..Default::default()
-        },
-    );
-    job.wrap = TextWrapping {
-        max_width: rect.width(),
-        max_rows: 2,
-        // Prefer breaking between words; egui still splits a word longer than a line.
-        break_anywhere: false,
-        overflow_character: Some('…'),
+/// The upper part of a card: a folder drawing, a photo filling it, a program's icon, or the
+/// type's glyph, on a faint rounded well.
+fn paint_preview(
+    ui: &Ui,
+    rect: Rect,
+    e: &Entry,
+    thumb: Option<(egui::TextureId, Vec2)>,
+    c: &Colors,
+    dim: &impl Fn(Color32) -> Color32,
+) {
+    let well = if c.light {
+        Color32::from_black_alpha(10)
+    } else {
+        shows_as(Color32::from_rgba_unmultiplied(255, 255, 255, 8))
     };
-    job.halign = Align::Center;
-    let galley = ui.fonts(|f| f.layout_job(job));
-    ui.painter()
-        .galley(egui::pos2(rect.center().x, rect.top()), galley, color);
+    let radius = CornerRadius::same(PREVIEW_RADIUS);
+    let p = ui.painter();
+    if e.is_dir {
+        p.rect_filled(rect, radius, well);
+        let w = (rect.width() * 0.42).min(rect.height() * 0.62 / 0.74);
+        let icon = Rect::from_center_size(rect.center(), Vec2::new(w, w * 0.74));
+        widgets::folder_icon(p, icon, c.accent_text, dim);
+        return;
+    }
+    if let Some((id, size)) = thumb {
+        if thumbs::is_program(&e.name) {
+            p.rect_filled(rect, radius, well);
+            let max = Vec2::splat(56.0_f32.min(rect.height() * 0.6));
+            let fitted = size * (max.x / size.x).min(max.y / size.y);
+            egui::Image::from_texture((id, fitted))
+                .tint(dim(Color32::WHITE))
+                .paint_at(ui, Rect::from_center_size(rect.center(), fitted));
+        } else {
+            // A photo fills the well, cropped to it.
+            let uv = cover_uv(size, rect.size());
+            egui::Image::from_texture((id, size))
+                .uv(uv)
+                .corner_radius(radius)
+                .tint(dim(Color32::WHITE))
+                .paint_at(ui, rect);
+        }
+        return;
+    }
+    let (g, gcol) = file_icon(e, c);
+    p.rect_filled(
+        rect,
+        radius,
+        dim(shows_as(theme::with_alpha(
+            gcol,
+            if c.light { 40 } else { 46 },
+        ))),
+    );
+    let size = (rect.height() * 0.36).clamp(20.0, 40.0);
+    p.text(
+        rect.center(),
+        Align2::CENTER_CENTER,
+        g,
+        icon_font(size),
+        dim(gcol),
+    );
+}
+
+/// The part of an image of `image` size that covers a box of `target` size, centred, in texture
+/// coordinates.
+fn cover_uv(image: Vec2, target: Vec2) -> Rect {
+    if image.x <= 0.0 || image.y <= 0.0 || target.x <= 0.0 || target.y <= 0.0 {
+        return Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+    }
+    let (ia, ta) = (image.x / image.y, target.x / target.y);
+    if ia > ta {
+        let w = ta / ia;
+        Rect::from_min_max(
+            egui::pos2((1.0 - w) / 2.0, 0.0),
+            egui::pos2((1.0 + w) / 2.0, 1.0),
+        )
+    } else {
+        let h = ia / ta;
+        Rect::from_min_max(
+            egui::pos2(0.0, (1.0 - h) / 2.0),
+            egui::pos2(1.0, (1.0 + h) / 2.0),
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cards_fill_the_line_exactly() {
+        for width in [150.0, 400.0, 777.0, 1600.0] {
+            let (cols, w, h) = fit(width);
+            assert!(w >= CARD_MIN_W || cols == 1);
+            assert!((cols as f32 * w + (cols - 1) as f32 * GAP - width).abs() < 0.01);
+            assert!(h > w * 0.6, "a card is taller than a strip");
+        }
+        assert_eq!(fit(100.0).0, 1);
+    }
+
+    #[test]
+    fn a_photo_is_cropped_to_cover_its_well() {
+        // A wide photo in a squarer well: its middle, full height.
+        let uv = cover_uv(Vec2::new(400.0, 100.0), Vec2::new(200.0, 100.0));
+        assert!((uv.width() - 0.5).abs() < 1e-5 && uv.height() == 1.0);
+        assert!((uv.center().x - 0.5).abs() < 1e-5);
+        // A tall one: its middle, full width.
+        let uv = cover_uv(Vec2::new(100.0, 400.0), Vec2::new(100.0, 100.0));
+        assert!((uv.height() - 0.25).abs() < 1e-5 && uv.width() == 1.0);
+        assert_eq!(cover_uv(Vec2::ZERO, Vec2::splat(10.0)).width(), 1.0);
+    }
 }

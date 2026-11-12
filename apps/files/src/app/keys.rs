@@ -1,7 +1,6 @@
 //! Keyboard shortcuts.
 
 use super::actions::Action;
-use super::grid::GRID_LINE_H;
 use super::tab::Loc;
 use super::ROW_H;
 use crate::settings::ViewMode;
@@ -116,7 +115,7 @@ impl super::FileMan {
             // Up and Down move a whole line and Left and Right one tile.
             let grid = self.settings.view == ViewMode::Grid;
             let (line, line_h) = if grid {
-                (self.grid_cols.max(1), GRID_LINE_H)
+                (self.grid_cols.max(1), self.grid_line_h)
             } else {
                 (1, ROW_H)
             };

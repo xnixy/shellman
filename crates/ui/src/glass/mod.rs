@@ -45,8 +45,8 @@
 //! islands are the window's own, to drag it by) and only the islands are glass.
 
 mod backdrop;
-mod effect;
 mod cloak;
+mod effect;
 pub mod islands;
 mod style;
 mod tree;
@@ -59,15 +59,15 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::sync::OnceLock;
 use tree::{Paint, Placed, Tree};
-use windows::Win32::Foundation::POINT;
-use windows::Win32::Graphics::Gdi::ClientToScreen;
 use windows::core::w;
 use windows::Foundation::TypedEventHandler;
+use windows::Win32::Foundation::POINT;
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Dwm::{
     DwmSetWindowAttribute, DWMSBT_NONE, DWMWA_BORDER_COLOR, DWMWA_SYSTEMBACKDROP_TYPE,
     DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DONOTROUND, DWMWINDOWATTRIBUTE,
 };
+use windows::Win32::Graphics::Gdi::ClientToScreen;
 use windows::Win32::Graphics::Gdi::{
     CombineRgn, CreateRectRgn, CreateRoundRectRgn, DeleteObject, SetWindowRgn, RGN_OR,
 };
@@ -204,7 +204,9 @@ impl GlassPanel {
             }
             *current = Some((islands.to_vec(), scale));
         }
-        self.inner.islands_seen.set(self.inner.islands_seen.get() + 1);
+        self.inner
+            .islands_seen
+            .set(self.inner.islands_seen.get() + 1);
         self.inner.follow();
     }
 
@@ -308,7 +310,13 @@ impl Inner {
                         right: window.0,
                         bottom: window.1,
                     };
-                    (geo, whole, placed, None, Some((self.islands_seen.get(), client)))
+                    (
+                        geo,
+                        whole,
+                        placed,
+                        None,
+                        Some((self.islands_seen.get(), client)),
+                    )
                 }
                 None => {
                     let area = self.shape.get().unwrap_or(RECT {
@@ -340,7 +348,13 @@ impl Inner {
                 }
             };
             drop(islands);
-            let layout = Layout { window, shape: area, also, dpi, islands: key };
+            let layout = Layout {
+                window,
+                shape: area,
+                also,
+                dpi,
+                islands: key,
+            };
             let before = self.laid_out.replace(Some(layout));
             if before != Some(layout) {
                 let moved = before.is_none_or(|b| {

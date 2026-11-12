@@ -1,108 +1,97 @@
-//! The window's layout: one even tint over the glass, the sidebar, the tab strip and toolbar,
-//! and the sheet that holds the folder and its footer.
+//! The window's layout: islands of glass placed by `plan`, each drawn in its own part of the
+//! window, and handed to the glass panel every frame (free while nothing moves). The rest of the
+//! window is gap: the desktop shows through, and it moves the window.
 
 use super::actions::Action;
+use super::plan::Plan;
 use super::tab::Loc;
-use super::{CAPTION_H, FOOTER_H, SIDEBAR_W};
+use super::RADIUS;
 use crate::settings::ViewMode;
-use egui::{Align, Color32, CornerRadius, Layout, Stroke, Ui, Vec2};
-use shellman_ui::theme::colors;
+use egui::{Align, Layout, Shape, Ui, UiBuilder, Vec2};
+use shellman_ui::glass::{islands, Island, Style};
+
+/// How much of the glass behind the cards shows (see `layout`). Over a bright, busy wallpaper,
+/// cards straight on the desktop could not be read, and glass only partly there (0.55 was
+/// tried) lets the sharp picture back through it, which reads no better. So it is whole glass,
+/// but without a shadow, so the cards still look like the pieces that float.
+const BACKING: f32 = 1.0;
 
 impl super::FileMan {
     pub(super) fn layout(&mut self, ctx: &egui::Context, actions: &mut Vec<Action>) {
-        let ppp = ctx.pixels_per_point();
-        self.caption = if self.glass {
-            shellman_ui::window::caption_buttons_size(self.hwnd)
-                .map(|(w, h)| Vec2::new(w as f32 / ppp, h as f32 / ppp))
-        } else {
-            None
-        };
-        // Exactly the caption buttons' height, so the tabs and the buttons share one centre line.
-        let caption_h = self.caption.map_or(CAPTION_H, |s| s.y.clamp(32.0, 48.0));
-        let c = colors();
-        // One even tint over the whole window; nothing else paints a band of its own.
-        ctx.layer_painter(egui::LayerId::background()).rect_filled(
-            ctx.screen_rect(),
-            CornerRadius::ZERO,
-            if self.glass { c.shell } else { c.bg },
-        );
-        egui::SidePanel::left("sidebar")
-            .frame(egui::Frame::new().inner_margin(egui::Margin {
-                left: 10,
-                right: 8,
-                top: 0,
-                bottom: 10,
-            }))
-            .exact_width(SIDEBAR_W)
-            .resizable(false)
-            .show_separator_line(false)
-            .show(ctx, |ui| self.sidebar(ui, caption_h, actions));
+        let screen = ctx.screen_rect();
+        let plan = Plan::new(screen);
+        // Read every frame, so the glass follows the theme, accent and glass amount live.
+        let style = Style::from_theme(RADIUS);
+        let composed = self.panel.as_ref().is_some_and(|p| p.composed());
+        if let Some(panel) = &self.panel {
+            panel.set_style(style);
+        }
+        let mut list: Vec<Island> = Vec::with_capacity(8);
         egui::CentralPanel::default()
-            .frame(egui::Frame::new().inner_margin(egui::Margin {
-                left: 0,
-                right: 10,
-                top: 0,
-                bottom: 10,
-            }))
+            .frame(egui::Frame::new())
             .show(ctx, |ui| {
-                egui::TopBottomPanel::top("tabs")
-                    .frame(egui::Frame::new())
-                    .show_separator_line(false)
-                    .exact_height(caption_h)
-                    .show_inside(ui, |ui| self.tab_strip(ui, actions));
-                egui::TopBottomPanel::top("toolbar")
-                    .frame(egui::Frame::new().inner_margin(egui::Margin {
-                        left: 0,
-                        right: 0,
-                        top: 8,
-                        bottom: 10,
-                    }))
-                    .show_separator_line(false)
-                    .show_inside(ui, |ui| self.toolbar(ui, actions));
-                egui::Frame::new()
-                    .fill(c.sheet)
-                    .stroke(Stroke::new(1.0_f32, c.hairline))
-                    .corner_radius(CornerRadius::same(12))
-                    .inner_margin(egui::Margin {
-                        left: 8,
-                        right: 8,
-                        top: 6,
-                        bottom: 0,
-                    })
-                    // Over glass the sheet is see-through, and a shadow under it would darken
-                    // its whole inside; only an opaque sheet gets one.
-                    .shadow(egui::Shadow {
-                        offset: [0, 2],
-                        blur: 16,
-                        spread: 0,
-                        color: if self.glass {
-                            Color32::TRANSPARENT
-                        } else {
-                            c.shadow
-                        },
-                    })
-                    .show(ui, |ui| {
-                        let size = ui.available_size();
-                        ui.set_min_size(size);
-                        let body = Vec2::new(size.x, (size.y - FOOTER_H).max(0.0));
-                        ui.allocate_ui_with_layout(body, Layout::top_down(Align::Min), |ui| {
-                            ui.set_min_size(body);
-                            self.folder_body(ui, actions);
-                        });
-                        self.footer(ui);
-                    });
+                // Under everything: the islands themselves when nothing composes them.
+                let under = ui.painter().add(Shape::Noop);
+                islands::drag_gaps(ui, screen);
+
+                let tabs = self.tab_strip(ui, plan.tabs_row, actions);
+                list.push(Island::pill(tabs));
+                self.window_controls(ui, plan.controls, actions);
+                list.push(Island::pill(plan.controls));
+                self.toolbar(ui, plan.bar, actions);
+                list.push(Island::pill(plan.bar));
+                let rail = self.rail(ui, plan.rail_area, actions);
+                list.push(Island::pill(rail));
+
+                // A list sits on one island. Cards are their own surfaces, over shadowless glass
+                // that keeps them readable on any wallpaper.
+                let listed = self.listed();
+                let content = if listed {
+                    list.push(Island::new(plan.content, RADIUS));
+                    plan.content.shrink2(Vec2::new(10.0, 8.0))
+                } else {
+                    list.push(Island::new(plan.content, RADIUS).faint(BACKING));
+                    plan.content.shrink(10.0)
+                };
+                let mut child = ui.new_child(
+                    UiBuilder::new()
+                        .id_salt("folder")
+                        .max_rect(content)
+                        .layout(Layout::top_down(Align::Min)),
+                );
+                child.set_clip_rect(content);
+                self.folder_body(&mut child, actions);
+
+                let mut extra = Vec::new();
+                if let Some(pill) = self.band(ui, plan.band, actions, &mut extra) {
+                    list.push(Island::pill(pill));
+                }
+                list.extend(extra.into_iter().map(Island::pill));
+                if !composed {
+                    ui.painter()
+                        .set(under, Shape::Vec(islands::solid_shapes(&list, &style)));
+                }
             });
+        if let Some(panel) = &self.panel {
+            panel.set_islands(&list, ctx.pixels_per_point());
+        }
+    }
+
+    /// Whether the folder shows as rows (on an island) rather than cards.
+    fn listed(&self) -> bool {
+        let loc = &self.tabs[self.active].loc;
+        *loc == Loc::Bin || (*loc != Loc::Pc && self.settings.view == ViewMode::List)
     }
 
     /// This PC, or the folder in the chosen view. The bin is always a list: its columns (original
-    /// location, date deleted) have no place on a tile.
+    /// location, date deleted) have no place on a card.
     fn folder_body(&mut self, ui: &mut Ui, actions: &mut Vec<Action>) {
         if self.tabs[self.active].loc == Loc::Pc {
             self.pc_page(ui, actions);
-        } else if self.settings.view == ViewMode::Grid && self.tabs[self.active].loc != Loc::Bin {
-            self.file_grid(ui, actions);
-        } else {
+        } else if self.listed() {
             self.file_list(ui, actions);
+        } else {
+            self.file_grid(ui, actions);
         }
     }
 }

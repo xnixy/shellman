@@ -1,6 +1,7 @@
 //! Small pieces drawn on islands (see `glass::islands`): chips, round icon buttons, and the
 //! window buttons a frameless islands window draws for itself.
 
+use crate::glass::islands::shows_as;
 use crate::theme::{self, colors, glyph, icon_font, semibold_font};
 use egui::{Align2, Color32, CornerRadius, FontId, Rect, Sense, Stroke, Ui, Vec2};
 
@@ -40,50 +41,83 @@ pub fn chip_width(ui: &Ui, label: &str, icon: bool, kind: Chip) -> f32 {
     (text + icon + PAD * 2.0).ceil()
 }
 
-/// The faint fill and line of a soft chip (or a card) on glass, and its hovered fill.
+/// The faint fill and line of a soft chip (or a card) on glass, and its hovered fill. Given as
+/// they should show (see `glass::islands::shows_as`).
 pub fn soft_colors(light: bool) -> (Color32, Color32, Stroke) {
+    let white = |a: u8| shows_as(Color32::from_rgba_unmultiplied(255, 255, 255, a));
     if light {
         (
-            Color32::from_white_alpha(130),
-            Color32::from_white_alpha(200),
-            Stroke::new(1.0_f32, Color32::from_black_alpha(16)),
+            white(110),
+            white(170),
+            Stroke::new(1.0_f32, Color32::from_black_alpha(18)),
         )
     } else {
-        (
-            Color32::from_white_alpha(13),
-            Color32::from_white_alpha(26),
-            Stroke::new(1.0_f32, Color32::from_white_alpha(18)),
-        )
+        (white(14), white(28), Stroke::new(1.0_f32, white(26)))
     }
 }
 
 /// A chip in `rect`: a rounded label, with a glyph before it if `icon` is given.
-pub fn chip(ui: &mut Ui, rect: Rect, id: egui::Id, label: &str, icon: Option<char>, kind: Chip) -> egui::Response {
+pub fn chip(
+    ui: &mut Ui,
+    rect: Rect,
+    id: egui::Id,
+    label: &str,
+    icon: Option<char>,
+    kind: Chip,
+) -> egui::Response {
     let c = colors();
     let resp = ui.interact(rect, id, Sense::click());
     let hovered = resp.hovered();
     let (soft, soft_hover, line) = soft_colors(c.light);
     let (fill, stroke, text) = match kind {
         Chip::Soft => (if hovered { soft_hover } else { soft }, line, c.text),
-        Chip::Plain => (if hovered { soft_hover } else { Color32::TRANSPARENT }, Stroke::NONE, c.text),
+        Chip::Plain => (
+            if hovered {
+                soft_hover
+            } else {
+                Color32::TRANSPARENT
+            },
+            Stroke::NONE,
+            c.text,
+        ),
         Chip::Accent => {
-            let fill = if hovered { theme::mix(c.accent_fill, Color32::WHITE, 0.12) } else { c.accent_fill };
+            let fill = if hovered {
+                theme::mix(c.accent_fill, Color32::WHITE, 0.12)
+            } else {
+                c.accent_fill
+            };
             (fill, Stroke::NONE, c.on_accent)
         }
         Chip::Danger => {
             let a = if hovered { 90 } else { 56 };
-            (theme::with_alpha(c.danger, a), Stroke::NONE, c.danger_text)
+            (
+                shows_as(theme::with_alpha(c.danger, a)),
+                Stroke::NONE,
+                c.danger_text,
+            )
         }
     };
     let r = CornerRadius::same((rect.height() / 2.0).round() as u8);
-    ui.painter().rect(rect, r, fill, stroke, egui::StrokeKind::Inside);
+    ui.painter()
+        .rect(rect, r, fill, stroke, egui::StrokeKind::Inside);
     let mut x = rect.left() + PAD;
     if let Some(g) = icon {
-        ui.painter().text(egui::pos2(x + 7.0, rect.center().y), Align2::CENTER_CENTER, g, icon_font(12.0), text);
+        ui.painter().text(
+            egui::pos2(x + 7.0, rect.center().y),
+            Align2::CENTER_CENTER,
+            g,
+            icon_font(12.0),
+            text,
+        );
         x += ICON_W;
     }
     let galley = ui.fonts(|f| {
-        f.layout(label.to_owned(), font(kind), text, (rect.right() - PAD - x).max(0.0))
+        f.layout(
+            label.to_owned(),
+            font(kind),
+            text,
+            (rect.right() - PAD - x).max(0.0),
+        )
     });
     let y = rect.center().y - galley.size().y / 2.0;
     ui.painter().galley(egui::pos2(x, y), galley, text);
@@ -92,20 +126,40 @@ pub fn chip(ui: &mut Ui, rect: Rect, id: egui::Id, label: &str, icon: Option<cha
 
 /// A round icon button of `size` points centred in `rect`. `danger` turns it red when hovered
 /// (a close button).
-pub fn round_icon(ui: &mut Ui, rect: Rect, id: egui::Id, g: char, enabled: bool, danger: bool) -> egui::Response {
+pub fn round_icon(
+    ui: &mut Ui,
+    rect: Rect,
+    id: egui::Id,
+    g: char,
+    enabled: bool,
+    danger: bool,
+) -> egui::Response {
     let c = colors();
-    let sense = if enabled { Sense::click() } else { Sense::hover() };
+    let sense = if enabled {
+        Sense::click()
+    } else {
+        Sense::hover()
+    };
     let resp = ui.interact(rect, id, sense);
     let radius = rect.width().min(rect.height()) / 2.0;
-    let mut fg = if enabled { c.text } else { theme::with_alpha(c.muted, 90) };
+    let mut fg = if enabled {
+        c.text
+    } else {
+        theme::with_alpha(c.muted, 90)
+    };
     if enabled && resp.hovered() {
-        let fill = if danger { Color32::from_rgb(196, 43, 28) } else { soft_colors(c.light).1 };
+        let fill = if danger {
+            Color32::from_rgb(196, 43, 28)
+        } else {
+            soft_colors(c.light).1
+        };
         if danger {
             fg = Color32::WHITE;
         }
         ui.painter().circle_filled(rect.center(), radius, fill);
     }
-    ui.painter().text(rect.center(), Align2::CENTER_CENTER, g, icon_font(12.0), fg);
+    ui.painter()
+        .text(rect.center(), Align2::CENTER_CENTER, g, icon_font(12.0), fg);
     resp
 }
 
@@ -114,12 +168,28 @@ pub fn round_icon(ui: &mut Ui, rect: Rect, id: egui::Id, g: char, enabled: bool,
 pub fn window_buttons(ui: &mut Ui, rect: Rect) {
     let d = rect.height();
     let maximized = ui.input(|i| i.viewport().maximized.unwrap_or(false));
-    let at = |i: f32| Rect::from_min_size(egui::pos2(rect.right() - d * (i + 1.0), rect.top()), Vec2::splat(d));
-    let size = if maximized { glyph::RESTORE } else { glyph::MAXIMIZE };
+    let at = |i: f32| {
+        Rect::from_min_size(
+            egui::pos2(rect.right() - d * (i + 1.0), rect.top()),
+            Vec2::splat(d),
+        )
+    };
+    let size = if maximized {
+        glyph::RESTORE
+    } else {
+        glyph::MAXIMIZE
+    };
     let ctx = ui.ctx().clone();
-    if round_icon(ui, at(0.0), egui::Id::new("window-close"), glyph::CHROME_CLOSE, true, true)
-        .on_hover_text("Close")
-        .clicked()
+    if round_icon(
+        ui,
+        at(0.0),
+        egui::Id::new("window-close"),
+        glyph::CHROME_CLOSE,
+        true,
+        true,
+    )
+    .on_hover_text("Close")
+    .clicked()
     {
         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
     }
@@ -130,9 +200,16 @@ pub fn window_buttons(ui: &mut Ui, rect: Rect) {
     {
         ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
     }
-    if round_icon(ui, at(2.0), egui::Id::new("window-min"), glyph::MINIMIZE, true, false)
-        .on_hover_text("Minimize")
-        .clicked()
+    if round_icon(
+        ui,
+        at(2.0),
+        egui::Id::new("window-min"),
+        glyph::MINIMIZE,
+        true,
+        false,
+    )
+    .on_hover_text("Minimize")
+    .clicked()
     {
         ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
     }

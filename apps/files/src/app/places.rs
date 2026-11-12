@@ -1,4 +1,4 @@
-//! The "Apps" section of the sidebar: the places other apps registered for Explorer's navigation
+//! The apps' places on the rail: the places other apps registered for Explorer's navigation
 //! pane (OneDrive, Dropbox, iCloud, ...), with their own names and icons.
 
 use super::actions::Action;
@@ -7,8 +7,7 @@ use egui::emath::GuiRounding;
 use egui::{ColorImage, TextureHandle, TextureOptions, Ui, Vec2};
 use shellman_core::places::Place;
 use shellman_core::places_reg::{self, PlacesWatcher};
-use shellman_ui::nav::{nav_row_with, section_label};
-use shellman_ui::theme::{colors, glyph, icon_font};
+use shellman_ui::theme::{glyph, icon_font};
 use shellman_ui::widgets::menu_item;
 use std::collections::HashMap;
 use std::sync::mpsc::{channel, Receiver, Sender};
@@ -122,21 +121,21 @@ fn is_hidden(hidden: &[String], id: &str) -> bool {
 }
 
 impl super::FileMan {
-    pub(super) fn sidebar_apps(&mut self, ui: &mut Ui, current: &Loc, actions: &mut Vec<Action>) {
-        let shown: Vec<Place> = self
-            .apps
+    /// The apps' places the user has not hidden.
+    pub(super) fn shown_apps(&self) -> Vec<Place> {
+        self.apps
             .list
             .iter()
             .filter(|p| !is_hidden(&self.settings.hidden_places, &p.id))
             .cloned()
-            .collect();
-        if shown.is_empty() {
-            return;
-        }
-        section_label(ui, "Apps");
+            .collect()
+    }
+
+    /// The apps' places, as icons on the rail; their names show on hover.
+    pub(super) fn rail_apps(&mut self, ui: &mut Ui, current: &Loc, actions: &mut Vec<Action>) {
         let ppp = ui.ctx().pixels_per_point();
         let px = (ICON_PT * ppp).round() as i32;
-        for place in shown {
+        for place in self.shown_apps() {
             let loc = Loc::Dir(place.target.clone());
             // Own icon, else the folder's shell icon, else a plain folder glyph.
             let own = self.apps.icon(&place, px).map(|t| t.id());
@@ -146,28 +145,34 @@ impl super::FileMan {
                 None
             };
             let wait = own.is_none() && shell.is_none() && self.apps.icon_pending(&place, px);
-            let resp = nav_row_with(ui, &place.name, *current == loc, false, |p, slot, active| {
-                let c = colors();
-                if let Some(id) = own.or(shell) {
-                    let at = egui::Rect::from_center_size(slot.center(), Vec2::splat(ICON_PT))
-                        .round_to_pixels(ppp);
-                    p.image(
-                        id,
-                        at,
-                        egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                        egui::Color32::WHITE,
-                    );
-                } else if !wait {
-                    p.text(
-                        slot.left_center(),
-                        egui::Align2::LEFT_CENTER,
-                        glyph::FOLDER_FILL,
-                        icon_font(14.0),
-                        if active { c.accent_text } else { c.muted },
-                    );
-                }
-            })
-            .on_hover_text(place.target.display().to_string());
+            let resp = super::rail::item(
+                ui,
+                ("app", &place.id),
+                *current == loc,
+                false,
+                |p, square, fg| {
+                    if let Some(id) = own.or(shell) {
+                        let at =
+                            egui::Rect::from_center_size(square.center(), Vec2::splat(ICON_PT))
+                                .round_to_pixels(ppp);
+                        p.image(
+                            id,
+                            at,
+                            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                            egui::Color32::WHITE,
+                        );
+                    } else if !wait {
+                        p.text(
+                            square.center(),
+                            egui::Align2::CENTER_CENTER,
+                            glyph::FOLDER_FILL,
+                            icon_font(15.0),
+                            fg,
+                        );
+                    }
+                },
+            )
+            .on_hover_text(format!("{}\n{}", place.name, place.target.display()));
             if resp.clicked() {
                 actions.push(Action::Navigate(loc.clone()));
             }
@@ -179,7 +184,7 @@ impl super::FileMan {
                     actions.push(Action::NewTab(loc.clone()));
                     ui.close_menu();
                 }
-                if menu_item(ui, glyph::CLOSE, "Hide from sidebar", "") {
+                if menu_item(ui, glyph::CLOSE, "Hide from the rail", "") {
                     actions.push(Action::HidePlace(place.id.clone()));
                     ui.close_menu();
                 }
@@ -187,13 +192,12 @@ impl super::FileMan {
         }
     }
 
-    /// The empty part of the sidebar: its menu brings hidden entries back.
-    pub(super) fn sidebar_background(&mut self, ui: &mut Ui, actions: &mut Vec<Action>) {
-        let rest = ui.available_rect_before_wrap();
-        if rest.height() < 1.0 {
-            return;
-        }
-        let resp = ui.interact(rest, egui::Id::new("sidebar_background"), egui::Sense::click());
+    /// The menu of the rail's empty part: it brings hidden places back.
+    pub(super) fn rail_background_menu(
+        &mut self,
+        resp: &egui::Response,
+        actions: &mut Vec<Action>,
+    ) {
         let hidden: Vec<&Place> = self
             .apps
             .list
@@ -202,10 +206,10 @@ impl super::FileMan {
             .collect();
         resp.context_menu(|ui| {
             if hidden.is_empty() {
-                ui.add_enabled(false, egui::Button::new("No hidden sidebar items"));
+                ui.add_enabled(false, egui::Button::new("No hidden places"));
                 return;
             }
-            ui.menu_button("Show hidden sidebar items", |ui| {
+            ui.menu_button("Show hidden places", |ui| {
                 for p in &hidden {
                     if menu_item(ui, glyph::FOLDER, &p.name, "") {
                         actions.push(Action::ShowPlace(p.id.clone()));

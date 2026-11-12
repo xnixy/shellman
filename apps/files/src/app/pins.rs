@@ -1,11 +1,10 @@
-//! Folders the user pinned to the sidebar: the list operations, the sidebar rows, and which pins
+//! Folders the user pinned to the rail: the list operations, the rail's icons, and which pins
 //! point at a folder that is no longer there.
 
 use super::actions::Action;
 use super::tab::Loc;
 use egui::{Align2, Id, Ui};
-use shellman_ui::nav::nav_row_with;
-use shellman_ui::theme::{glyph, icon_font};
+use shellman_ui::theme::{glyph, semibold_font};
 use shellman_ui::widgets::menu_item;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -13,7 +12,16 @@ use std::sync::{Arc, Mutex};
 
 /// A path as a key: Windows paths ignore case and a trailing slash.
 fn key(p: &Path) -> String {
-    p.to_string_lossy().trim_end_matches(['\\', '/']).to_lowercase()
+    p.to_string_lossy()
+        .trim_end_matches(['\\', '/'])
+        .to_lowercase()
+}
+
+/// The first letter of a name, as a capital, for a pin's icon.
+fn initial(name: &str) -> String {
+    name.chars()
+        .find(|c| c.is_alphanumeric())
+        .map_or_else(|| "?".into(), |c| c.to_uppercase().collect())
 }
 
 pub(super) fn is_pinned(list: &[PathBuf], p: &Path) -> bool {
@@ -68,8 +76,7 @@ impl Exists {
         self.asked_for = pins.to_vec();
         let (known, pins, ctx) = (self.known.clone(), pins.to_vec(), ctx.clone());
         std::thread::spawn(move || {
-            let found: HashMap<String, bool> =
-                pins.iter().map(|p| (key(p), p.is_dir())).collect();
+            let found: HashMap<String, bool> = pins.iter().map(|p| (key(p), p.is_dir())).collect();
             let changed = *known.lock().unwrap() != found;
             *known.lock().unwrap() = found;
             if changed {
@@ -79,13 +86,18 @@ impl Exists {
     }
 
     fn there(&self, p: &Path) -> bool {
-        self.known.lock().unwrap().get(&key(p)).copied().unwrap_or(true)
+        self.known
+            .lock()
+            .unwrap()
+            .get(&key(p))
+            .copied()
+            .unwrap_or(true)
     }
 }
 
 impl super::FileMan {
-    /// The pinned folders, as rows of the Places section.
-    pub(super) fn sidebar_pins(&mut self, ui: &mut Ui, current: &Loc, actions: &mut Vec<Action>) {
+    /// The pinned folders, as icons on the rail; their names and paths show on hover.
+    pub(super) fn rail_pins(&mut self, ui: &mut Ui, current: &Loc, actions: &mut Vec<Action>) {
         let pins = self.settings.pins.clone();
         ui.ctx()
             .data_mut(|d| d.insert_temp(Id::new("pinned_folders"), pins.clone()));
@@ -93,23 +105,28 @@ impl super::FileMan {
         for path in pins {
             let loc = Loc::Dir(path.clone());
             let there = self.pin_exists.there(&path);
-            let resp = nav_row_with(ui, &loc.title(), *current == loc, !there, |p, slot, active| {
-                let c = shellman_ui::theme::colors();
-                p.text(
-                    slot.left_center(),
-                    Align2::LEFT_CENTER,
-                    glyph::FOLDER,
-                    icon_font(14.0),
-                    if !there {
-                        shellman_ui::theme::with_alpha(c.muted, 90)
-                    } else if active {
-                        c.accent_text
-                    } else {
-                        c.muted
-                    },
-                );
-            })
-            .on_hover_text(path.display().to_string());
+            let tip = if there {
+                format!("{}\n{}", loc.title(), path.display())
+            } else {
+                format!("{} (not there any more)\n{}", loc.title(), path.display())
+            };
+            let resp = super::rail::item(
+                ui,
+                ("pin", &path),
+                *current == loc,
+                !there,
+                |p, square, fg| {
+                    // The folder's initial tells pins apart; the name shows on hover.
+                    p.text(
+                        square.center(),
+                        Align2::CENTER_CENTER,
+                        initial(&loc.title()),
+                        semibold_font(15.0),
+                        fg,
+                    );
+                },
+            )
+            .on_hover_text(tip);
             if resp.clicked() {
                 if there {
                     actions.push(Action::Navigate(loc.clone()));
@@ -156,6 +173,13 @@ mod tests {
         assert!(unpin(&mut list, Path::new(r"c:\work\proj")));
         assert!(!unpin(&mut list, Path::new(r"c:\work\proj")));
         assert_eq!(list, [PathBuf::from(r"D:\Other")]);
+    }
+
+    #[test]
+    fn a_pin_shows_its_first_letter() {
+        assert_eq!(initial("projects"), "P");
+        assert_eq!(initial("_build"), "B");
+        assert_eq!(initial(""), "?");
     }
 
     #[test]

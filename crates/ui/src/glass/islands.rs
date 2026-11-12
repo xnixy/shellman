@@ -57,10 +57,27 @@ pub fn to_pixels(island: &Island, scale: f32) -> ([i32; 4], f32) {
     let px = |v: f32| (v * scale).round() as i32;
     let edges = [px(r.left()), px(r.top()), px(r.right()), px(r.bottom())];
     let (w, h) = (edges[2] - edges[0], edges[3] - edges[1]);
-    let radius = (island.radius * scale)
-        .min(w.min(h) as f32 / 2.0)
-        .max(0.0);
+    let radius = (island.radius * scale).min(w.min(h) as f32 / 2.0).max(0.0);
     (edges, radius)
+}
+
+/// The colour to paint so that, on a transparent window over the desktop, it shows as `css` would
+/// laid over it in a browser (straight alpha, in sRGB). egui hands the window its colours
+/// premultiplied in linear light, which Windows then lays over in sRGB, so a faint white painted
+/// as it is shows far lighter (white at 4% adds what 22% would). Dark colours barely change.
+pub fn shows_as(css: egui::Color32) -> egui::Color32 {
+    use egui::ecolor::{gamma_from_linear, linear_from_gamma};
+    let [r, g, b, a] = css.to_srgba_unmultiplied();
+    let alpha = a as f32 / 255.0;
+    if alpha <= 0.0 || alpha >= 1.0 {
+        return css;
+    }
+    let channel = |v: u8| {
+        let added = v as f32 / 255.0 * alpha;
+        let straight = gamma_from_linear(linear_from_gamma(added) / alpha).min(1.0);
+        (straight * 255.0).round() as u8
+    };
+    egui::Color32::from_rgba_unmultiplied(channel(r), channel(g), channel(b), a)
 }
 
 /// The islands as egui shapes, for a window without composed glass: each a nearly solid rounded
@@ -71,7 +88,9 @@ pub fn solid_shapes(islands: &[Island], style: &Style) -> Vec<egui::Shape> {
     islands
         .iter()
         .map(|island| {
-            let radius = island.radius.min(island.rect.height().min(island.rect.width()) / 2.0);
+            let radius = island
+                .radius
+                .min(island.rect.height().min(island.rect.width()) / 2.0);
             let fill = theme::with_alpha(
                 frame.fill,
                 (frame.fill.a() as f32 * island.opacity.clamp(0.0, 1.0)).round() as u8,
@@ -91,7 +110,11 @@ pub fn solid_shapes(islands: &[Island], style: &Style) -> Vec<egui::Shape> {
 /// screen rect) that no later widget takes drags the window, and a double click maximizes or
 /// restores it. Call it first in the frame, before any island's content, so the content wins.
 pub fn drag_gaps(ui: &mut egui::Ui, rect: egui::Rect) -> egui::Response {
-    let resp = ui.interact(rect, egui::Id::new("island-gaps"), egui::Sense::click_and_drag());
+    let resp = ui.interact(
+        rect,
+        egui::Id::new("island-gaps"),
+        egui::Sense::click_and_drag(),
+    );
     crate::widgets::window_drag(ui, &resp);
     resp
 }
@@ -103,7 +126,10 @@ mod tests {
 
     #[test]
     fn points_become_whole_pixels() {
-        let i = Island::new(Rect::from_min_max(pos2(10.0, 10.3), pos2(110.0, 60.0)), 12.0);
+        let i = Island::new(
+            Rect::from_min_max(pos2(10.0, 10.3), pos2(110.0, 60.0)),
+            12.0,
+        );
         let (edges, radius) = to_pixels(&i, 1.5);
         assert_eq!(edges, [15, 15, 165, 90]);
         assert_eq!(radius, 18.0);
@@ -122,15 +148,47 @@ mod tests {
 
     #[test]
     fn radius_never_passes_half_the_shorter_side() {
-        let i = Island::new(Rect::from_min_size(pos2(0.0, 0.0), egui::vec2(40.0, 20.0)), 99.0);
+        let i = Island::new(
+            Rect::from_min_size(pos2(0.0, 0.0), egui::vec2(40.0, 20.0)),
+            99.0,
+        );
         assert_eq!(to_pixels(&i, 1.25).1, 12.5);
-        let empty = Island::new(Rect::from_min_size(pos2(5.0, 5.0), egui::vec2(0.0, 0.0)), 8.0);
+        let empty = Island::new(
+            Rect::from_min_size(pos2(5.0, 5.0), egui::vec2(0.0, 0.0)),
+            8.0,
+        );
         assert_eq!(to_pixels(&empty, 2.0).1, 0.0);
+    }
+
+    /// What a colour painted by egui adds over black on a transparent window, 0 to 1.
+    fn added(c: egui::Color32) -> f32 {
+        use egui::ecolor::{gamma_from_linear, linear_from_gamma};
+        let [r, _, _, a] = c.to_srgba_unmultiplied();
+        gamma_from_linear(linear_from_gamma(r as f32 / 255.0) * a as f32 / 255.0)
+    }
+
+    #[test]
+    fn a_faint_white_shows_as_faint_as_in_css() {
+        let css = egui::Color32::from_white_alpha(10);
+        let paint = shows_as(css);
+        assert_eq!(paint.a(), 10);
+        // Painted as it is, it adds several times what CSS would; converted, the same.
+        assert!(added(css) > 4.0 * 10.0 / 255.0);
+        assert!((added(paint) - 10.0 / 255.0).abs() < 0.004);
+        // Opaque and clear colours pass through.
+        assert_eq!(shows_as(egui::Color32::RED), egui::Color32::RED);
+        assert_eq!(
+            shows_as(egui::Color32::TRANSPARENT),
+            egui::Color32::TRANSPARENT
+        );
     }
 
     #[test]
     fn faint_drops_the_shadow() {
-        let i = Island::new(Rect::from_min_size(pos2(0.0, 0.0), egui::vec2(10.0, 10.0)), 4.0);
+        let i = Island::new(
+            Rect::from_min_size(pos2(0.0, 0.0), egui::vec2(10.0, 10.0)),
+            4.0,
+        );
         let f = i.faint(0.4);
         assert!(!f.shadow && f.opacity == 0.4 && f.rect == i.rect);
         assert!(i.shadow && i.opacity == 1.0);

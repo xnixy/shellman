@@ -7,8 +7,8 @@ mod placement;
 mod settings;
 
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+use shellman_ui::glass::{GlassPanel, Style};
 use shellman_ui::{theme, window};
-use windows::Win32::Foundation::HWND;
 
 fn main() -> eframe::Result {
     let settings = settings::load_settings();
@@ -46,21 +46,27 @@ fn main() -> eframe::Result {
         options,
         Box::new(move |cc| {
             theme::install_fonts(&cc.egui_ctx);
-            theme::set_light(std::env::var_os("SHELLMAN_FORCE_LIGHT").is_some() || cc.egui_ctx.theme() == egui::Theme::Light);
+            theme::set_light(
+                std::env::var_os("SHELLMAN_FORCE_LIGHT").is_some()
+                    || cc.egui_ctx.theme() == egui::Theme::Light,
+            );
             // The shared look, which the settings app edits; Files only follows it.
             let look = shellman_ui::appearance::Appearance::load_or(Default::default());
             look.apply(&cc.egui_ctx);
             theme::apply(&cc.egui_ctx);
             let mut hwnd = 0isize;
-            let mut glass = false;
+            let mut panel = None;
             if let Ok(handle) = cc.window_handle() {
                 if let RawWindowHandle::Win32(win32) = handle.as_raw() {
                     hwnd = win32.hwnd.get();
                     if let Some(at) = at {
                         placement::move_to(hwnd, at);
                     }
-                    glass = window::frost_window(HWND(hwnd as *mut _));
-                    window::remove_caption(HWND(hwnd as *mut _), glass);
+                    // No frame and no window backdrop: the window is transparent, and its
+                    // islands are pieces of glass under it (see `app::layout`). The resize edges
+                    // and Snap stay.
+                    window::frameless(hwnd);
+                    panel = Some(GlassPanel::attach(hwnd, Style::from_theme(app::RADIUS)));
                 }
             }
             Ok(Box::new(app::FileMan::new(
@@ -69,7 +75,7 @@ fn main() -> eframe::Result {
                 look,
                 start,
                 hwnd,
-                glass,
+                panel,
             )))
         }),
     )

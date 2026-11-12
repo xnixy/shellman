@@ -3,7 +3,9 @@
 
 use super::actions::{Action, Rename};
 use super::tab::Tab;
-use egui::{Color32, Id, Key, Modifiers, PointerButton, Rect, RichText, ScrollArea, Sense, Ui, Vec2};
+use egui::{
+    Color32, Id, Key, Modifiers, PointerButton, Rect, RichText, ScrollArea, Sense, Ui, Vec2,
+};
 use shellman_ui::theme::{self, colors, glyph};
 use shellman_ui::widgets::select_range;
 use std::path::Path;
@@ -63,7 +65,13 @@ impl ItemEvents {
 
 /// The right-click menu of item `r`. In the bin, its own short menu; elsewhere Files' menu with
 /// the shell's entries, whose walk starts as soon as the button goes down.
-pub(super) fn item_menu(ui: &Ui, resp: &egui::Response, actions: &mut Vec<Action>, r: usize, bin: bool) {
+pub(super) fn item_menu(
+    ui: &Ui,
+    resp: &egui::Response,
+    actions: &mut Vec<Action>,
+    r: usize,
+    bin: bool,
+) {
     if bin {
         resp.context_menu(|ui| super::bin::item_menu(ui, actions));
     } else {
@@ -120,7 +128,9 @@ pub(super) fn empty_state(ui: &mut Ui, tab: &Tab) -> bool {
             ui.label(theme::icon(glyph::DELETE, 34.0).color(theme::with_alpha(c.muted, 140)));
             ui.add_space(10.0);
             ui.label(RichText::new(msg).size(16.0).color(c.text));
-            ui.label(theme::muted("Deleted files show up here until you empty it."));
+            ui.label(theme::muted(
+                "Deleted files show up here until you empty it.",
+            ));
         } else {
             ui.label(theme::muted(msg));
         }
@@ -130,15 +140,12 @@ pub(super) fn empty_state(ui: &mut Ui, tab: &Tab) -> bool {
 
 /// The space behind the items: a click clears the selection, a right click offers what can be
 /// done to the folder itself. Call before drawing items, so items sit on top of it.
-pub(super) fn folder_backdrop(
-    ui: &mut Ui,
-    tab: &mut Tab,
-    actions: &mut Vec<Action>,
-) {
+pub(super) fn folder_backdrop(ui: &mut Ui, tab: &mut Tab, actions: &mut Vec<Action>) {
     let bg = ui.interact(
         ui.available_rect_before_wrap(),
         Id::new("folder-bg"),
-        Sense::click(),
+        // Drags too, so a drag here does not reach the gaps under it and move the window.
+        Sense::click_and_drag(),
     );
     if bg.clicked() {
         tab.selected.clear();

@@ -1,67 +1,100 @@
-//! The toolbar: navigation buttons, the path bar, and the search box.
+//! The bar under the tabs: back, forward, up and refresh, the path as chips (the current folder
+//! lit with the accent), the search field, and the view switch (or the bin's buttons).
+//!
+//! Its empty stretch is the window's to drag; clicking just after the path, or Ctrl+L, types a
+//! path instead.
 
 use super::actions::Action;
 use super::tab::Loc;
 use crate::settings::ViewMode;
-use egui::{
-    Align, Align2, Color32, CornerRadius, FontId, Id, Key, Layout, Rect, RichText, Sense, Stroke,
-    Ui, Vec2,
-};
+use egui::{Align, Align2, CornerRadius, FontId, Id, Key, Rect, RichText, Sense, Stroke, Ui, Vec2};
 use shellman_core::fsops::{self, Drive};
-use shellman_ui::theme::{self, colors, glyph, icon, icon_font};
-use shellman_ui::widgets::{round_button, select_all};
+use shellman_ui::chips::{chip, chip_width, round_icon, soft_colors, Chip, CHIP_H};
+use shellman_ui::theme::{self, colors, glyph, icon_font};
+use shellman_ui::widgets::select_all;
 use std::path::{Path, PathBuf};
 
+/// Inside the bar, at each end.
+const PAD: f32 = 9.0;
+const BUTTON: f32 = 34.0;
+const SEARCH_W: f32 = 230.0;
+const TOGGLE_W: f32 = 76.0;
+/// The room after the last crumb where a click starts typing a path.
+const TYPE_ZONE: f32 = 56.0;
+const SEP_W: f32 = 16.0;
+
 impl super::FileMan {
-    pub(super) fn toolbar(&mut self, ui: &mut Ui, actions: &mut Vec<Action>) {
+    pub(super) fn toolbar(&mut self, ui: &mut Ui, bar: Rect, actions: &mut Vec<Action>) {
         let tab = &self.tabs[self.active];
-        let (can_back, can_fwd, can_up) = (
+        let enabled = [
             !tab.back.is_empty(),
             !tab.fwd.is_empty(),
             tab.loc.parent().is_some(),
+            true,
+        ];
+        let nav = [
+            (glyph::BACK, "Back (Alt+Left)", Action::Back),
+            (glyph::FORWARD, "Forward (Alt+Right)", Action::Forward),
+            (glyph::UP, "Up (Alt+Up)", Action::Up),
+            (glyph::REFRESH, "Refresh (F5)", Action::Refresh),
+        ];
+        let mut x = bar.left() + PAD;
+        for ((g, tip, action), on) in nav.into_iter().zip(enabled) {
+            let r = Rect::from_center_size(
+                egui::pos2(x + BUTTON / 2.0, bar.center().y),
+                Vec2::splat(BUTTON),
+            );
+            if round_icon(ui, r, Id::new(("nav", tip)), g, on, false)
+                .on_hover_text(tip)
+                .clicked()
+            {
+                actions.push(action);
+            }
+            x += BUTTON;
+        }
+        x += 8.0;
+
+        // From the right: the view switch (or the bin's buttons), then search.
+        let bin = self.tabs[self.active].loc == Loc::Bin;
+        let toggle_w = if bin { super::bin::BUTTONS_W } else { TOGGLE_W };
+        let right = bar.right() - PAD;
+        let toggle = Rect::from_min_max(
+            egui::pos2(right - toggle_w, bar.center().y - 16.0),
+            egui::pos2(right, bar.center().y + 16.0),
         );
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 2.0;
-            if round_button(ui, glyph::BACK, can_back, "Back (Alt+Left)").clicked() {
-                actions.push(Action::Back);
-            }
-            if round_button(ui, glyph::FORWARD, can_fwd, "Forward (Alt+Right)").clicked() {
-                actions.push(Action::Forward);
-            }
-            if round_button(ui, glyph::UP, can_up, "Up (Alt+Up)").clicked() {
-                actions.push(Action::Up);
-            }
-            if round_button(ui, glyph::REFRESH, true, "Refresh (F5)").clicked() {
-                actions.push(Action::Refresh);
-            }
-            ui.add_space(8.0);
-            // The path pill gives way; the search box and the toggle keep their size.
-            let bin = self.tabs[self.active].loc == Loc::Bin;
-            let (search_w, toggle_w) = (220.0, if bin { super::bin::BUTTONS_W } else { 76.0 });
-            let path_w = (ui.available_width() - search_w - toggle_w - 20.0).max(120.0);
-            let (rect, _) = ui.allocate_exact_size(Vec2::new(path_w, 32.0), Sense::hover());
-            self.path_bar(ui, rect, actions);
-            ui.add_space(10.0);
-            let (trect, _) = ui.allocate_exact_size(Vec2::new(toggle_w, 32.0), Sense::hover());
-            if bin {
-                self.bin_buttons(ui, trect, actions);
-            } else {
-                self.view_toggle(ui, trect, actions);
-            }
-            ui.add_space(10.0);
-            let (srect, _) = ui.allocate_exact_size(Vec2::new(search_w, 32.0), Sense::hover());
-            self.search_box(ui, srect);
-        });
+        if bin {
+            self.bin_buttons(ui, toggle, actions);
+        } else {
+            self.view_toggle(ui, toggle, actions);
+        }
+        let room = (toggle.left() - 10.0 - x).max(0.0);
+        let search_w = (room * 0.4).clamp(140.0, SEARCH_W);
+        let search = Rect::from_min_max(
+            egui::pos2(toggle.left() - 10.0 - search_w, bar.center().y - 16.0),
+            egui::pos2(toggle.left() - 10.0, bar.center().y + 16.0),
+        );
+        self.search_box(ui, search);
+        let path = Rect::from_min_max(
+            egui::pos2(x, bar.center().y - 16.0),
+            egui::pos2((search.left() - 12.0).max(x), bar.center().y + 16.0),
+        );
+        self.path_bar(ui, path, actions);
     }
 
     /// List or grid, as a pill with two halves; the current one is lit.
     fn view_toggle(&self, ui: &mut Ui, rect: Rect, actions: &mut Vec<Action>) {
         let c = colors();
-        ui.painter()
-            .rect_filled(rect, CornerRadius::same(16), c.control);
+        let (soft, soft_hover, line) = soft_colors(c.light);
+        ui.painter().rect(
+            rect,
+            CornerRadius::same(16),
+            soft,
+            line,
+            egui::StrokeKind::Inside,
+        );
         let halves = [
             (ViewMode::List, glyph::VIEW_LIST, "List (Ctrl+1)"),
-            (ViewMode::Grid, glyph::VIEW_GRID, "Icons (Ctrl+2)"),
+            (ViewMode::Grid, glyph::VIEW_GRID, "Cards (Ctrl+2)"),
         ];
         let half_w = rect.width() / 2.0;
         for (i, (mode, g, tip)) in halves.into_iter().enumerate() {
@@ -76,12 +109,12 @@ impl super::FileMan {
             let current = self.settings.view == mode;
             if current {
                 ui.painter()
-                    .rect_filled(r, CornerRadius::same(13), c.control_active);
+                    .rect_filled(r, CornerRadius::same(13), c.accent_fill);
             } else if resp.hovered() {
                 ui.painter()
-                    .rect_filled(r, CornerRadius::same(13), c.control_hover);
+                    .rect_filled(r, CornerRadius::same(13), soft_hover);
             }
-            let color = if current { c.accent_text } else { c.muted };
+            let color = if current { c.on_accent } else { c.muted };
             ui.painter()
                 .text(r.center(), Align2::CENTER_CENTER, g, icon_font(13.0), color);
             if resp.clicked() && !current {
@@ -95,20 +128,20 @@ impl super::FileMan {
         let id = Id::new("search");
         let focused = ui.memory(|m| m.has_focus(id));
         let hovered = ui.rect_contains_pointer(rect);
-        let fill = if focused || hovered {
-            c.control_hover
+        let (soft, soft_hover, line) = soft_colors(c.light);
+        let fill = if focused || hovered { soft_hover } else { soft };
+        let stroke = if focused {
+            Stroke::new(1.0_f32, theme::with_alpha(c.accent_fill, 190))
         } else {
-            c.control
+            line
         };
-        ui.painter().rect_filled(rect, CornerRadius::same(16), fill);
-        if focused {
-            ui.painter().rect_stroke(
-                rect,
-                CornerRadius::same(16),
-                Stroke::new(1.0_f32, theme::with_alpha(c.accent_fill, 170)),
-                egui::StrokeKind::Inside,
-            );
-        }
+        ui.painter().rect(
+            rect,
+            CornerRadius::same(16),
+            fill,
+            stroke,
+            egui::StrokeKind::Inside,
+        );
         ui.painter().text(
             egui::pos2(rect.left() + 16.0, rect.center().y),
             Align2::LEFT_CENTER,
@@ -144,14 +177,9 @@ impl super::FileMan {
         }
     }
 
+    /// The path, as chips in `rect`; or the box to type one.
     fn path_bar(&mut self, ui: &mut Ui, rect: Rect, actions: &mut Vec<Action>) {
         let c = colors();
-        let fill = if ui.rect_contains_pointer(rect) {
-            c.control_hover
-        } else {
-            c.control
-        };
-        ui.painter().rect_filled(rect, CornerRadius::same(16), fill);
         let loc = self.tabs[self.active].loc.clone();
         if std::mem::take(&mut self.focus_path) && self.editing_path.is_none() {
             self.editing_path = Some(
@@ -161,12 +189,21 @@ impl super::FileMan {
             );
         }
         if let Some(text) = &mut self.editing_path {
+            let (_, soft_hover, _) = soft_colors(c.light);
+            ui.painter().rect(
+                rect,
+                CornerRadius::same(16),
+                soft_hover,
+                Stroke::new(1.0_f32, theme::with_alpha(c.accent_fill, 190)),
+                egui::StrokeKind::Inside,
+            );
             let resp = ui.put(
                 rect.shrink2(Vec2::new(4.0, 2.0)),
                 egui::TextEdit::singleline(text)
                     .id(Id::new("path-edit"))
                     .frame(false)
-                    .margin(Vec2::new(8.0, 6.0))
+                    .vertical_align(Align::Center)
+                    .margin(Vec2::new(10.0, 4.0))
                     .desired_width(rect.width()),
             );
             if !resp.has_focus() && !resp.lost_focus() {
@@ -178,26 +215,102 @@ impl super::FileMan {
                 let typed = std::mem::take(text);
                 self.editing_path = None;
                 if entered {
-                    let typed = typed.trim().trim_matches('"');
-                    let p = PathBuf::from(expand_env(typed));
-                    if typed.eq_ignore_ascii_case("this pc") || typed.is_empty() {
-                        actions.push(Action::Navigate(Loc::Pc));
-                    } else if p.is_dir() {
-                        actions.push(Action::Navigate(Loc::Dir(p)));
-                    } else if p.is_file() {
-                        fsops::open(&p);
-                    } else {
-                        self.toast(format!("Can't find {typed}"));
-                    }
+                    self.go_to_typed(typed.trim().trim_matches('"'), actions);
                 }
             }
             return;
         }
-        // Clicking empty space in the bar switches to typing.
-        let bg = ui.interact(rect, Id::new("path-bg"), Sense::click());
+        let crumbs = self.crumbs(&loc);
+        let last = crumbs.len() - 1;
+        let widths: Vec<f32> = crumbs
+            .iter()
+            .enumerate()
+            .map(|(i, (name, _))| {
+                let kind = if i == last { Chip::Accent } else { Chip::Soft };
+                chip_width(ui, name, false, kind).min(220.0)
+            })
+            .collect();
+        // Keep the deepest crumbs that fit, by their measured widths.
+        let budget = rect.width() - TYPE_ZONE;
+        let ellipsis_w = chip_width(ui, "…", false, Chip::Soft) + SEP_W;
+        let mut used = 0.0;
+        let mut first = crumbs.len();
+        while first > 0 {
+            let w = widths[first - 1] + if first - 1 < last { SEP_W } else { 0.0 };
+            let more = if first > 1 { ellipsis_w } else { 0.0 };
+            if used + w + more > budget && first < crumbs.len() {
+                break;
+            }
+            used += w;
+            first -= 1;
+        }
+        if first > 0 {
+            used += ellipsis_w;
+        }
+        // Just after the path, a click types one; the field shows faintly while hovered.
+        let zone = Rect::from_min_max(
+            rect.min,
+            egui::pos2(
+                (rect.left() + used + TYPE_ZONE).min(rect.right()),
+                rect.bottom(),
+            ),
+        );
+        let bg = ui.interact(zone, Id::new("path-bg"), Sense::click());
+        if bg.hovered() {
+            let (soft, _, line) = soft_colors(c.light);
+            ui.painter().rect(
+                zone,
+                CornerRadius::same(16),
+                soft,
+                line,
+                egui::StrokeKind::Inside,
+            );
+        }
+        let bg = bg.on_hover_text("Click to type a path (Ctrl+L)");
         if bg.clicked() {
             self.focus_path = true;
         }
+        let y = rect.center().y - CHIP_H / 2.0;
+        let mut x = rect.left() + 2.0;
+        let sep = |ui: &Ui, x: &mut f32| {
+            ui.painter().text(
+                egui::pos2(*x + SEP_W / 2.0, rect.center().y),
+                Align2::CENTER_CENTER,
+                "/",
+                FontId::proportional(13.0),
+                c.muted,
+            );
+            *x += SEP_W;
+        };
+        if first > 0 {
+            let w = ellipsis_w - SEP_W;
+            let r = Rect::from_min_size(egui::pos2(x, y), Vec2::new(w, CHIP_H));
+            let hidden: Vec<String> = crumbs[..first].iter().map(|(n, _)| n.clone()).collect();
+            let _ = chip(ui, r, Id::new("crumb-more"), "…", None, Chip::Soft)
+                .on_hover_text(hidden.join(" / "));
+            x += w;
+            sep(ui, &mut x);
+        }
+        for (i, (name, target)) in crumbs.into_iter().enumerate().skip(first) {
+            let kind = if i == last { Chip::Accent } else { Chip::Soft };
+            let w = widths[i].min(rect.right() - x).max(0.0);
+            let r = Rect::from_min_size(egui::pos2(x, y), Vec2::new(w, CHIP_H));
+            let resp = chip(ui, r, Id::new(("crumb", i)), &name, None, kind);
+            if resp.clicked() {
+                actions.push(Action::Navigate(target.clone()));
+            }
+            if resp.middle_clicked() {
+                actions.push(Action::NewTab(target));
+            }
+            x += w;
+            if i < last {
+                sep(ui, &mut x);
+            }
+        }
+    }
+
+    /// The steps of the path to `loc`, each with where it leads.
+    fn crumbs(&self, loc: &Loc) -> Vec<(String, Loc)> {
         let mut crumbs: Vec<(String, Loc)> = match loc {
             Loc::Bin => vec![(loc.title(), Loc::Bin)],
             _ => vec![("This PC".into(), Loc::Pc)],
@@ -217,58 +330,20 @@ impl super::FileMan {
                 crumbs.push((name, Loc::Dir(p.to_path_buf())));
             }
         }
-        // Keep the deepest crumbs that fit, by their measured widths: an estimate from the
-        // character count dropped crumbs while there was still room.
-        let budget = rect.width() - 40.0;
-        let (name_font, chevron_font) = (FontId::proportional(14.0), icon_font(9.0));
-        let chevron_w = ui
-            .fonts(|f| f.layout_no_wrap(glyph::CHEVRON.to_string(), chevron_font, c.muted))
-            .size()
-            .x;
-        let mut used = 0.0;
-        let mut first = crumbs.len();
-        while first > 0 {
-            let name = crumbs[first - 1].0.clone();
-            let text_w = ui
-                .fonts(|f| f.layout_no_wrap(name, name_font.clone(), c.text))
-                .size()
-                .x;
-            let w = text_w + 22.0 + chevron_w;
-            if used + w > budget && first < crumbs.len() {
-                break;
-            }
-            used += w;
-            first -= 1;
-        }
-        let inner = rect.shrink2(Vec2::new(10.0, 1.0));
-        let mut child = ui.new_child(
-            egui::UiBuilder::new()
-                .max_rect(inner)
-                .layout(Layout::left_to_right(Align::Center)),
-        );
-        child.spacing_mut().item_spacing.x = 0.0;
-        if first > 0 {
-            child.label(RichText::new("…").color(c.muted));
-        }
-        let last = crumbs.len() - 1;
-        for (i, (name, target)) in crumbs.into_iter().enumerate().skip(first) {
-            if i > first || first > 0 {
-                child.label(icon(glyph::CHEVRON, 9.0).color(c.muted));
-            }
-            let text = RichText::new(name).color(if i == last { c.text } else { c.muted });
-            let resp = child.add(
-                egui::Button::new(text)
-                    .fill(Color32::TRANSPARENT)
-                    .stroke(Stroke::NONE)
-                    .corner_radius(CornerRadius::same(12))
-                    .min_size(Vec2::new(0.0, 26.0)),
-            );
-            if resp.clicked() {
-                actions.push(Action::Navigate(target.clone()));
-            }
-            if resp.middle_clicked() {
-                actions.push(Action::NewTab(target));
-            }
+        crumbs
+    }
+
+    /// Go where a typed path leads: a folder, a file (opened), or This PC.
+    fn go_to_typed(&mut self, typed: &str, actions: &mut Vec<Action>) {
+        let p = PathBuf::from(expand_env(typed));
+        if typed.eq_ignore_ascii_case("this pc") || typed.is_empty() {
+            actions.push(Action::Navigate(Loc::Pc));
+        } else if p.is_dir() {
+            actions.push(Action::Navigate(Loc::Dir(p)));
+        } else if p.is_file() {
+            fsops::open(&p);
+        } else {
+            self.toast(format!("Can't find {typed}"));
         }
     }
 }
