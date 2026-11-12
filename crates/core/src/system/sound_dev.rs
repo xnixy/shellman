@@ -167,6 +167,19 @@ pub fn set_muted(dev: &IMMDevice, muted: bool) {
     }
 }
 
+// ---- The classic applet ----
+
+/// Open the classic Sound applet (`mmsys.cpl`) on its Playback (0) or Recording (1) tab. Runs
+/// `rundll32 shell32.dll,Control_RunDLL`, which opens it without Explorer, with no console.
+pub fn open_classic(tab: u8) {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    let _ = std::process::Command::new("rundll32.exe")
+        .args(["shell32.dll,Control_RunDLL", &format!("mmsys.cpl,,{tab}")])
+        .creation_flags(CREATE_NO_WINDOW)
+        .spawn();
+}
+
 // ---- Balance ----
 
 /// Balance as -1 (all left) ..= 1 (all right) from the two channel volumes; 0 when even.
