@@ -9,8 +9,6 @@ use egui::{Painter, Rect, Ui};
 
 /// How tall the fade-out is, in points.
 pub const ZONE: f32 = 28.0;
-/// The height of one band inside the zone.
-const STEP: f32 = 4.0;
 
 /// Where the content ends: the y of the panel's bottom edge.
 #[derive(Clone, Copy)]
@@ -38,14 +36,16 @@ impl Fade {
         if rect.top() < top {
             paint(&band(rect.top(), top));
         }
+        // One physical pixel per band: taller bands showed as stripes (4 pt was 6 px at 150%).
+        let step = 1.0 / ui.ctx().pixels_per_point();
         // Bands sit on one grid for every item, so neighbours line up.
-        let first = ((rect.top().max(top) - top) / STEP).floor();
-        let mut y = top + first * STEP;
+        let first = ((rect.top().max(top) - top) / step).floor();
+        let mut y = top + first * step;
         while y < rect.bottom().min(self.edge) {
-            let mut p = band(y, y + STEP);
-            p.set_opacity(opacity_at(y + STEP / 2.0 - top));
+            let mut p = band(y, y + step);
+            p.set_opacity(opacity_at(y + step / 2.0 - top));
             paint(&p);
-            y += STEP;
+            y += step;
         }
     }
 }

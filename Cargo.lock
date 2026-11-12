@@ -1958,6 +1958,7 @@ dependencies = [
  "shellman-core",
  "shellman-icons",
  "windows",
+ "windows-numerics",
 ]
 
 [[package]]

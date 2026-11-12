@@ -1,8 +1,9 @@
 //! Appearing on request, and only one launcher at a time.
 //!
-//! The process stays resident with its window hidden. Running `shellman-launcher.exe` again
-//! finds the first one through a named mutex, signals it through a named event, and exits at
-//! once; the resident process then shows its window (or hides it, if it is already showing).
+//! The process stays resident with its window out of sight (cloaked; see `hide`). Running
+//! `shellman-launcher.exe` again finds the first one through a named mutex, signals it through a
+//! named event, and exits at once; the resident process then shows its window (or hides it, if it
+//! is already showing).
 //! Showing is a few Win32 calls on a window that already exists, so there is no start-up cost
 //! at the moment of summoning.
 
@@ -18,10 +19,12 @@ use windows::Win32::System::Threading::{
     CreateEventW, CreateMutexW, SetEvent, WaitForSingleObject, INFINITE,
 };
 use windows::Win32::UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI};
+use shellman_ui::glass;
 use windows::Win32::UI::WindowsAndMessaging::{
-    AllowSetForegroundWindow, GetCursorPos, GetForegroundWindow, IsIconic, IsWindowVisible,
-    GetWindowLongPtrW, SetForegroundWindow, SetWindowLongPtrW, SetWindowPos, ShowWindow,
-    ASFW_ANY, GWL_STYLE, HWND_TOPMOST, SWP_FRAMECHANGED, SWP_SHOWWINDOW, SW_HIDE, WS_CAPTION,
+    AllowSetForegroundWindow, GetCursorPos, GetForegroundWindow, GetWindowRect, IsIconic,
+    IsWindowVisible, GetWindowLongPtrW, SetForegroundWindow, SetWindowLongPtrW, SetWindowPos,
+    ShowWindow, ASFW_ANY, GWL_EXSTYLE, GWL_STYLE, HWND_TOPMOST, SWP_FRAMECHANGED, SWP_NOACTIVATE,
+    SWP_SHOWWINDOW, SW_HIDE, SW_SHOWNOACTIVATE, WS_CAPTION, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW,
     WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_SYSMENU, WS_THICKFRAME,
 };
 
@@ -29,6 +32,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
 pub const WIDTH: f32 = 760.0;
 pub const HEIGHT: f32 = 560.0;
 const TOP_FRACTION: f64 = 0.14;
+/// The panel's corner radius in points.
+pub const RADIUS: f32 = 24.0;
 
 /// Whether this process is the resident launcher; if not, the resident one has been signalled
 /// and this process has nothing more to do.
@@ -145,15 +150,30 @@ impl Instance {
     }
 }
 
-/// Whether the window is on screen right now.
+/// Whether the window is on screen right now (shown and not cloaked).
 pub fn is_visible(hwnd: isize) -> bool {
-    unsafe { IsWindowVisible(HWND(hwnd as *mut _)) }.as_bool()
+    unsafe { IsWindowVisible(HWND(hwnd as *mut _)) }.as_bool() && !glass::is_cloaked(hwnd)
 }
 
-/// Hide the window. Called by the window itself.
+/// Set the window up as resident and out of sight: cloaked, and a tool window, so it is never
+/// listed as a running app. Called once, before the window library first shows it.
+pub fn prepare(hwnd: isize) {
+    glass::cloak(hwnd, true);
+    tool_window(HWND(hwnd as *mut _));
+}
+
+/// Put the window out of sight. Called by the window itself.
+///
+/// Out of sight means cloaked, not hidden: a hidden window gets no paint messages, so a frame
+/// egui had already asked for (the caret's next blink, say) never comes, and the window library
+/// waits for it on a whole core until the next showing. Hiding and showing again without
+/// activation hands the keyboard back to the window behind.
 pub fn hide(hwnd: isize) {
+    glass::cloak(hwnd, true);
+    let hwnd = HWND(hwnd as *mut _);
     unsafe {
-        let _ = ShowWindow(HWND(hwnd as *mut _), SW_HIDE);
+        let _ = ShowWindow(hwnd, SW_HIDE);
+        let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
     }
 }
 
@@ -173,7 +193,10 @@ fn show(hwnd: HWND) {
         let _ = GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &mut dpi_x, &mut dpi_y);
         let scale = dpi_x as f32 / 96.0;
         let (x, y, w, h) = panel_rect(info.rcWork, scale);
+        // Placed while still cloaked, so it is never seen where it was or at a passing size.
+        glass::cloak(hwnd.0 as isize, true);
         strip_frame(hwnd);
+        tool_window(hwnd);
         let _ = SetWindowPos(
             hwnd,
             Some(HWND_TOPMOST),
@@ -183,7 +206,27 @@ fn show(hwnd: HWND) {
             h,
             SWP_SHOWWINDOW | SWP_FRAMECHANGED,
         );
+        // Moving onto a monitor of another scale makes the window library resize the window to
+        // keep its old size in points (and move it to match), so the place is set once more.
+        let mut now = RECT::default();
+        let wanted = RECT { left: x, top: y, right: x + w, bottom: y + h };
+        if GetWindowRect(hwnd, &mut now).is_ok() && now != wanted {
+            let _ = SetWindowPos(hwnd, Some(HWND_TOPMOST), x, y, w, h, SWP_NOACTIVATE);
+        }
+        glass::cloak(hwnd.0 as isize, false);
         take_foreground(hwnd);
+    }
+}
+
+/// A tool window, never an app window: the dock and the window list leave it out. (The window
+/// library's "no taskbar button" only removes the button.)
+fn tool_window(hwnd: HWND) {
+    unsafe {
+        let ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32;
+        let tool = (ex & !WS_EX_APPWINDOW.0) | WS_EX_TOOLWINDOW.0;
+        if tool != ex {
+            SetWindowLongPtrW(hwnd, GWL_EXSTYLE, tool as isize);
+        }
     }
 }
 

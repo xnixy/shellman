@@ -9,6 +9,7 @@ use crate::usage::Usage;
 use crate::rank;
 use shellman_core::apps_index::{self, App, AppIndex};
 use shellman_core::thumbs::Thumbs;
+use shellman_ui::glass;
 use shellman_ui::theme::{self, colors, glyph, icon_font};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -292,22 +293,22 @@ impl Launcher {
             }
         }
         self.follow_window(ctx);
+        // Hidden: draw nothing. A drawn search box keeps the focus, and its caret blink asks for
+        // repaints that a hidden window never gets, which spins the event loop on a whole core.
+        if !self.shared.is_showing() {
+            return;
+        }
         self.keys(ctx);
 
         // SHELLMAN_FORCE_LIGHT: look at the light palette without changing Windows' setting.
         let force_light = std::env::var_os("SHELLMAN_FORCE_LIGHT").is_some();
         theme::set_light(force_light || ctx.theme() == egui::Theme::Light);
-        let c = colors();
         let screen = ctx.screen_rect();
 
         // ---- PANEL BACKGROUND: the one place the panel's own fill is painted. ----
-        let fill = if self.glass { c.shell } else { c.bg };
-        egui::CentralPanel::default().frame(egui::Frame::new().fill(fill)).show(ctx, |ui| {
-            if self.glass {
-                // The same surfaces as Files and the dock: the glass tint, then the sheet.
-                ui.painter().rect_filled(screen, 0.0, c.sheet);
-            }
-        });
+        // Over the glass panel, nothing; without it, a rounded surface painted here.
+        let surface = glass::content_frame(self.glass, &glass::Style::from_theme(summon::RADIUS));
+        egui::CentralPanel::default().frame(surface).show(ctx, |_| {});
         // ---- end of panel background ----
 
         // On showing, the content fades in and grows from 97%; nothing runs once it is done.
