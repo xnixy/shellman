@@ -194,6 +194,7 @@ impl eframe::App for SettingsApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.st.thumbs.poll(ctx);
         self.track_system(ctx);
+        shellman_ui::app_icon::sync_window_icon(ctx, shellman_ui::app_icon::Kind::Settings);
         self.follow_files(ctx);
         self.layout(ctx);
     }

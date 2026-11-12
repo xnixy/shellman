@@ -10,3 +10,4 @@ publish = false
 
 [dependencies]
 png = "0.17"
+shellman-icons = { path = "../../crates/icons" }

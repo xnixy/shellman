@@ -1906,6 +1906,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "shellman-icons"
+version = "0.1.0"
+
+[[package]]
 name = "shellman-launcher"
 version = "0.1.0"
 dependencies = [
@@ -1952,6 +1956,7 @@ dependencies = [
  "egui",
  "serde",
  "shellman-core",
+ "shellman-icons",
  "windows",
 ]
 

@@ -54,6 +54,7 @@ name = "icongen"
 version = "0.1.0"
 dependencies = [
  "png",
+ "shellman-icons",
 ]
 
 [[package]]
@@ -88,6 +89,10 @@ dependencies = [
  "flate2",
  "miniz_oxide 0.8.9",
 ]
+
+[[package]]
+name = "shellman-icons"
+version = "0.1.0"
 
 [[package]]
 name = "simd-adler32"
