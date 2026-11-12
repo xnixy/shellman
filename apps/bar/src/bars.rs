@@ -176,6 +176,7 @@ impl Bars {
                         shape::square_corners(hwnd);
                     }
                     Kind::Dock => {
+                        shape::see_through(hwnd);
                         surface::attach(hwnd, dock_style);
                     }
                 }

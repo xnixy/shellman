@@ -8,8 +8,9 @@ pub mod surface;
 
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::UI::Shell::{DefSubclassProc, SetWindowSubclass};
+use windows::Win32::UI::Controls::MARGINS;
 use windows::Win32::Graphics::Dwm::{
-    DwmSetWindowAttribute, DWMWA_BORDER_COLOR, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DONOTROUND,
+    DwmExtendFrameIntoClientArea, DwmSetWindowAttribute, DWMWA_BORDER_COLOR, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DONOTROUND,
 };
 use windows::core::BOOL;
 use windows::Win32::UI::WindowsAndMessaging::{SendMessageW, WM_NCACTIVATE, EnumWindows, GetWindowTextW, GetWindowThreadProcessId};
@@ -97,6 +98,16 @@ unsafe extern "system" fn dock_proc(
             DefSubclassProc(hwnd, msg, wparam, lparam)
         }
         _ => DefSubclassProc(hwnd, msg, wparam, lparam),
+    }
+}
+
+/// Let the window's own transparent pixels show what is under it (its glass). A window the
+/// window library made transparent should already, but a bar window's GL surface showed black
+/// there until DWM was told its frame covers the whole window.
+pub fn see_through(hwnd: isize) {
+    let margins = MARGINS { cxLeftWidth: -1, cxRightWidth: -1, cyTopHeight: -1, cyBottomHeight: -1 };
+    unsafe {
+        let _ = DwmExtendFrameIntoClientArea(HWND(hwnd as *mut _), &margins);
     }
 }
 

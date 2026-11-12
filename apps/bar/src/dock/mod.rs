@@ -333,7 +333,7 @@ impl Dock {
                     let f = glass::content_frame(false, &style);
                     ui.painter().rect(glass, f.corner_radius, f.fill, f.stroke, egui::StrokeKind::Inside);
                 }
-                let scene = draw::Scene { items: &self.items, front: self.front, metrics: m, xs: &xs, width, glass, salt };
+                let scene = draw::Scene { items: &self.items, front: self.front, metrics: m, xs: &xs, width, glass, salt, tint: style.tint };
                 draw::paint(ui, &scene, &mut self.thumbs)
             })
             .inner;

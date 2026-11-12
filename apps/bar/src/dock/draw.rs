@@ -11,7 +11,7 @@ use super::metrics::{self, Metrics};
 use egui::{Color32, Id, Pos2, Rect, Vec2};
 use shellman_core::thumbs::Thumbs;
 use shellman_ui::app_icon::{self, Kind};
-use shellman_ui::theme::{colors, glyph, icon_font, with_alpha};
+use shellman_ui::theme::{colors, glyph, icon_font, mix, with_alpha};
 
 /// How long icons and the glass take to move, and a new icon to fade in.
 pub const MOVE: f32 = 0.16;
@@ -45,37 +45,48 @@ pub struct Scene<'a> {
     pub glass: Rect,
     /// Keeps this dock window's animations apart from the other monitors'.
     pub salt: &'a str,
+    /// The glass's tint, which the marks are drawn from.
+    pub tint: Color32,
 }
 
-/// The palette of the dock's marks, from the theme: text-coloured, so they show whatever the
-/// accent (black included) and in light and dark.
+/// The palette of the dock's marks: the glass's own tint moved towards the text colour, so they
+/// show whatever the accent (black included), in light and dark.
+///
+/// They are nearly opaque on purpose. Windows blends a window over its glass in linear light
+/// (measured: a 1 px white line at 16% alpha came out as a 40% grey), so a faint translucent
+/// white turns out far brighter than drawn; a solid colour comes out as drawn.
 struct Ink {
     text: Color32,
-    /// Behind a hovered icon.
+    /// Behind a hovered icon, and a pressed one.
     hover: Color32,
-    /// Behind a pressed one.
     press: Color32,
-    /// A running app's dot, and the dividers.
+    /// A running app's dot, the front app's pill, and the dividers.
     dot: Color32,
+    front: Color32,
     divider: Color32,
+    /// Behind an old small icon, or one still loading.
+    plate: Color32,
 }
 
-fn ink() -> Ink {
+fn ink(tint: Color32) -> Ink {
     let c = colors();
-    let (hover, press, dot, divider) = if c.light { (16, 30, 120, 34) } else { (26, 44, 130, 40) };
+    let base = tint.to_opaque();
+    let toward = |t: f32, alpha: u8| with_alpha(mix(base, c.text, t), alpha);
     Ink {
         text: c.text,
-        hover: with_alpha(c.text, hover),
-        press: with_alpha(c.text, press),
-        dot: with_alpha(c.text, dot),
-        divider: with_alpha(c.text, divider),
+        hover: toward(0.11, 190),
+        press: toward(0.18, 210),
+        dot: toward(0.55, 255),
+        front: toward(0.92, 255),
+        divider: toward(0.22, 255),
+        plate: toward(0.07, 200),
     }
 }
 
 pub fn paint(ui: &mut egui::Ui, scene: &Scene, thumbs: &mut Thumbs) -> Events {
     let ctx = ui.ctx().clone();
     let m = scene.metrics;
-    let ink = ink();
+    let ink = ink(scene.tint);
     let mut events = Events::default();
     let glass = scene.glass;
     // Each icon's left edge, eased towards its place, from the glass's centre: when an app comes
@@ -118,7 +129,7 @@ pub fn paint(ui: &mut egui::Ui, scene: &Scene, thumbs: &mut Thumbs) -> Events {
         let k = (1.0 - 0.06 * press) * (0.8 + 0.2 * appear);
         let shown = Rect::from_center_size(icon.center(), icon.size() * k);
         let tint = Color32::WHITE.gamma_multiply(appear).linear_multiply(1.0 - 0.12 * press);
-        paint_icon(ui, item, shown, tint, thumbs);
+        paint_icon(ui, item, shown, tint, ink.plate, thumbs);
         paint_mark(ui, item, scene.front, egui::pos2(icon.center().x, glass.bottom() - m.pad / 2.0), &ink, appear);
 
         if resp.hovered() {
@@ -174,10 +185,10 @@ fn texture(ctx: &egui::Context, item: &Item, px: f32, thumbs: &mut Thumbs) -> Op
 /// The item's icon filling `rect`. The shell's images come cropped to what they draw (see
 /// `Thumbs::icons`): a real big icon fills the box; an old small one is drawn at a whole-number
 /// scale on a faint plate, as the launcher does, rather than blown up and blurred.
-fn paint_icon(ui: &egui::Ui, item: &Item, rect: Rect, tint: Color32, thumbs: &mut Thumbs) {
+fn paint_icon(ui: &egui::Ui, item: &Item, rect: Rect, tint: Color32, plate: Color32, thumbs: &mut Thumbs) {
     let ppp = ui.ctx().pixels_per_point();
     let plate = |ui: &egui::Ui| {
-        let fill = colors().text.gamma_multiply(0.07).gamma_multiply(tint.a() as f32 / 255.0);
+        let fill = plate.gamma_multiply(tint.a() as f32 / 255.0);
         ui.painter().rect_filled(rect, rect.width() * 0.22, fill);
     };
     let Some((id, px)) = texture(ui.ctx(), item, rect.width() * ppp, thumbs) else {
@@ -207,7 +218,7 @@ fn paint_mark(ui: &egui::Ui, item: &Item, front: Option<isize>, at: Pos2, ink: &
     let p = ui.painter();
     if front.is_some_and(|f| item.windows.contains(&f)) {
         let pill = Rect::from_center_size(at, egui::vec2(12.0, 4.0));
-        p.rect_filled(pill, 2.0, with_alpha(ink.text, 230).gamma_multiply(alpha));
+        p.rect_filled(pill, 2.0, ink.front.gamma_multiply(alpha));
     } else {
         p.circle_filled(at, 2.0, ink.dot.gamma_multiply(alpha));
     }
