@@ -10,6 +10,8 @@ const NATIVE: &[&str] = &[
     "cut",
     "copy",
     "paste",
+    // Files' own "Paste shortcut".
+    "pastelink",
     "delete",
     "rename",
     "properties",

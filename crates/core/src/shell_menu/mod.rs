@@ -15,6 +15,7 @@ mod fake;
 mod loader;
 mod model;
 mod paint;
+mod raise;
 mod slow;
 mod target;
 mod tidy;
@@ -24,6 +25,7 @@ mod worker;
 pub use loader::{Loader, View};
 pub use model::{Cascade, Icon, Item};
 pub use paint::Palette;
+pub use raise::watch_for_windows;
 pub use slow::SlowBook;
 pub use target::Target;
 pub use tidy::Route;
@@ -49,6 +51,7 @@ pub fn properties(hwnd: isize, path: &Path) {
         nShow: SW_SHOWNORMAL.0,
         ..Default::default()
     };
+    watch_for_windows();
     unsafe {
         let _ = ShellExecuteExW(&mut info);
     }

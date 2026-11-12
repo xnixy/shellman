@@ -21,6 +21,10 @@ pub(super) enum Action {
     Recycle,
     Clip(Op),
     Paste,
+    /// Shortcuts to the clipboard's items, in this folder.
+    PasteShortcut,
+    /// Select this new item and start renaming it (a file the shell just made).
+    SelectRename(PathBuf),
     NewFolder,
     CopyPath,
     /// In the Recycle Bin: go to the folder the selected item came from and select it there.
@@ -202,6 +206,31 @@ impl super::FileMan {
                         self.clipboard = None;
                     }
                     self.run_op(op, what, paths, Some(dir));
+                }
+            }
+            Action::PasteShortcut => {
+                let Some(dir) = self.tabs[self.active].loc.dir().map(Path::to_path_buf) else {
+                    return;
+                };
+                let Some((_, paths)) = self.clipboard.clone() else { return };
+                let mut last = None;
+                for p in paths {
+                    let name = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                    let link = fsops::unique_child(&dir, &format!("{name} - Shortcut.lnk"));
+                    match fsops::make_link(&p, &link) {
+                        Ok(()) => last = Some(link),
+                        Err(e) => self.toast(format!("Couldn't make a shortcut: {e}")),
+                    }
+                }
+                if let Some(l) = last {
+                    self.tabs[self.active].select_after_load = Some((l, false));
+                    self.load(self.active);
+                }
+            }
+            Action::SelectRename(path) => {
+                if path.parent() == self.tabs[self.active].loc.dir() {
+                    self.tabs[self.active].select_after_load = Some((path, true));
+                    self.load(self.active);
                 }
             }
             Action::NewFolder => {

@@ -10,9 +10,14 @@ use shellman_core::fsops::Op;
 
 impl super::FileMan {
     pub(super) fn keyboard(&mut self, ctx: &egui::Context, actions: &mut Vec<Action>) {
+        // The Menu key has no egui key, so it is read from the keyboard's state.
+        let menu_key = menu_key_pressed(ctx);
         // An open menu has the keyboard: its arrows, Enter and Escape are its own.
         if self.dialog.is_some() || self.menu.is_open() {
             return;
+        }
+        if menu_key {
+            actions.push(Action::MenuKey);
         }
         let typing = ctx.wants_keyboard_input();
         let (mouse_back, mouse_fwd) = ctx.input(|i| {
@@ -165,4 +170,14 @@ impl super::FileMan {
             }
         });
     }
+}
+
+/// Whether the Menu (application) key went down since the last frame, while this window has focus.
+fn menu_key_pressed(ctx: &egui::Context) -> bool {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_APPS};
+    static WAS_DOWN: AtomicBool = AtomicBool::new(false);
+    let down = unsafe { GetAsyncKeyState(i32::from(VK_APPS.0)) } as u16 & 0x8000 != 0;
+    let was = WAS_DOWN.swap(down, Ordering::Relaxed);
+    down && !was && ctx.input(|i| i.focused)
 }

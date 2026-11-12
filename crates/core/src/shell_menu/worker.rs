@@ -243,11 +243,15 @@ fn invoke(h: &Held, id: u32, hwnd: isize, point: (i32, i32)) {
 /// command opened here), and for a few seconds in any case.
 fn linger() {
     let start = Instant::now();
+    let mut seen = super::raise::visible();
     loop {
         unsafe {
             MsgWaitForMultipleObjectsEx(None, 250, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
         }
         pump();
+        if start.elapsed() < Duration::from_secs(4) {
+            super::raise::raise_new(&mut seen);
+        }
         if start.elapsed() > LINGER && !has_visible_window() {
             return;
         }
