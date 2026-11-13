@@ -12,6 +12,7 @@ mod defterm;
 mod emoji;
 mod instance;
 mod keys;
+mod local;
 mod mouse;
 mod osc;
 mod palette;

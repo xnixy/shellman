@@ -32,6 +32,8 @@ pub struct Pointer {
     wheel: f32,
     /// The link under the pointer and where to open it.
     link: Option<String>,
+    /// The hover label naming the OSC 8 link under the pointer (its id), while one shows.
+    label: Option<egui::Id>,
 }
 
 impl Pointer {
@@ -309,6 +311,7 @@ impl super::TerminalApp {
         let on_grid = pos.filter(|p| self.grid.contains(*p) && self.over_grid_layer(ctx, *p));
         let mut hover = Hover::None;
         let mut link = None;
+        let mut label = None;
         if let (Some(pos), None) = (on_grid, self.pointer.down) {
             let spot = self.spot(ctx, pos);
             let session = &self.tabs.current().session;
@@ -324,10 +327,24 @@ impl super::TerminalApp {
                 None
             });
             if let Some((h, uri)) = found {
+                // An OSC 8 link's text can say anything: a label shows where it really goes.
+                if matches!(h, Hover::Link(_)) {
+                    let ppp = ctx.pixels_per_point();
+                    let m = self.renderer.metrics();
+                    let min = egui::pos2(self.grid.left() + (spot.col as i32 * m.cell_w) as f32 / ppp, self.grid.top() + (spot.row as i32 * m.cell_h) as f32 / ppp);
+                    let cell = Rect::from_min_size(min, egui::vec2(m.cell_w as f32 / ppp, m.cell_h as f32 / ppp));
+                    let id = egui::Id::new(("terminal-link-label", &uri));
+                    shellman_ui::hover::label_at(ctx, id, cell, true, &crate::clip::describe(&uri));
+                    label = Some(id);
+                }
                 hover = h;
                 link = Some(uri);
             }
         }
+        if let Some(gone) = self.pointer.label.filter(|g| Some(*g) != label) {
+            shellman_ui::hover::label_at(ctx, gone, Rect::NOTHING, false, "");
+        }
+        self.pointer.label = label;
         if hover != self.view.hover {
             self.view.hover = hover;
             self.tabs.current().session.mark_dirty();

@@ -733,9 +733,16 @@ entry points open it, and it can be Windows' default terminal (below).
 - **Mouse to programs**: X10 (9), 1000, 1002, 1003 tracking; normal, UTF-8 (1005) and SGR
   (1006) encodings; focus (1004, also on tab switches); wheel as buttons 64/65 when tracking,
   arrows on the alternate screen with 1007, else scrollback. Shift takes the mouse back.
-- **Links**: OSC 8 hyperlinks underline on hover; a URL in the text underlines while Ctrl is
-  held; Ctrl+click opens either (http, https, file, ftp, mailto only). OSC 52 copies (reads are
-  refused).
+- **Links**: OSC 8 hyperlinks underline on hover, and a glass hover label shows where the link
+  really goes (an OSC 8 link's text can say anything) and what Ctrl+click will do; a URL in the
+  text underlines while Ctrl is held. Ctrl+click (`clip::parse_link`, off the UI thread): `http`,
+  `https` and `mailto` open with Windows' handler; a `file:` link is never opened (run), only
+  shown: its folder (or the folder itself) opens in shellman Files, and only for a drive-letter
+  path on a local drive (`local.rs`: no host but `localhost`, no UNC, no `\\?\`, no network
+  drive, so nothing reaches another computer). Everything else (other schemes, control
+  characters, blanks or `"` in the link, bad `%` escapes, `user@host` web links) is ignored.
+  Files has no "select this file" start yet, so a file's folder opens without it selected.
+  OSC 52 copies (reads are refused).
 - **Cursor**: DECSCUSR shapes; blinking at Windows' caret rate, only while focused, stopping
   (shown) after 15 s without input or output, so an idle window draws nothing.
 - **Drawing**: a GPU renderer inside egui's frame (an `egui_glow` paint callback). Glyphs by
