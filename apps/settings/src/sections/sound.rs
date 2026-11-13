@@ -3,6 +3,7 @@
 //! classic Sound applet. All audio work is done by a worker (`SoundPage`); the page only draws
 //! what it last published and sends it what was asked.
 
+use shellman_ui::menu::dropdown::dropdown;
 use super::sound_mixer;
 use super::sound_rows::{device_row, disabled_row, link_row, meter_bar, volume_row};
 use crate::page;
@@ -213,17 +214,13 @@ fn spatial_picker(ui: &mut egui::Ui, h: &SoundPage, dev: &Device, detail: &Detai
         return;
     };
     let off = sp.is_off();
-    egui::ComboBox::from_id_salt(("spatial", &dev.id)).width(300.0).selected_text(sp.active_name()).show_ui(ui, |ui| {
-        if ui.selectable_label(off, "Off").clicked() && !off {
-            h.set_spatial(&dev.id, "");
-        }
-        for (id, name) in &sp.formats {
-            let on = id.eq_ignore_ascii_case(&sp.active);
-            if ui.selectable_label(on, name).clicked() && !on {
-                h.set_spatial(&dev.id, id);
-            }
-        }
-    });
+    let mut rows: Vec<(String, bool)> = vec![("Off".to_string(), off)];
+    rows.extend(sp.formats.iter().map(|(id, name)| (name.clone(), id.eq_ignore_ascii_case(&sp.active))));
+    match dropdown(ui, ("spatial", &dev.id), 300.0, &sp.active_name(), &rows) {
+        Some(0) if !off => h.set_spatial(&dev.id, ""),
+        Some(k) if k > 0 && !rows[k].1 => h.set_spatial(&dev.id, &sp.formats[k - 1].0),
+        _ => {}
+    }
     if let Some(hint) = &choices.spatial_hint {
         ui.label(theme::muted(hint).size(12.0));
     }
@@ -253,16 +250,13 @@ fn format_picker(ui: &mut egui::Ui, h: &SoundPage, dev: &Device, detail: &Detail
         return;
     }
     ui.horizontal(|ui| {
-        egui::ComboBox::from_id_salt(("format", &dev.id))
-            .width(300.0)
-            .selected_text(text(&now))
-            .show_ui(ui, |ui| {
-                for f in &detail.supported {
-                    if ui.selectable_label(*f == now, text(f)).clicked() && *f != now {
-                        h.set_format(&dev.id, *f);
-                    }
-                }
-            });
+        let rows: Vec<(String, bool)> = detail.supported.iter().map(|f| (text(f), *f == now)).collect();
+        if let Some(k) = dropdown(ui, ("format", &dev.id), 300.0, &text(&now), &rows) {
+            let f = detail.supported[k];
+            if f != now {
+                h.set_format(&dev.id, f);
+            }
+        }
         if detail.can_undo && ui.button("Undo").on_hover_text("Back to the format it had before").clicked() {
             h.undo_format(&dev.id);
         }

@@ -4,6 +4,7 @@
 //! Windows reports back. A refused write is said in one line. Setting the clock itself is not
 //! offered.
 
+use shellman_ui::menu::dropdown::dropdown;
 use crate::page;
 use crate::state::State;
 use shellman_core::system::region::{self, Current, Intl, Refused};
@@ -168,13 +169,12 @@ fn formats(ui: &mut egui::Ui, v: &mut DateTimeView, ctx: &egui::Context, data: &
     ui.add_space(12.0);
     page::label(ui, "First day of the week");
     let mut pick = None;
-    egui::ComboBox::from_id_salt("first-day").width(220.0).selected_text(logic::day_name(intl.first_day)).show_ui(ui, |ui| {
-        for (n, name) in logic::DAYS.iter().enumerate() {
-            if ui.selectable_label(n as u32 == intl.first_day, *name).clicked() && n as u32 != intl.first_day {
-                pick = Some(n as u32);
-            }
+    let rows: Vec<(String, bool)> = logic::DAYS.iter().enumerate().map(|(n, name)| (name.to_string(), n as u32 == intl.first_day)).collect();
+    if let Some(n) = dropdown(ui, "first-day", 220.0, logic::day_name(intl.first_day), &rows) {
+        if n as u32 != intl.first_day {
+            pick = Some(n as u32);
         }
-    });
+    }
     if let Some(day) = pick {
         v.write(ctx, Box::new(move || region::set_first_day(day)));
     }
@@ -191,12 +191,11 @@ fn pattern_picker(ui: &mut egui::Ui, title: &str, id: &str, offered: &[String], 
     }
     let text = |p: &str| format!("{}    ({p})", region::sample_date(p));
     let mut pick = None;
-    egui::ComboBox::from_id_salt(id).width(460.0).selected_text(text(current)).show_ui(ui, |ui| {
-        for p in list {
-            if ui.selectable_label(p == current, text(p)).clicked() && p != current {
-                pick = Some(p.to_owned());
-            }
+    let rows: Vec<(String, bool)> = list.iter().map(|p| (text(p), *p == current)).collect();
+    if let Some(i) = dropdown(ui, id, 460.0, &text(current), &rows) {
+        if list[i] != current {
+            pick = Some(list[i].to_owned());
         }
-    });
+    }
     pick
 }

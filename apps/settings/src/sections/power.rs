@@ -3,6 +3,7 @@
 //! the page is shown, and each change is written by a worker; the page then shows what Windows
 //! reports back. A write Windows refuses is said in one line under the group.
 
+use shellman_ui::menu::dropdown::dropdown;
 use crate::page;
 use crate::state::State;
 use shellman_core::system::power_logic::{self as logic, Key};
@@ -83,13 +84,13 @@ pub fn show(ui: &mut egui::Ui, st: &mut State) {
             if snap.plans.len() > 1 {
                 page::label(ui, "Plan");
                 let mut pick = None;
-                egui::ComboBox::from_id_salt("power-plan").width(300.0).selected_text(snap.active_name()).show_ui(ui, |ui| {
-                    for p in &snap.plans {
-                        if ui.selectable_label(Some(p.guid) == snap.active, &p.name).clicked() && Some(p.guid) != snap.active {
-                            pick = Some(p.guid);
-                        }
+                let rows: Vec<(String, bool)> = snap.plans.iter().map(|p| (p.name.clone(), Some(p.guid) == snap.active)).collect();
+                if let Some(k) = dropdown(ui, "power-plan", 300.0, &snap.active_name(), &rows) {
+                    let g = snap.plans[k].guid;
+                    if Some(g) != snap.active {
+                        pick = Some(g);
                     }
-                });
+                }
                 if let Some(g) = pick {
                     v.spawn(&ctx, Some(Box::new(move || pw::set_plan(&g))));
                 }
@@ -177,13 +178,12 @@ fn picker(ui: &mut egui::Ui, v: &mut PowerView, snap: &Snapshot, key: Key, sourc
     };
     let shown = choices.iter().find(|(n, _)| *n == now).map(|(_, t)| t.clone()).unwrap_or_default();
     let mut pick = None;
-    egui::ComboBox::from_id_salt(id).width(180.0).selected_text(shown).show_ui(ui, |ui| {
-        for (n, text) in &choices {
-            if ui.selectable_label(*n == now, text).clicked() && *n != now {
-                pick = Some(*n);
-            }
+    let rows: Vec<(String, bool)> = choices.iter().map(|(n, text)| (text.to_string(), *n == now)).collect();
+    if let Some(k) = dropdown(ui, id, 180.0, &shown, &rows) {
+        if choices[k].0 != now {
+            pick = Some(choices[k].0);
         }
-    });
+    }
     if let Some(n) = pick {
         v.notice = None;
         // Show the choice while the worker writes it; the answer it sends back replaces this.
