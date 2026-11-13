@@ -23,8 +23,6 @@ pub(super) enum Action {
     Paste,
     /// Shortcuts to the clipboard's items, in this folder.
     PasteShortcut,
-    /// Select this new item and start renaming it (a file the shell just made).
-    SelectRename(PathBuf),
     NewFolder,
     CopyPath,
     /// In the Recycle Bin: go to the folder the selected item came from and select it there.
@@ -221,12 +219,6 @@ impl super::FileMan {
             Action::Clip(op) => self.clip_put(op == Op::Move),
             Action::Paste => self.paste(),
             Action::PasteShortcut => self.paste_shortcut(),
-            Action::SelectRename(path) => {
-                if path.parent() == self.tabs[self.active].loc.dir() {
-                    self.tabs[self.active].select_after_load = Some((path, true));
-                    self.load(self.active);
-                }
-            }
             Action::NewFolder => {
                 let Some(dir) = self.tabs[self.active].loc.dir().map(Path::to_path_buf) else {
                     return;
@@ -294,12 +286,8 @@ impl super::FileMan {
                     }
                 });
             }
-            Action::Reveal(path) => {
-                if let Some(parent) = path.parent().filter(|p| p.is_dir()) {
-                    self.navigate(Loc::Dir(parent.to_path_buf()));
-                    self.tabs[self.active].select_after_load = Some((path, false));
-                }
-            }
+            // Whether its folder is there is looked at on a worker (see `probed`).
+            Action::Reveal(path) => self.probe(super::Probed::Reveal(path)),
             Action::Properties => {
                 let tab = &self.tabs[self.active];
                 let target = match tab.selection().first() {
@@ -378,6 +366,7 @@ impl super::FileMan {
         tab.cursor = None;
         tab.anchor = None;
         tab.filter.clear();
+        tab.expect_new = None;
         tab.list_offset = 0.0;
         self.thumbs.cancel_pending();
         self.bin_sort(self.active);
@@ -417,7 +406,13 @@ impl super::FileMan {
             self.tabs[self.active].selected.clear();
         }
         let has_clip = (self.clip.can_paste(), self.clip.has_files());
-        self.menu.open(&self.ctx, pos, target, background, has_clip);
+        // Whether the one item is a folder, from the listing: the disk is not asked here.
+        let tab = &self.tabs[self.active];
+        let is_dir = match target.items.as_slice() {
+            [one] => tab.row_of(one).is_some_and(|r| tab.entry(r).is_dir),
+            _ => false,
+        };
+        self.menu.open(&self.ctx, pos, target, is_dir, background, has_clip);
     }
 
     fn open_entry(&mut self, e: &Entry, many: bool) {

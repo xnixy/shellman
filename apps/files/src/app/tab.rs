@@ -98,6 +98,10 @@ pub(super) struct Tab {
     pub(super) list_height: f32,
     /// After the next load, select this item, and maybe start renaming it.
     pub(super) select_after_load: Option<(PathBuf, bool)>,
+    /// A New entry was picked here: the paths the tab listed then, and until when (in egui's
+    /// time) to look for the item it makes. Each listing is checked; the first item not there
+    /// before is selected and renamed.
+    pub(super) expect_new: Option<(HashSet<PathBuf>, f64)>,
     /// The Recycle Bin's items by their stored path, for the original location and the handles
     /// restore and delete need. Empty in every other place.
     pub(super) bin: HashMap<PathBuf, BinItem>,
@@ -148,6 +152,7 @@ impl Tab {
             list_offset: 0.0,
             list_height: 0.0,
             select_after_load: None,
+            expect_new: None,
             bin: HashMap::new(),
             sort_before_bin: None,
             only: None,
@@ -314,6 +319,11 @@ impl Tab {
         self.cursor = sel.cursor.filter(|&r| r < n);
     }
 
+    /// The item a New entry made, once the listing has it: the first not listed before.
+    pub(super) fn first_new(&self, before: &HashSet<PathBuf>) -> Option<PathBuf> {
+        self.entries.iter().map(|e| &e.path).find(|p| !before.contains(*p)).cloned()
+    }
+
     /// Files renamed `old` to `new`: the selection keeps it under its new name, so the next
     /// listing shows it still selected. True when it is all that is selected (then the cursor
     /// should land on it too).
@@ -399,6 +409,16 @@ mod tests {
         assert_eq!(t.selection_stats(), (2, 11));
         t.selected = HashSet::from([bb.clone()]);
         assert!(t.renamed(&bb, Path::new(r"C:\d\z")));
+    }
+
+    #[test]
+    fn a_new_item_is_found_in_the_next_listing() {
+        let mut t = Tab::new(1, Loc::Dir(PathBuf::from(r"C:\d")));
+        t.set_entries(listing(&[("a", 1), ("b", 1)]));
+        let before: HashSet<PathBuf> = t.entries.iter().map(|e| e.path.clone()).collect();
+        assert_eq!(t.first_new(&before), None, "not made yet");
+        t.set_entries(listing(&[("a", 1), ("New Text Document.txt", 0), ("b", 1)]));
+        assert_eq!(t.first_new(&before), Some(PathBuf::from(r"C:\d\New Text Document.txt")));
     }
 
     #[test]

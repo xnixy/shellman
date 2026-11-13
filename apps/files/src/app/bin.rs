@@ -200,13 +200,11 @@ impl FileMan {
             .and_then(|e| tab.bin.get(&e.path))
             .map(|i| i.original.clone());
         let Some(original) = original else { return };
-        match original.parent() {
-            Some(parent) if parent.is_dir() => {
-                self.apply(Action::Navigate(Loc::Dir(parent.to_path_buf())));
-                self.tabs[self.active].select_after_load = Some((original, false));
-            }
-            _ => self.toast("That folder no longer exists"),
+        if original.parent().is_none() {
+            return self.toast("That folder no longer exists");
         }
+        // Whether the folder is still there is looked at on a worker (see `probed`).
+        self.probe(super::Probed::BinOriginal(original));
     }
 
     /// The original locations of the selection, one per line, for the clipboard.

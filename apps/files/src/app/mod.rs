@@ -112,6 +112,27 @@ enum Msg {
         doomed: Vec<PathBuf>,
         ask: bool,
     },
+    /// What a path turned out to be, looked at on a worker (a network path can take seconds):
+    /// Some(true) a folder, Some(false) a file, None nothing there. `asked` is the tab and where
+    /// it was when asked; the answer is dropped if it has moved on since.
+    Probed {
+        what: Probed,
+        kind: Option<bool>,
+        asked: (u64, Loc),
+    },
+}
+
+/// Why a path was looked at (see `FileMan::probe`).
+#[derive(Debug)]
+pub(super) enum Probed {
+    /// A path typed in the address bar.
+    Typed(String, PathBuf),
+    /// Go to the folder `path` is in and select it: the folder was looked at.
+    Reveal(PathBuf),
+    /// The bin's "show original": the original's folder was looked at.
+    BinOriginal(PathBuf),
+    /// Dropped on a picker: a folder is where to go, a file is shown in its folder.
+    Dropped(PathBuf),
 }
 
 /// What to do with a delete once it is known which items cannot go to the Recycle Bin.
@@ -453,6 +474,59 @@ impl FileMan {
         });
     }
 
+    /// Look at the path `what` is about on a worker, never on the window's thread: a disconnected network path
+    /// blocks for seconds. The answer comes back as `Msg::Probed`.
+    pub(super) fn probe(&self, what: Probed) {
+        let path = match &what {
+            Probed::Typed(_, p) | Probed::Dropped(p) => p.clone(),
+            Probed::Reveal(p) | Probed::BinOriginal(p) => match p.parent() {
+                Some(parent) => parent.to_path_buf(),
+                None => return,
+            },
+        };
+        let tab = &self.tabs[self.active];
+        let asked = (tab.id, tab.loc.clone());
+        let (tx, ctx) = (self.tx.clone(), self.ctx.clone());
+        std::thread::spawn(move || {
+            let kind = std::fs::metadata(&path).ok().map(|m| m.is_dir());
+            let _ = tx.send(Msg::Probed { what, kind, asked });
+            ctx.request_repaint();
+        });
+    }
+
+    /// A path looked at by `probe`, now known.
+    fn probed(&mut self, what: Probed, kind: Option<bool>, asked: (u64, Loc)) {
+        // The user went elsewhere meanwhile: a late answer must not take them away.
+        let tab = &self.tabs[self.active];
+        if (tab.id, &tab.loc) != (asked.0, &asked.1) {
+            return;
+        }
+        match (what, kind) {
+            (Probed::Typed(_, p), Some(true)) => self.apply(actions::Action::Navigate(Loc::Dir(p))),
+            // In a picker, a typed file is the one chosen.
+            (Probed::Typed(_, p), Some(false)) if self.pick.is_some() => self.pick_typed_path(&p),
+            (Probed::Typed(_, p), Some(false)) => fsops::open(&p),
+            (Probed::Typed(typed, _), None) => self.toast(format!("Can't find {typed}")),
+            (Probed::Reveal(path), Some(true)) => {
+                if let Some(parent) = path.parent() {
+                    self.apply(actions::Action::Navigate(Loc::Dir(parent.to_path_buf())));
+                    self.tabs[self.active].select_after_load = Some((path, false));
+                }
+            }
+            (Probed::Reveal(_), _) => {}
+            (Probed::BinOriginal(original), Some(true)) => {
+                if let Some(parent) = original.parent() {
+                    self.apply(actions::Action::Navigate(Loc::Dir(parent.to_path_buf())));
+                    self.tabs[self.active].select_after_load = Some((original, false));
+                }
+            }
+            (Probed::BinOriginal(_), _) => self.toast("That folder no longer exists"),
+            (Probed::Dropped(p), Some(true)) => self.apply(actions::Action::Navigate(Loc::Dir(p))),
+            (Probed::Dropped(p), Some(false)) => self.apply(actions::Action::Reveal(p)),
+            (Probed::Dropped(_), None) => {}
+        }
+    }
+
     /// Run a shell operation on a worker. Afterwards the worker works out where each item
     /// arrived (under its own name, or the one a conflict gave it), for the tags to follow.
     fn run_plan(&self, plan: OpPlan) {
@@ -481,6 +555,7 @@ impl FileMan {
                     // A folder changed: a tagged item in it may have been renamed by another app.
                     self.want_tag_check();
                     let show_hidden = self.settings.show_hidden;
+                    let now = self.ctx.input(|i| i.time);
                     let Some(t) = self.tabs.iter_mut().find(|t| t.id == tab && t.gen == gen) else {
                         continue;
                     };
@@ -494,6 +569,14 @@ impl FileMan {
                             t.error = Some(e);
                             t.entries.clear();
                             t.view.clear();
+                        }
+                    }
+                    // After a New entry: the item it made, once this listing has it.
+                    if let Some((before, until)) = t.expect_new.take() {
+                        match t.first_new(&before) {
+                            Some(made) => t.select_after_load = Some((made, true)),
+                            None if now < until => t.expect_new = Some((before, until)),
+                            None => {}
                         }
                     }
                     if let Some((path, rename)) = t.select_after_load.take() {
@@ -550,6 +633,7 @@ impl FileMan {
                 }
                 Msg::Chosen { op, items, dest } => self.send_to(op, items, dest),
                 Msg::Details(reading) => self.details.arrived(reading),
+                Msg::Probed { what, kind, asked } => self.probed(what, kind, asked),
                 Msg::RecycleChecked { paths, doomed, ask } => match delete_step(doomed.len(), ask) {
                     DeleteStep::AskRecycle => self.dialog = Some(Dialog::Recycle(paths)),
                     DeleteStep::Recycle => self.run_op(Op::Recycle, "Delete", paths, None),
@@ -676,6 +760,14 @@ impl FileMan {
         let mut picked = Vec::new();
         if let Some(notice) = self.menu.show(ctx, &mut picked) {
             self.toast(notice);
+        }
+        // A New entry: remember what the folder held, so its next listing shows what was made.
+        if let Some(folder) = self.menu.take_made() {
+            let until = ctx.input(|i| i.time) + 10.0;
+            let tab = &mut self.tabs[self.active];
+            if tab.loc.dir() == Some(folder.as_path()) {
+                tab.expect_new = Some((tab.entries.iter().map(|e| e.path.clone()).collect(), until));
+            }
         }
         for a in picked {
             self.apply(a);

@@ -328,11 +328,8 @@ impl super::FileMan {
             // In a picker, a dropped file is where to go: its folder, with it selected.
             if let Payload::Files(paths) = d.payload {
                 if let Some(p) = paths.into_iter().next() {
-                    if p.is_dir() {
-                        self.apply(Action::Navigate(Loc::Dir(p)));
-                    } else {
-                        self.apply(Action::Reveal(p));
-                    }
+                    // Folder or file: looked at on a worker (see `probed`).
+                    self.probe(super::Probed::Dropped(p));
                 }
             }
             return;

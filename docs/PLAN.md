@@ -427,6 +427,12 @@ tested), else the activation manager, else PowerShell.
   (`core::thumbs`, so Files, the shelf, the dock and the rest) come from the shell's cache only
   (`SIIGBF_INCACHEONLY`). The details island reads an image's header only for image names
   (png, jpg, gif, bmp, webp), never the start of any other file.
+- The window's thread never lists a folder or asks whether a path is there (a disconnected
+  network path blocks for seconds): a typed path, Reveal / Open file location, the bin's "show
+  original" and a drop on a picker are looked at on a worker (`Msg::Probed`; dropped when the
+  tab went elsewhere meanwhile); an item menu takes "is a folder" from the listing. After
+  "New ▸ …" the tab keeps the paths it listed and its next listings (the folder watcher's, on a
+  worker) select and rename the first item not there before, for up to 10 s.
 
 ## Settings
 
