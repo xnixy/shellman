@@ -12,7 +12,7 @@ impl App {
 }
 
 /// The whole rule list: words in the name, and what the shortcut points at.
-fn is_noise(name: &str, id: &str) -> bool {
+pub(super) fn is_noise(name: &str, id: &str) -> bool {
     let name = name.to_lowercase();
     const WORDS: [&str; 12] = [
         "help",
@@ -54,7 +54,7 @@ mod tests {
     use super::*;
 
     fn listed(name: &str, id: &str) -> bool {
-        App { name: name.into(), id: id.into() }.is_listed()
+        App::new(name, id).is_listed()
     }
 
     #[test]

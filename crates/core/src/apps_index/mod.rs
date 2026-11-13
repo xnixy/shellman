@@ -7,7 +7,9 @@
 pub mod activate;
 mod enumerate;
 mod launch;
+mod merge;
 mod noise;
+mod startmenu;
 
 pub use enumerate::enumerate;
 pub use launch::{launch, run_text};
@@ -23,12 +25,43 @@ pub struct App {
     /// The shell's parsing name inside the Apps folder: an AUMID for Store apps, a path or GUID
     /// path for classic ones. `shell:AppsFolder\<id>` launches it and gives its icon.
     pub id: String,
+    /// `id` is a file to start directly (a shellman exe, or a Start menu shortcut the Apps folder
+    /// has not caught up with) rather than an Apps folder name.
+    pub direct: bool,
+    /// One of shellman's own apps.
+    pub own: bool,
+    /// A Windows app that shares its name with one of shellman's: shown with a quiet "Windows"
+    /// line so the two can be told apart.
+    pub windows_twin: bool,
 }
 
 impl App {
+    /// An entry of the Apps folder.
+    pub fn new(name: impl Into<String>, id: impl Into<String>) -> App {
+        App { name: name.into(), id: id.into(), direct: false, own: false, windows_twin: false }
+    }
+
     /// The path the shell understands for both launching and fetching the app's icon.
     pub fn shell_path(&self) -> String {
-        format!(r"shell:AppsFolder\{}", self.id)
+        if self.direct {
+            self.id.clone()
+        } else {
+            format!(r"shell:AppsFolder\{}", self.id)
+        }
+    }
+
+    /// The name as the grid labels it: a Windows namesake of a shellman app says so.
+    pub fn grid_label(&self) -> String {
+        if self.windows_twin {
+            format!("{} (Windows)", self.name)
+        } else {
+            self.name.clone()
+        }
+    }
+
+    /// What is searched besides the name: shellman's own apps also answer to "shellman".
+    pub fn alias(&self) -> Option<String> {
+        self.own.then(|| format!("shellman {}", self.name))
     }
 }
 

@@ -18,24 +18,15 @@ const NAME_SIZE: f32 = 15.0;
 pub enum Item {
     /// An app, by index into the list.
     App(usize),
-    /// shellman's own settings app, a built-in entry that is not in the Apps folder.
-    Settings,
     /// Run what was typed.
     Run,
 }
 
-/// What the Settings row is called, and so what a query is matched against to show it.
-pub const SETTINGS_NAME: &str = "shellman Settings";
-
-/// The rows for a ranked list of app indices: the apps, the Settings entry when the query
-/// matches it (`settings`), then "Run" always last, so it is there both when nothing matches and
-/// as a deliberate choice when something does.
-pub fn items(ranked: impl Iterator<Item = usize>, settings: bool, query_is_empty: bool) -> Vec<Item> {
+/// The rows for a ranked list of app indices, then "Run" always last, so it is there both when
+/// nothing matches and as a deliberate choice when something does.
+pub fn items(ranked: impl Iterator<Item = usize>, query_is_empty: bool) -> Vec<Item> {
     let mut items: Vec<Item> = ranked.map(Item::App).collect();
     if !query_is_empty {
-        if settings {
-            items.push(Item::Settings);
-        }
         items.push(Item::Run);
     }
     items
@@ -130,19 +121,14 @@ fn draw_row(
         Item::App(index) => {
             crate::icon::paint(p, icon, &apps[index], thumbs);
             name(p, name_at, name_w, &apps[index].name, Some(query), ink);
-            sub(p, sub_at, "App", ink, selected);
-        }
-        Item::Settings => {
-            // shellman's own icon, in the current accent.
-            let (id, _) = shellman_ui::app_icon::kind_texture(p.ctx(), shellman_ui::app_icon::Kind::Settings, false);
-            p.image(
-                id,
-                icon,
-                Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                Color32::WHITE,
-            );
-            name(p, name_at, name_w, SETTINGS_NAME, Some(query), ink);
-            sub(p, sub_at, "shellman", ink, selected);
+            let kind = if apps[index].own {
+                "shellman"
+            } else if apps[index].windows_twin {
+                "Windows"
+            } else {
+                "App"
+            };
+            sub(p, sub_at, kind, ink, selected);
         }
         Item::Run => {
             crate::icon::plate(p, icon);
@@ -213,23 +199,8 @@ mod tests {
 
     #[test]
     fn run_row_is_always_last() {
-        assert_eq!(items([3, 1].into_iter(), false, false), [Item::App(3), Item::App(1), Item::Run]);
-        assert_eq!(items(std::iter::empty(), false, false), [Item::Run]);
-        assert!(items(std::iter::empty(), false, true).is_empty());
-    }
-
-    #[test]
-    fn settings_entry_sits_before_run_and_only_when_it_matches() {
-        assert_eq!(items([2].into_iter(), true, false), [Item::App(2), Item::Settings, Item::Run]);
-        assert_eq!(items(std::iter::empty(), true, false), [Item::Settings, Item::Run]);
-        // Nothing typed: the grid shows, no rows at all.
-        assert!(items(std::iter::empty(), true, true).is_empty());
-    }
-
-    #[test]
-    fn typing_settings_matches_the_entry() {
-        let hit = |q: &str| !crate::rank::rank(&[SETTINGS_NAME], &|_| 0, q, 1).is_empty();
-        assert!(hit("sett") && hit("shellman set") && hit("Settings"));
-        assert!(!hit("calc"));
+        assert_eq!(items([3, 1].into_iter(), false), [Item::App(3), Item::App(1), Item::Run]);
+        assert_eq!(items(std::iter::empty(), false), [Item::Run]);
+        assert!(items(std::iter::empty(), true).is_empty());
     }
 }

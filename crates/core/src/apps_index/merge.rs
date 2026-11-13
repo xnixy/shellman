@@ -1,0 +1,207 @@
+//! Putting the lists together: the Apps folder, shellman's own apps, and the Start menu
+//! shortcuts the Apps folder has not picked up (without Explorer nothing refreshes it).
+
+use super::noise;
+use super::App;
+use std::path::Path;
+
+/// shellman's own apps: the exe's name after `shellman-`, and the name shown.
+pub const OWN: [(&str, &str); 4] = [
+    ("files", "Files"),
+    ("settings", "Settings"),
+    ("tasks", "Task Manager"),
+    ("terminal", "Terminal"),
+];
+
+/// A Start menu shortcut and what it points at.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Shortcut {
+    /// The shortcut's name without `.lnk`.
+    pub name: String,
+    /// The `.lnk` file.
+    pub path: String,
+    /// The resolved target, empty when it has none (a shell item, an app id).
+    pub target: String,
+}
+
+/// shellman's apps found in `dir`: present only when the exe is.
+pub fn own_apps(dir: &Path) -> Vec<App> {
+    OWN.iter()
+        .filter_map(|(exe, name)| {
+            let path = dir.join(format!("shellman-{exe}.exe"));
+            path.is_file().then(|| App {
+                direct: true,
+                own: true,
+                ..App::new(*name, path.to_string_lossy())
+            })
+        })
+        .collect()
+}
+
+/// The last component of a path, lower-case: `c:\x\Foo.exe` and `{GUID}\x\Foo.exe` give `foo.exe`.
+fn file_name(path: &str) -> String {
+    path.rsplit(['\\', '/']).next().unwrap_or("").to_lowercase()
+}
+
+/// Whether `path` is one of shellman's own exes, wherever it sits.
+fn is_own_exe(path: &str) -> bool {
+    let f = file_name(path);
+    OWN.iter().any(|(exe, _)| f == format!("shellman-{exe}.exe"))
+}
+
+/// Whether the Apps folder entry `id` is the program `target`. Classic entries are a full path,
+/// or a known folder's GUID then the rest of the path (`{GUID}\7-Zip\7zFM.exe`).
+fn id_is_target(id: &str, target: &str) -> bool {
+    let (id, target) = (id.to_lowercase(), target.to_lowercase());
+    if id == target {
+        return true;
+    }
+    let Some(rest) = id.strip_prefix('{').and_then(|r| r.split_once("}\\")).map(|(_, r)| r) else {
+        return false;
+    };
+    target.ends_with(&format!("\\{rest}"))
+}
+
+/// The final list: `folder` plus `own` plus the `shortcuts` the folder lacks, sorted by name.
+///
+/// - A folder entry or shortcut that is one of shellman's exes is dropped (the built-in entry
+///   stands for it).
+/// - A shortcut is added only when no folder entry has its name or its target, and its target
+///   and name pass the noise rules.
+/// - A Windows entry named like an own app is marked `windows_twin`; the own app sorts first.
+pub fn merge(folder: Vec<App>, own: Vec<App>, shortcuts: Vec<Shortcut>) -> Vec<App> {
+    let mut apps: Vec<App> = folder.into_iter().filter(|a| !is_own_exe(&a.id)).collect();
+    let mut seen_names: std::collections::HashSet<String> =
+        apps.iter().map(|a| a.name.trim().to_lowercase()).collect();
+    for s in shortcuts {
+        let name = s.name.trim();
+        if name.is_empty() || s.target.is_empty() || is_own_exe(&s.target) {
+            continue;
+        }
+        if noise::is_noise(name, &s.target) || !is_program(&s.target) {
+            continue;
+        }
+        if seen_names.contains(&name.to_lowercase()) || apps.iter().any(|a| id_is_target(&a.id, &s.target)) {
+            continue;
+        }
+        seen_names.insert(name.to_lowercase());
+        apps.push(App { direct: true, ..App::new(name, s.path) });
+    }
+    for a in &mut apps {
+        a.windows_twin = own.iter().any(|o| o.name.eq_ignore_ascii_case(&a.name));
+    }
+    apps.extend(own);
+    apps.sort_by_cached_key(|a| (a.name.to_lowercase(), !a.own, a.id.clone()));
+    apps.dedup_by(|a, b| a.id == b.id);
+    apps
+}
+
+/// Programs and consoles, not folders, documents or links.
+fn is_program(target: &str) -> bool {
+    let t = target.to_lowercase();
+    [".exe", ".msc", ".cpl", ".bat", ".cmd", ".com"].iter().any(|e| t.ends_with(e))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn lnk(name: &str, target: &str) -> Shortcut {
+        Shortcut { name: name.into(), path: format!(r"C:\sm\{name}.lnk"), target: target.into() }
+    }
+
+    fn own(name: &str, exe: &str) -> App {
+        App { direct: true, own: true, ..App::new(name, exe) }
+    }
+
+    fn names(apps: &[App]) -> Vec<&str> {
+        apps.iter().map(|a| a.name.as_str()).collect()
+    }
+
+    #[test]
+    fn own_apps_exist_only_with_their_exe() {
+        let dir = std::env::temp_dir().join(format!("shellman-own-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        for f in ["shellman-files.exe", "shellman-tasks.exe", "shellman-launcher.exe"] {
+            std::fs::write(dir.join(f), b"").unwrap();
+        }
+        let apps = own_apps(&dir);
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(names(&apps), ["Files", "Task Manager"]);
+        assert!(apps.iter().all(|a| a.own && a.direct && a.is_listed()));
+        assert!(apps[0].id.ends_with("shellman-files.exe"));
+        assert_eq!(apps[1].alias().as_deref(), Some("shellman Task Manager"));
+    }
+
+    #[test]
+    fn a_missing_shortcut_is_added_and_launched_directly() {
+        let t = r"C:\Program Files\Foo\foo.exe";
+        let merged = merge(vec![App::new("Calc", "calc")], vec![], vec![lnk("Foo", t)]);
+        assert_eq!(names(&merged), ["Calc", "Foo"]);
+        assert!(merged[1].direct);
+        assert_eq!(merged[1].shell_path(), r"C:\sm\Foo.lnk");
+    }
+
+    #[test]
+    fn shortcuts_the_folder_already_has_are_not_doubled() {
+        let folder = vec![
+            App::new("7-Zip File Manager", r"{6D809377-6AF0-444B-8957-A3773F02200E}\7-Zip\7zFM.exe"),
+            App::new("Git Bash", "Microsoft.AutoGenerated.{0FDD}"),
+            App::new("nvm", r"C:\Users\X\AppData\Local\nvm\nvm.exe"),
+        ];
+        let shortcuts = vec![
+            lnk("7zip", r"C:\Program Files\7-Zip\7zFM.exe"),
+            lnk("git bash", r"C:\Program Files\Git\git-bash.exe"),
+            lnk("Node Version", r"c:\users\x\appdata\local\nvm\nvm.exe"),
+        ];
+        assert_eq!(merge(folder, vec![], shortcuts).len(), 3);
+    }
+
+    #[test]
+    fn shortcut_noise_is_left_out() {
+        let shortcuts = vec![
+            lnk("Foo Help", r"C:\foo\foo.exe"),
+            lnk("Foo", r"C:\foo\docs.chm"),
+            lnk("Uninstall Foo", r"C:\foo\unins000.exe"),
+            lnk("Foo Link", r"C:\foo\Foo.url"),
+            lnk("Shell thing", ""),
+            lnk("Folder", r"C:\foo"),
+            lnk("Real", r"C:\foo\real.exe"),
+        ];
+        assert_eq!(names(&merge(vec![], vec![], shortcuts)), ["Real"]);
+    }
+
+    #[test]
+    fn my_hand_made_shortcuts_to_own_apps_do_not_duplicate() {
+        let own = vec![own("Files", r"C:\p\shellman-files.exe"), own("Task Manager", r"C:\p\shellman-tasks.exe")];
+        let shortcuts = vec![
+            lnk("shellman Files", r"C:\p\shellman-files.exe"),
+            lnk("Task Manager", r"C:\Other\Shellman-Tasks.exe"),
+        ];
+        let folder = vec![App::new("shellman Files", r"C:\p\shellman-files.exe")];
+        assert_eq!(names(&merge(folder, own, shortcuts)), ["Files", "Task Manager"]);
+    }
+
+    #[test]
+    fn windows_namesakes_are_kept_marked_and_sorted_after() {
+        let own = vec![own("Task Manager", r"C:\p\shellman-tasks.exe"), own("Terminal", r"C:\p\shellman-terminal.exe")];
+        let folder = vec![
+            App::new("Terminal", "Microsoft.WindowsTerminal_8wekyb3d8bbwe!App"),
+            App::new("Task Manager", r"{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\Taskmgr.exe"),
+            App::new("Notepad", "np"),
+        ];
+        let merged = merge(folder, own, vec![]);
+        assert_eq!(names(&merged), ["Notepad", "Task Manager", "Task Manager", "Terminal", "Terminal"]);
+        assert!(merged[1].own && !merged[1].windows_twin);
+        assert!(!merged[2].own && merged[2].windows_twin);
+        assert!(merged[3].own && merged[4].windows_twin);
+        assert!(!merged[0].windows_twin);
+    }
+
+    #[test]
+    fn target_matching_needs_the_whole_path_tail() {
+        assert!(id_is_target(r"{G}\7-Zip\7zFM.exe", r"C:\Program Files\7-Zip\7zFM.exe"));
+        assert!(!id_is_target(r"{G}\Zip\7zFM.exe", r"C:\Program Files\7-Zip\7zFM.exe"));
+        assert!(!id_is_target("com.squirrel.Discord", r"C:\x\discord.exe"));
+    }
+}

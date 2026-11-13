@@ -208,7 +208,7 @@ pub fn show(
                         if is_selected && reveal {
                             ui.scroll_to_rect(rect, None);
                         }
-                        let lines = name_lines(ui, &apps[index].name, cell_w - 12.0);
+                        let lines = name_lines(ui, &apps[index].grid_label(), cell_w - 12.0);
                         let hovered = resp.hovered();
                         fade.paint(ui, rect, |p| {
                             draw_cell(p, rect, &apps[index], &lines, is_selected, hovered, thumbs)
