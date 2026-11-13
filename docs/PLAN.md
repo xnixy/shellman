@@ -81,6 +81,12 @@ Rule: **the top bar is the system, the dock is apps.** Both are windows of one p
   Pin / Unpin and Close. On the Launcher
   icon: Settings. On the Recycle Bin: Open (in Files, never Explorer) and Empty Recycle Bin
   (grey when empty; a native confirmation first). The dock window is only as tall as its icons, so the menu cannot live in it.
+- Drag to rearrange: press an icon and move past 6 pt to pick it up; it rides the pointer along the
+  dock, the others slide apart (the dock's own window, no extra window), release drops it, Esc or
+  releasing off the dock cancels. Pinned apps reorder among the pinned (saved to `dock.json` at
+  once; every dock follows); a running unpinned app dropped among the pinned is pinned there; running
+  apps are not reorderable among themselves, and the Launcher, Files, divider and bin never move.
+  Unpinning stays in the right-click menu.
 - No magnification, which would repaint on every mouse move; a short hover lift instead.
 - Holding Win shows 1-9 on icons. Dropping a file on an icon opens it with that app.
 - Slots for progress and overlay badges; Files reports its copy progress directly.

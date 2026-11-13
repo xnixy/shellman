@@ -32,6 +32,16 @@ pub struct Events {
     pub hovered: Option<(usize, f32)>,
     /// The name label, where it was drawn this frame (it fades out after the pointer leaves).
     pub label: Option<Rect>,
+    /// The primary button went down on an icon: its index, where, and how far that is from the
+    /// icon's left edge.
+    pub pressed: Option<(usize, Pos2, f32)>,
+}
+
+/// An icon in hand: it follows the pointer along the dock, over its own place.
+pub struct Lifted {
+    pub app_id: String,
+    /// Its left edge, in the window's points.
+    pub left: f32,
 }
 
 pub struct Scene<'a> {
@@ -49,6 +59,9 @@ pub struct Scene<'a> {
     pub salt: &'a str,
     /// The glass's tint, which the marks are drawn from.
     pub tint: Color32,
+    /// The icon being dragged in this dock window, if any. While one is, nothing else reacts to
+    /// the pointer (no hover, click or scroll).
+    pub lifted: Option<Lifted>,
 }
 
 /// The palette of the dock's marks: the glass's own tint moved towards the text colour, so they
@@ -133,22 +146,53 @@ pub fn paint(ui: &mut egui::Ui, scene: &Scene, thumbs: &mut Thumbs) -> Events {
         // height, so sliding along the dock never falls between two icons.
         let cell = Rect::from_x_y_ranges(icon.x_range().expand(4.0), glass.y_range());
         let id = Id::new(("dock icon", scene.salt, &item.app_id));
-        let resp = ui.interact(cell, id, egui::Sense::click());
+        let resp = ui.interact(cell, id, egui::Sense::click_and_drag());
         let appear = appear(&ctx, id.with("appear"), fresh[i]);
-        let hover = ctx.animate_bool_with_time(id.with("hover"), resp.hovered(), EASE);
-        let press = ctx.animate_bool_with_time(id.with("press"), resp.is_pointer_button_down_on(), EASE * 0.6);
+        // In hand: the icon rides the pointer; its place stays as a faint plate. Let go (or
+        // cancelled), it eases back from where it was. Both ride one offset from its place.
+        let in_hand = scene.lifted.as_ref().filter(|l| l.app_id == item.app_id);
+        let carried = match in_hand {
+            Some(l) => ctx.animate_value_with_time(id.with("lift"), l.left - icon.left(), 0.0),
+            None => ctx.animate_value_with_time(id.with("lift"), 0.0, MOVE),
+        };
+        let calm = scene.lifted.is_none();
+        let hover = ctx.animate_bool_with_time(id.with("hover"), resp.hovered() && calm, EASE);
+        let press = ctx.animate_bool_with_time(id.with("press"), resp.is_pointer_button_down_on() && calm, EASE * 0.6);
         if hover > 0.0 {
             let plate = icon.expand(5.0);
             let fill = lerp_color(ink.hover, ink.press, press).gamma_multiply(hover);
             ui.painter().rect_filled(plate, m.icon * 0.22 + 5.0, fill);
         }
-        // Pressed, the icon sinks a little; new, it grows in from 80%.
-        let k = (1.0 - 0.06 * press) * (0.8 + 0.2 * appear);
-        let shown = Rect::from_center_size(icon.center(), icon.size() * k);
+        let lifted = carried.abs() > 0.5;
+        if in_hand.is_some() {
+            ui.painter().rect_filled(icon, m.icon * 0.22, ink.plate);
+        }
+        // Pressed, the icon sinks a little; new, it grows in from 80%; carried, it is a touch
+        // larger with a soft shadow, on a layer above its neighbours.
+        let k = (1.0 - 0.06 * press) * (0.8 + 0.2 * appear) * if lifted { 1.06 } else { 1.0 };
+        let at = icon.translate(egui::vec2(carried, 0.0));
+        let shown = Rect::from_center_size(at.center(), icon.size() * k);
         let tint = Color32::WHITE.gamma_multiply(appear).linear_multiply(1.0 - 0.12 * press);
-        paint_icon(ui, item, shown, tint, ink.plate, thumbs);
-        paint_mark(ui, item, scene.front, egui::pos2(icon.center().x, glass.bottom() - m.pad / 2.0), &ink, appear);
+        let painter = if lifted {
+            ui.painter().clone().with_layer_id(egui::LayerId::new(egui::Order::Foreground, Id::new("dock lifted")))
+        } else {
+            ui.painter().clone()
+        };
+        if lifted {
+            let shadow = egui::epaint::Shadow { offset: [0, 3], blur: 12, spread: 0, color: Color32::from_black_alpha(70) };
+            painter.add(shadow.as_shape(shown, egui::CornerRadius::same((m.icon * 0.22) as u8)));
+        }
+        paint_icon(&ctx, &painter, item, shown, tint, ink.plate, thumbs);
+        paint_mark(&painter, item, scene.front, egui::pos2(at.center().x, glass.bottom() - m.pad / 2.0), &ink, appear);
 
+        if resp.hovered() && ui.input(|i| i.pointer.primary_pressed()) {
+            if let Some(p) = ui.input(|i| i.pointer.interact_pos()) {
+                events.pressed = Some((i, p, p.x - icon.left()));
+            }
+        }
+        if !calm {
+            continue;
+        }
         if resp.hovered() {
             events.hovered = Some((i, icon.center().x));
             let delta = ui.input(|i| i.raw_scroll_delta.y);
@@ -211,37 +255,36 @@ pub(super) fn texture(ctx: &egui::Context, item: &Item, px: f32, thumbs: &mut Th
 /// The item's icon filling `rect`. The shell's images come cropped to what they draw (see
 /// `Thumbs::icons`): a real big icon fills the box; an old small one is drawn at a whole-number
 /// scale on a faint plate, as the launcher does, rather than blown up and blurred.
-fn paint_icon(ui: &egui::Ui, item: &Item, rect: Rect, tint: Color32, plate: Color32, thumbs: &mut Thumbs) {
-    let ppp = ui.ctx().pixels_per_point();
-    let plate = |ui: &egui::Ui| {
+fn paint_icon(ctx: &egui::Context, painter: &egui::Painter, item: &Item, rect: Rect, tint: Color32, plate: Color32, thumbs: &mut Thumbs) {
+    let ppp = ctx.pixels_per_point();
+    let plate = |painter: &egui::Painter| {
         let fill = plate.gamma_multiply(tint.a() as f32 / 255.0);
-        ui.painter().rect_filled(rect, rect.width() * 0.22, fill);
+        painter.rect_filled(rect, rect.width() * 0.22, fill);
     };
-    let Some((id, px)) = texture(ui.ctx(), item, rect.width() * ppp, thumbs) else {
-        plate(ui);
+    let Some((id, px)) = texture(ctx, item, rect.width() * ppp, thumbs) else {
+        plate(painter);
         let c = colors();
         let glyph_color = c.muted.gamma_multiply(tint.a() as f32 / 255.0);
-        ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, glyph::APP, icon_font(rect.width() * 0.4), glyph_color);
+        painter.text(rect.center(), egui::Align2::CENTER_CENTER, glyph::APP, icon_font(rect.width() * 0.4), glyph_color);
         return;
     };
     let shown = if px.max_elem() < SMALL_PX {
-        plate(ui);
+        plate(painter);
         let k = (rect.width() * 0.62 * ppp / px.max_elem()).floor().max(1.0);
         px * k / ppp
     } else {
         px * (rect.width() / px.max_elem())
     };
     let uv = Rect::from_min_max(Pos2::ZERO, egui::pos2(1.0, 1.0));
-    ui.painter().image(id, Rect::from_center_size(rect.center(), shown), uv, tint);
+    painter.image(id, Rect::from_center_size(rect.center(), shown), uv, tint);
 }
 
 /// A running app's mark under its icon: a soft dot, and a wider, brighter pill for the app in
 /// front. Pins that are not running have none.
-fn paint_mark(ui: &egui::Ui, item: &Item, front: Option<isize>, at: Pos2, ink: &Ink, alpha: f32) {
+fn paint_mark(p: &egui::Painter, item: &Item, front: Option<isize>, at: Pos2, ink: &Ink, alpha: f32) {
     if item.windows.is_empty() {
         return;
     }
-    let p = ui.painter();
     if front.is_some_and(|f| item.windows.contains(&f)) {
         let pill = Rect::from_center_size(at, egui::vec2(12.0, 4.0));
         p.rect_filled(pill, 2.0, ink.front.gamma_multiply(alpha));

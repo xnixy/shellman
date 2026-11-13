@@ -108,6 +108,55 @@ pub fn build(pins: &[Pin], files: &Pin, windows: &[AppWindow], prev_running: &[S
     out
 }
 
+/// Where in the pinned section an icon dragged to `center` (in the same space as `xs`, the icons'
+/// left edges in the current layout, each `icon` wide) would land: an index among the pinned apps
+/// other than itself, 0 being right after Files. None where it may not go: a running app that is
+/// not pinned cannot be reordered among the running apps, only dropped into the pinned ones.
+/// The launcher's and Files' places count as the start of the pinned section, never before it.
+pub fn drop_slot(items: &[Item], xs: &[f32], icon: f32, dragged: &str, center: f32) -> Option<usize> {
+    let from = items.iter().find(|i| i.app_id == dragged && i.pinnable())?;
+    if from.section == Section::Running {
+        let first = items.iter().position(|i| i.section == Section::Running)?;
+        if center >= xs[first] {
+            return None;
+        }
+    }
+    let before = items
+        .iter()
+        .zip(xs)
+        .filter(|(i, &x)| i.section == Section::Pinned && i.app_id != dragged && x + icon / 2.0 < center)
+        .count();
+    Some(before)
+}
+
+/// The icons as they will be with `dragged` dropped at pinned slot `slot` (see `drop_slot`): the
+/// same list with that icon moved into the pinned section.
+pub fn preview(items: &[Item], dragged: &str, slot: usize) -> Vec<Item> {
+    let Some(at) = items.iter().position(|i| i.app_id == dragged) else { return items.to_vec() };
+    let mut out = items.to_vec();
+    let mut item = out.remove(at);
+    item.section = Section::Pinned;
+    // The pinned section starts after the Launcher and Files.
+    let start = out.iter().position(|i| !matches!(i.section, Section::Launcher | Section::Files)).unwrap_or(out.len());
+    let end = out.iter().position(|i| matches!(i.section, Section::Running | Section::Bin)).unwrap_or(out.len());
+    out.insert((start + slot).min(end), item);
+    out
+}
+
+/// Put `pin` at pinned slot `slot` (an index among the pins that are shown, which leave out one
+/// that duplicates Files), adding it if it is not pinned yet. Returns whether the list changed.
+pub fn move_pin(pins: &mut Vec<Pin>, files: &Pin, pin: Pin, slot: usize) -> bool {
+    let before = pins.clone();
+    let existing = pins.iter().position(|p| p.matches(&pin.app_id)).map(|at| pins.remove(at)).unwrap_or(pin);
+    let shown: Vec<usize> = pins.iter().enumerate().filter(|(_, p)| !files.matches(&p.app_id)).map(|(i, _)| i).collect();
+    let at = match shown.get(slot) {
+        Some(&at) => at,
+        None => shown.last().map_or(pins.len(), |&last| last + 1),
+    };
+    pins.insert(at, existing);
+    *pins != before
+}
+
 /// The window to show when stepping through an app's windows. Steps go through them in a fixed
 /// order (by handle), not by depth, so each step moves on instead of swapping the top two.
 /// With none of them in front, the front-most one.
@@ -200,6 +249,108 @@ mod tests {
             items.iter().filter(|i| i.section == Section::Running).map(|i| i.app_id.as_str()).collect();
         // Differences in case never split an app into two icons.
         assert_eq!(order, vec!["c:\\B.exe", "c:\\a.exe", "c:\\new.exe"]);
+    }
+
+    fn item(section: Section, id: &str) -> Item {
+        Item { section, app_id: id.into(), exe: None, windows: Vec::new() }
+    }
+
+    /// Launcher, Files, pinned a b c, running x y, bin; 48 pt icons 8 pt apart.
+    fn row() -> (Vec<Item>, Vec<f32>) {
+        let items = vec![
+            item(Section::Launcher, "l"),
+            item(Section::Files, "f"),
+            item(Section::Pinned, "a"),
+            item(Section::Pinned, "b"),
+            item(Section::Pinned, "c"),
+            item(Section::Running, "x"),
+            item(Section::Running, "y"),
+            item(Section::Bin, "z"),
+        ];
+        let xs = vec![0.0, 56.0, 112.0, 168.0, 224.0, 292.0, 348.0, 0.0];
+        (items, xs)
+    }
+
+    fn names(items: &[Item]) -> String {
+        items.iter().map(|i| i.app_id.as_str()).collect()
+    }
+
+    #[test]
+    fn a_pinned_icon_lands_among_the_pinned() {
+        let (items, xs) = row();
+        // Dragging b: over a's left half, between a and c, past c, and way out to the right.
+        assert_eq!(drop_slot(&items, &xs, 48.0, "b", 120.0), Some(0));
+        assert_eq!(drop_slot(&items, &xs, 48.0, "b", 200.0), Some(1));
+        assert_eq!(drop_slot(&items, &xs, 48.0, "b", 260.0), Some(2));
+        assert_eq!(drop_slot(&items, &xs, 48.0, "b", 280.0), Some(2));
+        // Over the launcher or Files: first place, never before them.
+        assert_eq!(drop_slot(&items, &xs, 48.0, "c", 10.0), Some(0));
+        assert_eq!(names(&preview(&items, "b", 0)), "lfbacxyz");
+        assert_eq!(names(&preview(&items, "a", 2)), "lfbcaxyz");
+    }
+
+    #[test]
+    fn a_running_icon_pins_only_into_the_pinned_section() {
+        let (items, xs) = row();
+        assert_eq!(drop_slot(&items, &xs, 48.0, "x", 190.0), Some(1));
+        assert_eq!(drop_slot(&items, &xs, 48.0, "y", 100.0), Some(0));
+        // At the end of the pinned apps, just before the running ones.
+        assert_eq!(drop_slot(&items, &xs, 48.0, "y", 280.0), Some(3));
+        // Among the running apps: not reorderable.
+        assert_eq!(drop_slot(&items, &xs, 48.0, "x", 300.0), None);
+        assert_eq!(drop_slot(&items, &xs, 48.0, "y", 330.0), None);
+        let shown = preview(&items, "y", 3);
+        assert_eq!(names(&shown), "lfabcyxz");
+        assert_eq!(shown[5].section, Section::Pinned);
+        assert_eq!(shown[6].section, Section::Running);
+    }
+
+    #[test]
+    fn fixed_icons_do_not_move() {
+        let (items, xs) = row();
+        for id in ["l", "f", "z"] {
+            assert_eq!(drop_slot(&items, &xs, 48.0, id, 190.0), None, "{id}");
+        }
+        assert_eq!(drop_slot(&items, &xs, 48.0, "gone", 190.0), None);
+        // Whatever the slot, the launcher and Files stay first and the bin last.
+        for slot in 0..6 {
+            let shown = preview(&items, "x", slot);
+            assert_eq!(shown[..2].iter().map(|i| i.section).collect::<Vec<_>>(), [Section::Launcher, Section::Files]);
+            assert_eq!(shown.last().unwrap().section, Section::Bin);
+        }
+    }
+
+    fn pin_names(p: &[Pin]) -> String {
+        p.iter().map(|p| p.app_id.as_str()).collect::<Vec<_>>().join(",")
+    }
+
+    #[test]
+    fn moving_a_pin_saves_the_new_order() {
+        let files = pin("files");
+        let mut p = vec![pin("a"), pin("b"), pin("c")];
+        assert!(move_pin(&mut p, &files, pin("c"), 0));
+        assert_eq!(pin_names(&p), "c,a,b");
+        assert!(move_pin(&mut p, &files, pin("c"), 2));
+        assert_eq!(pin_names(&p), "a,b,c");
+        // Dropped where it already is: nothing to save.
+        assert!(!move_pin(&mut p, &files, pin("B"), 1));
+        // A running app is pinned at the place.
+        assert!(move_pin(&mut p, &files, pin("x"), 1));
+        assert_eq!(pin_names(&p), "a,x,b,c");
+        assert!(move_pin(&mut p, &files, pin("y"), 9));
+        assert_eq!(pin_names(&p), "a,x,b,c,y");
+        let mut none = Vec::new();
+        assert!(move_pin(&mut none, &files, pin("x"), 0));
+        assert_eq!(pin_names(&none), "x");
+    }
+
+    #[test]
+    fn a_hidden_pin_for_files_does_not_count_as_a_slot() {
+        let files = pin("files");
+        let mut p = vec![pin("a"), pin("FILES"), pin("b")];
+        // Shown slots: a, b. Slot 1 is before b.
+        assert!(move_pin(&mut p, &files, pin("c"), 1));
+        assert_eq!(pin_names(&p), "a,FILES,c,b");
     }
 
     #[test]
