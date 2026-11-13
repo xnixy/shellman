@@ -700,9 +700,10 @@ each; `SHELLMAN_TERMINAL_STATS=<file>` logs frame times):
   ConPTY: Windows Terminal brings its own (OpenConsole), which passes output through.
 - Stage 3, the bundled ConPTY (release, a 1758x1095 px window on the left 4K monitor at 150 %,
   medians of 3, measured while a game ran on the primary monitor, so absolute times are noisy;
-  the ratio is the point): `cat` of the 100 MB file in WSL, inbox conhost 9.5 s → bundled
-  OpenConsole 2.5 s (Windows Terminal was 2.4 s in stage 2); `dir /s C:\Windows\System32`
-  2.3 s → 2.0 s. See the stage-3 report for every run.
+  the ratio is the point; final runs interleaved, 3 each): `cat` of the 100 MB file in WSL,
+  stage 2 (inbox conhost) 9.6 s, stage 3 through Windows' ConPTY (the fallback) 7.95 s, stage 3
+  with the bundled OpenConsole 2.4 s (Windows Terminal was 2.4 s in stage 2);
+  `dir /s C:\Windows\System32` 1.62 s, 1.60 s, 1.53 s.
 - Idle 20 s: 0.000 CPU-s focused, 0.016 unfocused. A blinking cursor: 2 frames a second for
   15 s, then none. A tab flooding output in the background: no frames.
 - Not yet: splits,
