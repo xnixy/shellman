@@ -13,8 +13,9 @@ accent color, fast.
 | `apps/switcher` | Alt+Tab, Task View | working: Alt+Tab with live previews. Next: Task View (Win+Tab) |
 | `apps/desktop` | wallpaper window | working: wallpaper per monitor; keeps Windows' modern-app host running; hands a right-click to the shelf |
 | `apps/shelf` | desktop icons, the desktop's right-click menu | stage 1 working: the shelf (drop zone, Desktop / Downloads / Recent stacks that fan open, drag out, drop in), the right-click menu, Settings › Desktop. Next: widgets top right (stage 2) |
-| `apps/settings` | Settings pages for the shell | working: Appearance, Desktop, Dock, Top bar, Launcher, About |
-| `apps/tasks` | Task Manager (Ctrl+Shift+Esc, through the switcher's hook) | working: Processes (apps and background, grouped, sort, search, End task / End process tree / details), Performance (CPU, memory, GPUs, disks, network). Reads through `crates/core/src/procs`. Next: Services (read-only), elevated End task through `shellman-elevate` |
+| `apps/tasks` | Task Manager (Ctrl+Shift+Esc, through the switcher's hook) | working: Processes (apps and background, grouped, sort, search, End task / End process tree / details), Performance (CPU, memory, GPUs, disks, network), Services (read-only: status, startup type, PID, description, sort, search, go to process; read through the SCM in `crates/core/src/services`, off the UI thread, only while the page shows). End task / tree try unelevated first and, only when Windows refuses, go through `shellman-elevate`'s `end-processes <pid>:<start time>...` behind the UAC prompt (the helper rechecks start time and refuses critical processes); critical processes stay un-endable. Reads through `crates/core/src/procs` |
+| `apps/terminal` | Windows Terminal | stage 1: one shell in glass, GPU-drawn grid, scrollback. Next: tabs, selection, mouse, profiles |
+| `apps/settings` | Settings pages for the shell | working: Appearance, Desktop, Dock, Top bar, Launcher, About; rebuilt Windows pages: Sound, Display, Apps, Startup, Fonts, Mouse & keyboard, Power, Date, time & region, Storage, Default apps (read-only) |
 | `apps/session` | the shell process itself | built, not yet the shell: starts and supervises the apps, runs startup items, safety net, `--install`/`--uninstall` (never run yet) |
 
 Shared code:
@@ -213,6 +214,15 @@ tested), else the activation manager, else PowerShell.
 - Opened from the top bar glyph's right-click, the dock Launcher icon's menu, and the launcher's
   "shellman Settings" row.
 - Single instance.
+- Windows pages rebuilt here (Windows' own Settings does not open without Explorer): all read the
+  live value when shown and write at once, from `crates/core/src/system/` (`pointer`, `power_*`,
+  `region*`, `storage`, `default_apps`). Measured unelevated on 26300: mouse and keyboard
+  `SystemParametersInfoW`, the plan's timeouts and button actions, power mode and plan
+  (`powrprof`), the time zone (`SeTimeZonePrivilege` is held by Users, switched on for the call),
+  daylight saving and the `HKCU\Control Panel\International` values all work; nothing needs
+  `shellman-elevate`. Rows a machine lacks are hidden (no lid, no battery column on a desktop).
+  Default apps is read-only: `UserChoice` is hash-protected, so there is no change button.
+  Storage counts folders on workers, never follows reparse points, and only offers "Open in Files".
 
 ## Modern apps without Explorer
 
@@ -330,6 +340,50 @@ fails fast.
 Decision: no host of our own is possible, and Windows' host is off unless the user turns it on
 (see above). Settings pages people use most are to be rebuilt in shellman Settings.
 
+## Terminal
+
+`apps/terminal` (`shellman-terminal.exe [command line]`) is to replace Windows Terminal. Stage 1:
+one shell (default `powershell.exe`; the rest of the command line, as typed, runs instead) in a
+title pill and one glass island. Not yet: tabs, splits, selection and copy, mouse reporting to
+programs, links, profiles, settings, IME, ligatures, colour emoji, default-terminal registration.
+
+- **Emulation**: `alacritty_terminal` 0.26: grid, scrollback (10 000 lines), VT parser and the
+  pseudo-console (ConPTY, or a `conpty.dll` found on PATH or beside the exe), on a thread of its
+  own. Its listener answers the pty directly (cursor reports) and wakes the window.
+- **Structure**: `session.rs` is one shell (pty + emulator) and knows nothing of drawing;
+  `snapshot.rs` turns its visible grid into plain cells (colours resolved through `palette.rs`,
+  inverse, faint, wide characters, the cursor); `render/` draws cells and knows nothing of the
+  emulator. Tabs later are several sessions and one view. Keys to bytes are pure and tested
+  (`keys.rs`): xterm sequences, application cursor mode, Ctrl and Alt, bracketed paste.
+- **Drawing**: a GPU renderer inside egui's frame (an `egui_glow` paint callback; egui still
+  draws the chrome and `shellman_ui::glass` the glass). Glyphs are rasterized once by DirectWrite
+  (`crossfont`, with Windows' font fallback) at the monitor's pixel size into a 2048 px greyscale
+  atlas; cells snap to whole pixels. Three instanced draws: background runs, glyphs, then
+  underline / strike / thin cursor. Each grid row has fixed slots in the instance buffers and a
+  hash; only rows whose hash changed are rebuilt and sent. Font: Cascadia Mono, else Cascadia
+  Code, else Consolas, 12 pt.
+- **Glass and colour**: cells with the default background draw nothing, so the island is the
+  same glass as every other app and follows the glass setting live (the app watches
+  `appearance.json`). Explicit backgrounds are opaque, so full-screen programs look as they
+  were made. Text is greyscale antialiased: DirectWrite's ClearType coverage is averaged, since
+  subpixel coverage cannot be blended right over glass whose colour only DWM knows. Default text
+  and the cursor follow the theme (a black accent falls back to the text colour); the 16 colours
+  are Campbell on dark and a darkened set on light.
+- **Repaint**: only on new output, input, resize or a theme change. The cursor does not blink.
+
+Measured (release, 4K at 150%, maximized, 240 Hz monitor, `SHELLMAN_TERMINAL_STATS=<file>` logs
+frame times):
+
+- `cmd /c dir /s C:\Windows\System32`: 3.4 to 4.8 s (median 3.8), Windows Terminal 3.0 to 4.2 s
+  (median 3.5), five runs each. `Get-ChildItem C:\Windows\System32 -Recurse`: 21.5 and 18.4 s,
+  Windows Terminal 19.5 and 17.9 s. So within about 5 to 10 %; Windows Terminal ships a newer
+  ConPTY (OpenConsole) than the system's, which may be the rest.
+- While that output scrolls: a frame every vsync (241 fps), CPU per frame 0.5 to 0.8 ms on
+  average, 2.3 ms at most; rebuilding and hashing the rows 0.3 to 0.45 ms of it; about 60 rows sent
+  a frame.
+- Idle, with the window focused or not: 0 ms of CPU in 20 s.
+- First text on screen 0.7 s after start.
+
 ## Session
 
 `apps/session` (`shellman-session.exe`) is the one process Windows starts as the shell. Plain Win32,
@@ -391,6 +445,17 @@ from Run new task with `cmd`. Signing in as another user is unaffected (the valu
 - shellman's own apps are drawn in the user's accent wherever shellman shows them: dock,
   switcher, launcher, settings, window icons.
 - The icon embedded in each exe is fixed at the default accent.
+- Icon packs (`crates/core/src/icon_pack`): freedesktop themes or folders of images, added in
+  Settings › Appearance › Icon pack, matched to Windows apps by exe name, AUMID and shortcut name
+  through an alias table. `icons.json` holds the choice and per-app overrides.
+- **Islands**, the built-in pack and the default: the mockups' dock tiles, 66 icons (shellman's
+  own apps, the Recycle Bin empty and full, ~35 kinds of app, ~23 well-known apps in their own
+  colours). Sources in `assets/icon-packs/islands` (written by `tools/islands/make.py`; README
+  there), compiled into every app by `crates/core/build.rs` (about 135 KB an exe) and known by
+  paths that exist nowhere on disk. A small variant (heavier glyph) is drawn at 64 px and under.
+  No `icons.json`, or one without a `pack` key, means Islands; `"pack": null` is "Windows icons"
+  and stays so. Shellman's own apps take a pack's icon only by exact name (`shellman-files`), so
+  other packs leave them in the accent.
 
 ## Order of work
 

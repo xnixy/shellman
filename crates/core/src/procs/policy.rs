@@ -3,13 +3,10 @@
 //! Critical processes keep Windows (or shellman's session) running; ending one crashes or signs
 //! out the session, so the button is off for them. Protected ones are parts of Windows or of
 //! shellman whose loss is felt at once (no sound, no top bar); they can be ended, after a
-//! stronger confirm. Processes this unelevated program cannot open are not ended at all, and the
-//! reason is shown.
-//!
-//! Elevation seam: ending an elevated process would go through `shellman-elevate.exe` (see
-//! `crate::elevate`, which has a fixed list of operations and asks UAC each time). There is no
-//! "end process" operation there yet; adding one is the route, and the window says so instead of
-//! elevating by itself.
+//! stronger confirm. Processes this unelevated program cannot open (elevated, or another user's)
+//! can be ended too, but only after Windows' own permission prompt: the window tries unelevated
+//! first and, only when Windows refuses, asks `shellman-elevate.exe` (see `crate::elevate` and
+//! [`super::end::end_elevated`]). The helper applies [`is_untouchable`] again on its side.
 
 use super::{Access, Proc};
 
@@ -22,13 +19,13 @@ pub enum Verdict {
     Protected(&'static str),
     /// Never: it keeps the session alive.
     Critical(&'static str),
-    /// This program is not allowed to: it would need administrator rights.
+    /// This program may not open it: ending it asks Windows for administrator permission.
     Denied(&'static str),
 }
 
 impl Verdict {
     pub fn can_end(&self) -> bool {
-        matches!(self, Verdict::Allowed | Verdict::Protected(_))
+        matches!(self, Verdict::Allowed | Verdict::Protected(_) | Verdict::Denied(_))
     }
 
     /// Why the button is off or careful; None when nothing needs saying.
@@ -75,23 +72,24 @@ const PROTECTED: [&str; 12] = [
 /// shellman's session supervisor: ending it ends the shell, like winlogon's shell.
 const SUPERVISOR: &str = "shellman-session.exe";
 
+/// True for what must never be ended, from this program or from the elevated helper: the
+/// processes that end the session, and shellman's own supervisor.
+pub fn is_untouchable(pid: u32, name: &str) -> bool {
+    let name = name.to_ascii_lowercase();
+    pid <= 4 || CRITICAL.contains(&name.as_str()) || name == SUPERVISOR
+}
+
 /// The verdict for `proc`. `own_pid` is this program's own PID: it may close itself.
 pub fn may_end(proc: &Proc, own_pid: u32) -> Verdict {
     let name = proc.name.to_ascii_lowercase();
-    if proc.key.pid <= 4 || CRITICAL.contains(&name.as_str()) {
-        return Verdict::Critical("Windows needs this process; ending it would end the session.");
-    }
     if name == SUPERVISOR {
         return Verdict::Critical("shellman's session runs the shell; ending it would sign you out.");
     }
+    if is_untouchable(proc.key.pid, &name) {
+        return Verdict::Critical("Windows needs this process; ending it would end the session.");
+    }
     if proc.key.pid == own_pid {
         return Verdict::Allowed;
-    }
-    match proc.access {
-        Access::Full => {}
-        Access::ReadOnly | Access::None => {
-            return Verdict::Denied("It runs with rights this window does not have (administrator or another user).");
-        }
     }
     if name.starts_with("shellman-") && PROTECTED.contains(&name.as_str()) {
         return Verdict::Protected("Part of shellman: it goes away until the session starts it again.");
@@ -99,7 +97,12 @@ pub fn may_end(proc: &Proc, own_pid: u32) -> Verdict {
     if PROTECTED.contains(&name.as_str()) {
         return Verdict::Protected("Part of Windows: things may stop working until you sign in again.");
     }
-    Verdict::Allowed
+    match proc.access {
+        Access::Full => Verdict::Allowed,
+        Access::ReadOnly | Access::None => {
+            Verdict::Denied("Runs as administrator or another user: Windows will ask permission to end it.")
+        }
+    }
 }
 
 #[cfg(test)]
@@ -134,9 +137,19 @@ mod tests {
     #[test]
     fn what_cannot_be_opened_is_denied_with_a_reason() {
         let v = may_end(&proc(1200, "elevated.exe", Access::ReadOnly), 1);
-        assert!(matches!(v, Verdict::Denied(_)) && !v.can_end());
+        assert!(matches!(v, Verdict::Denied(_)) && v.can_end(), "ended after Windows' permission prompt");
+        // A protected process out of reach keeps the stronger confirm.
+        assert!(matches!(may_end(&proc(1201, "svchost.exe", Access::None), 1), Verdict::Protected(_)));
         // Critical wins over denied: the reason given is the stronger one.
         assert!(matches!(may_end(&proc(1300, "lsass.exe", Access::None), 1), Verdict::Critical(_)));
+    }
+
+    #[test]
+    fn the_helper_refuses_the_same_critical_processes() {
+        for (pid, name) in [(4, "System"), (500, "CSRSS.exe"), (700, "shellman-session.exe"), (800, "lsass.exe")] {
+            assert!(is_untouchable(pid, name), "{name}");
+        }
+        assert!(!is_untouchable(5000, "notepad.exe") && !is_untouchable(800, "svchost.exe"));
     }
 
     #[test]

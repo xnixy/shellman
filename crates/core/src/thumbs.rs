@@ -257,8 +257,9 @@ fn worker(queue: Queue, tx: Sender<(Key, Option<ColorImage>)>, ctx: egui::Contex
     }
 }
 
-/// The shell's image for a file: a preview where there is one, else the file's own icon.
-fn shell_image(path: &Path, px: i32) -> Option<ColorImage> {
+/// The shell's image for a file: a preview where there is one, else the file's own icon. The
+/// calling thread must have COM initialised.
+pub fn shell_image(path: &Path, px: i32) -> Option<ColorImage> {
     unsafe {
         let factory: IShellItemImageFactory =
             SHCreateItemFromParsingName(&HSTRING::from(path.as_os_str()), None).ok()?;

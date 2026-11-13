@@ -154,6 +154,16 @@ pub fn announce_taskbar() {
     }
 }
 
+/// Ask every shellman glass panel to make its backdrop again (`shellman_ui::glass`'s
+/// `REFRESH_MESSAGE`). DWM serves the host backdrop flat until the immersive shell is up, and a
+/// backdrop made before then stays flat.
+pub fn refresh_glass() {
+    unsafe {
+        let message = RegisterWindowMessageW(w!("shellman-glass-refresh"));
+        let _ = SendNotifyMessageW(HWND_BROADCAST, message, WPARAM(0), LPARAM(0));
+    }
+}
+
 /// Give the shell's task-window role back to the bar's tray window once the host has gone. The
 /// host takes the role while it runs (the bar's own claim is then refused), and it is left empty
 /// when the host ends; Windows only hides minimized windows (rather than drawing title-bar stubs

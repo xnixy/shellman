@@ -338,7 +338,9 @@ fn row(ui: &mut egui::Ui, app: &App, state: &RowState, thumbs: &mut Thumbs) -> O
     ui.painter().rect_filled(rect, CornerRadius::same(10), c.control);
 
     let icon = egui::Rect::from_center_size(egui::pos2(rect.left() + 14.0 + ICON / 2.0, rect.center().y), Vec2::splat(ICON));
-    let image = match app.icon.as_deref().and_then(shellman_ui::app_icon::kind_for_exe) {
+    // Shellman's own apps wear the accent, unless the icon pack has a tile for them.
+    let own = app.icon.as_deref().filter(|p| shellman_ui::app_icon::own_from_pack(p).is_none()).and_then(shellman_ui::app_icon::kind_for_exe);
+    let image = match own {
         Some(kind) => Some(shellman_ui::app_icon::kind_texture(ui.ctx(), kind, false)),
         None => thumbs.get_app(app.icon.as_deref(), &app.id, &app.name, false).map(|t| (t.id(), t.size_vec2())),
     };

@@ -180,6 +180,7 @@ fn start(st: &mut State, pause: Duration) {
     };
     loop {
         if win::shell_window_pid() == Some(pid) {
+            refresh_glass_soon();
             return st.say(format!("host {pid} owns the shell window after {} ms", begun.elapsed().as_millis()));
         }
         if host.wait(Duration::from_millis(200)) == Wait::Process {
@@ -191,6 +192,17 @@ fn start(st: &mut State, pause: Duration) {
             return st.say(format!("host {pid} has not taken the shell window after {TAKE_OVER:?}"));
         }
     }
+}
+
+/// Glass made before the immersive shell was up shows flat; ask it to make itself again a few
+/// times while the shell comes up (it is ready some time after the host owns the shell window).
+fn refresh_glass_soon() {
+    let _ = std::thread::Builder::new().name("glass refresh".into()).spawn(|| {
+        for wait in [0, 2, 5, 15] {
+            std::thread::sleep(Duration::from_secs(wait));
+            win::refresh_glass();
+        }
+    });
 }
 
 /// Sleep until a setting changes (forever, without a settings folder).
