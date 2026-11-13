@@ -2,7 +2,7 @@
 //! Edits apply by saving the same files the other apps watch.
 
 use crate::saver::Saver;
-use crate::sections::{AppsView, DisplayView, FontsView, IconsView, MouseView, PowerView, DateTimeView, Section, SoundView, StartupView};
+use crate::sections::{AppsView, DisplayView, FontsView, IconsView, MouseView, PowerView, DateTimeView, StorageView, Section, SoundView, StartupView};
 use shellman_core::settings::bar::BarSettings;
 use shellman_core::settings::dock::{self, DockSettings};
 use shellman_core::settings::launcher::LauncherSettings;
@@ -28,6 +28,8 @@ pub struct State {
     pub display: DisplayView,
     /// The Mouse & keyboard page's reading; taken when the page is shown.
     pub mouse: MouseView,
+    /// The Storage page's state; started or read when the page is shown.
+    pub storage: StorageView,
     /// The Date, time & region page's state; started or read when the page is shown.
     pub datetime: DateTimeView,
     /// The Power page's state; started or read when the page is shown.
@@ -60,6 +62,7 @@ impl State {
             sound: SoundView::default(),
             display: DisplayView::default(),
             mouse: MouseView::default(),
+            storage: StorageView::default(),
             datetime: DateTimeView::default(),
             power: PowerView::default(),
             apps: AppsView::default(),

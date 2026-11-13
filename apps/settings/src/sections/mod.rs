@@ -17,6 +17,8 @@ mod fonts_tabs;
 mod fonts_view;
 mod fonts_worker;
 mod launcher;
+mod storage;
+mod storage_rows;
 mod datetime;
 mod power;
 mod mouse;
@@ -31,6 +33,7 @@ pub use display::DisplayView;
 pub use fonts_view::FontsView;
 pub use icon_pack::IconsView;
 pub use mouse::MouseView;
+pub use storage::StorageView;
 pub use datetime::DateTimeView;
 pub use power::PowerView;
 pub use sound::SoundView;
@@ -46,6 +49,7 @@ pub enum Section {
     Mouse,
     Power,
     DateTime,
+    Storage,
     Apps,
     Startup,
     Fonts,
@@ -56,13 +60,14 @@ pub enum Section {
 }
 
 impl Section {
-    pub const ALL: [Section; 13] = [
+    pub const ALL: [Section; 14] = [
         Section::Appearance,
         Section::Sound,
         Section::Display,
         Section::Mouse,
         Section::Power,
         Section::DateTime,
+        Section::Storage,
         Section::Apps,
         Section::Startup,
         Section::Fonts,
@@ -80,6 +85,7 @@ impl Section {
             Section::Mouse => "Mouse & keyboard",
             Section::Power => "Power",
             Section::DateTime => "Date, time & region",
+            Section::Storage => "Storage",
             Section::Apps => "Apps",
             Section::Startup => "Startup apps",
             Section::Fonts => "Fonts",
@@ -99,6 +105,7 @@ impl Section {
             Section::Mouse => '\u{E962}',
             Section::Power => glyph::BATTERY,
             Section::DateTime => '\u{E823}',
+            Section::Storage => glyph::DRIVE,
             Section::Apps => '\u{E71D}',
             Section::Startup => '\u{E7E8}',
             // Segoe Fluent Icons' Font glyph.
@@ -118,6 +125,7 @@ impl Section {
             Section::Mouse => mouse::show(ui, state),
             Section::Power => power::show(ui, state),
             Section::DateTime => datetime::show(ui, state),
+            Section::Storage => storage::show(ui, state),
             Section::Apps => apps::show(ui, state),
             Section::Startup => startup::show(ui, state),
             Section::Fonts => fonts::show(ui, state),
@@ -141,6 +149,7 @@ impl Section {
                 | Section::Mouse
                 | Section::Power
                 | Section::DateTime
+                | Section::Storage
                 | Section::Apps
                 | Section::Startup
                 | Section::Fonts
@@ -160,6 +169,7 @@ impl Section {
             Section::Mouse => "mouse",
             Section::Power => "power",
             Section::DateTime => "datetime",
+            Section::Storage => "storage",
             Section::Apps => "apps",
             Section::Startup => "startup",
             Section::Fonts => "fonts",

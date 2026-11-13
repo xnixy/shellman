@@ -33,4 +33,5 @@ pub mod sound_sessions;
 pub mod sound_spatial;
 mod sound_worker;
 pub mod status;
+pub mod storage;
 pub mod wifi;
