@@ -62,13 +62,18 @@ pub fn card(painter: &Painter, center: Pos2, size: Vec2, radius: f32, angle: f32
     let local = outline(size, radius);
     let points: Vec<Pos2> = local.iter().map(|v| center + turn(*v, angle)).collect();
     let fade = |c: Color32| c.gamma_multiply(opacity.clamp(0.0, 1.0));
-    // The shadow: two offset copies, the outer fainter, for a little softness.
-    for (dy, grow, alpha) in [(3.0, 1.5, 22u8), (2.0, 0.0, 34)] {
-        let shadow: Vec<Pos2> = local
+    // A soft shadow, as the mockup's `0 4px 10px #0003`: a stack of faint copies growing outward,
+    // each a little fainter, which add up to a blurred edge. Drawn in this window, no glass.
+    const LAYERS: usize = 8;
+    let blur = (size.x.min(size.y) * 0.22).clamp(3.0, 9.0);
+    let drop = blur * 0.45;
+    for i in 0..LAYERS {
+        let grow = blur * (i as f32 + 1.0) / LAYERS as f32 - blur * 0.35;
+        let layer: Vec<Pos2> = outline(size + Vec2::splat(2.0 * grow), radius + grow)
             .iter()
-            .map(|v| center + Vec2::new(0.0, dy) + turn(*v * ((size.x + grow * 2.0) / size.x.max(1.0)), angle))
+            .map(|v| center + Vec2::new(0.0, drop) + turn(*v, angle))
             .collect();
-        painter.add(Shape::convex_polygon(shadow, fade(Color32::from_black_alpha(alpha)), Stroke::NONE));
+        painter.add(Shape::convex_polygon(layer, fade(Color32::from_black_alpha(9)), Stroke::NONE));
     }
     match fill {
         Fill::Color(c) => {

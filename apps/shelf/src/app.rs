@@ -181,8 +181,13 @@ impl Shelf {
             Event::DragOut(path) => {
                 if !self.dragging {
                     self.dragging = true;
+                    let image = crate::drag_image::render(ctx, &path, ctx.pixels_per_point());
+                    log::line(format!("drag out {} (picture {})", path.display(), image.is_some()));
                     let ctx = ctx.clone();
-                    transfer::drag::start(self.hwnd, vec![path], None, COPY | MOVE | LINK, move |_| ctx.request_repaint());
+                    transfer::drag::start(self.hwnd, vec![path], image, COPY | MOVE | LINK, move |e| {
+                        log::line(format!("drag ended: effect {} cancelled {}", e.effect, e.cancelled));
+                        ctx.request_repaint()
+                    });
                 }
             }
         }
