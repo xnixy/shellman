@@ -1,9 +1,9 @@
 //! Friendly app names for the bar's foreground-app label.
 
-use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::os::windows::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
+use std::sync::{LazyLock, Mutex};
 use windows::core::{w, HSTRING, PCWSTR, PWSTR};
 use windows::Win32::Storage::FileSystem::{
     GetFileVersionInfoSizeW, GetFileVersionInfoW, VerQueryValueW,
@@ -11,21 +11,57 @@ use windows::Win32::Storage::FileSystem::{
 use windows::Win32::System::Com::{CoInitializeEx, CoTaskMemFree, COINIT_APARTMENTTHREADED};
 use windows::Win32::UI::Shell::{IShellItem, SHCreateItemFromParsingName, SIGDN_NORMALDISPLAY};
 
-thread_local! {
-    /// Called on every foreground change, and the lookups touch the shell and the disk.
-    static CACHE: RefCell<HashMap<(String, Option<PathBuf>), String>> = RefCell::new(HashMap::new());
-}
+type Key = (String, Option<PathBuf>);
+
+/// Called on every foreground change, and the lookups touch the shell and the disk. Shared by
+/// every thread, so a name a worker found serves the UI thread too.
+static CACHE: LazyLock<Mutex<HashMap<Key, String>>> = LazyLock::new(Mutex::default);
+/// Names a worker is looking up now.
+static PENDING: LazyLock<Mutex<HashSet<Key>>> = LazyLock::new(Mutex::default);
 
 /// Friendly name: shell display name for real AppUserModelIDs, else the exe's FileDescription,
 /// else the exe's file stem, else `app_id`. Packaged apps resolve via step 1 to their Start name.
+/// Blocks on the shell and the disk the first time (100 ms and more for an Apps-folder parse):
+/// a UI thread wants [`display_name_soon`].
 pub fn display_name(app_id: &str, exe: Option<&Path>) -> String {
     let key = (app_id.to_owned(), exe.map(Path::to_path_buf));
-    if let Some(hit) = CACHE.with(|c| c.borrow().get(&key).cloned()) {
+    if let Some(hit) = CACHE.lock().unwrap().get(&key).cloned() {
         return hit;
     }
     let name = resolve(app_id, exe);
-    CACHE.with(|c| c.borrow_mut().insert(key, name.clone()));
+    CACHE.lock().unwrap().insert(key, name.clone());
     name
+}
+
+/// The friendly name if it is known already; otherwise a quick stand-in (shellman's own name,
+/// the exe's stem, or the id) while a worker thread looks it up, calling `ready` once it is
+/// known (to repaint). Never blocks.
+pub fn display_name_soon(app_id: &str, exe: Option<&Path>, ready: impl FnOnce() + Send + 'static) -> String {
+    let key: Key = (app_id.to_owned(), exe.map(Path::to_path_buf));
+    if let Some(hit) = CACHE.lock().unwrap().get(&key).cloned() {
+        return hit;
+    }
+    if PENDING.lock().unwrap().insert(key.clone()) {
+        std::thread::spawn(move || {
+            let name = resolve(&key.0, key.1.as_deref());
+            CACHE.lock().unwrap().insert(key.clone(), name);
+            PENDING.lock().unwrap().remove(&key);
+            ready();
+        });
+    }
+    stand_in(app_id, exe)
+}
+
+/// What shows while the real name is looked up.
+fn stand_in(app_id: &str, exe: Option<&Path>) -> String {
+    if let Some(n) = exe.and_then(own_app_name) {
+        return n.to_owned();
+    }
+    exe.and_then(|e| e.file_stem())
+        .and_then(|s| s.to_str())
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or(app_id)
+        .to_owned()
 }
 
 /// Shellman's own apps are named by their exe (`shellman-files.exe`), which has no description
@@ -142,6 +178,22 @@ mod tests {
         assert_eq!(name(r"C:\x\files.exe"), None);
         let exe = Path::new(r"C:\x\shellman-files.exe");
         assert_eq!(display_name(r"c:\x\shellman-files.exe", Some(exe)), "Files");
+    }
+
+    #[test]
+    fn soon_gives_a_stand_in_then_the_name() {
+        let exe = Path::new(r"C:\Windows\System32\charmap.exe");
+        let id = r"c:\windows\system32\charmap.exe";
+        let (tx, rx) = std::sync::mpsc::channel();
+        let first = display_name_soon(id, Some(exe), move || {
+            let _ = tx.send(());
+        });
+        let _ = rx.recv_timeout(std::time::Duration::from_secs(10));
+        let name = display_name(id, Some(exe));
+        // The exe's stem for now, unless already known.
+        assert!(first == "charmap" || first == name, "{first}");
+        assert_eq!(display_name_soon(id, Some(exe), || {}), name);
+        assert_eq!(stand_in("Some.App", None), "Some.App");
     }
 
     #[test]

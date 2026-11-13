@@ -86,11 +86,26 @@ Rule: **the top bar is the system, the dock is apps.** Both are windows of one p
 - Click activates. Clicking an app already in front with several windows steps through them in
   a fixed order (by handle), and so does scrolling. With one window, a click on the app in front
   minimizes it. Middle click opens a new window.
-- Hovering shows live DWM previews, and sliding along the dock scrubs them.
+- Hovering shows live DWM previews, and sliding along the dock scrubs them. Done (13 Nov): after
+  350 ms resting on an icon with windows, a glass island above it holds one tile per window (up
+  to six, wrapping into rows past the work area's width): the live picture and the title, a close
+  button on the tile under the pointer, middle click closes, click brings the window forward.
+  Another icon switches at once; leaving dock and panel closes it after 200 ms; a click, a drag,
+  an open menu, a fullscreen app, the dock hiding or another app coming forward close it. Each
+  dock has its own panel window, made at its first preview and then kept (parked cloaked, its
+  glass pieces and live pictures released), sized through `glass::guard::popup` and resized at
+  most every 40 ms (`guard::Pace`), on its own monitor at its scale, inside the work area. A
+  minimized window keeps its tile: DWM still serves its last frame (build 26300); a stub smaller
+  than 64 x 48 px gives the app icon on a plate instead. No peek (Aero Peek needs the
+  undocumented `DwmpActivateLivePreview`). `SHELLMAN_PREVIEW_LOG=<file>` traces the panels.
 - Right-click on an icon: shellman's glass popup menu (see the desktop's right-click menu) with
   Pin / Unpin and Close. On the Launcher
-  icon: Settings. On the Recycle Bin: Open (in Files, never Explorer) and Empty Recycle Bin
-  (grey when empty; a native confirmation first). The dock window is only as tall as its icons, so the menu cannot live in it.
+  icon: Settings. On the Recycle Bin: Open (in Files, never Explorer), what is in it ("6 items,
+  7.3 MB") and Empty Recycle Bin… (red; grey when empty), whose second step, in the menu itself,
+  names what goes ("Delete 6 items, 7.3 MB for good?", red Empty Recycle Bin, Cancel nearest the
+  pointer). The bin's empty or full icon and that count are asked of the shell on a thread of its
+  own at start and again only when a bin folder changes (the folder watcher Files' bin page
+  uses), never polled; the docks are woken when it changes. The dock window is only as tall as its icons, so the menu cannot live in it.
 - Drag to rearrange: press an icon and move past 6 pt to pick it up; it rides the pointer along the
   dock, the others slide apart (the dock's own window, no extra window), release drops it, Esc or
   releasing off the dock cancels. Pinned apps reorder among the pinned (saved to `dock.json` at
@@ -99,7 +114,35 @@ Rule: **the top bar is the system, the dock is apps.** Both are windows of one p
   Unpinning stays in the right-click menu.
 - No magnification, which would repaint on every mouse move; a short hover lift instead.
 - Holding Win shows 1-9 on icons. Dropping a file on an icon opens it with that app.
+  Done (13 Nov), each dock window an OLE drop target (`dock::drop` rules, `dock::drop_target`):
+  resting 700 ms on a running app's icon brings its window forward (spring-loading); a drop on
+  an app opens the files with it where that is well defined (`core::open_with`: an app known by
+  its exe path gets the paths as arguments, a Store app goes through `ActivateForFile`; other
+  AppUserModelIDs, whose exe may be a helper, only spring-load); on Files a folder opens there,
+  a file opens its folder (Files cannot select a file from its command line yet); on the bin the
+  files go to the Recycle Bin. Folders, programs and shortcuts dragged near the edge between two
+  pins (or after Files or the last pin) are pinned there; a pinned folder opens in Files. The
+  aimed icon gets an accent plate and ring, a pin boundary an accent bar. Opening and recycling
+  run on threads of their own; the dock never takes the focus.
 - Slots for progress and overlay badges; Files reports its copy progress directly.
+  Done (13 Nov, `dock::tasks`, `dock::status`, `core::taskbar_list`): `ITaskbarList3` runs inside
+  the calling app (explorerframe.dll) and sends window messages to the shell's taskbar window:
+  `WM_USER+64` progress value (0..65534), `+65` progress state (`TBPFLAG`), `+79` overlay
+  `HICON`, the app window in `wParam` (numbers from ManagedShell's `TasksService`, which Cairo
+  and RetroBar use as the shell; explorerframe.dll imports `FindWindowW`/`SendMessageTimeoutW`
+  and holds the string `Shell_TrayWnd`). The bar's tray window is both `Shell_TrayWnd` and the
+  task window (`SetTaskmanWindow`), and hands them to the dock; the overlay's pixels are copied
+  at once. Apps send them only once told their button exists, so while the bar is the task
+  window the dock posts `TaskbarButtonCreated` to each new app window. A test bar (`--no-shell`)
+  is neither, and hears them only on its own hook window, as a test sends them. Flashing
+  (`FlashWindowEx`) arrives as `HSHELL_FLASH` at a `RegisterShellHookWindow` window, which any
+  process may have. Shown: the badge on a small island of glass of its own at the icon's top
+  right; a thin bar under the icon (accent, paused amber, error red; indeterminate a segment
+  gliding at about 6 fps, only on the dock of the window's monitor, since a dock frame costs
+  about 14 ms); attention pulses the icon amber twice (1.8 s, 30 fps) then a steady amber dot
+  until the app comes forward. Repaints from other threads go through the host's frame
+  (`dock::wake_docks_from_thread`), and animations leave gaps between frames: a viewport
+  repainting without pause starved the other docks' repaints for as long as it ran.
 - Tray icons always stay in the top bar, in stable places; they are never folded into the dock,
   because many Windows apps close to the tray and their icon would hop between bars. When a tray
   app that also has a dock icon shows something new (an unread count, an alert), its dock icon
@@ -1081,9 +1124,12 @@ images, and the shell and default terminal state.)
 
 ## Order of work
 
-1. Dock hover previews (in progress).
+1. Dock hover previews (done 13 Nov).
 2. Win+1-9 (the lone Win key is done).
-3. Dock: drag-and-drop onto icons, badges and progress, Recycle Bin empty / full.
+3. Dock: drag-and-drop onto icons, badges and progress, Recycle Bin empty / full (done 13 Nov).
+   Left open: the design's live-activity pill beside the dock ("Copying · 64%"): this plan gives
+   copy progress and attention to the top bar's "now" pill, so what the dock's pill would show
+   besides it is undecided; not built.
 4. Top bar: "now" pill, notifications and calendar.
 5. Desktop: arrange mode (drag the shelf and widgets about); widgets done (Today, Now playing).
 6. Task View.

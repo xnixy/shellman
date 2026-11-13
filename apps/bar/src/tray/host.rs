@@ -95,6 +95,10 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPA
         }
         return LRESULT(ok as isize);
     }
+    // As the shell's task window, apps' ITaskbarList3 badges and progress arrive here.
+    if let Some(r) = crate::dock::tasks::on_message(msg, wparam.0, lparam.0) {
+        return r;
+    }
     DefWindowProcW(hwnd, msg, wparam, lparam)
 }
 

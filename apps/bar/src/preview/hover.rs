@@ -30,7 +30,8 @@ pub struct Anchor {
     pub center_x: i32,
     /// The panel's bottom edge, just above the dock.
     pub bottom: i32,
-    pub monitor: RECT,
+    /// Where it may go: the work area's sides and top, the monitor's bottom.
+    pub work: RECT,
     /// Pixels per point of that monitor.
     pub scale: f32,
 }
@@ -191,7 +192,7 @@ mod tests {
     const ANCHOR: Anchor = Anchor {
         center_x: 100,
         bottom: 50,
-        monitor: RECT { left: 0, top: 0, right: 1000, bottom: 500 },
+        work: RECT { left: 0, top: 0, right: 1000, bottom: 500 },
         scale: 1.0,
     };
 

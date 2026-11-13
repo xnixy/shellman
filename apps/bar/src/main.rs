@@ -46,6 +46,10 @@ fn main() -> eframe::Result {
             // Cloaked windows are not drawn; this also keeps clicks going through it.
             .with_mouse_passthrough(true)
             .with_taskbar(false),
+        // Bars are placed by Win32; nothing of eframe's window state is worth keeping, and a test
+        // copy (`SHELLMAN_CONFIG_DIR`) keeps whatever eframe writes in its own folder.
+        persist_window: false,
+        persistence_path: std::env::var_os("SHELLMAN_CONFIG_DIR").map(|d| std::path::PathBuf::from(d).join("eframe-bar.ron")),
         ..Default::default()
     };
     eframe::run_native(

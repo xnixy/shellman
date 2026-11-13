@@ -7,7 +7,7 @@ mod click;
 mod data;
 pub mod demo;
 mod host;
-mod icon;
+pub(crate) mod icon;
 pub(crate) mod log;
 pub mod view;
 

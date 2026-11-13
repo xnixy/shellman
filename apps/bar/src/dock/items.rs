@@ -56,7 +56,13 @@ impl Item {
             Section::Launcher => "Launcher".into(),
             Section::Files => "Files".into(),
             Section::Bin => "Recycle Bin".into(),
-            _ => shellman_core::system::app_name::display_name(&self.app_id, self.exe.as_deref()),
+            // Looked up on a worker (the shell and the disk can take 100 ms and more); the
+            // exe's name shows until then, and the docks are woken when it arrives.
+            _ => shellman_core::system::app_name::display_name_soon(
+                &self.app_id,
+                self.exe.as_deref(),
+                super::wake_docks_from_thread,
+            ),
         }
     }
 

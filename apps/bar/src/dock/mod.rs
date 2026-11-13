@@ -6,13 +6,18 @@
 //! per monitor drawing it, so every dock shows the same apps in the same order. A click on any of
 //! them brings the window forward wherever it is.
 
+mod badges;
 mod bin;
 mod drag;
 mod draw;
+mod drop;
+mod drop_target;
 mod items;
 mod menu;
 mod metrics;
 mod shown;
+mod status;
+pub(crate) mod tasks;
 
 pub use metrics::ABOVE;
 
@@ -59,6 +64,12 @@ pub struct Dock {
     menu_for: Option<Item>,
     /// An icon being picked up and moved (see `drag`).
     drag: drag::Machine,
+    /// Files dragged over the dock windows from other apps (see `drop`).
+    drops: drop_target::Drops,
+    /// The Recycle Bin's state, kept up to date off the UI thread.
+    bin: bin::Bin,
+    /// Overlay badges uploaded as textures.
+    badge_tex: badges::Textures,
 }
 
 impl Dock {
@@ -72,7 +83,10 @@ impl Dock {
             fullscreen::request_check();
         });
         watcher.on_front_moved(fullscreen::request_check);
+        let bin = bin::Bin::new(ctx.clone());
+        tasks::start();
         let mut dock = Self {
+            drops: drop_target::Drops::new(wake.clone()),
             wake,
             list: WindowList::default(),
             watcher,
@@ -88,6 +102,8 @@ impl Dock {
             menu: PopupMenu::new(),
             menu_for: None,
             drag: drag::Machine::default(),
+            bin,
+            badge_tex: badges::Textures::default(),
         };
         dock.rebuild();
         dock
@@ -114,6 +130,9 @@ impl Dock {
         self.windows = self.list.refresh();
         self.windows.retain(|w| !is_bar_window(w));
         self.front = winlist::foreground();
+        let hwnds: Vec<isize> = self.windows.iter().map(|w| w.hwnd).collect();
+        tasks::settle(&hwnds, self.front);
+        tasks::announce(&hwnds);
         self.rebuild();
     }
 
@@ -171,7 +190,7 @@ impl Dock {
         }
         if item.windows.is_empty() {
             if let Some(target) = item.launch_target() {
-                shellman_core::fsops::open(&target);
+                launch(target);
             }
             return;
         }
@@ -209,7 +228,7 @@ impl Dock {
         let kind = if item.section == Section::Launcher {
             menu::Kind::Launcher
         } else if item.section == Section::Bin {
-            menu::Kind::Bin { can_empty: bin::can_empty() }
+            menu::Kind::Bin { state: self.bin.state() }
         } else {
             let pinned = item.pinnable().then(|| item.section == Section::Pinned);
             menu::Kind::App { pinned, windows: item.windows.len() }
@@ -223,12 +242,12 @@ impl Dock {
     }
 
     /// Do what the icon's menu chose, if it chose something since the last frame.
-    fn menu_picked(&mut self) {
+    fn menu_picked(&mut self, ctx: &egui::Context) {
         let Some(choice) = self.menu.take_pick() else { return };
         let Some(item) = self.menu_for.take() else { return };
         match choice {
             menu::Choice::Settings => {
-                shellman_core::sibling::start("settings");
+                std::thread::spawn(|| shellman_core::sibling::start("settings"));
             }
             menu::Choice::TogglePin => {
                 if item.section == Section::Pinned {
@@ -248,7 +267,15 @@ impl Dock {
             menu::Choice::OpenBin => {
                 bin::open();
             }
-            menu::Choice::EmptyBin => bin::confirm_and_empty(),
+            menu::Choice::EmptyBin => {
+                // The second step, in the menu itself, where the first was.
+                if let Some(state) = self.bin.state().filter(|s| !s.is_empty()) {
+                    self.menu.open(ctx, menu::anchor(), menu::entries(&menu::Kind::ConfirmEmpty { state }));
+                    self.menu_for = Some(item);
+                }
+            }
+            menu::Choice::EmptyBinConfirmed => bin::empty(),
+            menu::Choice::Cancel => {}
         }
     }
 
@@ -290,7 +317,7 @@ impl Dock {
             } else if self.items[i].section == Section::Bin {
                 bin::open();
             } else if let Some(target) = self.items[i].launch_target() {
-                shellman_core::fsops::open(&target);
+                launch(target);
             }
         }
         if let Some((i, delta)) = events.scrolled {
@@ -308,6 +335,30 @@ impl Dock {
 /// "egui window" windows several times a second, and every dock grew and shrank with them).
 fn is_bar_window(w: &AppWindow) -> bool {
     w.exe.as_deref().and_then(|p| p.file_name()).is_some_and(|n| n.eq_ignore_ascii_case("shellman-bar.exe"))
+}
+
+/// Something the docks show changed on another thread (the bin, a badge, an app's name).
+static DOCKS_CHANGED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Repaint the docks, from any thread. A repaint asked for a dock viewport from a thread of
+/// our own did not reliably reach it (measured: badges sent from a test showed only at the next
+/// unrelated repaint), so the host's frame, which is reliably woken, wakes them.
+pub(crate) fn wake_docks_from_thread() {
+    DOCKS_CHANGED.store(true, std::sync::atomic::Ordering::Release);
+    crate::host::request_frame();
+}
+
+/// Start what a pin or icon opens: a pinned folder opens in Files, anything else through the
+/// shell. On a thread of its own: a pin on a sleeping or network drive, or a slow shell
+/// handler, would otherwise freeze every bar window.
+fn launch(target: std::path::PathBuf) {
+    std::thread::spawn(move || {
+        if target.is_dir() {
+            shellman_core::sibling::start_with("files", &[&target.to_string_lossy()]);
+        } else {
+            shellman_core::fsops::open(&target);
+        }
+    });
 }
 
 /// Ask a window to close, as its own close button would.
@@ -355,6 +406,10 @@ impl Dock {
     /// frame call this first, so whichever runs first brings the shared model up to date, and
     /// wakes the bars whose picture changed: only those.
     pub fn catch_up(&mut self, ctx: &egui::Context) {
+        self.bin.poll();
+        if DOCKS_CHANGED.swap(false, std::sync::atomic::Ordering::AcqRel) {
+            self.wake.docks();
+        }
         let icons = self.thumbs.poll(ctx);
         let renamed = self.watcher.take_front_renamed();
         let dirty = self.watcher.take_dirty();
@@ -390,7 +445,7 @@ impl Dock {
     /// icons' hover state apart from the other docks'.
     pub fn frame(&mut self, ctx: &egui::Context, hwnd: isize, salt: &str) -> Hover {
         theme::set_light(crate::app::light(ctx));
-        self.menu_picked();
+        self.menu_picked(ctx);
         self.catch_up(ctx);
         let m = self.metrics();
         let style = self.style();
@@ -410,14 +465,49 @@ impl Dock {
         let shown = ctx.animate_value_with_time(egui::Id::new(("dock width", salt)), width, draw::MOVE);
         let has_bin = shown_items.iter().any(|i| i.section == Section::Bin);
         let (glass, bin) = metrics::islands(window, shown, has_bin, &m);
-        let islands: Vec<Island> = std::iter::once(glass).chain(bin).map(|r| Island::new(r, m.radius)).collect();
+        // Each icon's left edge where it settles (the drawing eases towards it).
+        let lefts: Vec<f32> = shown_items
+            .iter()
+            .zip(&xs)
+            .map(|(item, &x)| match bin.filter(|_| item.section == Section::Bin) {
+                Some(b) => b.left() + x,
+                None => glass.center().x + x - width / 2.0,
+            })
+            .collect();
+        // What the apps told the taskbar: badges (each a small island of glass of its own over
+        // the icon's corner), progress and calls for attention.
+        let statuses = self.statuses(ctx, &shown_items, hwnd);
+        let icon_top = glass.bottom() - m.pad - m.icon;
+        let badges: Vec<Island> = statuses
+            .iter()
+            .zip(&lefts)
+            .filter(|(s, _)| s.badge.is_some())
+            .map(|(_, &left)| Island::pill(status::badge_rect(left, icon_top, m.icon)))
+            .collect();
+        let islands: Vec<Island> =
+            std::iter::once(glass).chain(bin).map(|r| Island::new(r, m.radius)).chain(badges).collect();
         let composed = surface::composed(hwnd);
+        // Files dragged in from other apps: where the icons are, and what is aimed at.
+        self.drops.register(hwnd);
+        for (pins, slot) in self.drops.take_pins() {
+            self.pin_dropped(pins, slot);
+        }
+        let gaps = metrics::pin_gaps(&shown_items, &lefts, &m);
+        self.drops.publish(hwnd, drop_map(hwnd, &shown_items, &lefts, &gaps, glass, &m, scale));
+        let dropping = self.drops.hover_on(hwnd).map(|h| draw::DropMark {
+            key: h.key,
+            gap: match h.aim {
+                drop::Aim::Gap(slot) => gaps.iter().find(|g| g.1 == slot).map(|g| g.0),
+                _ => None,
+            },
+            ok: h.ok,
+        });
         let events = egui::CentralPanel::default()
             .frame(egui::Frame::new())
             .show(ctx, |ui| {
                 // Room under the icons for the islands' own fill, when it is painted here.
                 let under = ui.painter().add(egui::Shape::Noop);
-                let scene = draw::Scene { items: &shown_items, front: self.front, metrics: m, xs: &xs, width, glass, bin, salt, tint: style.tint, lifted: held.lifted };
+                let scene = draw::Scene { items: &shown_items, front: self.front, metrics: m, xs: &xs, width, glass, bin, salt, tint: style.tint, lifted: held.lifted, dropping, status: &statuses };
                 let events = draw::paint(ui, &scene, &mut self.thumbs);
                 if !composed {
                     // No composed glass: the islands are painted here, without blur or shadow.
@@ -514,6 +604,54 @@ impl Dock {
             self.rebuild();
             self.wake.bars();
         }
+    }
+}
+
+impl Dock {
+    /// Folders, programs or shortcuts dropped between the pins: pin them there, in order, and
+    /// save at once.
+    fn pin_dropped(&mut self, pins: Vec<Pin>, slot: usize) {
+        let mut changed = false;
+        for (k, pin) in pins.into_iter().enumerate() {
+            changed |= items::move_pin(&mut self.pins.pins, &self.files, pin, slot + k);
+        }
+        if changed {
+            self.pins.save();
+            self.rebuild();
+            self.wake.bars();
+        }
+    }
+}
+
+/// The drop areas of one dock window's icons, in screen pixels: each icon's cell (half the
+/// spacing to each side, the glass's height), and the boundaries a pin may be dropped on.
+fn drop_map(hwnd: isize, items: &[Item], lefts: &[f32], gaps: &[(f32, usize)], glass: egui::Rect, m: &Metrics, scale: f32) -> drop::Map {
+    let (ox, oy) = crate::bars::client_origin(hwnd).unwrap_or((0, 0));
+    let px = |v: f32| (v * scale).round() as i32;
+    let (top, bottom) = (oy + px(glass.top()), oy + px(glass.bottom()));
+    let icons = items
+        .iter()
+        .zip(lefts)
+        .map(|(item, &left)| drop::Spot {
+            rect: [ox + px(left - 4.0), top, ox + px(left + m.icon + 4.0), bottom],
+            key: item.app_id.clone(),
+            icon: match item.section {
+                Section::Launcher => drop::Icon::Launcher,
+                Section::Files => drop::Icon::Files,
+                Section::Bin => drop::Icon::Bin,
+                Section::Pinned | Section::Running => drop::Icon::App {
+                    app_id: item.app_id.clone(),
+                    exe: item.exe.clone(),
+                    front: item.windows.first().copied(),
+                },
+            },
+        })
+        .collect();
+    drop::Map {
+        icons,
+        gaps: gaps.iter().map(|&(x, slot)| (ox + px(x), slot)).collect(),
+        // The outer quarter of the icons on each side of a boundary.
+        zone: px(m.icon / 4.0 + 4.0),
     }
 }
 
