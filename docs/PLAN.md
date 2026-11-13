@@ -104,6 +104,16 @@ Rule: **the top bar is the system, the dock is apps.** Both are windows of one p
   Unpinning stays in the right-click menu.
 - No magnification, which would repaint on every mouse move; a short hover lift instead.
 - Holding Win shows 1-9 on icons. Dropping a file on an icon opens it with that app.
+  Done (13 Nov), each dock window an OLE drop target (`dock::drop` rules, `dock::drop_target`):
+  resting 700 ms on a running app's icon brings its window forward (spring-loading); a drop on
+  an app opens the files with it where that is well defined (`core::open_with`: an app known by
+  its exe path gets the paths as arguments, a Store app goes through `ActivateForFile`; other
+  AppUserModelIDs, whose exe may be a helper, only spring-load); on Files a folder opens there,
+  a file opens its folder (Files cannot select a file from its command line yet); on the bin the
+  files go to the Recycle Bin. Folders, programs and shortcuts dragged near the edge between two
+  pins (or after Files or the last pin) are pinned there; a pinned folder opens in Files. The
+  aimed icon gets an accent plate and ring, a pin boundary an accent bar. Opening and recycling
+  run on threads of their own; the dock never takes the focus.
 - Slots for progress and overlay badges; Files reports its copy progress directly.
 - Tray icons always stay in the top bar, in stable places; they are never folded into the dock,
   because many Windows apps close to the tray and their icon would hop between bars. When a tray

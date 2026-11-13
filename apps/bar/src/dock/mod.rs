@@ -9,6 +9,8 @@
 mod bin;
 mod drag;
 mod draw;
+mod drop;
+mod drop_target;
 mod items;
 mod menu;
 mod metrics;
@@ -59,6 +61,8 @@ pub struct Dock {
     menu_for: Option<Item>,
     /// An icon being picked up and moved (see `drag`).
     drag: drag::Machine,
+    /// Files dragged over the dock windows from other apps (see `drop`).
+    drops: drop_target::Drops,
 }
 
 impl Dock {
@@ -73,6 +77,7 @@ impl Dock {
         });
         watcher.on_front_moved(fullscreen::request_check);
         let mut dock = Self {
+            drops: drop_target::Drops::new(wake.clone()),
             wake,
             list: WindowList::default(),
             watcher,
@@ -171,7 +176,7 @@ impl Dock {
         }
         if item.windows.is_empty() {
             if let Some(target) = item.launch_target() {
-                shellman_core::fsops::open(&target);
+                launch(target);
             }
             return;
         }
@@ -310,6 +315,16 @@ fn is_bar_window(w: &AppWindow) -> bool {
     w.exe.as_deref().and_then(|p| p.file_name()).is_some_and(|n| n.eq_ignore_ascii_case("shellman-bar.exe"))
 }
 
+/// Start what a pin or icon opens: a pinned folder opens in Files, anything else through the
+/// shell.
+fn launch(target: std::path::PathBuf) {
+    if target.is_dir() {
+        shellman_core::sibling::start_with("files", &[&target.to_string_lossy()]);
+    } else {
+        shellman_core::fsops::open(&target);
+    }
+}
+
 /// Ask a window to close, as its own close button would.
 pub fn close_window(hwnd: isize) {
     unsafe {
@@ -412,12 +427,35 @@ impl Dock {
         let (glass, bin) = metrics::islands(window, shown, has_bin, &m);
         let islands: Vec<Island> = std::iter::once(glass).chain(bin).map(|r| Island::new(r, m.radius)).collect();
         let composed = surface::composed(hwnd);
+        // Files dragged in from other apps: where the icons are, and what is aimed at.
+        self.drops.register(hwnd);
+        for (pins, slot) in self.drops.take_pins() {
+            self.pin_dropped(pins, slot);
+        }
+        let lefts: Vec<f32> = shown_items
+            .iter()
+            .zip(&xs)
+            .map(|(item, &x)| match bin.filter(|_| item.section == Section::Bin) {
+                Some(b) => b.left() + x,
+                None => glass.center().x + x - width / 2.0,
+            })
+            .collect();
+        let gaps = metrics::pin_gaps(&shown_items, &lefts, &m);
+        self.drops.publish(hwnd, drop_map(hwnd, &shown_items, &lefts, &gaps, glass, &m, scale));
+        let dropping = self.drops.hover_on(hwnd).map(|h| draw::DropMark {
+            key: h.key,
+            gap: match h.aim {
+                drop::Aim::Gap(slot) => gaps.iter().find(|g| g.1 == slot).map(|g| g.0),
+                _ => None,
+            },
+            ok: h.ok,
+        });
         let events = egui::CentralPanel::default()
             .frame(egui::Frame::new())
             .show(ctx, |ui| {
                 // Room under the icons for the islands' own fill, when it is painted here.
                 let under = ui.painter().add(egui::Shape::Noop);
-                let scene = draw::Scene { items: &shown_items, front: self.front, metrics: m, xs: &xs, width, glass, bin, salt, tint: style.tint, lifted: held.lifted };
+                let scene = draw::Scene { items: &shown_items, front: self.front, metrics: m, xs: &xs, width, glass, bin, salt, tint: style.tint, lifted: held.lifted, dropping };
                 let events = draw::paint(ui, &scene, &mut self.thumbs);
                 if !composed {
                     // No composed glass: the islands are painted here, without blur or shadow.
@@ -514,6 +552,54 @@ impl Dock {
             self.rebuild();
             self.wake.bars();
         }
+    }
+}
+
+impl Dock {
+    /// Folders, programs or shortcuts dropped between the pins: pin them there, in order, and
+    /// save at once.
+    fn pin_dropped(&mut self, pins: Vec<Pin>, slot: usize) {
+        let mut changed = false;
+        for (k, pin) in pins.into_iter().enumerate() {
+            changed |= items::move_pin(&mut self.pins.pins, &self.files, pin, slot + k);
+        }
+        if changed {
+            self.pins.save();
+            self.rebuild();
+            self.wake.bars();
+        }
+    }
+}
+
+/// The drop areas of one dock window's icons, in screen pixels: each icon's cell (half the
+/// spacing to each side, the glass's height), and the boundaries a pin may be dropped on.
+fn drop_map(hwnd: isize, items: &[Item], lefts: &[f32], gaps: &[(f32, usize)], glass: egui::Rect, m: &Metrics, scale: f32) -> drop::Map {
+    let (ox, oy) = crate::bars::client_origin(hwnd).unwrap_or((0, 0));
+    let px = |v: f32| (v * scale).round() as i32;
+    let (top, bottom) = (oy + px(glass.top()), oy + px(glass.bottom()));
+    let icons = items
+        .iter()
+        .zip(lefts)
+        .map(|(item, &left)| drop::Spot {
+            rect: [ox + px(left - 4.0), top, ox + px(left + m.icon + 4.0), bottom],
+            key: item.app_id.clone(),
+            icon: match item.section {
+                Section::Launcher => drop::Icon::Launcher,
+                Section::Files => drop::Icon::Files,
+                Section::Bin => drop::Icon::Bin,
+                Section::Pinned | Section::Running => drop::Icon::App {
+                    app_id: item.app_id.clone(),
+                    exe: item.exe.clone(),
+                    front: item.windows.first().copied(),
+                },
+            },
+        })
+        .collect();
+    drop::Map {
+        icons,
+        gaps: gaps.iter().map(|&(x, slot)| (ox + px(x), slot)).collect(),
+        // The outer quarter of the icons on each side of a boundary.
+        zone: px(m.icon / 4.0 + 4.0),
     }
 }
 

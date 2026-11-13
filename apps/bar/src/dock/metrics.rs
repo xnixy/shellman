@@ -102,6 +102,28 @@ pub fn islands(window: egui::Vec2, apps_w: f32, bin: bool, m: &Metrics) -> (egui
     (apps, bin)
 }
 
+/// Where something dropped between pins would go: for each pinned slot (0 right after Files, up
+/// to after the last pin), the x of the boundary, in the same space as `lefts` (each icon's left
+/// edge). Halfway between the two icons, or half a spacing past the last pin.
+pub fn pin_gaps(items: &[Item], lefts: &[f32], m: &Metrics) -> Vec<(f32, usize)> {
+    let Some(files) = items.iter().position(|i| i.section == Section::Files) else { return Vec::new() };
+    let pinned: Vec<usize> = items.iter().enumerate().filter(|(_, i)| i.section == Section::Pinned).map(|(k, _)| k).collect();
+    let mut out = Vec::with_capacity(pinned.len() + 1);
+    for slot in 0..=pinned.len() {
+        let left = if slot == 0 { files } else { pinned[slot - 1] };
+        let right = pinned.get(slot).copied().or_else(|| {
+            items.get(left + 1).filter(|i| i.section == Section::Running).map(|_| left + 1)
+        });
+        let edge = lefts[left] + m.icon;
+        let x = match right {
+            Some(r) => (edge + lefts[r]) / 2.0,
+            None => edge + SPACING / 2.0,
+        };
+        out.push((x, slot));
+    }
+    out
+}
+
 /// The label for an icon whose centre is `center_x` points from the window's left, `text_w`
 /// points of text, above glass whose top is `glass_top` points down: its pill, in points, kept
 /// inside a window `window_w` points wide.
@@ -166,6 +188,29 @@ mod tests {
         // Without running apps, no divider at all.
         let (_, total) = layout(&[item(Section::Launcher), item(Section::Files), item(Section::Bin)], &M);
         assert_eq!(total, 2.0 * PAD + 2.0 * 48.0 + SPACING);
+    }
+
+    #[test]
+    fn pin_gaps_sit_between_files_and_the_pins() {
+        let items = [
+            item(Section::Launcher),
+            item(Section::Files),
+            item(Section::Pinned),
+            item(Section::Pinned),
+            item(Section::Running),
+            item(Section::Bin),
+        ];
+        let (xs, _) = layout(&items, &M);
+        let gaps = pin_gaps(&items, &xs, &M);
+        assert_eq!(gaps.len(), 3);
+        assert_eq!(gaps[0], (xs[1] + 48.0 + SPACING / 2.0, 0));
+        assert_eq!(gaps[1], (xs[2] + 48.0 + SPACING / 2.0, 1));
+        // After the last pin, before the divider: halfway across it.
+        assert_eq!(gaps[2], ((xs[3] + 48.0 + xs[4]) / 2.0, 2));
+        // No pins: one slot, after Files.
+        let few = [item(Section::Launcher), item(Section::Files), item(Section::Bin)];
+        let (xs, _) = layout(&few, &M);
+        assert_eq!(pin_gaps(&few, &xs, &M), vec![(xs[1] + 48.0 + SPACING / 2.0, 0)]);
     }
 
     #[test]

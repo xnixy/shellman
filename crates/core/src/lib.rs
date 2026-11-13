@@ -17,6 +17,7 @@ pub mod live_thumb;
 pub mod monitors;
 pub mod net;
 pub mod notify;
+pub mod open_with;
 pub mod outside;
 pub mod places;
 pub mod places_reg;

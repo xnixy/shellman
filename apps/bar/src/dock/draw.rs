@@ -62,6 +62,16 @@ pub struct Scene<'a> {
     /// The icon being dragged in this dock window, if any. While one is, nothing else reacts to
     /// the pointer (no hover, click or scroll).
     pub lifted: Option<Lifted>,
+    /// Files dragged in from another app, over this dock window.
+    pub dropping: Option<DropMark>,
+}
+
+/// Where files dragged over the dock would go: an icon (by id), or a boundary between pins (its
+/// x in the window's points); `ok` when a drop or a rest there does something.
+pub struct DropMark {
+    pub key: Option<String>,
+    pub gap: Option<f32>,
+    pub ok: bool,
 }
 
 /// The palette of the dock's marks: the glass's own tint moved towards the text colour, so they
@@ -81,6 +91,9 @@ struct Ink {
     divider: Color32,
     /// Behind an old small icon, or one still loading.
     plate: Color32,
+    /// An icon files are dragged over: the glass tinted with the accent, and an accent ring.
+    drop_fill: Color32,
+    drop_ring: Color32,
 }
 
 fn ink(tint: Color32) -> Ink {
@@ -95,6 +108,8 @@ fn ink(tint: Color32) -> Ink {
         front: toward(0.92, 255),
         divider: toward(0.22, 255),
         plate: toward(0.07, 200),
+        drop_fill: with_alpha(mix(base, c.accent_fill, 0.35), 220),
+        drop_ring: c.accent_fill,
     }
 }
 
@@ -163,6 +178,18 @@ pub fn paint(ui: &mut egui::Ui, scene: &Scene, thumbs: &mut Thumbs) -> Events {
             let fill = lerp_color(ink.hover, ink.press, press).gamma_multiply(hover);
             ui.painter().rect_filled(plate, m.icon * 0.22 + 5.0, fill);
         }
+        // Files dragged over it: an accent plate and ring when the drop does something, the
+        // plain hover plate when it does not.
+        let aimed = scene.dropping.as_ref().filter(|d| d.key.as_deref() == Some(item.app_id.as_str()));
+        let aimed_t = ctx.animate_bool_with_time(id.with("drop"), aimed.is_some(), EASE);
+        if aimed_t > 0.0 {
+            let ok = aimed.is_none_or(|d| d.ok);
+            let plate = icon.expand(5.0);
+            let r = m.icon * 0.22 + 5.0;
+            let (fill, ring) = if ok { (ink.drop_fill, ink.drop_ring) } else { (ink.hover, ink.hover) };
+            ui.painter().rect_filled(plate, r, fill.gamma_multiply(aimed_t));
+            ui.painter().rect_stroke(plate, r, egui::Stroke::new(2.0_f32, ring.gamma_multiply(aimed_t)), egui::StrokeKind::Inside);
+        }
         let lifted = carried.abs() > 0.5;
         if in_hand.is_some() {
             ui.painter().rect_filled(icon, m.icon * 0.22, ink.plate);
@@ -209,6 +236,11 @@ pub fn paint(ui: &mut egui::Ui, scene: &Scene, thumbs: &mut Thumbs) -> Events {
         if resp.secondary_clicked() {
             events.menu = Some(i);
         }
+    }
+    // A boundary between pins that a dropped folder or program would be pinned at.
+    if let Some(x) = scene.dropping.as_ref().and_then(|d| d.gap) {
+        let bar = Rect::from_center_size(egui::pos2(x, top + m.icon / 2.0), egui::vec2(4.0, m.icon + 6.0));
+        ui.painter().rect_filled(bar, 2.0, ink.drop_ring);
     }
     // An icon without windows names itself; one with windows shows their previews instead.
     let named = events.hovered.filter(|&(i, _)| scene.items[i].windows.is_empty());
