@@ -16,4 +16,5 @@ windows.workspace = true
 serde.workspace = true
 
 [build-dependencies]
+shellman-buildinfo.workspace = true
 winresource.workspace = true

@@ -2231,9 +2231,17 @@ dependencies = [
  "egui",
  "raw-window-handle",
  "serde",
+ "shellman-buildinfo",
  "shellman-core",
  "shellman-ui",
  "windows",
+ "winresource",
+]
+
+[[package]]
+name = "shellman-buildinfo"
+version = "0.1.0"
+dependencies = [
  "winresource",
 ]
 
@@ -2244,6 +2252,7 @@ dependencies = [
  "eframe",
  "egui",
  "raw-window-handle",
+ "shellman-buildinfo",
  "shellman-core",
  "shellman-ui",
  "windows",
@@ -2272,6 +2281,7 @@ name = "shellman-desktop"
 version = "0.1.0"
 dependencies = [
  "egui",
+ "shellman-buildinfo",
  "shellman-core",
  "shellman-ui",
  "windows",
@@ -2282,6 +2292,7 @@ dependencies = [
 name = "shellman-elevate"
 version = "0.1.0"
 dependencies = [
+ "shellman-buildinfo",
  "shellman-core",
  "shellman-sysfont",
  "windows",
@@ -2298,6 +2309,7 @@ dependencies = [
  "raw-window-handle",
  "serde",
  "serde_json",
+ "shellman-buildinfo",
  "shellman-core",
  "shellman-pick",
  "shellman-ui",
@@ -2326,6 +2338,7 @@ dependencies = [
  "egui",
  "raw-window-handle",
  "serde",
+ "shellman-buildinfo",
  "shellman-core",
  "shellman-ui",
  "windows",
@@ -2354,6 +2367,7 @@ name = "shellman-session"
 version = "0.1.0"
 dependencies = [
  "dirs",
+ "shellman-buildinfo",
  "shellman-core",
  "windows",
  "winresource",
@@ -2366,10 +2380,20 @@ dependencies = [
  "eframe",
  "egui",
  "raw-window-handle",
+ "shellman-buildinfo",
  "shellman-core",
  "shellman-pick",
  "shellman-sysfont",
  "shellman-ui",
+ "windows",
+ "winresource",
+]
+
+[[package]]
+name = "shellman-setup"
+version = "0.1.0"
+dependencies = [
+ "shellman-buildinfo",
  "windows",
  "winresource",
 ]
@@ -2395,6 +2419,7 @@ dependencies = [
  "eframe",
  "egui",
  "raw-window-handle",
+ "shellman-buildinfo",
  "shellman-core",
  "shellman-ui",
  "windows",
@@ -2425,6 +2450,7 @@ dependencies = [
  "eframe",
  "egui",
  "raw-window-handle",
+ "shellman-buildinfo",
  "shellman-core",
  "shellman-ui",
  "windows",

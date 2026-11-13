@@ -1,0 +1,10 @@
+[package]
+name = "shellman-buildinfo"
+version = "0.1.0"
+edition.workspace = true
+description = "The build stamp every shellman exe carries (git describe + commit date), written into its version resource"
+license.workspace = true
+publish = false
+
+[dependencies]
+winresource.workspace = true

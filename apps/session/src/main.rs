@@ -14,6 +14,7 @@ mod leftovers;
 mod log;
 mod policy;
 mod proc;
+mod restart;
 mod registry;
 mod safety;
 mod shutdown;

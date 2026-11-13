@@ -17,6 +17,9 @@ use windows::Win32::UI::WindowsAndMessaging::{
 /// Between one app's start and the next, so the desktop is up before the bar and so on.
 const GAP: Duration = Duration::from_millis(250);
 
+/// How long an app gets to close after a restart was requested (`restart.rs`) before it is ended.
+const RESTART_GRACE: Duration = Duration::from_secs(6);
+
 struct Slot {
     app: App,
     proc: Option<Proc>,
@@ -24,6 +27,8 @@ struct Slot {
     /// When to (re)start it; `None` while it runs or after it was given up on.
     due: Option<Instant>,
     started: Instant,
+    /// A restart was requested: the deadline by which it must have closed on its own.
+    restart: Option<Instant>,
 }
 
 pub struct Fleet {
@@ -40,7 +45,7 @@ impl Fleet {
         let mut fleet = Fleet { slots: Vec::new(), t0, adopted: 0, parked: false };
         for (i, app) in apps.into_iter().enumerate() {
             let mut slot =
-                Slot { app, proc: None, crashes: Crashes::default(), due: None, started: t0 };
+                Slot { app, proc: None, crashes: Crashes::default(), due: None, started: t0, restart: None };
             match fleet.adopt(&slot.app) {
                 Some(p) => {
                     log::line(&format!("{}: already running as pid {}, adopted", slot.app.name, p.pid));
@@ -51,8 +56,28 @@ impl Fleet {
             }
             fleet.slots.push(slot);
         }
+        crate::restart::publish_names(fleet.slots.iter().map(|s| s.app.name.clone()).collect());
         fleet.publish();
         fleet
+    }
+
+    /// Handle a queued "restart app X" (`restart.rs`): ask it to close; its exit is then a
+    /// restart, not a crash. An app that is not running is simply started now.
+    fn request_restart(&mut self, name: &str) {
+        let now = Instant::now();
+        let Some(slot) = self.slots.iter_mut().find(|s| s.app.name == name) else { return };
+        match (&slot.proc, slot.restart) {
+            (_, Some(_)) => log::line(&format!("{name}: restart already under way")),
+            (Some(p), None) => {
+                let asked = shutdown::close_windows(&[p.pid]);
+                log::line(&format!("{name}: restart requested, pid {} asked to close ({asked} windows)", p.pid));
+                slot.restart = Some(now + RESTART_GRACE);
+            }
+            (None, None) => {
+                log::line(&format!("{name}: restart requested, not running: starting it"));
+                slot.due = Some(now);
+            }
+        }
     }
 
     /// A running copy of this app's exe that no other slot holds.
@@ -152,12 +177,18 @@ impl Fleet {
         let ran = self.slots[i].started.elapsed();
         self.slots[i].proc = None;
         let name = self.slots[i].app.name.clone();
+        let requested = self.slots[i].restart.take().is_some();
         if shutdown::quiet() {
             log::line(&format!("{name}: exited with {code:#x} while ending, not restarted"));
             return;
         }
-        let next = self.slots[i].crashes.on_exit(code, now);
-        log::line(&format!("{name}: exited with {code:#x} after {} ms", ran.as_millis()));
+        let next = if requested {
+            log::line(&format!("{name}: exited with {code:#x} after {} ms, as asked: restarting", ran.as_millis()));
+            self.slots[i].crashes.on_requested_exit()
+        } else {
+            log::line(&format!("{name}: exited with {code:#x} after {} ms", ran.as_millis()));
+            self.slots[i].crashes.on_exit(code, now)
+        };
         if next == Next::Deliberate {
             // A resident started with `--background` while its copy runs exits 0 at once: hold
             // that copy instead, so it is still watched.
@@ -177,6 +208,19 @@ impl Fleet {
     pub fn step(&mut self) {
         if self.parked {
             return;
+        }
+        for name in crate::restart::take() {
+            self.request_restart(&name);
+        }
+        for s in &mut self.slots {
+            // Asked to close and did not: end it (still a requested restart).
+            if let (Some(p), Some(deadline)) = (&s.proc, s.restart) {
+                if deadline <= Instant::now() && p.exit_code().is_none() {
+                    log::line(&format!("{}: did not close in {} s, ended", s.app.name, RESTART_GRACE.as_secs()));
+                    p.terminate();
+                    s.restart = Some(Instant::now() + RESTART_GRACE);
+                }
+            }
         }
         for i in 0..self.slots.len() {
             if let Some(code) = self.slots[i].proc.as_ref().and_then(Proc::exit_code) {
@@ -201,7 +245,7 @@ impl Fleet {
         }
         let handles = self.slots.iter().filter_map(|s| s.proc.as_ref().map(|p| p.handle)).take(63).collect();
         let now = Instant::now();
-        let due = self.slots.iter().filter_map(|s| s.due).min().map(|d| d.saturating_duration_since(now));
+        let due = self.slots.iter().filter_map(|s| s.due.or(s.restart)).min().map(|d| d.saturating_duration_since(now));
         (handles, due)
     }
 

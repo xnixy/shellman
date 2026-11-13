@@ -14,4 +14,5 @@ shellman-sysfont = { path = "../../crates/sysfont" }
 windows.workspace = true
 
 [build-dependencies]
+shellman-buildinfo.workspace = true
 winresource.workspace = true
