@@ -280,6 +280,9 @@ impl SettingsApp {
                 if self.section != Section::Fonts {
                     self.st.fonts.stop();
                 }
+                if self.section != Section::Terminal {
+                    self.st.terminal.stop();
+                }
             });
         });
         if let Some(section) = self.st.goto.take() {

@@ -26,12 +26,12 @@ pub mod server;
 
 use shellman_core::registry::{Hive, Real, Registry};
 
-/// shellman Terminal's handoff class.
-pub const CLSID: &str = "{39C0509F-90BF-4A6C-A66D-5CF96BDDC7E2}";
+/// shellman Terminal's handoff class (Settings reads it too).
+pub const CLSID: &str = shellman_core::terminal::handoff::CLSID;
 /// Windows Terminal's OpenConsole (`IConsoleHandoff`), the console host we hand to.
 pub const WT_CONSOLE: &str = "{2EACA947-7F5F-4CFA-BA87-8F7FBEEFBE69}";
 /// "Let Windows decide".
-pub const DEFAULT: &str = "{00000000-0000-0000-0000-000000000000}";
+pub const DEFAULT: &str = shellman_core::terminal::handoff::DEFAULT;
 
 pub const STARTUP_KEY: &str = r"Console\%%Startup";
 pub const CONSOLE_VALUE: &str = "DelegationConsole";
@@ -141,13 +141,7 @@ pub fn apply(ops: &[Op]) -> Result<(), String> {
     Ok(())
 }
 
-/// Whether Windows Terminal (whose OpenConsole we hand to) is installed for this user: its app
-/// alias folder is there.
-fn windows_terminal_installed() -> bool {
-    std::env::var_os("LOCALAPPDATA")
-        .map(|d| std::path::Path::new(&d).join(r"Microsoft\WindowsApps\Microsoft.WindowsTerminal_8wekyb3d8bbwe"))
-        .is_some_and(|p| p.is_dir())
-}
+use shellman_core::terminal::handoff::windows_terminal_installed;
 
 fn show(p: &Option<Pair>) -> String {
     match p {

@@ -361,6 +361,13 @@ impl Session {
         }
     }
 
+    /// Keep `lines` of history from now on (Settings changed it).
+    pub fn set_scrollback(&self, lines: usize) {
+        let config = Config { scrolling_history: lines, semantic_escape_chars: crate::select::WORD_STOPS.to_owned(), ..Config::default() };
+        self.term.lock().set_options(config);
+        self.shared.dirty.store(true, Ordering::Release);
+    }
+
     pub fn size(&self) -> Size {
         self.size
     }

@@ -202,6 +202,18 @@ impl Renderer {
         Ok(())
     }
 
+    /// Change the font family (Settings): every glyph is made again.
+    pub fn set_family(&mut self, family: &str) -> Result<(), String> {
+        if family == self.family {
+            return Ok(());
+        }
+        self.atlas = atlas::Atlas::new(self.px, family)?;
+        self.color = color::ColorAtlas::new(self.px);
+        self.family = family.to_owned();
+        self.hashes.iter_mut().for_each(|h| *h = 0);
+        Ok(())
+    }
+
     /// Bring the GPU's copy up to `frame`: only rows whose cells (or cursor) changed are
     /// rebuilt and sent. Returns how many rows that was.
     pub fn prepare(&mut self, frame: &Frame) -> usize {

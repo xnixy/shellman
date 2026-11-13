@@ -505,8 +505,21 @@ entry points open it, and it can be Windows' default terminal (below).
   The choice is `default_terminal` in `terminal.json`: `"shellman"` (default), `"windows-terminal"`
   or `"custom"` with `custom_terminal` (a command line, `{dir}` for the folder). A missing choice
   falls back: shellman's terminal (sibling exe), Windows Terminal (app alias `wt.exe -d`, then the
-  activation manager), Command Prompt in a new console. **Owed**: a control for it in Settings
-  (not added while Settings is being edited elsewhere); `terminal.json` is the place for now.
+  activation manager), Command Prompt in a new console. Settings › Terminal sets it (below).
+- **Settings › Terminal** (stage 3, `apps/settings/src/sections/terminal.rs`; rail entry and
+  search words): default profile (the names from `shellman_core::terminal::profiles`, which the
+  terminal now builds its profiles from too), font family and size, lines of history,
+  copy-on-select, "New terminal opens in" (`new_instance`), "Open Terminal here uses"
+  (`default_terminal`, `custom_terminal`), and "Use shellman Terminal for all console programs".
+  `terminal.json` is read and written whole through `shellman_core::terminal::file::File`, so
+  fields the page does not know are kept (tested). A running terminal follows the file (its
+  settings-folder watch): font family and size, history length (`Term::set_options`),
+  copy-on-select, default profile and `new_instance` apply live. The console switch shows the
+  registry's `DelegationTerminal` (`terminal::handoff::current`: shellman, Windows Terminal,
+  Windows decides, or another CLSID) and runs the installed `shellman-terminal.exe`'s own
+  `--register-default-terminal` / `--unregister-default-terminal` beside Settings, off the UI
+  thread, then reads the state again; it is disabled without Windows Terminal (one line says
+  why). Tested: the state from the value and the command it runs; the switch was not flipped.
 - **Windows' default terminal** (`defterm/`, `pty.rs`): where a console program shows
   when it starts with no terminal (a `.bat`, Win+R `cmd`, a program spawning `powershell`). Off
   until `shellman-terminal --register-default-terminal`; `--unregister-default-terminal` undoes
@@ -692,7 +705,7 @@ each; `SHELLMAN_TERMINAL_STATS=<file>` logs frame times):
   2.3 s → 2.0 s. See the stage-3 report for every run.
 - Idle 20 s: 0.000 CPU-s focused, 0.016 unfocused. A blinking cursor: 2 frames a second for
   15 s, then none. A tab flooding output in the background: no frames.
-- Not yet: splits, a Settings page,
+- Not yet: splits,
   OSC 10/11 answers through the system ConPTY (it does not forward the queries; the answering is
   in place).
 

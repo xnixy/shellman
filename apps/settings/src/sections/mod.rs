@@ -29,6 +29,7 @@ mod sound;
 mod sound_mixer;
 mod sound_rows;
 mod startup;
+mod terminal;
 mod updates;
 mod updates_rows;
 
@@ -43,6 +44,7 @@ pub use datetime::DateTimeView;
 pub use power::PowerView;
 pub use sound::SoundView;
 pub use startup::StartupView;
+pub use terminal::TerminalView;
 pub use updates::UpdatesView;
 use crate::state::State;
 use shellman_ui::theme::glyph;
@@ -65,11 +67,12 @@ pub enum Section {
     Dock,
     TopBar,
     Launcher,
+    Terminal,
     About,
 }
 
 impl Section {
-    pub const ALL: [Section; 17] = [
+    pub const ALL: [Section; 18] = [
         Section::Appearance,
         Section::Desktop,
         Section::Sound,
@@ -86,6 +89,7 @@ impl Section {
         Section::Dock,
         Section::TopBar,
         Section::Launcher,
+        Section::Terminal,
         Section::About,
     ];
 
@@ -107,6 +111,7 @@ impl Section {
             Section::Dock => "Dock",
             Section::TopBar => "Top bar",
             Section::Launcher => "Launcher",
+            Section::Terminal => "Terminal",
             Section::About => "About",
         }
     }
@@ -133,6 +138,8 @@ impl Section {
             Section::Dock => glyph::APP,
             Section::TopBar => glyph::DESKTOP,
             Section::Launcher => glyph::SEARCH,
+            // Segoe Fluent Icons' command prompt, as the terminal's own tabs show.
+            Section::Terminal => '\u{E756}',
             Section::About => glyph::INFO,
         }
     }
@@ -155,6 +162,7 @@ impl Section {
             Section::Dock => dock::show(ui, state),
             Section::TopBar => bar::show(ui, state),
             Section::Launcher => launcher::show(ui, state),
+            Section::Terminal => terminal::show(ui, state),
             Section::About => about::show(ui, state),
         }
     }
@@ -182,6 +190,7 @@ impl Section {
                 | Section::Dock
                 | Section::TopBar
                 | Section::Launcher
+                | Section::Terminal
                 | Section::About
         )
     }
@@ -205,6 +214,7 @@ impl Section {
             Section::Dock => "dock",
             Section::TopBar => "top-bar",
             Section::Launcher => "launcher",
+            Section::Terminal => "terminal",
             Section::About => "about",
         }
     }

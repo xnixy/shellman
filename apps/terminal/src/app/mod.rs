@@ -237,6 +237,7 @@ impl TerminalApp {
                 self.look = look;
                 look.apply(ctx);
             }
+            self.reload_config();
         }
         theme::set_light(ctx.theme() == egui::Theme::Light);
         if self.look.accent == AccentChoice::System {
@@ -251,6 +252,32 @@ impl TerminalApp {
             let s = &self.tabs.current().session;
             let active = s.win32_input() && !self.strip.menu_open() && !self.find.has_focus(ctx);
             gate.set(active, active && s.with_term(crate::select::has));
+        }
+    }
+
+    /// `terminal.json` changed (Settings saved it): what can change in a running window does.
+    /// The font and its size (zoom starts over), the history kept, copy-on-select, the default
+    /// profile and what a second start does; `default_terminal` is read where it is used.
+    fn reload_config(&mut self) {
+        let new = Config::read();
+        if new == self.config {
+            return;
+        }
+        let old = std::mem::replace(&mut self.config, new);
+        if old.font_family != self.config.font_family {
+            if let Err(e) = self.renderer.set_family(&self.config.font_family) {
+                eprintln!("terminal: {e}");
+            }
+            self.tabs.current().session.mark_dirty();
+        }
+        if old.font_size != self.config.font_size {
+            self.font_pt = self.config.font_size;
+            self.tabs.current().session.mark_dirty();
+        }
+        if old.scrollback != self.config.scrollback {
+            for t in self.tabs.iter() {
+                t.session.set_scrollback(self.config.scrollback);
+            }
         }
     }
 
