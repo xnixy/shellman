@@ -63,7 +63,7 @@
 mod backdrop;
 mod effect;
 mod cloak;
-mod guard;
+pub mod guard;
 pub mod islands;
 mod style;
 mod tree;

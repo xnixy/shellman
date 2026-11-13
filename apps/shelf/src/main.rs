@@ -1,8 +1,9 @@
 #![windows_subsystem = "windows"]
 //! Shellman's shelf: what sits on the wallpaper, and the wallpaper's right-click menu.
 //!
-//! The shelf is one slim island of glass on an edge of the primary monitor: a drop zone, then a
-//! stack per folder (Desktop, Downloads, Recent) that fans open on click. It lives at desktop
+//! The shelf is one slim island of glass on an edge of each monitor (or the primary only, as
+//! Settings › Desktop says): a drop zone, then a stack per folder (Desktop, Downloads, Recent)
+//! that fans open on click. It lives at desktop
 //! level, above the wallpaper and below every window. The right-click menu is asked for by the
 //! desktop process (see `shellman_core::desktop_menu`) and shown here, on any monitor.
 //!
@@ -15,6 +16,7 @@
 mod actions;
 mod app;
 mod cards;
+mod displays;
 mod drag_image;
 mod draw;
 mod drop;
@@ -24,6 +26,7 @@ mod log;
 mod menu;
 mod stacks;
 mod text;
+mod views;
 mod wallpaper;
 mod window;
 

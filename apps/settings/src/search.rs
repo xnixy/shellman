@@ -23,7 +23,7 @@ const ENTRIES: &[Entry] = &[
     e(Section::Appearance, "Sidebars", "rail sidebar collapse expand fold icons names labels"),
     e(Section::Desktop, "", "wallpaper background icons right-click"),
     e(Section::Desktop, "Desktop style", "clean widgets shelf"),
-    e(Section::Desktop, "Shelf", "stacks downloads recent drop edge"),
+    e(Section::Desktop, "Shelf", "stacks downloads recent drop edge displays monitors primary all"),
     e(Section::Sound, "", "audio speakers microphone volume"),
     e(Section::Sound, "Output", "speakers headphones volume mute default device spatial atmos format balance test"),
     e(Section::Sound, "Input", "microphone mic level meter record"),

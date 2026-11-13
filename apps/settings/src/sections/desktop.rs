@@ -1,12 +1,12 @@
 //! Desktop: the desktop's style (Shelf + widgets, or Clean) as two preview tiles, and the shelf's
-//! rows: on or off, which edge, which stacks, and where dropped files go. The shelf follows the
+//! rows: on or off, which displays, which edge, which stacks, and where dropped files go. The shelf follows the
 //! file as it changes. The widgets' rows come with the widgets.
 
 use crate::page;
 use crate::pick::Pick;
 use crate::state::State;
 use egui::{pos2, vec2, Align2, Color32, CornerRadius, FontId, Rect, Sense, Stroke, Ui};
-use shellman_core::settings::desktop::{DropTo, Edge, Stack, Style};
+use shellman_core::settings::desktop::{DropTo, Edge, ShelfOn, Stack, Style};
 use shellman_ui::chips::{self, Chip};
 use shellman_ui::glass::islands::shows_as;
 use shellman_ui::menu::{self, Icon};
@@ -76,6 +76,10 @@ fn row(ui: &mut Ui, label: &str, first: bool, add: impl FnOnce(&mut Ui) -> bool)
 fn rows(ui: &mut Ui, st: &mut State) -> bool {
     let mut changed = false;
     changed |= row(ui, "Show shelf", true, |ui| switch(ui, &mut st.desktop.shelf.show, "").changed());
+    changed |= row(ui, "Show shelf on", false, |ui| {
+        let options = ShelfOn::ALL.map(|o| (o, o.label()));
+        page::segmented(ui, &mut st.desktop.shelf.on, &options)
+    });
     changed |= row(ui, "Edge", false, |ui| {
         let options = Edge::ALL.map(|e| (e, e.label()));
         page::segmented(ui, &mut st.desktop.shelf.edge, &options)

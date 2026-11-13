@@ -12,6 +12,7 @@ pub mod icon_pack;
 pub mod fsops;
 pub mod installed;
 pub mod live_thumb;
+pub mod monitors;
 pub mod notify;
 pub mod outside;
 pub mod places;
