@@ -1,0 +1,326 @@
+//! The keyboard: the terminal's own shortcuts (tabs, copy and paste, zoom), then keys, typed text
+//! and pastes to the shown tab's shell.
+//!
+//! Text comes as Windows composed it (`WM_CHAR`: dead keys, AltGr, any layout), so characters
+//! are never worked out from key codes here; key codes only matter for keys with sequences of
+//! their own and for Ctrl and Alt combinations. AltGr reaches egui without Ctrl and Alt (winit
+//! takes them off on layouts that have AltGr), so its characters go as text.
+
+use crate::keys::{self, Key, Local, Mods};
+use crate::select;
+use alacritty_terminal::term::TermMode;
+
+#[derive(Default)]
+pub struct KeyState {
+    /// A key pressed with Alt whose text has not come yet: the text gets ESC before it.
+    alt_key: Option<char>,
+}
+
+/// A shortcut the terminal keeps.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Shortcut {
+    NewTab,
+    /// Ctrl+Shift+1..9: a new tab of the n-th profile (from 0).
+    NewTabOf(usize),
+    CloseTab,
+    NextTab,
+    PrevTab,
+    /// Ctrl+Alt+1..9.
+    TabNumber(usize),
+    ZoomIn,
+    ZoomOut,
+    ZoomReset,
+}
+
+/// The shortcut for a key, if it is one. `physical` is the key's place on the keyboard, for the
+/// digit row (Shift turns it into punctuation on most layouts).
+pub fn shortcut(key: egui::Key, physical: Option<egui::Key>, m: Mods) -> Option<Shortcut> {
+    use egui::Key as K;
+    let digit = |k: Option<K>| -> Option<usize> {
+        Some(match k? {
+            K::Num1 => 1,
+            K::Num2 => 2,
+            K::Num3 => 3,
+            K::Num4 => 4,
+            K::Num5 => 5,
+            K::Num6 => 6,
+            K::Num7 => 7,
+            K::Num8 => 8,
+            K::Num9 => 9,
+            _ => return None,
+        })
+    };
+    let ctrl_shift = m.ctrl && m.shift && !m.alt;
+    let ctrl_only = m.ctrl && !m.shift && !m.alt;
+    Some(match key {
+        K::T if ctrl_shift => Shortcut::NewTab,
+        K::W if ctrl_shift => Shortcut::CloseTab,
+        K::Tab if m.ctrl && !m.alt => {
+            if m.shift {
+                Shortcut::PrevTab
+            } else {
+                Shortcut::NextTab
+            }
+        }
+        K::Equals | K::Plus if m.ctrl && !m.alt => Shortcut::ZoomIn,
+        K::Minus if ctrl_only => Shortcut::ZoomOut,
+        K::Num0 if ctrl_only => Shortcut::ZoomReset,
+        _ => {
+            let n = digit(physical.or(Some(key)))?;
+            if m.ctrl && m.alt && !m.shift {
+                Shortcut::TabNumber(n)
+            } else if ctrl_shift {
+                Shortcut::NewTabOf(n - 1)
+            } else {
+                return None;
+            }
+        }
+    })
+}
+
+impl super::TerminalApp {
+    /// Keys, typed text and pastes go to the shown tab's shell, after the terminal's own.
+    pub(super) fn input(&mut self, ctx: &egui::Context) {
+        if self.strip.menu_open() {
+            // The profile menu has the keyboard (Escape closes it).
+            if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+                self.strip.close_menu();
+            }
+            return;
+        }
+        let events = ctx.input(|i| i.events.clone());
+        let mut out = Vec::new();
+        let mut typed = false;
+        for event in events {
+            let mode = self.tabs.current().session.mode();
+            let app_cursor = mode.contains(TermMode::APP_CURSOR);
+            match event {
+                egui::Event::Text(text) | egui::Event::Ime(egui::ImeEvent::Commit(text)) => {
+                    let alt = self.keys.alt_key.take().is_some();
+                    out.extend(keys::text_bytes(&text, alt));
+                    typed = true;
+                }
+                egui::Event::Key { key, physical_key, pressed: true, modifiers, .. } => {
+                    // A key whose Alt text never came (Windows sends none for some): ESC and
+                    // the key itself.
+                    if let Some(c) = self.keys.alt_key.take() {
+                        out.extend(keys::text_bytes(&c.to_string(), true));
+                    }
+                    let mods = Mods { shift: modifiers.shift, ctrl: modifiers.ctrl, alt: modifiers.alt };
+                    if let Some(s) = shortcut(key, physical_key, mods) {
+                        // What was typed before goes first, to the tab it was typed in.
+                        self.flush(&mut out, &mut typed);
+                        self.run(ctx, s);
+                        continue;
+                    }
+                    let session = &self.tabs.current().session;
+                    let has_selection = session.with_term(select::has);
+                    // Enter copies a selection (and Escape drops it), as in Windows Terminal.
+                    if has_selection && mods == Mods::NONE && matches!(key, egui::Key::Enter | egui::Key::Escape) {
+                        if key == egui::Key::Enter {
+                            self.copy_selection(ctx);
+                        }
+                        session.with_term_mut(|t| t.selection = None);
+                        continue;
+                    }
+                    let Some(k) = map_key(key, mods) else { continue };
+                    if let Key::Char(c) = k {
+                        if mods.alt && !mods.ctrl {
+                            self.keys.alt_key = Some(if mods.shift { c } else { c.to_ascii_lowercase() });
+                            continue;
+                        }
+                    }
+                    match keys::local(k, mods) {
+                        Some(Local::ScrollPage(dir)) => {
+                            let s = &self.tabs.current().session;
+                            s.scroll(dir * (s.size().rows as i32 - 1).max(1));
+                        }
+                        None => {
+                            out.extend(keys::key_bytes(k, mods, app_cursor).unwrap_or_default());
+                            typed = true;
+                        }
+                    }
+                }
+                egui::Event::Paste(text) => {
+                    out.extend(keys::paste_bytes(&text, mode.contains(TermMode::BRACKETED_PASTE)));
+                    typed = true;
+                }
+                // egui turns Ctrl+C (and Ctrl+Shift+C, Ctrl+Insert) into copy: a selection is
+                // copied; without one, Ctrl+C is the interrupt it always was.
+                egui::Event::Copy => {
+                    let m = ctx.input(|i| i.modifiers);
+                    if self.tabs.current().session.with_term(select::has) {
+                        self.copy_selection(ctx);
+                        if !m.shift {
+                            self.tabs.current().session.with_term_mut(|t| t.selection = None);
+                        }
+                    } else if m.ctrl && !m.shift {
+                        out.push(0x03);
+                        typed = true;
+                    }
+                }
+                egui::Event::Cut => {
+                    let m = ctx.input(|i| i.modifiers);
+                    if m.ctrl {
+                        out.push(0x18);
+                    } else {
+                        // Shift+Delete.
+                        out.extend(keys::key_bytes(Key::Delete, Mods { shift: true, ..Mods::NONE }, app_cursor).unwrap_or_default());
+                    }
+                    typed = true;
+                }
+                _ => {}
+            }
+        }
+        if let Some(c) = self.keys.alt_key.take() {
+            out.extend(keys::text_bytes(&c.to_string(), true));
+            typed = true;
+        }
+        self.flush(&mut out, &mut typed);
+    }
+
+    /// Send what was typed to the shown tab; typing drops a selection and shows the cursor.
+    fn flush(&mut self, out: &mut Vec<u8>, typed: &mut bool) {
+        if *typed {
+            let s = &self.tabs.current().session;
+            if s.with_term(|t| t.selection.is_some()) {
+                s.with_term_mut(|t| t.selection = None);
+            }
+            self.view.restart_blink();
+        }
+        self.tabs.current().session.write(std::mem::take(out));
+        *typed = false;
+    }
+
+    /// Put the selection on the clipboard.
+    pub(super) fn copy_selection(&self, ctx: &egui::Context) -> bool {
+        match self.tabs.current().session.with_term(select::text) {
+            Some(text) if !text.is_empty() => {
+                ctx.copy_text(text);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn run(&mut self, ctx: &egui::Context, s: Shortcut) {
+        match s {
+            Shortcut::NewTab => self.new_tab(None),
+            Shortcut::NewTabOf(i) => {
+                if i < self.profiles.len() {
+                    self.new_tab(Some(i));
+                }
+            }
+            Shortcut::CloseTab => self.close_tab(ctx, self.tabs.active()),
+            Shortcut::NextTab | Shortcut::PrevTab => {
+                let to = self.tabs.stepped(s == Shortcut::NextTab);
+                self.select_tab(to);
+            }
+            Shortcut::TabNumber(n) => self.select_tab(self.tabs.numbered(n)),
+            Shortcut::ZoomIn => self.zoom(Some(1.0)),
+            Shortcut::ZoomOut => self.zoom(Some(-1.0)),
+            Shortcut::ZoomReset => self.zoom(None),
+        }
+    }
+}
+
+/// egui's key as the terminal's: the keys with sequences of their own, and character keys
+/// (which matter only with Ctrl or Alt; plain typing comes as text).
+pub fn map_key(key: egui::Key, mods: Mods) -> Option<Key> {
+    use egui::Key as E;
+    Some(match key {
+        E::Enter => Key::Enter,
+        E::Backspace => Key::Backspace,
+        E::Tab => Key::Tab,
+        E::Escape => Key::Escape,
+        // Plain Space types a space as text.
+        E::Space if mods.ctrl => Key::Space,
+        E::ArrowUp => Key::Up,
+        E::ArrowDown => Key::Down,
+        E::ArrowLeft => Key::Left,
+        E::ArrowRight => Key::Right,
+        E::Home => Key::Home,
+        E::End => Key::End,
+        E::PageUp => Key::PageUp,
+        E::PageDown => Key::PageDown,
+        E::Insert => Key::Insert,
+        E::Delete => Key::Delete,
+        E::F1 => Key::F(1),
+        E::F2 => Key::F(2),
+        E::F3 => Key::F(3),
+        E::F4 => Key::F(4),
+        E::F5 => Key::F(5),
+        E::F6 => Key::F(6),
+        E::F7 => Key::F(7),
+        E::F8 => Key::F(8),
+        E::F9 => Key::F(9),
+        E::F10 => Key::F(10),
+        E::F11 => Key::F(11),
+        E::F12 => Key::F(12),
+        _ if mods.ctrl || mods.alt => {
+            let mut s = key.symbol_or_name().chars();
+            match (s.next(), s.next()) {
+                (Some(c), None) => Key::Char(c),
+                _ => return None,
+            }
+        }
+        _ => return None,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use egui::Key as K;
+
+    const CTRL_SHIFT: Mods = Mods { shift: true, ctrl: true, alt: false };
+    const CTRL_ALT: Mods = Mods { shift: false, ctrl: true, alt: true };
+    const CTRL: Mods = Mods { shift: false, ctrl: true, alt: false };
+
+    #[test]
+    fn tab_shortcuts() {
+        assert_eq!(shortcut(K::T, None, CTRL_SHIFT), Some(Shortcut::NewTab));
+        assert_eq!(shortcut(K::W, None, CTRL_SHIFT), Some(Shortcut::CloseTab));
+        assert_eq!(shortcut(K::Tab, None, CTRL), Some(Shortcut::NextTab));
+        assert_eq!(shortcut(K::Tab, None, CTRL_SHIFT), Some(Shortcut::PrevTab));
+        // Ctrl+T and Ctrl+W alone are the shell's (readline's transpose, delete word).
+        assert_eq!(shortcut(K::T, None, CTRL), None);
+        assert_eq!(shortcut(K::W, None, CTRL), None);
+    }
+
+    #[test]
+    fn digits_by_their_place_whatever_shift_makes_of_them() {
+        assert_eq!(shortcut(K::Num3, Some(K::Num3), CTRL_ALT), Some(Shortcut::TabNumber(3)));
+        // Shift+1 is "!" on US, but its place is still 1.
+        assert_eq!(shortcut(K::Exclamationmark, Some(K::Num1), CTRL_SHIFT), Some(Shortcut::NewTabOf(0)));
+        assert_eq!(shortcut(K::Num1, Some(K::Num1), CTRL), None);
+        assert_eq!(shortcut(K::Num1, Some(K::Num1), Mods::NONE), None);
+    }
+
+    #[test]
+    fn zoom_keys() {
+        assert_eq!(shortcut(K::Equals, None, CTRL), Some(Shortcut::ZoomIn));
+        assert_eq!(shortcut(K::Plus, None, CTRL_SHIFT), Some(Shortcut::ZoomIn));
+        assert_eq!(shortcut(K::Minus, None, CTRL), Some(Shortcut::ZoomOut));
+        assert_eq!(shortcut(K::Num0, Some(K::Num0), CTRL), Some(Shortcut::ZoomReset));
+    }
+
+    #[test]
+    fn altgr_characters_are_text_not_keys() {
+        // AltGr+Q ('@' on a German layout) reaches egui as Q with no modifiers and the text "@".
+        assert_eq!(map_key(K::Q, Mods::NONE), None);
+        assert_eq!(shortcut(K::Q, Some(K::Q), Mods::NONE), None);
+        // Left Ctrl + left Alt is AltGr to Windows too: no control code goes for it.
+        assert_eq!(keys::key_bytes(Key::Char('q'), CTRL_ALT, false), None);
+        // AltGr+7 is '{' on German: not Ctrl+Alt+7 (switch to tab 7), since AltGr carries no
+        // Ctrl or Alt.
+        assert_eq!(shortcut(K::Num7, Some(K::Num7), Mods::NONE), None);
+    }
+
+    #[test]
+    fn ctrl_letters_map_to_their_keys() {
+        assert_eq!(map_key(K::C, CTRL), Some(Key::Char('C')));
+        assert_eq!(map_key(K::ArrowUp, Mods::NONE), Some(Key::Up));
+        assert_eq!(map_key(K::A, Mods::NONE), None);
+    }
+}

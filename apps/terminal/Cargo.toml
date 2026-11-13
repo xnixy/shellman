@@ -16,7 +16,11 @@ egui.workspace = true
 # The grid is drawn with OpenGL inside egui's frame (a paint callback); same versions as eframe's.
 egui_glow = "0.31"
 glow = "0.16"
+# The pty's poll registration, wrapped to read its output on the way (same version as alacritty's).
+polling = "3"
 raw-window-handle.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 # Watches the settings folder, so the glass and accent follow Settings live.
 shellman-core.workspace = true
 shellman-ui.workspace = true

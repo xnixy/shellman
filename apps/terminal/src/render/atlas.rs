@@ -73,15 +73,18 @@ pub struct Atlas {
 }
 
 impl Atlas {
-    /// Load the grid font at `px` pixels per em.
-    pub fn new(px: f32) -> Result<Self, String> {
+    /// Load the grid font at `px` pixels per em: `family` if it is installed (and not empty),
+    /// else the first of [`FAMILIES`] that is.
+    pub fn new(px: f32, family: &str) -> Result<Self, String> {
         let mut raster = Rasterizer::new().map_err(|e| e.to_string())?;
         let size = Size::from_px(px);
         let face = |raster: &mut Rasterizer, family: &str, weight, slant| {
             raster.load_font(&FontDesc::new(family, Style::Description { slant, weight }), size)
         };
-        let (family, regular): (&str, _) = FAMILIES
+        let wanted = (!family.trim().is_empty()).then_some(family.trim());
+        let (family, regular): (&str, _) = wanted
             .iter()
+            .chain(FAMILIES.iter())
             .find_map(|f| face(&mut raster, f, Weight::Normal, Slant::Normal).ok().map(|k| (*f, k)))
             .ok_or("no monospace font (Cascadia Mono, Consolas) is installed")?;
         // DirectWrite picks the nearest face; a family without bold gets its regular.
@@ -120,6 +123,15 @@ impl Atlas {
     pub fn glyph(&mut self, c: char, style: u8) -> Result<Glyph, Full> {
         if let Some(g) = self.glyphs.get(&(c, style)) {
             return Ok(*g);
+        }
+        // Lines and blocks: drawn to fill the cell exactly, so neighbours join.
+        let m = self.metrics;
+        if let Some(pixels) = super::boxdraw::draw(c, m.cell_w as usize, m.cell_h as usize, m.underline_thick.max(1) as usize) {
+            let (x, y) = self.place(m.cell_w, m.cell_h)?;
+            self.uploads.push(Upload { x, y, w: m.cell_w, h: m.cell_h, pixels });
+            let glyph = Glyph { x: x as u16, y: y as u16, w: m.cell_w as u16, h: m.cell_h as u16, left: 0, top: m.baseline as i16 };
+            self.glyphs.insert((c, style), glyph);
+            return Ok(glyph);
         }
         let key = GlyphKey { character: c, font_key: self.fonts[style as usize & 3], size: self.size };
         let raster = match self.raster.get_glyph(key) {
