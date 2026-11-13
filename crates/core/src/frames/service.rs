@@ -141,6 +141,7 @@ fn update_all() {
     let stale: Vec<isize> = STATE.with(|s| {
         let mut s = s.borrow_mut();
         let Some(st) = s.as_mut() else { return Vec::new() };
+        sweep(&mut st.denied, alive);
         let stale: Vec<isize> = st.applied.iter().copied().filter(|h| !seen.contains(h)).collect();
         for h in &stale {
             st.applied.remove(h);
@@ -148,6 +149,15 @@ fn update_all() {
         stale
     });
     stale.into_iter().for_each(reset_one);
+}
+
+/// Forget the handles of windows that are gone (`alive` is `IsWindow`, a fake in tests).
+fn sweep(set: &mut HashSet<isize>, alive: impl Fn(isize) -> bool) {
+    set.retain(|h| alive(*h));
+}
+
+fn alive(hwnd: isize) -> bool {
+    unsafe { IsWindow(Some(HWND(hwnd as *mut _))) }.as_bool()
 }
 
 fn top_level_windows() -> Vec<HWND> {
@@ -194,6 +204,14 @@ unsafe extern "system" fn on_event(
     if event == EVENT_SYSTEM_FOREGROUND {
         foreground_changed(top);
     } else if top == hwnd {
+        if event == EVENT_OBJECT_CREATE {
+            // A new window, even when it got the handle of a closed one that refused.
+            STATE.with(|s| {
+                if let Some(st) = s.borrow_mut().as_mut() {
+                    st.denied.remove(&(hwnd.0 as isize));
+                }
+            });
+        }
         let front = STATE.with(|s| s.borrow().as_ref().map_or(0, |st| st.front));
         consider(hwnd, front);
     }
@@ -261,7 +279,8 @@ fn consider(hwnd: HWND, front: isize) -> bool {
                     st.applied.insert(hwnd.0 as isize);
                     // Closed windows leave their handles behind; sweep now and then.
                     if st.applied.len() > 256 {
-                        st.applied.retain(|h| unsafe { IsWindow(Some(HWND(*h as *mut _))) }.as_bool());
+                        sweep(&mut st.applied, alive);
+                        sweep(&mut st.denied, alive);
                     }
                 }
             });
@@ -270,6 +289,8 @@ fn consider(hwnd: HWND, front: isize) -> bool {
         Outcome::Denied => {
             STATE.with(|s| {
                 if let Some(st) = s.borrow_mut().as_mut() {
+                    // A closed elevated window's handle may be reused by a window that is not.
+                    sweep(&mut st.denied, alive);
                     st.denied.insert(hwnd.0 as isize);
                 }
             });
@@ -352,5 +373,19 @@ fn exe_of(hwnd: HWND) -> Option<PathBuf> {
         let _ = CloseHandle(process);
         ok.ok()?;
         Some(PathBuf::from(String::from_utf16_lossy(&buf[..len as usize])))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sweep;
+    use std::collections::HashSet;
+
+    #[test]
+    fn closed_windows_leave_the_denied_list() {
+        // 7 was an elevated window that refused and has closed; 9 still runs.
+        let mut denied: HashSet<isize> = [7, 9].into_iter().collect();
+        sweep(&mut denied, |h| h == 9);
+        assert_eq!(denied, [9].into_iter().collect(), "a later window reusing 7 is styled again");
     }
 }
