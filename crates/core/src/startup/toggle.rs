@@ -17,8 +17,9 @@ pub enum Step {
 /// Switch `item` on or off. `now` is the FILETIME stamped on a disable.
 ///
 /// Per-user items are written under HKCU. Machine-wide ones keep their approval under HKLM, which
-/// is tried directly. Readers take the user's own entry before the machine's, so when the user
-/// already has one for this item it is changed too, or the switch would not show.
+/// is tried directly; that is the only place Windows reads it from (see `approved`). A per-user
+/// entry for a machine-wide item (Windows ignores it; something else may have written it) is
+/// kept in step, so no tool that reads it shows the opposite.
 pub fn apply(reg: &dyn Registry, item: &Item, enable: bool, now: u64) -> Result<Step, String> {
     let area = item.area().ok_or_else(|| "This item has no switch.".to_string())?;
     let write = |hive| approved::write(reg, hive, area, &item.name, enable, now);
@@ -87,7 +88,8 @@ mod tests {
         reg.put(Hive::Hkcu, &Area::Run.key(), "M", Value::Binary(vec![2; 12]));
         let item = items(&reg).into_iter().find(|i| i.name == "M").unwrap();
         assert_eq!(apply(&reg, &item, false, 1), Ok(Step::Done));
-        assert!(!approved::check(&reg, Area::Run, "M").0);
+        assert!(!approved::check(&reg, Hive::Hklm, Area::Run, "M").0);
+        assert!(!approved::check(&reg, Hive::Hkcu, Area::Run, "M").0);
     }
 
     #[test]

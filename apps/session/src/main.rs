@@ -63,27 +63,34 @@ fn run(mut fleet: supervisor::Fleet, safety: bool, test: bool, park: bool) {
     if park {
         fleet.park();
     }
-    let mut deadline_passed = false;
+    // The last fallback, when it was, and whether supervising was already resumed once.
+    let mut fell_back: Option<(safety::Reason, std::time::Instant)> = None;
+    let mut resumed = false;
     loop {
         fleet.step();
+        let mut extra = None;
         if safety && !fleet.parked() {
-            let seen = safety::Seen {
-                shift: false,
-                bar_lost: fleet.bar_lost(),
-                bar_alive: fleet.bar_alive(),
-                tray_up: fallback::tray_up(),
-                since_start: fleet.since_start(),
-            };
-            deadline_passed |= seen.since_start >= safety::DEADLINE;
+            let (bar, since) = fleet.bar();
+            let seen = safety::Seen { shift: false, bar, tray_up: fallback::tray_up(), since };
             if let Some(reason) = safety::decide(&seen) {
                 log::line(&format!("falling back to Explorer: {}", reason.text()));
                 fallback::start_explorer(test);
                 fleet.park();
+                fell_back = Some((reason, std::time::Instant::now()));
+            } else {
+                extra = safety::wake_in(&seen);
             }
         }
-        // Until the deadline, wake for it; the bar's exits wake the loop by themselves.
-        let extra = (safety && !deadline_passed && !fleet.parked())
-            .then(|| safety::DEADLINE.saturating_sub(fleet.since_start()) + Duration::from_millis(50));
+        if let Some((reason, at)) = fell_back.filter(|_| fleet.parked() && !resumed) {
+            let explorer = shellman_core::app_host::explorer_is_shell();
+            if safety::resume(reason, explorer, at.elapsed(), resumed) {
+                log::line("fallback: Explorer did not become the shell; supervising the apps again (once)");
+                resumed = true;
+                fleet.resume();
+            } else if !explorer {
+                extra = Some(safety::EXPLORER_GRACE.saturating_sub(at.elapsed()) + Duration::from_millis(50));
+            }
+        }
         if !fleet.wait(extra) {
             break;
         }

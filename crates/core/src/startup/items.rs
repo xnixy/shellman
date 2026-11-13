@@ -2,6 +2,7 @@
 //! Pure: the registry, the Startup folders' files and environment expansion come in as arguments.
 
 use super::approved::{self, Area};
+use super::packaged::Task;
 use crate::registry::{Hive, Registry};
 use std::path::PathBuf;
 
@@ -11,6 +12,8 @@ const CV: &str = "Software\\Microsoft\\Windows\\CurrentVersion";
 pub enum Origin {
     Run { hive: Hive, key: String },
     Folder { common: bool, path: PathBuf },
+    /// A packaged app's startup task (see `packaged`).
+    Packaged { family: String, task_id: String, executable: String, full_trust: bool },
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -35,6 +38,8 @@ impl Item {
     pub fn area(&self) -> Option<Area> {
         match &self.origin {
             Origin::Folder { .. } => Some(Area::StartupFolder),
+            // Switched in the package's own state, not in StartupApproved.
+            Origin::Packaged { .. } => None,
             Origin::Run { .. } if self.once => None,
             Origin::Run { key, .. } => {
                 let k = key.to_ascii_lowercase();
@@ -54,6 +59,7 @@ impl Item {
         match &self.origin {
             Origin::Run { hive, .. } => *hive == Hive::Hklm,
             Origin::Folder { common, .. } => *common,
+            Origin::Packaged { .. } => false,
         }
     }
 }
@@ -78,6 +84,44 @@ pub fn strip_prefix(raw: &str) -> (&str, bool) {
 
 fn hive_name(h: Hive) -> &'static str {
     if h == Hive::Hkcu { "HKCU" } else { "HKLM" }
+}
+
+/// A packaged startup task as an item. A UWP task (not a desktop program) needs the immersive
+/// shell, so the reason says so; the session skips it while modern apps cannot open.
+pub fn packaged_item(t: &Task) -> Item {
+    let d = &t.declared;
+    let shown = if d.display_name.is_empty() || d.display_name.starts_with("ms-resource:") {
+        t.package_name.clone()
+    } else {
+        d.display_name.clone()
+    };
+    let name = if shown.is_empty() { d.task_id.clone() } else { format!("{shown} ({})", d.task_id) };
+    let mut why = t.why.clone();
+    if !d.full_trust {
+        why.push_str("; a UWP app, started only while modern apps can open");
+    }
+    Item {
+        origin: Origin::Packaged {
+            family: t.family.clone(),
+            task_id: d.task_id.clone(),
+            executable: d.executable.clone(),
+            full_trust: d.full_trust,
+        },
+        place: format!("Packaged task, {}", t.family),
+        name,
+        command: t.program(),
+        enabled: t.enabled,
+        why,
+        once: false,
+        delete_after: false,
+    }
+}
+
+/// Put packaged tasks where the shell starts them: after the registry's items and before the
+/// Startup folders (`shell\lib\runonce`: the Run keys, then the startup tasks, then the rest).
+pub fn insert_packaged(items: &mut Vec<Item>, tasks: &[Task]) {
+    let at = items.iter().position(|i| matches!(i.origin, Origin::Folder { .. })).unwrap_or(items.len());
+    items.splice(at..at, tasks.iter().map(packaged_item));
 }
 
 pub fn collect(
@@ -107,7 +151,7 @@ pub fn collect(
             let Some(text) = value.text() else { continue };
             let (command, after) = strip_prefix(text);
             let (mut enabled, mut why) = match area {
-                Some(a) => approved::check(reg, a, &name),
+                Some(a) => approved::check(reg, hive, a, &name),
                 None => (true, "not subject to StartupApproved".to_string()),
             };
             // Deleting a machine-wide RunOnce value takes admin rights; without them it would
@@ -132,7 +176,8 @@ pub fn collect(
         if name.eq_ignore_ascii_case("desktop.ini") {
             continue;
         }
-        let (enabled, why) = approved::check(reg, Area::StartupFolder, &name);
+        let hive = if f.common { Hive::Hklm } else { Hive::Hkcu };
+        let (enabled, why) = approved::check(reg, hive, Area::StartupFolder, &name);
         let dir = f.path.parent().map(PathBuf::from).unwrap_or_default();
         items.push(Item {
             origin: Origin::Folder { common: f.common, path: dir },
@@ -152,6 +197,58 @@ pub fn collect(
 mod tests {
     use super::*;
     use crate::registry::{fake::Fake, Value};
+    use crate::startup::packaged::{Declared, Task};
+
+    fn task(id: &str, full_trust: bool, enabled: bool) -> Task {
+        Task {
+            family: "Pkg_abc".into(),
+            package_name: "Pkg".into(),
+            install_dir: "C:\\P".into(),
+            declared: Declared {
+                task_id: id.into(),
+                app_id: "App".into(),
+                executable: "p.exe".into(),
+                parameters: String::new(),
+                full_trust,
+                enabled_by_default: true,
+                display_name: "ms-resource:Name".into(),
+            },
+            enabled,
+            why: "State 2: enabled".into(),
+        }
+    }
+
+    #[test]
+    fn packaged_tasks_go_between_the_registry_and_the_folders() {
+        let reg = Fake::default();
+        reg.put(Hive::Hkcu, &format!("{CV}\\Run"), "A", text("a.exe"));
+        let files = [FolderFile { common: false, path: PathBuf::from("C:\\S\\t.lnk") }];
+        let mut items = collect(&reg, &files, &|s| s.to_string(), true);
+        insert_packaged(&mut items, &[task("T", true, true), task("U", false, false)]);
+        let names: Vec<_> = items.iter().map(|i| i.name.as_str()).collect();
+        assert_eq!(names, ["A", "Pkg (T)", "Pkg (U)", "t.lnk"]);
+        let t = &items[1];
+        assert!(t.enabled && t.area().is_none() && !t.machine_wide());
+        assert_eq!(t.command, "C:\\P\\p.exe");
+        assert!(items[2].why.contains("UWP"));
+        // With no folder items they go last.
+        let mut items = collect(&reg, &[], &|s| s.to_string(), true);
+        insert_packaged(&mut items, &[task("T", true, true)]);
+        assert_eq!(items.last().unwrap().name, "Pkg (T)");
+    }
+
+    #[test]
+    fn approvals_are_read_in_the_items_own_hive() {
+        let reg = Fake::default();
+        reg.put(Hive::Hklm, &format!("{CV}\\Run"), "M", text("m.exe"));
+        reg.put(Hive::Hkcu, &approved_key("Run"), "M", Value::Binary(vec![3; 12]));
+        let files = [FolderFile { common: true, path: PathBuf::from("C:\\C\\c.lnk") }];
+        reg.put(Hive::Hkcu, &approved_key("StartupFolder"), "c.lnk", Value::Binary(vec![3; 12]));
+        let items = collect(&reg, &files, &|s| s.to_string(), true);
+        assert!(items.iter().all(|i| i.enabled), "HKCU values do not switch off machine-wide items");
+        reg.put(Hive::Hklm, &approved_key("StartupFolder"), "c.lnk", Value::Binary(vec![1; 12]));
+        assert!(!collect(&reg, &files, &|s| s.to_string(), true)[1].enabled);
+    }
 
     fn text(s: &str) -> Value {
         Value::Text(s.to_string())
@@ -216,7 +313,7 @@ mod tests {
     #[test]
     fn folder_items_use_their_own_approval_key() {
         let reg = Fake::default();
-        reg.put(Hive::Hkcu, &approved_key("StartupFolder"), "t.lnk", Value::Binary(vec![3; 12]));
+        reg.put(Hive::Hklm, &approved_key("StartupFolder"), "t.lnk", Value::Binary(vec![3; 12]));
         let files = [FolderFile { common: true, path: PathBuf::from("C:\\C\\t.lnk") }];
         let items = collect(&reg, &files, &|s| s.to_string(), false);
         assert!(!items[0].enabled);
