@@ -1,11 +1,14 @@
 #![windows_subsystem = "windows"]
 //! Terminal: shells in tabs, in a glass window. The command line (`-d`, `-p`, `-e`/`--`,
-//! `--hold`) is in `cli.rs`; a second start can hand its tab to the open window (`instance.rs`).
+//! `--hold`) is in `cli.rs`; a second start can hand its tab to the open window (`instance.rs`);
+//! `-Embedding` is COM starting it to show a console Windows hands over (`defterm`).
 
 mod app;
 mod cli;
 mod clip;
 mod config;
+mod defterm;
+mod handoff_pty;
 mod instance;
 mod keys;
 mod mouse;
@@ -28,8 +31,18 @@ fn main() -> eframe::Result {
     let line = command_line().unwrap_or_default();
     let mut launch = match cli::parse(&line) {
         Ok(cli::Mode::Window(l)) => l,
+        Ok(cli::Mode::Embedding) => return embedding(),
+        Ok(cli::Mode::RegisterDefault) => {
+            attach_console();
+            std::process::exit(defterm::register());
+        }
+        Ok(cli::Mode::UnregisterDefault) => {
+            attach_console();
+            std::process::exit(defterm::unregister());
+        }
         Err(e) => {
-            say(&format!("shellman-terminal: {e}\n{}", cli::USAGE));
+            attach_console();
+            eprintln!("shellman-terminal: {e}\n{}", cli::USAGE);
             std::process::exit(2);
         }
     };
@@ -41,27 +54,66 @@ fn main() -> eframe::Result {
     if config::Config::load().new_instance == config::NewInstance::Tab && instance::hand_over(&launch) {
         return Ok(());
     }
-    run_window(launch)
+    run_window(launch, None)
 }
 
-/// Print to the console this was started from, if any (a Windows-subsystem exe has none of its own).
-fn say(text: &str) {
-    use windows::Win32::System::Console::{AttachConsole, ATTACH_PARENT_PROCESS};
+/// COM started this for a console handoff: take it, then show it (or, for a console started
+/// hidden, run it with no window until its program ends).
+fn embedding() -> eframe::Result {
+    let rx = match defterm::server::serve() {
+        Ok(rx) => rx,
+        Err(e) => {
+            eprintln!("shellman-terminal: {e}");
+            std::process::exit(1);
+        }
+    };
+    let Ok(arrived) = rx.recv_timeout(std::time::Duration::from_secs(30)) else {
+        std::process::exit(0);
+    };
+    if arrived.hidden() {
+        app::run_hidden(arrived);
+        std::process::exit(0);
+    }
+    run_window(cli::Launch::default(), Some(arrived))
+}
+
+/// Make `println!` reach the console this was started from (a Windows-subsystem exe has none of
+/// its own). Redirected output already works.
+fn attach_console() {
+    use windows::core::w;
+    use windows::Win32::Foundation::GENERIC_WRITE;
+    use windows::Win32::Storage::FileSystem::{CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_WRITE, OPEN_EXISTING};
+    use windows::Win32::System::Console::{
+        AttachConsole, GetStdHandle, SetStdHandle, ATTACH_PARENT_PROCESS, STD_ERROR_HANDLE, STD_OUTPUT_HANDLE,
+    };
     unsafe {
         let _ = AttachConsole(ATTACH_PARENT_PROCESS);
+        let has_out = GetStdHandle(STD_OUTPUT_HANDLE).is_ok_and(|h| !h.is_invalid() && !h.0.is_null());
+        if !has_out {
+            if let Ok(con) = CreateFileW(w!("CONOUT$"), GENERIC_WRITE.0, FILE_SHARE_WRITE, None, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, None) {
+                let _ = SetStdHandle(STD_OUTPUT_HANDLE, con);
+                let _ = SetStdHandle(STD_ERROR_HANDLE, con);
+            }
+        }
     }
-    eprintln!("{text}");
 }
 
-fn run_window(launch: cli::Launch) -> eframe::Result {
+fn run_window(launch: cli::Launch, handoff: Option<defterm::server::Arrived>) -> eframe::Result {
+    let mut viewport = egui::ViewportBuilder::default()
+        .with_title("Terminal")
+        .with_inner_size([960.0, 600.0])
+        .with_min_inner_size([420.0, 260.0])
+        .with_transparent(true)
+        .with_decorations(false);
+    // A console started with a position (STARTUPINFO's dwX/dwY) opens there.
+    let position = handoff.as_ref().and_then(|a| a.position);
+    if let Some((x, y)) = position {
+        let scale = unsafe { windows::Win32::UI::HiDpi::GetDpiForSystem() }.max(96) as f32 / 96.0;
+        viewport = viewport.with_position([x as f32 / scale, y as f32 / scale]);
+    }
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_title("Terminal")
-            .with_inner_size([960.0, 600.0])
-            .with_min_inner_size([420.0, 260.0])
-            .with_transparent(true)
-            .with_decorations(false),
-        centered: true,
+        viewport,
+        centered: position.is_none(),
         // The grid is redrawn only when something changed; vsync caps a flood of output.
         vsync: true,
         ..Default::default()
@@ -90,7 +142,7 @@ fn run_window(launch: cli::Launch) -> eframe::Result {
                 }
             }
             let panel = panel.ok_or("the window has no handle")?;
-            Ok(Box::new(app::TerminalApp::new(&cc.egui_ctx, look, panel, launch)?))
+            Ok(Box::new(app::TerminalApp::new(&cc.egui_ctx, look, panel, launch, handoff)?))
         }),
     )
 }

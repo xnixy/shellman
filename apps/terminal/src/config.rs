@@ -64,6 +64,12 @@ impl Config {
         }
     }
 
+    /// The settings without writing the file when it is missing (a window COM started for a
+    /// handed-over console writes nothing).
+    pub fn read() -> Self {
+        shellman_core::config::load::<Config>(NAME).sane()
+    }
+
     /// Values kept within what works.
     fn sane(mut self) -> Self {
         if !self.font_size.is_finite() {

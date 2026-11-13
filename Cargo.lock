@@ -2448,6 +2448,7 @@ dependencies = [
  "shellman-core",
  "shellman-ui",
  "windows",
+ "windows-core",
  "winresource",
 ]
 

@@ -15,6 +15,8 @@ mod view;
 
 use crate::cli::Launch;
 use crate::config::Config;
+use crate::defterm::server::Arrived;
+use crate::handoff_pty::HandoffPty;
 use crate::instance;
 use crate::profiles::{self, Profile};
 use crate::render::{Frame, Renderer};
@@ -82,9 +84,9 @@ pub struct TerminalApp {
 }
 
 impl TerminalApp {
-    /// `launch`: what the first tab runs, and where.
-    pub fn new(ctx: &egui::Context, look: Appearance, panel: GlassPanel, launch: Launch) -> Result<Self, String> {
-        let config = Config::load();
+    /// `launch`: what the first tab runs, and where; or `handoff`, a console Windows handed over.
+    pub fn new(ctx: &egui::Context, look: Appearance, panel: GlassPanel, launch: Launch, handoff: Option<Arrived>) -> Result<Self, String> {
+        let config = if handoff.is_some() { Config::read() } else { Config::load() };
         let profiles = profiles::build(&profiles::detect());
         let ppp = ctx.pixels_per_point();
         let font_pt = config.font_size;
@@ -95,10 +97,17 @@ impl TerminalApp {
         if let Some(dir) = shellman_ui::appearance::file().and_then(|f| f.parent().map(|p| p.to_path_buf())) {
             look_watch.set_dirs(vec![dir]);
         }
-        let first = {
-            let (command, dir) = plan(&profiles, &config, &launch, None);
-            spawn(&command, Some(dir), &renderer, &config, wake.clone()).map_err(|e| format!("could not start {command}: {e}"))?
+        let minimized = handoff.as_ref().is_some_and(Arrived::minimized);
+        let first = match handoff {
+            Some(arrived) => attach(arrived, &renderer, &config, wake.clone()).map_err(|e| format!("could not show the console: {e}"))?,
+            None => {
+                let (command, dir) = plan(&profiles, &config, &launch, None);
+                spawn(&command, Some(dir), &renderer, &config, wake.clone()).map_err(|e| format!("could not start {command}: {e}"))?
+            }
         };
+        if minimized {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+        }
         let inbox = instance::listen(wake.clone());
         Ok(Self {
             tabs: Tabs::new(Tab { id: 0, session: first, hold: launch.hold && launch.command.is_some(), held: false }),
@@ -361,6 +370,34 @@ fn plan(profiles: &[Profile], config: &Config, launch: &Launch, cwd: Option<Stri
             let p = profiles::pick(profiles, launch.profile.as_deref().unwrap_or(&config.default_profile));
             p.launch(here.as_deref(), &home())
         }
+    }
+}
+
+/// Show a handed-over console in a tab sized like the shown grid (fixed on its first frame).
+fn attach(arrived: Arrived, renderer: &Renderer, config: &Config, wake: Arc<dyn Fn() + Send + Sync>) -> std::io::Result<Session> {
+    let m = renderer.metrics();
+    let size = Size { cols: 80, rows: 24, cell_w: m.cell_w as u16, cell_h: m.cell_h as u16 };
+    // A console's title is often its exe's whole path: shortened as a program's title is.
+    let name = arrived.title.map(|t| crate::session::short_title(&t)).unwrap_or(arrived.program);
+    let pty = HandoffPty::new(arrived.handles, size.into())?;
+    Session::attach(pty, name, size, config.scrollback, wake)
+}
+
+/// A console started hidden: no window. Its output is read (so it never blocks) and dropped,
+/// until its program ends.
+pub fn run_hidden(arrived: Arrived) {
+    use alacritty_terminal::event::WindowSize;
+    use alacritty_terminal::tty::{EventedPty, EventedReadWrite};
+    use std::io::Read;
+    let size = WindowSize { num_lines: 24, num_cols: 80, cell_width: 1, cell_height: 1 };
+    let Ok(mut pty) = HandoffPty::new(arrived.handles, size) else { return };
+    let mut sink = [0u8; 64 * 1024];
+    loop {
+        while pty.reader().read(&mut sink).unwrap_or(0) > 0 {}
+        if pty.next_child_event().is_some() {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
     }
 }
 

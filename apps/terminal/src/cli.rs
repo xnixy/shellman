@@ -3,6 +3,9 @@
 //! ```text
 //! shellman-terminal [-d|--dir <folder>] [-p|--profile <name>] [--hold] [-e <command line> | -- <command line>]
 //! shellman-terminal <command line>                 (as before: runs it in the first tab)
+//! shellman-terminal --register-default-terminal    (Windows' default terminal: see `defterm`)
+//! shellman-terminal --unregister-default-terminal
+//! shellman-terminal -Embedding                     (started by COM for a console handoff)
 //! ```
 //!
 //! The command line after `-e` or `--` reaches CreateProcess exactly as typed (quotes and all),
@@ -35,6 +38,10 @@ pub struct Launch {
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum Mode {
     Window(Launch),
+    /// COM started this to take a console handoff (`defterm`).
+    Embedding,
+    RegisterDefault,
+    UnregisterDefault,
 }
 
 impl Launch {
@@ -134,6 +141,17 @@ fn tokens(line: &str) -> Vec<Token> {
 /// Parse everything after the exe.
 pub fn parse(line: &str) -> Result<Mode, String> {
     let toks = tokens(line);
+    // COM adds `-Embedding` (once, or after one already in the registered line).
+    if !toks.is_empty() && toks.iter().all(|t| t.text.eq_ignore_ascii_case("-embedding") || t.text.eq_ignore_ascii_case("/embedding")) {
+        return Ok(Mode::Embedding);
+    }
+    if let [only] = toks.as_slice() {
+        match only.text.as_str() {
+            "--register-default-terminal" => return Ok(Mode::RegisterDefault),
+            "--unregister-default-terminal" => return Ok(Mode::UnregisterDefault),
+            _ => {}
+        }
+    }
     let mut launch = Launch::default();
     let mut i = 0;
     let value = |i: usize, name: &str| -> Result<String, String> {
@@ -175,7 +193,7 @@ pub fn parse(line: &str) -> Result<Mode, String> {
     Ok(Mode::Window(launch))
 }
 
-pub const USAGE: &str = "usage: shellman-terminal [-d <folder>] [-p <profile>] [--hold] [-e <command line> | -- <command line>]";
+pub const USAGE: &str = "usage: shellman-terminal [-d <folder>] [-p <profile>] [--hold] [-e <command line> | -- <command line>]\n       shellman-terminal --register-default-terminal | --unregister-default-terminal";
 
 #[cfg(test)]
 mod tests {
@@ -230,6 +248,17 @@ mod tests {
             assert!(parse(line).is_err(), "{line}");
         }
         assert!(parse(&format!("-- {}", "x".repeat(MAX_COMMAND + 1))).is_err());
+    }
+
+    #[test]
+    fn modes() {
+        assert_eq!(parse("-Embedding"), Ok(Mode::Embedding));
+        assert_eq!(parse("/Embedding"), Ok(Mode::Embedding));
+        assert_eq!(parse("-Embedding -Embedding"), Ok(Mode::Embedding));
+        assert_eq!(parse("--register-default-terminal"), Ok(Mode::RegisterDefault));
+        assert_eq!(parse("--unregister-default-terminal"), Ok(Mode::UnregisterDefault));
+        assert!(parse("-d x --register-default-terminal").is_err());
+        assert!(parse("-Embedding -d x").is_err());
     }
 
     #[test]
