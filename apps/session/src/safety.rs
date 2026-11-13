@@ -14,9 +14,6 @@ use std::time::Duration;
 /// A bar that has not made the tray window this long after it was (re)started is not coming.
 pub const DEADLINE: Duration = Duration::from_secs(20);
 
-/// After a fallback, how long Explorer gets to become the shell (own `Shell_TrayWnd`).
-pub const EXPLORER_GRACE: Duration = Duration::from_secs(15);
-
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Reason {
     /// Shift was held while the session started: the user's way out.
@@ -91,13 +88,82 @@ pub fn wake_in(s: &Seen) -> Option<Duration> {
     waiting.then(|| DEADLINE.saturating_sub(s.since) + Duration::from_millis(50))
 }
 
-/// After a fallback (not Shift: that one is the user's choice), whether Explorer failed to become
-/// the shell, so supervising should start again. That happens when something else already owns
-/// the shell window (the modern-app host): Explorer then only opens a folder window, and a parked
-/// session would leave the user with neither bar. Only once per session, so a bar that cannot
-/// run does not bounce between the two for ever.
-pub fn resume(reason: Reason, explorer_is_shell: bool, since_fallback: Duration, resumed_before: bool) -> bool {
-    reason != Reason::Shift && !resumed_before && !explorer_is_shell && since_fallback >= EXPLORER_GRACE
+/// What the session does once a fallback (`fallback::run`) is over.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum After {
+    /// Stay parked, with the watchdog looking for a taskbar.
+    Park,
+    /// Supervise the apps again, with a fresh crash budget.
+    Resume,
+}
+
+/// Explorer gave no taskbar even after the host was asked to quit and a retry: supervise the
+/// bar again, once per session, so a bar that cannot run does not bounce between the two for
+/// ever. Never after Shift (the user's choice). Every other end parks, under the watchdog.
+pub fn after_fallback(reason: Reason, outcome: crate::fallback::Outcome, resumed_before: bool) -> After {
+    let failed = outcome == crate::fallback::Outcome::NoTaskbar;
+    if failed && reason != Reason::Shift && !resumed_before {
+        After::Resume
+    } else {
+        After::Park
+    }
+}
+
+/// While parked, how often the watchdog looks for a taskbar.
+pub const WATCH_EVERY: Duration = Duration::from_secs(60);
+/// No taskbar must be seen twice, this far apart, before anything is done (an Explorer that is
+/// restarting itself has none for a moment).
+pub const CONFIRM: Duration = Duration::from_secs(10);
+/// At most this many fallbacks from the watchdog within `RETRY_WINDOW`.
+pub const RETRIES: usize = 5;
+pub const RETRY_WINDOW: Duration = Duration::from_secs(60 * 60);
+
+/// What the watchdog wants after a look.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Look {
+    /// Look again after this long.
+    Wait(Duration),
+    /// No taskbar at all: run the fallback again.
+    Retry,
+    /// No taskbar, and the retries for this hour are spent: say so loudly, look again later.
+    Spent(Duration),
+}
+
+/// A parked session must never be the end state with neither a shellman bar nor an Explorer
+/// taskbar. This looks for any `Shell_TrayWnd` every minute; when there is none (twice, 10 s
+/// apart) it runs the fallback again (free the shell window, start Explorer, check), at most
+/// `RETRIES` times an hour.
+#[derive(Default, Debug)]
+pub struct Watchdog {
+    missing_since: Option<Duration>,
+    tries: Vec<Duration>,
+}
+
+impl Watchdog {
+    /// `now`: time since the session started.
+    pub fn look(&mut self, taskbar: bool, now: Duration) -> Look {
+        if taskbar {
+            self.missing_since = None;
+            return Look::Wait(WATCH_EVERY);
+        }
+        let Some(since) = self.missing_since else {
+            self.missing_since = Some(now);
+            return Look::Wait(CONFIRM);
+        };
+        if now.saturating_sub(since) < CONFIRM {
+            return Look::Wait(CONFIRM - now.saturating_sub(since));
+        }
+        self.tries.retain(|&t| now.saturating_sub(t) < RETRY_WINDOW);
+        if self.tries.len() >= RETRIES {
+            // Confirmed afresh when the wait is over.
+            self.missing_since = None;
+            let oldest = self.tries.iter().min().copied().unwrap_or(now);
+            return Look::Spent((oldest + RETRY_WINDOW).saturating_sub(now).max(WATCH_EVERY));
+        }
+        self.tries.push(now);
+        self.missing_since = None;
+        Look::Retry
+    }
 }
 
 #[cfg(test)]
@@ -174,13 +240,64 @@ mod tests {
     }
 
     #[test]
-    fn resumes_once_when_explorer_did_not_take_over() {
-        let g = EXPLORER_GRACE;
-        assert!(resume(Reason::BarLost, false, g, false));
-        assert!(resume(Reason::NoTray, false, g, false));
-        assert!(!resume(Reason::BarLost, false, g - Duration::from_millis(1), false), "Explorer is given time");
-        assert!(!resume(Reason::BarLost, true, g, false), "Explorer is the shell: stay out of its way");
-        assert!(!resume(Reason::BarLost, false, g, true), "only once");
-        assert!(!resume(Reason::Shift, false, g, false), "Shift is the user's choice");
+    fn resumes_once_when_explorer_gave_no_taskbar() {
+        use crate::fallback::Outcome::*;
+        assert_eq!(after_fallback(Reason::BarLost, NoTaskbar, false), After::Resume);
+        assert_eq!(after_fallback(Reason::NoTray, NoTaskbar, false), After::Resume);
+        assert_eq!(after_fallback(Reason::BarLost, NoTaskbar, true), After::Park, "only once");
+        assert_eq!(after_fallback(Reason::Shift, NoTaskbar, false), After::Park, "Shift is the user's choice");
+        for ok in [Taskbar, AlreadyShell, Ending] {
+            assert_eq!(after_fallback(Reason::BarLost, ok, false), After::Park);
+        }
+    }
+
+    fn s(secs: u64) -> Duration {
+        Duration::from_secs(secs)
+    }
+
+    #[test]
+    fn the_watchdog_leaves_a_taskbar_alone() {
+        let mut w = Watchdog::default();
+        for t in 0..100 {
+            assert_eq!(w.look(true, s(t * 60)), Look::Wait(WATCH_EVERY));
+        }
+    }
+
+    #[test]
+    fn the_watchdog_retries_after_two_looks_without_a_taskbar() {
+        let mut w = Watchdog::default();
+        assert_eq!(w.look(false, s(100)), Look::Wait(CONFIRM));
+        assert_eq!(w.look(false, s(104)), Look::Wait(s(6)), "woken early: the rest of the wait");
+        assert_eq!(w.look(false, s(110)), Look::Retry);
+        // A taskbar came back for a moment in between: the count starts over.
+        assert_eq!(w.look(false, s(200)), Look::Wait(CONFIRM));
+        assert_eq!(w.look(true, s(210)), Look::Wait(WATCH_EVERY));
+        assert_eq!(w.look(false, s(270)), Look::Wait(CONFIRM));
+    }
+
+    #[test]
+    fn the_watchdog_is_bounded_but_never_gives_up_for_good() {
+        let mut w = Watchdog::default();
+        let mut t = s(0);
+        let mut retries = 0;
+        let mut spent = None;
+        for _ in 0..40 {
+            match w.look(false, t) {
+                Look::Retry => retries += 1,
+                Look::Spent(d) => {
+                    spent = Some(d);
+                    break;
+                }
+                Look::Wait(_) => {}
+            }
+            t += CONFIRM;
+        }
+        assert_eq!(retries, RETRIES);
+        let d = spent.expect("spent after RETRIES");
+        assert!(d >= WATCH_EVERY && d <= RETRY_WINDOW);
+        // An hour after the first retry it tries again.
+        let later = t + RETRY_WINDOW;
+        assert_eq!(w.look(false, later), Look::Wait(CONFIRM));
+        assert_eq!(w.look(false, later + CONFIRM), Look::Retry);
     }
 }

@@ -26,7 +26,9 @@ mod transparency;
 mod window;
 
 use cli::Mode;
-use std::time::Duration;
+use std::sync::mpsc::{channel, Receiver, TryRecvError};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -55,51 +57,120 @@ fn main() {
         return;
     };
     transparency::listen(window);
+    let net = Net { shell: fallback::for_run(test), window: window.0 as isize, t0: Instant::now() };
     // Shift at start is the user's way out: Explorer, and no shellman apps at all.
     if safety && fallback::shift_held() {
-        log::line(&format!("falling back to Explorer: {}", safety::Reason::Shift.text()));
-        fallback::start_explorer(test);
-        run(supervisor::Fleet::new(Vec::new()), false, test, true);
+        run(supervisor::Fleet::new(Vec::new()), Some(net), Some(safety::Reason::Shift));
         return;
     }
     let fleet = supervisor::Fleet::new(apps);
     if startup && !test {
         startup::start(fleet.adopted());
     }
-    run(fleet, safety, test, false);
+    run(fleet, safety.then_some(net), None);
 }
 
-/// The message loop: supervise until the window closes.
-fn run(mut fleet: supervisor::Fleet, safety: bool, test: bool, park: bool) {
-    if park {
+/// The safety net's part of the loop.
+struct Net {
+    shell: Arc<dyn fallback::Shell + Send + Sync>,
+    window: isize,
+    t0: Instant,
+}
+
+/// Where the safety net stands.
+enum State {
+    /// Supervising; the net watches the bar.
+    Watching,
+    /// A fallback runs on its thread (`fallback::spawn`); the fleet is parked meanwhile.
+    FallingBack(safety::Reason, Receiver<fallback::Outcome>),
+    /// Parked; the watchdog looks for a taskbar at `next`.
+    Parked { reason: safety::Reason, next: Instant },
+}
+
+impl Net {
+    fn fall_back(&self, reason: safety::Reason, fleet: &mut supervisor::Fleet) -> State {
+        log::line(&format!("falling back to Explorer: {}", reason.text()));
         fleet.park();
+        let (tx, rx) = channel();
+        fallback::spawn(self.shell.clone(), self.window, tx);
+        State::FallingBack(reason, rx)
     }
-    // The last fallback, when it was, and whether supervising was already resumed once.
-    let mut fell_back: Option<(safety::Reason, std::time::Instant)> = None;
+}
+
+/// The message loop: supervise until the window closes. `net` is the safety net (None: off).
+fn run(mut fleet: supervisor::Fleet, net: Option<Net>, shift: Option<safety::Reason>) {
+    let mut state = State::Watching;
+    // Whether supervising was already resumed once after a fallback that gave no taskbar.
     let mut resumed = false;
+    // One for the whole session, so its bound (5 fallbacks an hour) holds across parks.
+    let mut dog = safety::Watchdog::default();
+    if let (Some(net), Some(reason)) = (&net, shift) {
+        state = net.fall_back(reason, &mut fleet);
+    }
     loop {
         fleet.step();
         let mut extra = None;
-        if safety && !fleet.parked() {
-            let (bar, since) = fleet.bar();
-            let seen = safety::Seen { shift: false, bar, tray_up: fallback::tray_up(), since };
-            if let Some(reason) = safety::decide(&seen) {
-                log::line(&format!("falling back to Explorer: {}", reason.text()));
-                fallback::start_explorer(test);
-                fleet.park();
-                fell_back = Some((reason, std::time::Instant::now()));
-            } else {
-                extra = safety::wake_in(&seen);
-            }
-        }
-        if let Some((reason, at)) = fell_back.filter(|_| fleet.parked() && !resumed) {
-            let explorer = shellman_core::app_host::explorer_is_shell();
-            if safety::resume(reason, explorer, at.elapsed(), resumed) {
-                log::line("fallback: Explorer did not become the shell; supervising the apps again (once)");
-                resumed = true;
-                fleet.resume();
-            } else if !explorer {
-                extra = Some(safety::EXPLORER_GRACE.saturating_sub(at.elapsed()) + Duration::from_millis(50));
+        if let Some(net) = &net {
+            state = match state {
+                State::Watching => {
+                    let (bar, since) = fleet.bar();
+                    let seen = safety::Seen { shift: false, bar, tray_up: fallback::tray_up(), since };
+                    match safety::decide(&seen) {
+                        Some(reason) => net.fall_back(reason, &mut fleet),
+                        None => {
+                            extra = safety::wake_in(&seen);
+                            State::Watching
+                        }
+                    }
+                }
+                State::FallingBack(reason, rx) => match rx.try_recv() {
+                    Ok(outcome) => match safety::after_fallback(reason, outcome, resumed) {
+                        safety::After::Resume => {
+                            log::line("fallback: no taskbar from Explorer; supervising the apps again (once)");
+                            resumed = true;
+                            fleet.resume();
+                            State::Watching
+                        }
+                        safety::After::Park => {
+                            log::line(&format!("fallback: {outcome:?}; parked, the watchdog looks for a taskbar every {} s", safety::WATCH_EVERY.as_secs()));
+                            let next = Instant::now() + safety::WATCH_EVERY;
+                            State::Parked { reason, next }
+                        }
+                    },
+                    Err(TryRecvError::Empty) => State::FallingBack(reason, rx),
+                    Err(TryRecvError::Disconnected) => {
+                        log::line("fallback: ERROR its thread ended without an outcome; parked under the watchdog");
+                        State::Parked { reason, next: Instant::now() }
+                    }
+                },
+                State::Parked { reason, mut next } => {
+                    let now = Instant::now();
+                    if now < next || shutdown::quiet() {
+                        State::Parked { reason, next }
+                    } else {
+                        match dog.look(net.shell.any_taskbar(), net.t0.elapsed()) {
+                            safety::Look::Retry => {
+                                log::line("watchdog: ERROR no taskbar at all (no bar, no Explorer); running the fallback again");
+                                net.fall_back(reason, &mut fleet)
+                            }
+                            safety::Look::Wait(d) => {
+                                next = now + d;
+                                State::Parked { reason, next }
+                            }
+                            safety::Look::Spent(d) => {
+                                log::line(&format!("watchdog: ERROR still no taskbar and {} fallbacks this hour; next try in {} s. By hand: Ctrl+Alt+Del, Task Manager, Run new task, explorer.exe", safety::RETRIES, d.as_secs()));
+                                next = now + d;
+                                State::Parked { reason, next }
+                            }
+                        }
+                    }
+                }
+            };
+            // Parked, the fleet waits on nothing: the watchdog's next look must wake the loop.
+            // (While the session is being asked to end it is not due; a cancel is a message.)
+            if let State::Parked { next, .. } = &state {
+                let left = next.saturating_duration_since(Instant::now());
+                extra = Some(if left.is_zero() { safety::WATCH_EVERY } else { left + Duration::from_millis(50) });
             }
         }
         if !fleet.wait(extra) {

@@ -22,6 +22,8 @@ mod supervise;
 mod win;
 
 pub use win::explorer_is_shell;
+/// For the session's safety net, which must free the shell window before it starts Explorer.
+pub use win::{quit_shell, shell_window_pid};
 
 /// `off` never runs the host; `on` runs it even in a test copy (for tests, with
 /// `SHELLMAN_CONFIG_DIR` pointing somewhere else). Unset: the `modern_apps` setting decides.

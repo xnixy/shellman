@@ -191,6 +191,7 @@ impl Fleet {
         self.os.parked(true);
     }
 
+    #[cfg(test)]
     pub fn parked(&self) -> bool {
         self.parked
     }
