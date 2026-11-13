@@ -41,8 +41,32 @@ pub fn show(ui: &mut egui::Ui, st: &mut State) {
         }
         font_picker::preview(ui);
     });
+    page::group(ui, "Sidebars", |ui| sidebars(ui, st));
     page::group(ui, "Icon pack", |ui| super::icon_pack::group(ui, st));
     page::group(ui, "Window frames", frames_group);
+}
+
+/// How every app's sidebar starts: with names, or icons only. Choosing again also undoes what
+/// each app's own fold button chose, so every open app follows at once.
+fn sidebars(ui: &mut egui::Ui, st: &mut State) {
+    let mut collapsed = st.look.rail_collapsed;
+    if page::segmented(ui, &mut collapsed, &[(false, "Show names"), (true, "Icons only")]) {
+        st.look.set_rail_default(collapsed);
+        st.save_look();
+    }
+    ui.add_space(6.0);
+    ui.label(
+        theme::muted("The button at the foot of an app's sidebar changes that app only; choosing here sets every app. Narrow windows show icons only.")
+            .size(12.0),
+    );
+    // Apps set their own way: one click puts them all back on the default.
+    if st.look.rails != shellman_ui::appearance::Rails::default() {
+        ui.add_space(4.0);
+        if ui.link(egui::RichText::new("Set every app to this").size(12.5)).clicked() {
+            st.look.set_rail_default(collapsed);
+            st.save_look();
+        }
+    }
 }
 
 /// Other apps' title bars and borders in shellman's look (`frames.json`, read by the desktop).

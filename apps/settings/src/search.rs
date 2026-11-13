@@ -20,6 +20,7 @@ const ENTRIES: &[Entry] = &[
     e(Section::Appearance, "", "look theme dark light colour color style"),
     e(Section::Appearance, "Accent color", "colour swatch windows custom highlight"),
     e(Section::Appearance, "Glass", "transparency blur acrylic solid clear opacity"),
+    e(Section::Appearance, "Sidebars", "rail sidebar collapse expand fold icons names labels"),
     e(Section::Desktop, "", "wallpaper background icons right-click"),
     e(Section::Desktop, "Desktop style", "clean widgets shelf"),
     e(Section::Desktop, "Shelf", "stacks downloads recent drop edge"),

@@ -19,7 +19,8 @@ const BACKING: f32 = 1.0;
 impl super::FileMan {
     pub(super) fn layout(&mut self, ctx: &egui::Context, actions: &mut Vec<Action>) {
         let screen = ctx.screen_rect();
-        let plan = Plan::new(screen, self.details_on());
+        let rows = self.rail_rows(ctx);
+        let mode = self.rail_mode(screen.width());
         // Read every frame, so the glass follows the theme, accent and glass amount live.
         let style = Style::from_theme(RADIUS);
         let composed = self.panel.as_ref().is_some_and(|p| p.composed());
@@ -33,6 +34,8 @@ impl super::FileMan {
                 // Under everything: the islands themselves when nothing composes them.
                 let under = ui.painter().add(Shape::Noop);
                 islands::drag_gaps(ui, screen);
+                let rail_w = shellman_ui::rail::width(ui, &rows.entries, mode);
+                let plan = Plan::new(screen, self.details_on(), rail_w);
 
                 let top = if self.pick.is_some() {
                     self.pick_title(ui, plan.tabs_row, actions)
@@ -44,8 +47,8 @@ impl super::FileMan {
                 list.push(Island::pill(plan.controls));
                 self.toolbar(ui, plan.bar, actions);
                 list.push(Island::pill(plan.bar));
-                let rail = self.rail(ui, plan.rail_area, actions);
-                list.push(Island::pill(rail));
+                let solid = (!composed).then_some(&style);
+                self.rail(ui, &mut list, screen, plan.rail_area.top(), &rows, mode, solid, actions);
 
                 // A list sits on one island. Cards are their own surfaces, over shadowless glass
                 // that keeps them readable on any wallpaper.

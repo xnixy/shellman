@@ -1,10 +1,10 @@
 //! Folders the user pinned to the rail: the list operations, the rail's icons, and which pins
 //! point at a folder that is no longer there.
 
-use super::actions::Action;
 use super::tab::Loc;
-use egui::{Align2, Id, Ui};
-use shellman_ui::theme::{glyph, semibold_font};
+use super::rail::{Kind, Spot};
+use egui::Id;
+use shellman_ui::rail::{Icon, Row};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -95,64 +95,27 @@ impl Exists {
 }
 
 impl super::FileMan {
-    /// The pinned folders, as icons on the rail; their names and paths show on hover.
-    pub(super) fn rail_pins(&mut self, ui: &mut Ui, current: &Loc, actions: &mut Vec<Action>) {
+    /// The pinned folders' rows on the rail: the folder's initial for its icon (it tells pins
+    /// apart when the rail is folded), the path beside it on hover, faded when it is gone.
+    pub(super) fn rail_pins(&mut self, ctx: &egui::Context) -> Vec<(Row<'static>, Spot)> {
         let pins = self.settings.pins.clone();
-        ui.ctx()
-            .data_mut(|d| d.insert_temp(Id::new("pinned_folders"), pins.clone()));
-        self.pin_exists.refresh(ui.ctx(), &pins);
-        for path in pins {
-            let loc = Loc::Dir(path.clone());
-            let there = self.pin_exists.there(&path);
-            let tip = if there {
-                format!("{}\n{}", loc.title(), path.display())
-            } else {
-                format!("{} (not there any more)\n{}", loc.title(), path.display())
-            };
-            let resp = super::rail::item(
-                ui,
-                ("pin", &path),
-                *current == loc,
-                !there,
-                |p, square, fg| {
-                    // The folder's initial tells pins apart; the name shows on hover.
-                    p.text(
-                        square.center(),
-                        Align2::CENTER_CENTER,
-                        initial(&loc.title()),
-                        semibold_font(15.0),
-                        fg,
-                    );
-                },
-            );
-            super::rail::label(ui, &resp, &tip);
-            if there {
-                super::dnd::zone(ui, resp.rect, super::dnd::Dest::Dir(path.clone()), 14.0);
-            }
-            if resp.clicked() {
-                if there {
-                    actions.push(Action::Navigate(loc.clone()));
+        ctx.data_mut(|d| d.insert_temp(Id::new("pinned_folders"), pins.clone()));
+        self.pin_exists.refresh(ctx, &pins);
+        pins.into_iter()
+            .map(|path| {
+                let loc = Loc::Dir(path.clone());
+                let there = self.pin_exists.there(&path);
+                let title = loc.title();
+                let tip = if there {
+                    format!("{title}\n{}", path.display())
                 } else {
-                    self.toast(format!("{} is not there any more", path.display()));
-                }
-            }
-            if resp.middle_clicked() && there {
-                actions.push(Action::NewTab(loc.clone()));
-            }
-            resp.context_menu(|ui| {
-                super::controls::flat_items(ui);
-                if there && super::controls::mi(ui, glyph::ADD, "Open in new tab", "") {
-                    actions.push(Action::NewTab(loc.clone()));
-                    ui.close_menu();
-                }
-                if super::controls::mi(ui, glyph::UNPIN, "Unpin from sidebar", "") {
-                    actions.push(Action::TogglePin(path.clone()));
-                    ui.close_menu();
-                }
-            });
-        }
+                    format!("{title} (not there any more)\n{}", path.display())
+                };
+                let row = Row::new(format!("pin:{}", path.display()), Icon::Initial(initial(&title)), title).tip(tip).dim(!there);
+                (row, Spot { loc, kind: Kind::Pin { there } })
+            })
+            .collect()
     }
-
     pub(super) fn toggle_pin(&mut self, path: PathBuf) {
         if !unpin(&mut self.settings.pins, &path) {
             pin(&mut self.settings.pins, &path);

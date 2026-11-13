@@ -11,6 +11,7 @@ use egui::{pos2, vec2, Align2, Rect, Sense, UiBuilder};
 use shellman_ui::chips::{self, Chip};
 use shellman_ui::glass::islands::{self, Island};
 use shellman_ui::glass::{GlassPanel, Style};
+use shellman_ui::appearance::RailApp;
 use shellman_ui::rail;
 use shellman_ui::theme::{self, colors, glyph, icon_font, semibold_font, AccentChoice};
 use std::time::Duration;
@@ -107,7 +108,7 @@ impl SettingsApp {
             islands::drag_gaps(ui, screen);
 
             // The title pill and the page share one column; the rail stands left of it.
-            let rail_w = rail::width(ui, &self.rail_entries(), rail::mode(screen.width(), self.st.look.rail_collapsed));
+            let rail_w = rail::width(ui, &self.rail_entries(), rail::mode(screen.width(), self.st.look.rail_folded(RailApp::Settings)));
             let left = screen.left() + MARGIN + rail_w + MARGIN;
             let room = screen.right() - MARGIN - left;
             let buttons_w = BUTTON_H * 3.0;
@@ -208,21 +209,22 @@ impl SettingsApp {
     fn rail(&mut self, ui: &mut egui::Ui, list: &mut Vec<Island>, screen: Rect, top: f32) {
         let entries = self.rail_entries();
         let solid = (!self.panel.composed()).then(|| self.panel.style());
-        let mode = rail::mode(screen.width(), self.st.look.rail_collapsed);
+        let mode = rail::mode(screen.width(), self.st.look.rail_folded(RailApp::Settings));
         let out = rail::show(ui, list, screen, top, &entries, Some(self.section.slug()), mode, solid.as_ref(), page::GROUP_RADIUS);
         if let Some(i) = out.clicked {
             self.section = Section::ALL[i];
             self.query.clear();
         }
         if out.toggled {
-            self.st.look.rail_collapsed = !self.st.look.rail_collapsed;
+            let folded = self.st.look.rail_folded(RailApp::Settings);
+            self.st.look.fold_rail(RailApp::Settings, !folded);
             self.st.save_look();
         }
     }
 
     /// The rail's rows: one per section, in the section list's order.
     fn rail_entries(&self) -> Vec<rail::Entry<'static>> {
-        Section::ALL.iter().map(|s| rail::Entry::Item { key: s.slug(), glyph: s.glyph(), label: s.label() }).collect()
+        Section::ALL.iter().map(|s| rail::Entry::item(s.slug(), s.glyph(), s.label())).collect()
     }
 
     /// The page, scrolling under the title pill: its groups become islands, clipped to `area`.

@@ -270,6 +270,14 @@ tested), else the activation manager, else PowerShell.
 - Opened from the top bar glyph's right-click, the dock Launcher icon's menu, and the launcher's
   "shellman Settings" row.
 - Single instance.
+- Sidebars: Settings, Files and Task Manager draw their left rail with one component
+  (`shellman_ui::rail`): a blurred-glass island, icon and name per row, group headings (a thin
+  line when folded), a fold button at its foot, names as glass pills on hover when folded. Below
+  800 px the window shows icons only, whatever the choice. Rule: Appearance › Sidebars ("Show
+  names" / "Icons only", `appearance.json` `rail_collapsed`) is the default for every app; an
+  app's fold button changes that app only (`"rails": {"files": true}`, an app left out follows
+  the default); choosing in Appearance sets the default and drops every app's own choice. Rows
+  are data; Files attaches its drops, middle clicks and menus to the rows' responses.
 - Windows pages rebuilt here (Windows' own Settings does not open without Explorer): all read the
   live value when shown and write at once, from `crates/core/src/system/` (`pointer`, `power_*`,
   `region*`, `storage`, `default_apps`). Measured unelevated on 26300: mouse and keyboard

@@ -22,7 +22,6 @@ pub(super) const TABS_H: f32 = 40.0;
 pub(super) const BAR_H: f32 = 50.0;
 /// Between the two top rows: they read as one group.
 const ROW_GAP: f32 = 8.0;
-pub(super) const RAIL_W: f32 = 56.0;
 /// The band along the bottom that holds the selection pill (or the item count).
 pub(super) const BAND_H: f32 = 44.0;
 /// The window buttons' pill: Sort, then minimize, maximize and close.
@@ -49,12 +48,13 @@ pub(super) struct Plan {
 }
 
 impl Plan {
-    pub(super) fn new(screen: Rect, details: bool) -> Self {
+    /// The plan for a window of `screen`, with the rail `rail_w` wide.
+    pub(super) fn new(screen: Rect, details: bool, rail_w: f32) -> Self {
         let left = screen.left() + MARGIN;
         let right = screen.right() - MARGIN;
         let top = screen.top() + MARGIN;
         let bottom = screen.bottom() - MARGIN;
-        let inner_left = left + RAIL_W + GAP;
+        let inner_left = left + rail_w + GAP;
         let controls = Rect::from_min_max(pos2(right - CONTROLS_W, top), pos2(right, top + TABS_H));
         let tabs_row = Rect::from_min_max(
             pos2(inner_left, top),
@@ -74,7 +74,7 @@ impl Plan {
             pos2(inner_left, content_top),
             pos2(content_right, content_bottom),
         );
-        let rail_area = Rect::from_min_max(pos2(left, content_top), pos2(left + RAIL_W, bottom));
+        let rail_area = Rect::from_min_max(pos2(left, content_top), pos2(left + rail_w, bottom));
         Self {
             tabs_row,
             controls,
@@ -87,13 +87,6 @@ impl Plan {
     }
 }
 
-/// The rail: as tall as its icons want, but never past its area.
-pub(super) fn rail(area: Rect, wanted: f32) -> Rect {
-    Rect::from_min_size(
-        area.min,
-        egui::vec2(area.width(), wanted.min(area.height())),
-    )
-}
 
 /// A pill `wanted` wide at the left of `row`, no wider than the row.
 pub(super) fn from_left(row: Rect, wanted: f32) -> Rect {
@@ -113,6 +106,8 @@ mod tests {
     use super::*;
     /// The smallest window, which must still fit every island apart.
     use crate::placement::MIN_SIZE;
+    /// The rail folded to icons (it is wider with its names; see `shellman_ui::rail::width`).
+    const RAIL_W: f32 = shellman_ui::rail::FOLDED_W;
 
     fn screen(w: f32, h: f32) -> Rect {
         Rect::from_min_size(pos2(0.0, 0.0), egui::vec2(w, h))
@@ -127,10 +122,17 @@ mod tests {
 
     #[test]
     fn islands_never_overlap_down_to_the_smallest_window() {
-        for (w, h) in [MIN_SIZE, (1100.0, 700.0), (2560.0, 1400.0)] {
-            let p = Plan::new(screen(w, h), false);
-            let rail = rail(p.rail_area, 10_000.0);
-            let all = [p.tabs_row, p.controls, p.bar, rail, p.content, p.band];
+        // The smallest window always folds the rail; just wide enough to show names, the
+        // widest rail the names may make.
+        let widest = 270.0;
+        for (w, h, rail_w) in [
+            (MIN_SIZE.0, MIN_SIZE.1, RAIL_W),
+            (shellman_ui::rail::NARROW_BELOW, MIN_SIZE.1, widest),
+            (1100.0, 700.0, 180.0),
+            (2560.0, 1400.0, widest),
+        ] {
+            let p = Plan::new(screen(w, h), false, rail_w);
+            let all = [p.tabs_row, p.controls, p.bar, p.rail_area, p.content, p.band];
             for (i, a) in all.iter().enumerate() {
                 assert!(
                     a.width() > 0.0 && a.height() > 0.0,
@@ -145,24 +147,27 @@ mod tests {
                 }
             }
             // The tabs keep room for a few tabs at the smallest size.
-            assert!(p.tabs_row.width() >= 300.0, "{w}x{h}");
+            assert!(p.tabs_row.width() >= 250.0, "{w}x{h}");
             assert!(p.content.height() >= 200.0, "{w}x{h}");
         }
     }
 
     #[test]
     fn content_lines_up_with_the_bar_and_the_rail() {
-        let p = Plan::new(screen(1100.0, 700.0), false);
-        assert_eq!(p.content.left(), p.bar.left());
-        assert_eq!(p.content.right(), p.bar.right());
-        assert_eq!(p.rail_area.top(), p.content.top());
-        assert_eq!(p.controls.right(), p.bar.right());
-        assert_eq!(p.content.left() - p.rail_area.right(), GAP);
+        for rail_w in [RAIL_W, 200.0] {
+            let p = Plan::new(screen(1100.0, 700.0), false, rail_w);
+            assert_eq!(p.content.left(), p.bar.left());
+            assert_eq!(p.content.right(), p.bar.right());
+            assert_eq!(p.rail_area.top(), p.content.top());
+            assert_eq!(p.controls.right(), p.bar.right());
+            assert_eq!(p.content.left() - p.rail_area.right(), GAP);
+            assert_eq!(p.tabs_row.left(), p.content.left());
+        }
     }
 
     #[test]
     fn the_details_island_takes_the_right_and_never_overlaps() {
-        let p = Plan::new(screen(1400.0, 800.0), true);
+        let p = Plan::new(screen(1400.0, 800.0), true, RAIL_W);
         let d = p.details.expect("room for it");
         assert_eq!(d.right(), p.bar.right());
         assert_eq!(d.top(), p.content.top());
@@ -171,8 +176,8 @@ mod tests {
         assert!(apart(d, p.band) && apart(d, p.content));
         // Too narrow: the content keeps its room.
         let (w, _) = MIN_SIZE;
-        assert!(Plan::new(screen(w, 600.0), true).details.is_none());
-        assert!(Plan::new(screen(1400.0, 800.0), false).details.is_none());
+        assert!(Plan::new(screen(w, 600.0), true, RAIL_W).details.is_none());
+        assert!(Plan::new(screen(1400.0, 800.0), false, RAIL_W).details.is_none());
     }
 
     #[test]
@@ -184,8 +189,5 @@ mod tests {
         let c = centred(band, 300.0);
         assert_eq!(c.center(), band.center());
         assert_eq!(centred(band, 2000.0).width(), 800.0);
-        let area = Rect::from_min_size(pos2(12.0, 120.0), egui::vec2(56.0, 500.0));
-        assert_eq!(rail(area, 300.0).height(), 300.0);
-        assert_eq!(rail(area, 3000.0).height(), 500.0);
     }
 }

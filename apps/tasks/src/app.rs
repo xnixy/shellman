@@ -6,16 +6,17 @@ use crate::histories::Histories;
 use crate::instance::Instance;
 use crate::model::List;
 use crate::{performance, processes, services};
-use egui::{pos2, vec2, Align2, Rect, Sense};
+use egui::{pos2, vec2, Align2, Rect};
 use shellman_core::procs::end::Native;
 use shellman_core::procs::native::NativeSource;
 use shellman_core::procs::sampler::Sampler;
 use shellman_core::procs::{Details, Key, System};
 use shellman_core::thumbs::Thumbs;
-use shellman_ui::appearance::Appearance;
+use shellman_ui::appearance::{Appearance, RailApp};
 use shellman_ui::chips::{self, Chip};
 use shellman_ui::glass::islands::{self, Island};
 use shellman_ui::glass::{GlassPanel, Style};
+use shellman_ui::rail;
 use shellman_ui::theme::{self, colors, glyph, icon_font, semibold_font, AccentChoice};
 use std::collections::HashMap;
 use std::time::Duration;
@@ -26,8 +27,7 @@ use windows::Win32::UI::WindowsAndMessaging::{IsIconic, IsWindowVisible};
 pub const MARGIN: f32 = 12.0;
 /// Corner radius of an island.
 pub const RADIUS: f32 = 22.0;
-const RAIL_W: f32 = 56.0;
-const RAIL_ICON: f32 = 34.0;
+
 const TITLE_H: f32 = 46.0;
 const BUTTON_H: f32 = 30.0;
 const SEARCH_W: f32 = 240.0;
@@ -50,11 +50,12 @@ enum RailItem {
     Startup,
 }
 
-const RAIL: [(RailItem, char, &str); 4] = [
-    (RailItem::Page(Page::Processes), glyph::VIEW_LIST, "Processes"),
-    (RailItem::Page(Page::Performance), '\u{E9D2}', "Performance"),
-    (RailItem::Page(Page::Services), glyph::SETTINGS, "Services"),
-    (RailItem::Startup, glyph::POWER, "Startup apps (in Settings)"),
+/// The rail: what each row is, its key, glyph and name.
+const RAIL: [(RailItem, &str, char, &str); 4] = [
+    (RailItem::Page(Page::Processes), "processes", glyph::VIEW_LIST, "Processes"),
+    (RailItem::Page(Page::Performance), "performance", '\u{E9D2}', "Performance"),
+    (RailItem::Page(Page::Services), "services", glyph::SETTINGS, "Services"),
+    (RailItem::Startup, "startup", glyph::POWER, "Startup apps"),
 ];
 
 impl Page {
@@ -104,6 +105,8 @@ pub struct TasksApp {
     panel: GlassPanel,
     sampler: Sampler,
     look: Appearance,
+    /// Wakes the window when the shared look changes (the glass, or the sidebar's fold).
+    look_watch: shellman_core::watch::Watcher,
     st: State,
     _instance: Instance,
 }
@@ -125,12 +128,17 @@ impl TasksApp {
             Some("services") => Page::Services,
             _ => Page::Processes,
         };
+        let look_watch = shellman_core::watch::Watcher::quick(ctx.clone());
+        if let Some(dir) = shellman_ui::appearance::file().and_then(|f| f.parent().map(|p| p.to_path_buf())) {
+            look_watch.set_dirs(vec![dir]);
+        }
         Self {
             page: start_page,
             query: String::new(),
             panel,
             sampler,
             look,
+            look_watch,
             st: State {
                 list: List::default(),
                 actions: Actions::new(elevator(ctx)),
@@ -177,7 +185,8 @@ impl TasksApp {
             let screen = ctx.screen_rect();
             let under = ui.painter().add(egui::Shape::Noop);
             islands::drag_gaps(ui, screen);
-            let left = screen.left() + MARGIN + RAIL_W + MARGIN;
+            let rail_w = rail::width(ui, &rail_entries(), self.rail_mode(screen));
+            let left = screen.left() + MARGIN + rail_w + MARGIN;
             let title = Rect::from_min_max(pos2(left, screen.top() + MARGIN), pos2(screen.right() - MARGIN, screen.top() + MARGIN + TITLE_H));
             list.push(Island::pill(title));
             self.title(ui, title);
@@ -268,45 +277,52 @@ impl TasksApp {
         self.st.list.set_query(&self.query);
     }
 
-    /// The pill of pages: one icon each, the current one filled with the accent.
+    /// The rail of pages (shared with the other apps): icon and name each, folded to icons by
+    /// the user or by a narrow window.
     fn rail(&mut self, ui: &mut egui::Ui, list: &mut Vec<Island>, screen: Rect, top: f32) {
-        let c = colors();
-        let n = RAIL.len() as f32;
-        let wanted = 28.0 + n * RAIL_ICON + (n - 1.0) * 4.0;
-        let height = wanted.min(screen.bottom() - MARGIN - top);
-        let rail = Rect::from_min_size(pos2(screen.left() + MARGIN, top), vec2(RAIL_W, height));
-        list.push(Island::pill(rail));
-        let (_, hover, _) = chips::soft_colors(c.light);
-        let mut y = rail.top() + 14.0;
-        for (item, g, tip) in RAIL {
-            let cell = Rect::from_min_size(pos2(rail.center().x - RAIL_ICON / 2.0, y), vec2(RAIL_ICON, RAIL_ICON));
-            y += RAIL_ICON + 4.0;
-            if cell.bottom() > rail.bottom() {
-                break;
-            }
-            let resp = ui.interact(cell, egui::Id::new(("rail", tip)), Sense::click());
-            let current = item == RailItem::Page(self.page);
-            let (fill, fg) = if current {
-                (c.accent_fill, c.on_accent)
-            } else if resp.hovered() {
-                (hover, c.text)
-            } else {
-                (egui::Color32::TRANSPARENT, c.muted)
-            };
-            ui.painter().rect_filled(cell, 12.0, fill);
-            ui.painter().text(cell.center(), Align2::CENTER_CENTER, g, icon_font(16.0), fg);
-            if resp.on_hover_text(tip).clicked() {
-                match item {
-                    RailItem::Page(p) => self.page = p,
-                    RailItem::Startup => {
-                        shellman_core::sibling::start_with("settings", &["--page", "startup"]);
-                    }
+        let solid = (!self.panel.composed()).then(|| self.panel.style());
+        let entries = rail_entries();
+        let current = RAIL.iter().find(|(item, ..)| *item == RailItem::Page(self.page)).map(|(_, key, ..)| *key);
+        let out = rail::show(ui, list, screen, top, &entries, current, self.rail_mode(screen), solid.as_ref(), RADIUS);
+        if let Some(i) = out.clicked {
+            match RAIL[i].0 {
+                RailItem::Page(p) => self.page = p,
+                RailItem::Startup => {
+                    shellman_core::sibling::start_with("settings", &["--page", "startup"]);
                 }
+            }
+        }
+        if out.toggled {
+            self.look = Appearance::toggle_rail_saved(RailApp::Tasks, self.look);
+        }
+    }
+
+    fn rail_mode(&self, screen: Rect) -> rail::Mode {
+        rail::mode(screen.width(), self.look.rail_folded(RailApp::Tasks))
+    }
+
+    /// Take in the shared look when Settings (or another app's fold) saves it.
+    fn follow_look(&mut self, ctx: &egui::Context) {
+        if !self.look_watch.poll().is_empty() {
+            let look = Appearance::load_or(self.look);
+            if look != self.look {
+                self.look = look;
+                look.apply(ctx);
             }
         }
     }
 }
 
+/// The rail's rows, in `RAIL`'s order.
+fn rail_entries() -> Vec<rail::Entry<'static>> {
+    RAIL.iter()
+        .map(|(item, key, g, label)| match item {
+            // It leaves for Settings, which the pointer is told before it goes.
+            RailItem::Startup => rail::Row::new(*key, rail::Icon::Glyph(*g), *label).tip("Startup apps (in Settings)").into(),
+            RailItem::Page(_) => rail::Entry::item(key, *g, label),
+        })
+        .collect()
+}
 impl eframe::App for TasksApp {
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
         [0.0; 4]
@@ -314,6 +330,7 @@ impl eframe::App for TasksApp {
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.st.thumbs.poll(ctx);
+        self.follow_look(ctx);
         self.track_system(ctx);
         shellman_ui::app_icon::sync_window_icon(ctx, shellman_ui::app_icon::Kind::Shellman);
         self.take_sample();
