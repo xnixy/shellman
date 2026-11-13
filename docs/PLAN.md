@@ -158,6 +158,10 @@ Rule: **the top bar is the system, the dock is apps.** Both are windows of one p
   bitmap each. No egui.
 - `IDesktopWallpaper` needs Explorer. As the shell, it reads the classic settings instead: one
   picture for all monitors, no slideshow.
+- Pictures are decoded on a worker, one at a time: a monitor, DPI, wallpaper or resume change
+  while one runs only marks one more run for the latest monitors, and a result is shown only for
+  the latest generation (older ones never replace newer ones), so recreated windows always get
+  their picture.
 - No icon grid. The design (`docs/design/desktop-concepts.html`, "Shelf + Widgets") puts a shelf
   on the left edge and two widgets top right; "Clean" (wallpaper only) is the other style.
   Settings in `desktop.json` (`settings::desktop`): style, shelf on/off, edge, stacks, where
@@ -841,7 +845,10 @@ beside Explorer for tests.
   `shellman-*.old<digits>.exe` files beside itself that are not in use.
 - **Logoff**: a hidden top-level window answers WM_QUERYENDSESSION with yes at once; on
   WM_ENDSESSION (or WM_CLOSE) it posts WM_CLOSE to every top-level window of the children, waits up
-  to 4 s, logs who is left, never kills.
+  to 4 s, logs who is left, never kills. An app that exits between the query and the answer is
+  not a crash and is not restarted then, and the bar counts as pending (never "lost", so no
+  fallback); when the end is cancelled (WM_ENDSESSION FALSE) every app that exited meanwhile is
+  started again in order. Apps left stopped or given up on before the query stay as they were.
 - **Startup items** (what Explorer does at logon): RunOnce (HKCU; HKLM only if elevated, the value
   is deleted before the command starts, or after with a `!` prefix), Policies\Explorer\Run, HKLM
   Run and its WOW6432Node twin, HKCU Run, then packaged apps' startup tasks, then the common and
@@ -885,13 +892,35 @@ beside Explorer for tests.
     started by Task Scheduler, not the shell, so they run without Explorer already.
 - **Safety net**: if Shift is held at the session's start, or the bar's exe is missing, or the bar
   was given up on (crash budget spent) or ended with exit code 0, or a running bar has no
-  `Shell_TrayWnd` 20 s after its own latest (re)start, the session starts `explorer.exe` (unless
-  one runs), logs why, and stops supervising (it stays alive, so Winlogon does not restart it in a
-  loop). A bar whose restart is pending is never "lost" (a single crash after 80 minutes used to
-  hand the session to Explorer, because the 20 s were counted from the session's start). If
-  Explorer has not become the shell 15 s after a fallback (the modern-app host owns the shell
-  window, so it only opens a folder window), supervising resumes once with a fresh crash budget;
-  a second fallback stays parked. Never after Shift. Shift also skips every shellman app.
+  `Shell_TrayWnd` 20 s after its own latest (re)start, the session falls back to Explorer. A bar
+  whose restart is pending is never "lost" (a single crash after 80 minutes used to hand the
+  session to Explorer, because the 20 s were counted from the session's start), and nothing is
+  decided while Windows is asking to end the session. Shift also skips every shellman app.
+  - The fleet is *parked*: nothing is started or restarted, apps that run are left running,
+    restart requests are answered 2. Parking is not ending: the startup items carry on (only a
+    real logoff or the window closing stops them; a park used to end them, and the Explorer
+    started as fallback skipped them too because the session had already claimed the run).
+  - The hand-over (`fallback.rs`, on a thread of its own so the window keeps answering) makes
+    Explorer the shell, which it becomes only when nobody owns the shell window; otherwise it
+    opens a folder window and nothing else. So, up to two attempts: (1) Explorer already the
+    shell (`app_host::explorer_is_shell`: Explorer owns `Shell_TrayWnd` or the shell window; an
+    `explorer.exe` folder window does not count) -> nothing to do. (2) The modern-app host
+    (ShellAppRuntime, kept by the desktop) owns the shell window -> WM_QUIT to it
+    (`app_host::quit_shell`, its clean stop: Winlogon does not start Explorer for it and the
+    desktop's host supervisor leaves it stopped), wait up to 12 s for it to exit; another owner
+    is logged loudly. (3) Start `explorer.exe` (without `SHELLMAN_SESSION`). (4) Wait up to 15 s
+    for a `Shell_TrayWnd` owned by explorer.exe. Not there: the second attempt does (1) to (4)
+    again; still not: logged as an ERROR.
+  - After it: no Explorer taskbar after both attempts -> supervising resumes once per session,
+    with a fresh crash budget (never after Shift); anything else (taskbar, Explorer already the
+    shell, or a second failure) -> parked under the watchdog.
+  - The watchdog: while parked, every 60 s it looks for any `Shell_TrayWnd` (the bar's or
+    Explorer's). None, and still none 10 s later -> the hand-over runs again. At most 5 times an
+    hour; when they are spent it logs an ERROR with the manual way out (Ctrl+Alt+Del, Task
+    Manager, Run new task, `explorer.exe`) and tries again when the hour has passed. So a parked
+    session never stays without a taskbar for more than about 70 s plus one hand-over, unless
+    Explorer itself cannot start.
+  - The session stays alive throughout, so Winlogon does not restart it in a loop.
 - **Transparency (blur)**: DWM draws every blur (the glass's host backdrop, acrylic, Mica) flat
   unless the session WNF state `0x0F950324A3BC4035` (family IMSN, probably
   `WNF_IMSN_TRANSPARENCYPOLICY`; read from uDWM's `CWindowList` on 10.0.26300) holds a non-zero
@@ -913,8 +942,11 @@ beside Explorer for tests.
   energy saver; which signal it follows is not known yet.
 - **Tests**: `SHELLMAN_SESSION_APPS="exe|arg|arg;exe2"` replaces the app list (and turns off
   startup items and the safety net, which `SHELLMAN_SESSION_SAFETY=on` brings back;
-  `SHELLMAN_SESSION_FALLBACK=<exe>` stands in for explorer.exe). `examples/child.rs` is a
-  throwaway child.
+  `SHELLMAN_SESSION_FALLBACK=<exe>|<arg>...` stands in for explorer.exe: it "has a taskbar"
+  while it runs, and a test run never looks at or touches the real shell window, host or
+  Explorer; without it the hand-over only logs). `examples/child.rs` is a throwaway child
+  (`wait` plays an Explorer that works, `exit 0` one that gives no taskbar). The fleet
+  (`supervisor::Os`) and the hand-over (`fallback::Shell`) have fakes for unit tests.
 
 ### The shell swap
 

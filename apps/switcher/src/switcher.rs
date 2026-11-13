@@ -161,6 +161,9 @@ impl Switcher {
         let mut windows = self.list.refresh();
         windows.truncate(layout::capacity(screen.size_points()));
         if windows.is_empty() {
+            // The hook marked the switcher open with Alt+Tab; nothing will show, so give Esc,
+            // Enter and the arrows back to the apps now rather than when Alt is released.
+            keys::close();
             return;
         }
         let front_is_first = front == Some(windows[0].hwnd);

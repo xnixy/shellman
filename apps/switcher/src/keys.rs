@@ -273,6 +273,18 @@ mod tests {
     }
 
     #[test]
+    fn closing_without_a_key_gives_the_keys_back() {
+        // Alt+Tab with no windows to show: the hook marked it open, the switcher closes at once.
+        let v = decide(false, press(VK_TAB, true, true));
+        OPEN.store(v.open, Ordering::Release);
+        close();
+        let open = OPEN.load(Ordering::Acquire);
+        for vk in [VK_ESCAPE, VK_RETURN, VK_LEFT, VK_DOWN] {
+            assert!(!decide(open, press(vk, true, true)).swallow, "{vk:?} reaches the app");
+        }
+    }
+
+    #[test]
     fn a_missed_alt_release_closes_on_the_next_key() {
         let v = decide(true, press(VK_LEFT, true, false));
         assert_eq!(v, Verdict { swallow: false, key: Some(Key::Cancel), open: false });

@@ -42,7 +42,8 @@ fn is_old_name(name: &str, stem: &str) -> bool {
         .is_some_and(|mid| !mid.is_empty() && !mid.contains(['.', '\\']))
 }
 
-fn image_of(pid: u32) -> Option<String> {
+/// A process's full exe path.
+pub fn image_of(pid: u32) -> Option<String> {
     unsafe {
         let h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
         let mut buf = [0u16; 1024];

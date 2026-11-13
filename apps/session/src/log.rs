@@ -19,6 +19,10 @@ fn path() -> Option<PathBuf> {
 }
 
 pub fn line(text: &str) {
+    // Unit tests never write a log: without SHELLMAN_CONFIG_DIR that would be the live session's.
+    if cfg!(test) {
+        return;
+    }
     let Some(path) = path() else { return };
     if std::fs::metadata(&path).is_ok_and(|m| m.len() > CAP) {
         let _ = std::fs::rename(&path, path.with_extension("old.log"));
