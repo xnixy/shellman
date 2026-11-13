@@ -14,6 +14,7 @@ accent color, fast.
 | `apps/desktop` | wallpaper window, desktop icons | working: wallpaper per monitor; keeps Windows' modern-app host running. Next: desktop icons, right-click menu |
 | `apps/settings` | Settings pages for the shell | working: Appearance, Dock, Top bar, Launcher, About |
 | `apps/tasks` | Task Manager (Ctrl+Shift+Esc, through the switcher's hook) | working: Processes (apps and background, grouped, sort, search, End task / End process tree / details), Performance (CPU, memory, GPUs, disks, network). Reads through `crates/core/src/procs`. Next: Services (read-only), elevated End task through `shellman-elevate` |
+| `apps/terminal` | Windows Terminal | stage 1: one shell in glass, GPU-drawn grid, scrollback. Next: tabs, selection, mouse, profiles |
 | `apps/session` | the shell process itself | built, not yet the shell: starts and supervises the apps, runs startup items, safety net, `--install`/`--uninstall` (never run yet) |
 
 Shared code:
@@ -264,6 +265,50 @@ fails fast.
 
 Decision: no host of our own is possible, and Windows' host is off unless the user turns it on
 (see above). Settings pages people use most are to be rebuilt in shellman Settings.
+
+## Terminal
+
+`apps/terminal` (`shellman-terminal.exe [command line]`) is to replace Windows Terminal. Stage 1:
+one shell (default `powershell.exe`; the rest of the command line, as typed, runs instead) in a
+title pill and one glass island. Not yet: tabs, splits, selection and copy, mouse reporting to
+programs, links, profiles, settings, IME, ligatures, colour emoji, default-terminal registration.
+
+- **Emulation**: `alacritty_terminal` 0.26: grid, scrollback (10 000 lines), VT parser and the
+  pseudo-console (ConPTY, or a `conpty.dll` found on PATH or beside the exe), on a thread of its
+  own. Its listener answers the pty directly (cursor reports) and wakes the window.
+- **Structure**: `session.rs` is one shell (pty + emulator) and knows nothing of drawing;
+  `snapshot.rs` turns its visible grid into plain cells (colours resolved through `palette.rs`,
+  inverse, faint, wide characters, the cursor); `render/` draws cells and knows nothing of the
+  emulator. Tabs later are several sessions and one view. Keys to bytes are pure and tested
+  (`keys.rs`): xterm sequences, application cursor mode, Ctrl and Alt, bracketed paste.
+- **Drawing**: a GPU renderer inside egui's frame (an `egui_glow` paint callback; egui still
+  draws the chrome and `shellman_ui::glass` the glass). Glyphs are rasterized once by DirectWrite
+  (`crossfont`, with Windows' font fallback) at the monitor's pixel size into a 2048 px greyscale
+  atlas; cells snap to whole pixels. Three instanced draws: background runs, glyphs, then
+  underline / strike / thin cursor. Each grid row has fixed slots in the instance buffers and a
+  hash; only rows whose hash changed are rebuilt and sent. Font: Cascadia Mono, else Cascadia
+  Code, else Consolas, 12 pt.
+- **Glass and colour**: cells with the default background draw nothing, so the island is the
+  same glass as every other app and follows the glass setting live (the app watches
+  `appearance.json`). Explicit backgrounds are opaque, so full-screen programs look as they
+  were made. Text is greyscale antialiased: DirectWrite's ClearType coverage is averaged, since
+  subpixel coverage cannot be blended right over glass whose colour only DWM knows. Default text
+  and the cursor follow the theme (a black accent falls back to the text colour); the 16 colours
+  are Campbell on dark and a darkened set on light.
+- **Repaint**: only on new output, input, resize or a theme change. The cursor does not blink.
+
+Measured (release, 4K at 150%, maximized, 240 Hz monitor, `SHELLMAN_TERMINAL_STATS=<file>` logs
+frame times):
+
+- `cmd /c dir /s C:\Windows\System32`: 3.4 to 4.8 s (median 3.8), Windows Terminal 3.0 to 4.2 s
+  (median 3.5), five runs each. `Get-ChildItem C:\Windows\System32 -Recurse`: 21.5 and 18.4 s,
+  Windows Terminal 19.5 and 17.9 s. So within about 5 to 10 %; Windows Terminal ships a newer
+  ConPTY (OpenConsole) than the system's, which may be the rest.
+- While that output scrolls: a frame every vsync (241 fps), CPU per frame 0.5 to 0.8 ms on
+  average, 2.3 ms at most; rebuilding and hashing the rows 0.3 to 0.45 ms of it; about 60 rows sent
+  a frame.
+- Idle, with the window focused or not: 0 ms of CPU in 20 s.
+- First text on screen 0.7 s after start.
 
 ## Session
 

@@ -1,0 +1,26 @@
+[package]
+name = "shellman-terminal"
+version = "0.1.0"
+edition.workspace = true
+description = "Shellman's terminal: a shell in a glass window"
+license.workspace = true
+publish = false
+
+[dependencies]
+# The grid, the VT parser and ConPTY: see docs/PLAN.md, Terminal.
+alacritty_terminal = "0.26"
+# Glyphs rasterized by DirectWrite, with its font fallback (what Alacritty uses).
+crossfont = "0.9"
+eframe.workspace = true
+egui.workspace = true
+# The grid is drawn with OpenGL inside egui's frame (a paint callback); same versions as eframe's.
+egui_glow = "0.31"
+glow = "0.16"
+raw-window-handle.workspace = true
+# Watches the settings folder, so the glass and accent follow Settings live.
+shellman-core.workspace = true
+shellman-ui.workspace = true
+windows.workspace = true
+
+[build-dependencies]
+winresource.workspace = true
