@@ -53,9 +53,10 @@ pub fn terminate_as_helper(key: Key) -> Result<(), EndError> {
         Err(info::OpenError::Gone) => return Ok(()),
         Err(e) => return Err(e.into()),
     };
-    let name = info::image_path(&h)
-        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
-        .unwrap_or_default();
+    // A process whose name cannot be read is not ended: it cannot be told from a critical one.
+    let Some(name) = info::image_path(&h).and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned())) else {
+        return Err(EndError::Failed("Its name could not be read.".into()));
+    };
     if policy::is_untouchable(key.pid, &name) {
         return Err(EndError::Failed("Windows needs this process.".into()));
     }
