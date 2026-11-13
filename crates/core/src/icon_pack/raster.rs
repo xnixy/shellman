@@ -12,6 +12,10 @@ pub fn is_svg(path: &Path) -> bool {
 
 /// The SVG file drawn to fit a `px` by `px` square, centred, on a transparent background.
 pub fn svg_file(path: &Path, px: u32) -> Option<ColorImage> {
+    // The built-in pack's icons are compiled in, not on disk.
+    if let Some(data) = super::builtin::bytes(path, px) {
+        return svg_data(data, px);
+    }
     // A pack's icon is tens of kilobytes; anything far bigger is not an icon.
     if std::fs::metadata(path).ok()?.len() > 4 * 1024 * 1024 {
         return None;

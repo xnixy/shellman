@@ -90,12 +90,32 @@ fn texture(ctx: &Context, kind: Kind, size: u32) -> (TextureId, Vec2) {
     (tex.id(), tex.size_vec2())
 }
 
-/// What to draw for the app at `path`: shellman's own icon in the current accent when it is one
-/// of shellman's exes, otherwise the shell's image (None until that has loaded).
+/// What to draw for the app at `path`: for one of shellman's exes, the icon pack's tile for it
+/// when the pack has one (Islands does), else its own icon in the current accent; for any other
+/// program the shell's image or the pack's (None until that has loaded).
 pub fn get(ctx: &Context, path: &Path, large: bool, thumbs: &mut Thumbs) -> Option<(TextureId, Vec2)> {
     match kind_for_exe(path) {
-        Some(kind) => Some(kind_texture(ctx, kind, large)),
+        Some(kind) => match own_from_pack(path) {
+            Some(image) => thumbs.get(&image, large).map(|t| (t.id(), t.size_vec2())),
+            None => Some(kind_texture(ctx, kind, large)),
+        },
         None => thumbs.get(path, large).map(|t| (t.id(), t.size_vec2())),
+    }
+}
+
+/// The icon pack's image for one of shellman's own exes (`shellman-files.exe` is the pack's
+/// `shellman-files`), when the chosen pack has one.
+pub fn own_from_pack(path: &Path) -> Option<std::path::PathBuf> {
+    kind_for_exe(path)?;
+    shellman_core::icon_pack::resolve_path(path, None)
+}
+
+/// `get` for shellman's own app known only by its exe's name (`shellman-launcher.exe`), at `px`
+/// pixels: the pack's tile, or the accent icon of `kind`.
+pub fn own_texture_px(ctx: &Context, exe: &str, kind: Kind, px: f32, thumbs: &mut Thumbs) -> Option<(TextureId, Vec2)> {
+    match own_from_pack(Path::new(exe)) {
+        Some(image) => thumbs.get(&image, true).map(|t| (t.id(), t.size_vec2())),
+        None => Some(kind_texture_px(ctx, kind, px)),
     }
 }
 

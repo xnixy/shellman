@@ -61,6 +61,18 @@ impl PackIndex {
         index
     }
 
+    /// An index of files known by name already (the built-in pack, which is not on disk).
+    pub fn from_names(files: impl IntoIterator<Item = (String, PathBuf)>) -> Self {
+        let mut index = PackIndex::default();
+        for (name, path) in files {
+            if let Some(name) = pack_name(&name) {
+                index.insert(name, u32::MAX / 2, path, false);
+            }
+        }
+        index.finish();
+        index
+    }
+
     fn add_theme(&mut self, dir: &Path, siblings: Option<&Path>, depth: usize, seen: &mut Vec<PathBuf>) {
         if seen.iter().any(|s| s == dir) {
             return;
@@ -204,7 +216,7 @@ impl PackIndex {
     }
 
     /// The exact name only (no loose matching), for the alias targets.
-    fn get_exact(&self, name: &str) -> Option<PathBuf> {
+    pub fn get_exact(&self, name: &str) -> Option<PathBuf> {
         self.file(name)
     }
 
