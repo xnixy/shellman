@@ -136,6 +136,7 @@ impl Anchor {
 
 /// A caller's handle: what it opened, and the values to hand back. Cheap; keep one per kind of
 /// menu in the app's state.
+#[derive(Clone)]
 pub struct PopupMenu<T> {
     ids: Vec<T>,
     token: u64,

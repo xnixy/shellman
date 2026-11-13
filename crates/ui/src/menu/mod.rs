@@ -3,6 +3,7 @@
 //! few lists that are not menus but panels inside a window (Files' tag editor, the terminal's
 //! profile list until it moves to the popup).
 
+pub mod dropdown;
 mod keys;
 pub mod popup;
 mod row;
