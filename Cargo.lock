@@ -2452,7 +2452,9 @@ dependencies = [
 name = "shellman-ui"
 version = "0.1.0"
 dependencies = [
+ "eframe",
  "egui",
+ "raw-window-handle",
  "serde",
  "serde_json",
  "shellman-core",

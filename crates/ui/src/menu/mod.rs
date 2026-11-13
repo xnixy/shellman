@@ -2,8 +2,12 @@
 //! chevron, submenus that open on hover or with the arrow keys, and a scroll when it is taller
 //! than the window. The rows are plain data, rebuilt each frame, so entries that arrive late (the
 //! shell's) simply appear in the next frame.
+//!
+//! [`popup`] is the same kind of menu as a window of its own, on glass, for menus that cannot
+//! live inside their app's window (the desktop's, the dock's).
 
 mod keys;
+pub mod popup;
 mod row;
 
 use egui::{Area, Context, Id, Key, Order, Pos2, Rect, Sense, Vec2};
