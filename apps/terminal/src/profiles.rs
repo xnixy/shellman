@@ -4,6 +4,7 @@
 
 use crate::osc;
 pub use shellman_core::terminal::profiles::{detect, Found};
+use shellman_core::terminal::{quote_arg, quote_program};
 use std::path::{Path, PathBuf};
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -19,7 +20,7 @@ pub enum Kind {
 pub struct Profile {
     pub name: String,
     pub kind: Kind,
-    /// The program, quoted when it has spaces.
+    /// The program, quoted (`quote_program`).
     pub program: String,
 }
 
@@ -76,15 +77,7 @@ pub fn pick<'a>(list: &'a [Profile], name: &str) -> &'a Profile {
 }
 
 fn quote(p: &Path) -> String {
-    quote_arg(&p.display().to_string())
-}
-
-fn quote_arg(s: &str) -> String {
-    if s.contains(' ') || s.is_empty() {
-        format!("\"{s}\"")
-    } else {
-        s.to_owned()
-    }
+    quote_program(&p.display().to_string())
 }
 
 #[cfg(test)]
@@ -127,6 +120,32 @@ mod tests {
         // A directory that is gone: home.
         let (_, dir) = pick(&list, "Command Prompt").launch(Some(r"Q:\gone\away"), &home);
         assert_eq!(dir, home);
+    }
+
+    /// What Windows makes of a command line.
+    fn argv(line: &str) -> Vec<String> {
+        use windows::core::PCWSTR;
+        use windows::Win32::Foundation::{LocalFree, HLOCAL};
+        use windows::Win32::UI::Shell::CommandLineToArgvW;
+        let wide: Vec<u16> = line.encode_utf16().chain(std::iter::once(0)).collect();
+        let mut n = 0;
+        let list = unsafe { CommandLineToArgvW(PCWSTR(wide.as_ptr()), &mut n) };
+        let out = (0..n as usize).map(|i| unsafe { (*list.add(i)).to_string().unwrap() }).collect();
+        unsafe {
+            let _ = LocalFree(Some(HLOCAL(list.cast())));
+        }
+        out
+    }
+
+    #[test]
+    fn a_directory_cannot_add_arguments_to_a_wsl_line() {
+        let found = Found { pwsh: None, wsl: vec!["Debian".into()], git_bash: None };
+        let list = build(&found);
+        let home = std::env::temp_dir();
+        for cwd in [r#"/tmp/a" --exec calc.exe ""#, "/tmp/x\\\" --exec calc.exe", "/tmp/end\\", "/tmp/a\tb"] {
+            let (cmd, _) = pick(&list, "Debian").launch(Some(cwd), &home);
+            assert_eq!(argv(&cmd), ["wsl.exe", "-d", "Debian", "--cd", cwd], "{cmd}");
+        }
     }
 
     #[test]
