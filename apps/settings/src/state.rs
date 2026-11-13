@@ -4,6 +4,7 @@
 use crate::saver::Saver;
 use crate::sections::{AppsView, DisplayView, FontsView, IconsView, MouseView, PowerView, DateTimeView, StorageView, DefaultAppsView, Section, SoundView, StartupView};
 use shellman_core::settings::bar::BarSettings;
+use shellman_core::settings::desktop::DesktopSettings;
 use shellman_core::settings::dock::{self, DockSettings};
 use shellman_core::settings::launcher::LauncherSettings;
 use shellman_core::settings::shell::ShellSettings;
@@ -13,6 +14,9 @@ use shellman_ui::appearance::Appearance;
 
 pub struct State {
     pub look: Appearance,
+    pub desktop: DesktopSettings,
+    /// The Desktop page's folder picker for dropped files, while it is open.
+    pub desktop_pick: Option<crate::pick::Pick>,
     pub dock: DockSettings,
     /// What each pin is called, in the pins' order. Looking a name up touches the shell, so it is
     /// done when the pins change, not on every frame.
@@ -54,6 +58,8 @@ impl State {
     pub fn new(ctx: &egui::Context, look: Appearance, glass: bool) -> Self {
         let mut state = Self {
             look,
+            desktop: DesktopSettings::load(),
+            desktop_pick: None,
             dock: DockSettings::load(),
             dock_names: Vec::new(),
             bar: BarSettings::load(),
@@ -104,6 +110,11 @@ impl State {
         self.saver.run(move || look.save());
     }
 
+    pub fn save_desktop(&self) {
+        let desktop = self.desktop.clone();
+        self.saver.run(move || desktop.save());
+    }
+
     pub fn save_dock(&self) {
         let dock = self.dock.clone();
         self.saver.run(move || dock.save());
@@ -132,6 +143,11 @@ impl State {
         if look != self.look {
             self.look = look;
             self.apply_look(ctx);
+            changed = true;
+        }
+        let desktop = DesktopSettings::load();
+        if desktop != self.desktop {
+            self.desktop = desktop;
             changed = true;
         }
         let dock = DockSettings::load();

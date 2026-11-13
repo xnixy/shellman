@@ -11,10 +11,11 @@ accent color, fast.
 | `apps/bar` | taskbar, tray, clock, Start button (as a top bar and a dock) | working: a top bar and a dock on every monitor, tray, pins, fullscreen step-aside. Next: hover previews, Win keys |
 | `apps/launcher` | Start menu and search | working: Spotlight-style panel, app grid, ranked search, most used, the Win key (through the switcher's hook) |
 | `apps/switcher` | Alt+Tab, Task View | working: Alt+Tab with live previews. Next: Task View (Win+Tab) |
-| `apps/desktop` | wallpaper window, desktop icons | working: wallpaper per monitor; keeps Windows' modern-app host running. Next: desktop icons, right-click menu |
+| `apps/desktop` | wallpaper window | working: wallpaper per monitor; keeps Windows' modern-app host running; hands a right-click to the shelf |
+| `apps/shelf` | desktop icons, the desktop's right-click menu | stage 1 working: the shelf (drop zone, Desktop / Downloads / Recent stacks that fan open, drag out, drop in), the right-click menu, Settings › Desktop. Next: widgets top right (stage 2) |
 | `apps/tasks` | Task Manager (Ctrl+Shift+Esc, through the switcher's hook) | working: Processes (apps and background, grouped, sort, search, End task / End process tree / details), Performance (CPU, memory, GPUs, disks, network), Services (read-only: status, startup type, PID, description, sort, search, go to process; read through the SCM in `crates/core/src/services`, off the UI thread, only while the page shows). End task / tree try unelevated first and, only when Windows refuses, go through `shellman-elevate`'s `end-processes <pid>:<start time>...` behind the UAC prompt (the helper rechecks start time and refuses critical processes); critical processes stay un-endable. Reads through `crates/core/src/procs` |
 | `apps/terminal` | Windows Terminal | stage 1: one shell in glass, GPU-drawn grid, scrollback. Next: tabs, selection, mouse, profiles |
-| `apps/settings` | Settings pages for the shell | working: Appearance, Dock, Top bar, Launcher, About; rebuilt Windows pages: Sound, Display, Apps, Startup, Fonts, Mouse & keyboard, Power, Date, time & region, Storage, Default apps (read-only) |
+| `apps/settings` | Settings pages for the shell | working: Appearance, Desktop, Dock, Top bar, Launcher, About; rebuilt Windows pages: Sound, Display, Apps, Startup, Fonts, Mouse & keyboard, Power, Date, time & region, Storage, Default apps (read-only) |
 | `apps/session` | the shell process itself | built, not yet the shell: starts and supervises the apps, runs startup items, safety net, `--install`/`--uninstall` (never run yet) |
 
 Shared code:
@@ -140,7 +141,71 @@ Rule: **the top bar is the system, the dock is apps.** Both are windows of one p
   bitmap each. No egui.
 - `IDesktopWallpaper` needs Explorer. As the shell, it reads the classic settings instead: one
   picture for all monitors, no slideshow.
+- No icon grid. The design (`docs/design/desktop-concepts.html`, "Shelf + Widgets") puts a shelf
+  on the left edge and, later, two widgets top right; "Clean" (wallpaper only) is the other style.
+  Settings in `desktop.json` (`settings::desktop`): style, shelf on/off, edge, stacks, where
+  dropped files go, and the widgets' switches (read by nothing yet).
 
+### The shelf: its own process
+
+Decision: what sits on the wallpaper, and the wallpaper's right-click menu, live in a new app,
+`apps/shelf` (`shellman-shelf.exe`), started by the session after the bar (and by the desktop
+when no session runs). Not in the desktop process: that one carries Windows' modern-app host and
+must stay plain Win32; the shelf loads egui and the GPU, shell thumbnail handlers and OLE drag and
+drop, any of which can crash, and the session restarts a crashed shelf without touching the
+wallpaper or the host. Not in the bar: the bar is all always-on-top windows and owns the tray, and
+a shell extension crashing in a thumbnail must not take the tray down. The cost is one process
+(~130 MB working set with its GL surfaces, nothing at rest). What it shares with the bar and Files
+is in the crates: `glass`, `thumbs`, `transfer` (drag source, drop target, clipboard), `fsops`,
+`watch`, `winlist::fullscreen` and the window watcher, `outside` (the click-outside hook, moved out
+of the Control Center).
+
+- One window, the root viewport: on the primary monitor's edge, as tall as the monitor, wide
+  enough for an open fan; only its islands show and take clicks (`set_islands_only`).
+- Desktop level: a tool window that never activates, so never in Alt+Tab or the dock. Whenever
+  anyone moves it in the z-order (showing it, the window library), the move is redirected to just
+  above the topmost visible desktop window (`ShellmanDesktop`, `Progman`), found walking from the
+  top: other apps keep windows under the wallpaper (an "Open With" helper was found there), so the
+  first non-desktop window from the bottom is the wrong place. Other windows coming forward never
+  move it, so this costs nothing at rest. While a stack is open the window is topmost and has the
+  focus (for Esc); it goes back down when the fan has closed.
+- Steps aside for fullscreen apps like the bars: the window watcher posts a check, and the shelf
+  shows no islands while `foreground_covers_monitor_of` says so.
+- Idle: no repaint loop. Frames come from the pointer, folder changes (a folder watch per folder,
+  reads on worker threads), thumbnails arriving, the settings file, and the menu request; the fan's
+  160 ms open/close animation is the only animation. Measured: 0.016 s of CPU in 10 s at rest.
+- Stacks: Desktop (the user's and the common Desktop), Downloads, Recent (the Recent folder's
+  shortcuts resolved, files that still exist, each once). Newest first by the later of created
+  and modified; hidden/system files and partial downloads left out. A fan shows the six newest and
+  "Open <folder> in Files · N more". Items drag out as a real OLE drag (as from Files).
+- Drops: files dropped on the shelf go into the chosen folder through `fsops::shell_op` (progress,
+  conflict dialog, undo), with Explorer's rules: a move on the same volume, a copy across volumes,
+  Ctrl/Shift/Alt as usual. A browser's picture or text becomes a new file; virtual files (a
+  browser's `FileGroupDescriptor` without a path) are refused.
+- `SHELLMAN_SHELF_FOLDERS=<dir>` puts Desktop, Downloads, Recent and Documents under one folder
+  (tests); `SHELLMAN_WALLPAPER_DRYRUN=<file>` writes the chosen wallpaper there instead of setting
+  it; `SHELLMAN_FORCE_LIGHT` / `SHELLMAN_FORCE_DARK`. Log: `%LOCALAPPDATA%\shellman\shelf.log`.
+
+### The right-click menu
+
+The desktop process hears the right-click on a wallpaper window, lets the shelf's process take
+the foreground (it received the click, so it may), and posts the shelf window a registered message
+with the point (`core::desktop_menu`; `--menu x y` starts a shelf that opens it when none runs).
+The shelf shows a plain Windows popup there, the component the dock's menu uses: New (Folder,
+Text document, Markdown note), Paste (greyed with nothing to paste), Open in Files, Open Terminal
+here, Change wallpaper…, Desktop settings, Display settings. "Edit desktop…" comes with the widgets.
+
+A first version drew shellman's own menu on glass in an egui window as large as the clicked
+monitor. Opening it repeatedly crashed `dwm.exe` (12 Nov, 18:00:02, `dwmcore.dll`, E_INVALIDARG),
+most likely from a glass panel created and destroyed per menu on a monitor-sized window (and, in
+one state, re-attached every frame); a monitor-sized topmost window also made the bar hide as for
+a fullscreen app. Rule from it: never a window as large as a monitor for a popup, and never
+create glass per click. A glass menu should come back as one window, sized to the menu, made once
+and kept.
+
+"Open Terminal here" is one function (`shelf::terminal`), to be replaced by shellman's own
+terminal: Windows Terminal through its app alias `wt.exe -d <folder>` (starts without Explorer,
+tested), else the activation manager, else PowerShell.
 ## Settings
 
 - One app writes the shared files under `%APPDATA%\shellman`. Every app follows them through its
@@ -324,7 +389,7 @@ frame times):
 `apps/session` (`shellman-session.exe`) is the one process Windows starts as the shell. Plain Win32,
 no egui, no `shellman-core`; it must be the most robust piece. Beside Explorer nothing starts it.
 
-- **Starts** next to its own exe, in order: desktop, bar, switcher, launcher `--background`,
+- **Starts** next to its own exe, in order: desktop, bar, shelf, switcher, launcher `--background`,
   control `--background` (250 ms apart). Every child gets `SHELLMAN_SESSION=1`. The bar then leaves
   the residents to the session; started by hand it still starts them itself.
 - **Supervises** with one `MsgWaitForMultipleObjectsEx` on all process handles plus the window's
@@ -398,6 +463,6 @@ from Run new task with `cmd`. Signing in as another user is unaffected (the valu
 2. Win+1-9 (the lone Win key is done).
 3. Dock: drag-and-drop onto icons, badges and progress, Recycle Bin empty / full.
 4. Top bar: "now" pill, notifications and calendar.
-5. Desktop icons and menu.
+5. Desktop: widgets (Today, Now playing) and arrange mode; a glass right-click menu.
 6. Task View.
 7. `session`: built. Next: try the swap on a spare user account, then on the real one.

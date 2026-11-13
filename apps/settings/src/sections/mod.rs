@@ -4,6 +4,7 @@ mod about;
 mod apps;
 mod appearance;
 mod bar;
+mod desktop;
 mod display;
 mod display_map;
 mod icon_pack;
@@ -46,6 +47,7 @@ use shellman_ui::theme::glyph;
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Section {
     Appearance,
+    Desktop,
     Sound,
     Display,
     Mouse,
@@ -63,8 +65,9 @@ pub enum Section {
 }
 
 impl Section {
-    pub const ALL: [Section; 15] = [
+    pub const ALL: [Section; 16] = [
         Section::Appearance,
+        Section::Desktop,
         Section::Sound,
         Section::Display,
         Section::Mouse,
@@ -84,6 +87,7 @@ impl Section {
     pub fn label(self) -> &'static str {
         match self {
             Section::Appearance => "Appearance",
+            Section::Desktop => "Desktop",
             Section::Sound => "Sound",
             Section::Display => "Display",
             Section::Mouse => "Mouse & keyboard",
@@ -104,6 +108,8 @@ impl Section {
     pub fn glyph(self) -> char {
         match self {
             Section::Appearance => '\u{E790}',
+            // Segoe Fluent Icons' Photo: the wallpaper.
+            Section::Desktop => glyph::PICTURES,
             Section::Sound => glyph::VOLUME,
             Section::Display => glyph::DESKTOP,
             // Segoe Fluent Icons' Mouse glyph.
@@ -126,6 +132,7 @@ impl Section {
     pub fn show(self, ui: &mut egui::Ui, state: &mut State) {
         match self {
             Section::Appearance => appearance::show(ui, state),
+            Section::Desktop => desktop::show(ui, state),
             Section::Sound => sound::show(ui, state),
             Section::Display => display::show(ui, state),
             Section::Mouse => mouse::show(ui, state),
@@ -151,6 +158,7 @@ impl Section {
         matches!(
             self,
             Section::Appearance
+                | Section::Desktop
                 | Section::Sound
                 | Section::Display
                 | Section::Mouse
@@ -172,6 +180,7 @@ impl Section {
     pub fn slug(self) -> &'static str {
         match self {
             Section::Appearance => "appearance",
+            Section::Desktop => "desktop",
             Section::Sound => "sound",
             Section::Display => "display",
             Section::Mouse => "mouse",

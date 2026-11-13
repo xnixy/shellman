@@ -4,6 +4,7 @@
 pub mod app_host;
 pub mod apps_index;
 pub mod config;
+pub mod desktop_menu;
 pub mod elevate;
 pub mod foreground;
 pub mod frames;
@@ -12,6 +13,7 @@ pub mod fsops;
 pub mod installed;
 pub mod live_thumb;
 pub mod notify;
+pub mod outside;
 pub mod places;
 pub mod places_reg;
 pub mod procs;

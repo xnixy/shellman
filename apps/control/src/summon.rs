@@ -7,7 +7,8 @@
 //! its window, or hides it if it is showing. `SHELLMAN_INSTANCE` is appended to both names, so a
 //! test copy can run beside the real one.
 
-use crate::{outside, place};
+use crate::place;
+use shellman_core::outside;
 use shellman_ui::glass;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
