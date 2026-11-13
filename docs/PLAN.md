@@ -271,7 +271,8 @@ glass islands following the glass slider, dark and light.
 - Where: in the shelf process (`apps/shelf/src/widgets`), not an app of their own: it already has
   desktop-level glass windows that never activate, are never in Alt+Tab, step aside for a
   fullscreen app per monitor, and follow `desktop.json` live. Each monitor with widgets gets one
-  more immediate viewport (`shellman shelf widgets <device>`), with the shelf windows' manners
+  more viewport (`shellman shelf widgets <device>`), deferred, so it is drawn when it asks and
+  not with every frame of the shelves; its state lives on the window thread. It has the shelf windows' manners
   (`window::prepare_other`), its glass attached once. Size (`widgets::place`): the widgets'
   column plus the shadow, as tall as the tallest stack (Today with three rows and a heading, then
   Now playing), cut to the work area: 452x569 pt (678x854 px at 150%), never the monitor (and at most half its width),
@@ -282,7 +283,10 @@ glass islands following the glass slider, dark and light.
 - Idle: no repaint loop. Frames come from data arriving (the feeds worker, the media session),
   the pointer, a minute tick for the date and the "in 25 min" chips, and a one-second tick only
   while something plays (its time and progress line); none while a fullscreen app covers the
-  monitor. Measured 0 ms of CPU in 15 s at rest (debug build, no media session).
+  monitor. The ticks, the feeds and the media session ask for a frame of the widget windows only;
+  the shelves are not drawn for them (before, every tick drew every shelf and widget window).
+  Anything that draws the shelves also draws the widgets once. Measured 0 ms of CPU in 15 s at
+  rest (debug build, no media session).
 - Today: weekday, the day's number large (Segoe UI Light, `theme::light_font`), the month; the
   weather beside it (icon, temperature, "London · light rain", "H 8° · L 3°"); then up to three
   rows of what is left of today (all-day first, then by time; a calendar colour dot; the next one
