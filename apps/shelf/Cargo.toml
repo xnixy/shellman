@@ -1,0 +1,19 @@
+[package]
+name = "shellman-shelf"
+version = "0.1.0"
+edition.workspace = true
+description = "Shellman's shelf: what sits on the wallpaper (the shelf of stacks) and the desktop's right-click menu"
+license.workspace = true
+publish = false
+
+[dependencies]
+eframe.workspace = true
+egui.workspace = true
+raw-window-handle.workspace = true
+shellman-core.workspace = true
+shellman-pick.workspace = true
+shellman-ui.workspace = true
+windows.workspace = true
+
+[build-dependencies]
+winresource.workspace = true

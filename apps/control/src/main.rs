@@ -7,7 +7,6 @@
 //! resident process without showing the panel.
 
 mod app;
-mod outside;
 mod place;
 mod power_menu;
 mod settings_page;

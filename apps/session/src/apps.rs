@@ -25,8 +25,8 @@ impl App {
     }
 }
 
-/// The real list: desktop first (wallpaper, and Windows' modern-app host), then the bar and the
-/// switcher, then the residents, which stay hidden until summoned. The session owns the
+/// The real list: desktop first (wallpaper, and Windows' modern-app host), then the bar, the shelf
+/// (what sits on the wallpaper) and the switcher, then the residents, which stay hidden until summoned. The session owns the
 /// residents; the bar starts them itself only when run without a session.
 pub fn defaults(dir: &Path) -> Vec<App> {
     let one = |name: &str, args: &[&str]| {
@@ -35,6 +35,7 @@ pub fn defaults(dir: &Path) -> Vec<App> {
     vec![
         one("desktop", &[]),
         one("bar", &[]),
+        one("shelf", &[]),
         one("switcher", &[]),
         one("launcher", &["--background"]),
         one("control", &["--background"]),
@@ -69,8 +70,8 @@ mod tests {
     fn defaults_are_in_start_order_beside_the_exe() {
         let apps = defaults(Path::new("C:\\s"));
         let names: Vec<_> = apps.iter().map(|a| a.name.as_str()).collect();
-        assert_eq!(names, ["desktop", "bar", "switcher", "launcher", "control"]);
-        assert_eq!(apps[3].args, ["--background"]);
+        assert_eq!(names, ["desktop", "bar", "shelf", "switcher", "launcher", "control"]);
+        assert_eq!(apps[4].args, ["--background"]);
         assert!(apps[1].is_bar());
         assert_eq!(apps[0].exe, Path::new("C:\\s\\shellman-desktop.exe"));
     }

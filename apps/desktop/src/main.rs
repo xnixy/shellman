@@ -1,6 +1,7 @@
 #![windows_subsystem = "windows"]
-//! Shellman's desktop: for now, only the wallpaper. One plain window per monitor, always at the
-//! bottom of the z-order, painted once and then left alone. Desktop icons join it later.
+//! Shellman's desktop: the wallpaper. One plain window per monitor, always at the bottom of the
+//! z-order, painted once and then left alone. What sits on the wallpaper (the shelf) and its
+//! right-click menu are the shelf process's (pps/shelf); a right-click here is handed to it.
 
 mod app;
 mod decode;
@@ -46,6 +47,12 @@ fn main() {
         // copy) leaves it out.
         if !frames_only {
             shellman_core::app_host::start(has("--no-shell"));
+            // The shelf (what sits on the wallpaper, and its right-click menu) is a process of its
+            // own. The session starts and restarts it; run without one, the desktop starts it.
+            // A shelf already running makes the new one exit at once.
+            if std::env::var_os("SHELLMAN_SESSION").is_none() {
+                std::thread::spawn(|| shellman_core::sibling::start("shelf"));
+            }
         }
         app::run(frames_only);
     }

@@ -35,6 +35,12 @@ pub fn retry(target: &str) -> bool {
 
 /// Blocking: see the module's note.
 fn activate(id: &str) -> bool {
+    activate_with(id, "")
+}
+
+/// Start the Store app `id` (`<Family>!<App>`) with a command line `args` (empty for none).
+/// Blocking, so call it from a thread of its own: see the module's note.
+pub fn activate_with(id: &str, args: &str) -> bool {
     unsafe {
         // A thread of our own, so this is its first and only COM use.
         if CoInitializeEx(None, COINIT_MULTITHREADED).is_err() {
@@ -47,7 +53,11 @@ fn activate(id: &str) -> bool {
             None,
             CLSCTX_INPROC_SERVER | CLSCTX_LOCAL_SERVER,
         )
-        .and_then(|manager| manager.ActivateApplication(&HSTRING::from(id), None, AO_NONE))
+        .and_then(|manager| {
+            let text = HSTRING::from(args);
+            let args = if args.is_empty() { windows::core::PCWSTR::null() } else { windows::core::PCWSTR(text.as_ptr()) };
+            manager.ActivateApplication(&HSTRING::from(id), args, AO_NONE)
+        })
         .is_ok();
         CoUninitialize();
         started

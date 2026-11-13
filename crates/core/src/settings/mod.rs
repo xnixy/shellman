@@ -6,6 +6,7 @@
 //! configures agree on one definition.
 
 pub mod bar;
+pub mod desktop;
 pub mod dock;
 pub mod launcher;
 pub mod shell;

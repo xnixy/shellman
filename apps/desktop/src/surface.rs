@@ -2,23 +2,24 @@
 //!
 //! A surface is a background colour plus at most one ready-made bitmap. Painting is a fill and a
 //! blit, nothing else, so there is no work between repaints. The window procedure lives here too:
-//! it keeps the window at the very bottom and never lets it take focus.
+//! it keeps the window at the very bottom, never lets it take focus, and hands a right-click to the
+//! shelf process, which shows the desktop's menu.
 
 use crate::fit::Area;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::Arc;
 use windows::core::w;
-use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, RECT, WPARAM};
+use windows::Win32::Foundation::{COLORREF, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::{
     BeginPaint, BitBlt, CreateCompatibleDC, CreateSolidBrush, DeleteDC, DeleteObject, EndPaint, FillRect,
     HGDIOBJ, PAINTSTRUCT, SRCCOPY, SelectObject,
 };
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::{
-    CreateWindowExW, DefWindowProcW, GetClientRect, LoadCursorW, PostMessageW, RegisterClassW, SetWindowPos, ShowWindow,
+    CreateWindowExW, DefWindowProcW, GetClientRect, GetCursorPos, LoadCursorW, PostMessageW, RegisterClassW, SetWindowPos, ShowWindow,
     HWND_BOTTOM, IDC_ARROW, SWP_NOACTIVATE, SWP_NOZORDER, SW_SHOWNOACTIVATE, WINDOWPOS, WM_DPICHANGED, WM_ERASEBKGND,
-    WM_MOUSEACTIVATE, WM_NCDESTROY, WM_PAINT, WM_WINDOWPOSCHANGING, WNDCLASSW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
+    WM_MOUSEACTIVATE, WM_NCDESTROY, WM_PAINT, WM_RBUTTONUP, WM_WINDOWPOSCHANGING, WNDCLASSW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
     WS_POPUP,
 };
 
@@ -118,6 +119,14 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPA
         }
         // Never take focus from the window in front: MA_NOACTIVATE.
         WM_MOUSEACTIVATE => LRESULT(3),
+        // The wallpaper's menu is the shelf process's (egui and glass stay out of this one).
+        WM_RBUTTONUP => {
+            let mut pt = POINT::default();
+            if GetCursorPos(&mut pt).is_ok() {
+                shellman_core::desktop_menu::request(pt.x, pt.y);
+            }
+            LRESULT(0)
+        }
         // Whoever moves or restacks this window, it stays at the very bottom.
         WM_WINDOWPOSCHANGING => {
             let pos = &mut *(lparam.0 as *mut WINDOWPOS);

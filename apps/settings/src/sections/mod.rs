@@ -4,6 +4,7 @@ mod about;
 mod apps;
 mod appearance;
 mod bar;
+mod desktop;
 mod display;
 mod display_map;
 mod icon_pack;
@@ -34,6 +35,7 @@ use shellman_ui::theme::glyph;
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Section {
     Appearance,
+    Desktop,
     Sound,
     Display,
     Apps,
@@ -46,8 +48,9 @@ pub enum Section {
 }
 
 impl Section {
-    pub const ALL: [Section; 10] = [
+    pub const ALL: [Section; 11] = [
         Section::Appearance,
+        Section::Desktop,
         Section::Sound,
         Section::Display,
         Section::Apps,
@@ -62,6 +65,7 @@ impl Section {
     pub fn label(self) -> &'static str {
         match self {
             Section::Appearance => "Appearance",
+            Section::Desktop => "Desktop",
             Section::Sound => "Sound",
             Section::Display => "Display",
             Section::Apps => "Apps",
@@ -77,6 +81,8 @@ impl Section {
     pub fn glyph(self) -> char {
         match self {
             Section::Appearance => '\u{E790}',
+            // Segoe Fluent Icons' Photo: the wallpaper.
+            Section::Desktop => glyph::PICTURES,
             Section::Sound => glyph::VOLUME,
             Section::Display => glyph::DESKTOP,
             Section::Apps => '\u{E71D}',
@@ -93,6 +99,7 @@ impl Section {
     pub fn show(self, ui: &mut egui::Ui, state: &mut State) {
         match self {
             Section::Appearance => appearance::show(ui, state),
+            Section::Desktop => desktop::show(ui, state),
             Section::Sound => sound::show(ui, state),
             Section::Display => display::show(ui, state),
             Section::Apps => apps::show(ui, state),
@@ -113,6 +120,7 @@ impl Section {
         matches!(
             self,
             Section::Appearance
+                | Section::Desktop
                 | Section::Sound
                 | Section::Display
                 | Section::Apps
@@ -129,6 +137,7 @@ impl Section {
     pub fn slug(self) -> &'static str {
         match self {
             Section::Appearance => "appearance",
+            Section::Desktop => "desktop",
             Section::Sound => "sound",
             Section::Display => "display",
             Section::Apps => "apps",

@@ -7,7 +7,8 @@
 use crate::power_menu::PowerMenu;
 use crate::summon::{self, Shared};
 use crate::views::{connect, display::DisplayView, footer, island, media::MediaView, sound::SoundView};
-use crate::{outside, settings_page};
+use crate::settings_page;
+use shellman_core::outside;
 use shellman_core::system::audio_watch::SoundWatch;
 use shellman_core::system::brightness::BrightnessWatch;
 use shellman_core::system::live::Wake;
