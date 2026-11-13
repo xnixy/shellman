@@ -38,6 +38,35 @@ pub(super) fn open(key: Key, rights: windows::Win32::System::Threading::PROCESS_
     (created(&h)? == key.created).then_some(h)
 }
 
+/// Why a process could not be opened for `key`.
+pub(super) enum OpenError {
+    /// Windows refused: it runs elevated, or as another user or the system.
+    Denied,
+    /// No such process now, or one that reuses the PID: `key` has already ended.
+    Gone,
+    Other(String),
+}
+
+/// Like [`open`], saying why when it fails.
+pub(super) fn open_checked(
+    key: Key,
+    rights: windows::Win32::System::Threading::PROCESS_ACCESS_RIGHTS,
+) -> Result<Handle, OpenError> {
+    use windows::Win32::Foundation::{ERROR_ACCESS_DENIED, ERROR_INVALID_PARAMETER};
+    let opened = unsafe { OpenProcess(rights | PROCESS_QUERY_LIMITED_INFORMATION, false, key.pid) };
+    let h = match opened {
+        Ok(h) => Handle(h),
+        Err(e) if e.code() == ERROR_ACCESS_DENIED.to_hresult() => return Err(OpenError::Denied),
+        Err(e) if e.code() == ERROR_INVALID_PARAMETER.to_hresult() => return Err(OpenError::Gone),
+        Err(e) => return Err(OpenError::Other(e.message())),
+    };
+    match created(&h) {
+        Some(c) if c == key.created => Ok(h),
+        Some(_) => Err(OpenError::Gone),
+        None => Err(OpenError::Other("Its start time could not be read.".into())),
+    }
+}
+
 fn created(h: &Handle) -> Option<i64> {
     let (mut c, mut e, mut k, mut u) = Default::default();
     unsafe { GetProcessTimes(h.0, &mut c, &mut e, &mut k, &mut u) }.ok()?;
@@ -81,7 +110,7 @@ pub fn read_static(key: Key, name: &str) -> Static {
     out
 }
 
-fn image_path(h: &Handle) -> Option<PathBuf> {
+pub(super) fn image_path(h: &Handle) -> Option<PathBuf> {
     let mut buf = vec![0u16; 1024];
     let mut len = buf.len() as u32;
     unsafe { QueryFullProcessImageNameW(h.0, PROCESS_NAME_WIN32, PWSTR(buf.as_mut_ptr()), &mut len) }.ok()?;

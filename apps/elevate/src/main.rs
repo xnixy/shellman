@@ -69,6 +69,22 @@ mod tests {
     }
 
     #[test]
+    fn end_processes_takes_only_pid_and_start_time() {
+        let never = |_: &ops::Op| -> bool { panic!("must not run") };
+        assert_eq!(decide(&args(&["end-processes", "notepad.exe"]), true, never), exit::BAD_ARGS);
+        assert_eq!(decide(&args(&["end-processes", "4:1"]), true, never), exit::BAD_ARGS);
+        assert_eq!(decide(&args(&["end-processes"]), true, never), exit::BAD_ARGS);
+        assert_eq!(decide(&args(&["end-processes", "500:133800000000000000"]), false, never), exit::NOT_ELEVATED);
+        let seen = std::cell::RefCell::new(None);
+        let record = |op: &ops::Op| {
+            *seen.borrow_mut() = Some(op.clone());
+            true
+        };
+        assert_eq!(decide(&args(&["end-processes", "500:7", "400:6"]), true, record), exit::DONE);
+        assert_eq!(*seen.borrow(), Some(ops::Op::EndProcesses { targets: vec![(500, 7), (400, 6)] }));
+    }
+
+    #[test]
     fn elevated_runs_and_reports() {
         assert_eq!(decide(&args(&["sound-device", "disable", ID]), true, |_| true), exit::DONE);
         assert_eq!(decide(&args(&["sound-device", "disable", ID]), true, |_| false), exit::FAILED);

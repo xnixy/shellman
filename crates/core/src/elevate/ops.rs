@@ -21,6 +21,25 @@ pub enum Op {
     SysfontRestore,
     /// Put a system font used before back, from its history folder (`sysfont-reuse <generation>`).
     SysfontReuse { generation: String },
+    /// End processes, in this order, each named by PID and start time (`end-processes
+    /// <pid>:<created> ...`); one whose start time differs is another process on a reused PID and
+    /// is left alone. Never a name or a command line.
+    EndProcesses { targets: Vec<(u32, i64)> },
+}
+
+/// The most processes one `end-processes` may name (a big browser's tree is well under this).
+pub const MAX_TARGETS: usize = 256;
+
+/// `pid:created` as written on the command line: decimal digits only, a PID above 4 and a start
+/// time above zero.
+fn parse_target(word: &str) -> Option<(u32, i64)> {
+    let (pid, created) = word.split_once(':')?;
+    let digits = |s: &str, max: usize| !s.is_empty() && s.len() <= max && s.bytes().all(|b| b.is_ascii_digit());
+    if !digits(pid, 10) || !digits(created, 19) {
+        return None;
+    }
+    let (pid, created) = (pid.parse::<u32>().ok()?, created.parse::<i64>().ok()?);
+    (pid > 4 && created > 0).then_some((pid, created))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -87,6 +106,11 @@ pub fn parse(args: &[String]) -> Result<Op, BadArgs> {
         ["sysfont-apply", generation] if is_generation(generation) => Ok(Op::SysfontApply { generation: (*generation).to_owned() }),
         ["sysfont-reuse", generation] if is_generation(generation) => Ok(Op::SysfontReuse { generation: (*generation).to_owned() }),
         ["sysfont-restore"] => Ok(Op::SysfontRestore),
+        ["end-processes", targets @ ..] if (1..=MAX_TARGETS).contains(&targets.len()) => {
+            let parsed: Option<Vec<_>> = targets.iter().map(|t| parse_target(t)).collect();
+            parsed.map(|targets| Op::EndProcesses { targets }).ok_or(BadArgs("a target is <pid>:<start time>"))
+        }
+        ["end-processes", ..] => Err(BadArgs("end-processes takes 1 to 256 targets")),
         ["sysfont-apply" | "sysfont-reuse", ..] => Err(BadArgs("takes exactly one generation id")),
         ["sysfont-restore", ..] => Err(BadArgs("sysfont-restore takes nothing")),
         ["startup-approve", ..] => Err(BadArgs("startup-approve takes exactly a state, an area and a name")),
@@ -110,6 +134,11 @@ impl Op {
             Op::SysfontApply { generation } => vec!["sysfont-apply".into(), generation.clone()],
             Op::SysfontRestore => vec!["sysfont-restore".into()],
             Op::SysfontReuse { generation } => vec!["sysfont-reuse".into(), generation.clone()],
+            Op::EndProcesses { targets } => {
+                let mut v = vec!["end-processes".to_owned()];
+                v.extend(targets.iter().map(|(pid, created)| format!("{pid}:{created}")));
+                v
+            }
         }
     }
 
@@ -133,6 +162,13 @@ impl Op {
     /// The operation that puts a system font used before back, or None when not an id.
     pub fn sysfont_reuse(generation: &str) -> Option<Op> {
         is_generation(generation).then(|| Op::SysfontReuse { generation: generation.to_owned() })
+    }
+
+    /// The operation that ends these (PID, start time) processes in order, or None when there are
+    /// none, too many, or one is not an ordinary process (PID 4 or below, no start time).
+    pub fn end_processes(targets: &[(u32, i64)]) -> Option<Op> {
+        let ok = (1..=MAX_TARGETS).contains(&targets.len()) && targets.iter().all(|&(pid, created)| pid > 4 && created > 0);
+        ok.then(|| Op::EndProcesses { targets: targets.to_vec() })
     }
 
     /// The operation for a sound device, or None when `id` is not an endpoint id.
@@ -260,6 +296,50 @@ mod tests {
         }
         assert_eq!(Op::sysfont_apply("tob9y0").unwrap().command_line(), "sysfont-apply tob9y0");
         assert!(Op::sysfont_apply("x/y").is_none());
+    }
+
+    #[test]
+    fn end_processes_parses_strictly() {
+        let ok = |a: &[&str]| parse(&args(a));
+        assert_eq!(
+            ok(&["end-processes", "4312:133800000000000000", "99:1"]),
+            Ok(Op::EndProcesses { targets: vec![(4312, 133800000000000000), (99, 1)] })
+        );
+        let many: Vec<String> = std::iter::once("end-processes".to_owned()).chain((0..257).map(|i| format!("{}:1", i + 10))).collect();
+        assert!(parse(&many[..257]).is_ok(), "256 targets");
+        assert!(parse(&many).is_err(), "257 targets");
+        for bad in [
+            &["end-processes"][..],
+            &["end-processes", "notepad.exe"],
+            &["end-processes", "4312"],
+            &["end-processes", "4312:"],
+            &["end-processes", ":5"],
+            &["end-processes", "4:5"],
+            &["end-processes", "0:5"],
+            &["end-processes", "100:0"],
+            &["end-processes", "-5:1"],
+            &["end-processes", "100:-1"],
+            &["end-processes", "+100:1"],
+            &["end-processes", "100:1:2"],
+            &["end-processes", "99999999999:1"],
+            &["end-processes", "100:99999999999999999999"],
+            &["end-processes", "100:1", "cmd.exe"],
+            &["end-processes", "100:1 200:2"],
+            &["end-process", "100:1"],
+        ] {
+            assert!(ok(bad).is_err(), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn end_processes_round_trips() {
+        let op = Op::end_processes(&[(4312, 133800000000000000), (77, 5)]).unwrap();
+        assert_eq!(parse(&op.to_args()), Ok(op.clone()));
+        assert_eq!(op.command_line(), "end-processes 4312:133800000000000000 77:5");
+        assert!(Op::end_processes(&[]).is_none());
+        assert!(Op::end_processes(&[(4, 1)]).is_none());
+        assert!(Op::end_processes(&[(100, 0)]).is_none());
+        assert!(Op::end_processes(&vec![(100, 1); MAX_TARGETS + 1]).is_none());
     }
 
     #[test]

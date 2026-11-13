@@ -81,6 +81,17 @@ pub struct State {
     pub go_to: Option<Page>,
 }
 
+/// Ending what Windows refuses runs the helper behind the UAC prompt, and wakes the window when
+/// it is answered.
+fn elevator(ctx: &egui::Context) -> crate::actions::Elevator {
+    let wake = ctx.clone();
+    std::sync::Arc::new(move |keys| {
+        let outcome = shellman_core::procs::end::end_elevated(&keys);
+        wake.request_repaint();
+        outcome
+    })
+}
+
 pub struct TasksApp {
     page: Page,
     query: String,
@@ -115,7 +126,7 @@ impl TasksApp {
             look,
             st: State {
                 list: List::default(),
-                actions: Actions::default(),
+                actions: Actions::new(elevator(ctx)),
                 control: Native,
                 histories: Histories::default(),
                 system: System::default(),
@@ -293,6 +304,7 @@ impl eframe::App for TasksApp {
         self.track_system(ctx);
         shellman_ui::app_icon::sync_window_icon(ctx, shellman_ui::app_icon::Kind::Shellman);
         self.take_sample();
+        self.st.actions.poll();
         self.layout(ctx);
     }
 }
