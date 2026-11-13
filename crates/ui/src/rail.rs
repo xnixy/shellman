@@ -197,7 +197,7 @@ fn has_foot(mode: Mode) -> bool {
     mode != Mode::Narrow
 }
 
-/// The island's height for these entries, before the window limits it.
+/// The height the rows and the foot need (the island itself runs down the whole window).
 pub fn wanted_height(entries: &[Entry], mode: Mode) -> f32 {
     let foot = if has_foot(mode) { GAP + row_h(mode) } else { 0.0 };
     2.0 * INSET + list_h(entries, mode) + foot
@@ -225,7 +225,7 @@ pub fn width(ui: &Ui, entries: &[Entry], mode: Mode) -> f32 {
     wide_width(longest)
 }
 
-/// Draw the rail at the window's left, `top` down, as an island pushed onto `list` (so the
+/// Draw the rail at the window's left, from `top` to the window's bottom margin, as an island pushed onto `list` (so the
 /// window makes it glass). `solid` is the style to paint with when the window has no composed
 /// glass. `selected` is the key of the current row.
 #[allow(clippy::too_many_arguments)]
@@ -244,7 +244,8 @@ pub fn show(
     let w = width(ui, entries, mode);
     let wide = mode == Mode::Wide;
     let foot = if has_foot(mode) { GAP + row_h(mode) } else { 0.0 };
-    let height = wanted_height(entries, mode).min(screen.bottom() - MARGIN - top);
+    // The whole column down to the window's margin, the fold button at its foot.
+    let height = (screen.bottom() - MARGIN - top).max(ICON_CELL + 2.0 * INSET);
     let rail = Rect::from_min_size(pos2(screen.left() + MARGIN, top), vec2(w, height));
     list.push(if wide { Island::new(rail, radius) } else { Island::pill(rail) });
 

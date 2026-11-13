@@ -128,7 +128,8 @@ impl SettingsApp {
                 list.push(Island::pill(corner));
                 chips::window_buttons(ui, Rect::from_center_size(corner.center(), vec2(buttons_w, BUTTON_H)));
             }
-            self.rail(ui, &mut list, screen, content_top);
+            // The rail runs the window's whole height, level with the title pill.
+            self.rail(ui, &mut list, screen, title.top());
 
             let area = Rect::from_min_max(pos2(left, content_top), pos2(left + width, screen.bottom() - MARGIN));
             self.page(ui, area, &mut list);
