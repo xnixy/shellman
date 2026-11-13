@@ -229,12 +229,33 @@ pub struct Details {
     pub denied: Option<String>,
 }
 
+/// Why a process was not ended.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum EndError {
+    /// Windows refused this program: the process is elevated or belongs to someone else. The
+    /// administrator helper may still be able to (see [`end::end_elevated`]).
+    Denied,
+    /// It is not running any more (or its PID now belongs to another process).
+    Gone,
+    Failed(String),
+}
+
+impl EndError {
+    pub fn message(&self) -> String {
+        match self {
+            EndError::Denied => "Windows did not let this window end it.".into(),
+            EndError::Gone => "It has already ended.".into(),
+            EndError::Failed(why) => format!("It could not be ended: {why}"),
+        }
+    }
+}
+
 /// What the window does to processes. Every call names the process by [`Key`], so a PID that was
 /// reused by a newer process is never acted on.
 pub trait Control {
     /// Ask these windows to close (WM_CLOSE), as their own close button would. How many were asked.
     fn close_windows(&self, windows: &[isize]) -> usize;
     /// End the process at once (TerminateProcess).
-    fn terminate(&self, key: Key) -> Result<(), String>;
+    fn terminate(&self, key: Key) -> Result<(), EndError>;
     fn details(&self, key: Key) -> Details;
 }

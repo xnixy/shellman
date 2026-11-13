@@ -4,10 +4,17 @@
 //! there, "End now" ends it at once. A background process is ended at once, after "End <name>?"
 //! in the pill. A protected one asks with a warning; a critical one cannot be ended (the button
 //! is off). End process tree always asks first and ends the children before the parent.
+//!
+//! Ending is tried unelevated first. What Windows refuses (elevated, or another user's) is then
+//! handed, in one go, to `shellman-elevate` behind the UAC prompt, on a worker thread (the pill
+//! says it is waiting). Declining the prompt is an answer, not an error.
 
 use crate::model::{List, Target};
+use shellman_core::elevate::Outcome;
 use shellman_core::procs::policy::{self, Verdict};
-use shellman_core::procs::{Control, Key};
+use shellman_core::procs::{end, Access, Control, EndError, Key};
+use std::sync::mpsc::{self, Receiver, TryRecvError};
+use std::sync::Arc;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Act {
@@ -26,13 +33,34 @@ pub enum Ask {
     Confirm { act: Act, keys: Vec<Key>, name: String, warning: Option<&'static str> },
     /// The windows were asked to close; "End now" if it does not.
     Closing { keys: Vec<Key>, name: String },
+    /// Waiting for the administrator prompt to be answered and the helper to be done.
+    Waiting { name: String },
     /// What happened, when it did not go as asked.
     Note(String),
 }
 
-#[derive(Default)]
+/// Ends these processes as administrator; blocks, so it runs on a worker thread.
+pub type Elevator = Arc<dyn Fn(Vec<Key>) -> Outcome + Send + Sync>;
+
+/// An elevated ending in progress.
+struct Pending {
+    answer: Receiver<Outcome>,
+    name: String,
+    total: usize,
+    /// What already failed unelevated, for the note at the end.
+    failed: Vec<String>,
+}
+
 pub struct Actions {
     pub ask: Ask,
+    elevate: Elevator,
+    pending: Option<Pending>,
+}
+
+impl Default for Actions {
+    fn default() -> Self {
+        Self::new(Arc::new(|keys: Vec<Key>| end::end_elevated(&keys)))
+    }
 }
 
 /// The strictest verdict over the processes: a group with one critical process is critical.
@@ -64,6 +92,11 @@ pub fn affected(list: &List, t: Target, act: Act) -> Vec<usize> {
 }
 
 impl Actions {
+    /// `elevate` is what runs when Windows refuses an ending (the real one asks UAC).
+    pub fn new(elevate: Elevator) -> Self {
+        Self { ask: Ask::Nothing, elevate, pending: None }
+    }
+
     /// The End task or End process tree button.
     pub fn start(&mut self, list: &List, act: Act, control: &dyn Control, own_pid: u32) {
         let Some(t) = list.target() else {
@@ -96,7 +129,9 @@ impl Actions {
         };
         let procs: Vec<usize> = keys.iter().filter_map(|&k| list.index(k)).collect();
         let windows = windows_of(list, &procs);
-        if act == Act::End && !windows.is_empty() {
+        // Windows of what runs elevated cannot be sent a close; it is ended (after the prompt).
+        let reachable = procs.iter().all(|&i| list.procs[i].access == Access::Full);
+        if act == Act::End && !windows.is_empty() && reachable {
             control.close_windows(&windows);
             self.ask = Ask::Closing { keys, name };
         } else {
@@ -116,11 +151,49 @@ impl Actions {
     }
 
     fn terminate(&mut self, keys: &[Key], name: &str, control: &dyn Control) {
-        let failed: Vec<String> = keys.iter().filter_map(|&k| control.terminate(k).err()).collect();
-        self.ask = match failed.first() {
-            None => Ask::Nothing,
-            Some(why) if failed.len() == keys.len() => Ask::Note(format!("{name} was not ended. {why}")),
-            Some(why) => Ask::Note(format!("{} of {} processes of {name} were not ended. {why}", failed.len(), keys.len())),
+        let mut denied = Vec::new();
+        let mut failed = Vec::new();
+        for &k in keys {
+            match control.terminate(k) {
+                // One that is already gone is as good as ended.
+                Ok(()) | Err(EndError::Gone) => {}
+                Err(EndError::Denied) => denied.push(k),
+                Err(e) => failed.push(e.message()),
+            }
+        }
+        if denied.is_empty() {
+            self.ask = report(name, keys.len(), &failed);
+            return;
+        }
+        let (send, answer) = mpsc::channel();
+        let run = self.elevate.clone();
+        std::thread::spawn(move || {
+            let _ = send.send(run(denied));
+        });
+        self.pending = Some(Pending { answer, name: name.to_owned(), total: keys.len(), failed });
+        self.ask = Ask::Waiting { name: name.to_owned() };
+    }
+
+    /// Each frame: has the administrator helper finished?
+    pub fn poll(&mut self) {
+        let Some(p) = &self.pending else {
+            return;
+        };
+        let outcome = match p.answer.try_recv() {
+            Ok(o) => o,
+            Err(TryRecvError::Empty) => return,
+            Err(TryRecvError::Disconnected) => Outcome::Failed("The administrator helper did not answer.".into()),
+        };
+        let Some(p) = self.pending.take() else {
+            return;
+        };
+        self.ask = match outcome {
+            // Declining the prompt is the answer; the rest that failed is still told.
+            Outcome::Done | Outcome::Cancelled => report(&p.name, p.total, &p.failed),
+            other => {
+                let why = other.message().unwrap_or_default();
+                Ask::Note(format!("{} was not ended. {why}", p.name))
+            }
         };
     }
 
@@ -136,6 +209,15 @@ impl Actions {
     }
 }
 
+/// What to say when some of `total` processes were not ended; nothing when all were.
+fn report(name: &str, total: usize, failed: &[String]) -> Ask {
+    match failed.first() {
+        None => Ask::Nothing,
+        Some(why) if failed.len() == total => Ask::Note(format!("{name} was not ended. {why}")),
+        Some(why) => Ask::Note(format!("{} of {total} processes of {name} were not ended. {why}", failed.len())),
+    }
+}
+
 fn windows_of(list: &List, procs: &[usize]) -> Vec<isize> {
     procs.iter().flat_map(|&i| list.procs[i].windows.iter().map(|w| w.hwnd)).collect()
 }
@@ -144,7 +226,7 @@ fn windows_of(list: &List, procs: &[usize]) -> Vec<isize> {
 mod tests {
     use super::*;
     use crate::model::tests::{app, proc, sample};
-    use shellman_core::procs::{Access, Details};
+    use shellman_core::procs::Details;
     use std::cell::RefCell;
 
     #[derive(Default)]
@@ -152,6 +234,9 @@ mod tests {
         closed: RefCell<Vec<isize>>,
         ended: RefCell<Vec<u32>>,
         refuse: Option<u32>,
+        /// Windows refuses these unelevated.
+        deny: Vec<u32>,
+        gone: Vec<u32>,
     }
 
     impl Control for Fake {
@@ -159,9 +244,15 @@ mod tests {
             self.closed.borrow_mut().extend_from_slice(windows);
             windows.len()
         }
-        fn terminate(&self, key: Key) -> Result<(), String> {
+        fn terminate(&self, key: Key) -> Result<(), EndError> {
             if self.refuse == Some(key.pid) {
-                return Err("Access is denied.".into());
+                return Err(EndError::Failed("Access is denied.".into()));
+            }
+            if self.deny.contains(&key.pid) {
+                return Err(EndError::Denied);
+            }
+            if self.gone.contains(&key.pid) {
+                return Err(EndError::Gone);
             }
             self.ended.borrow_mut().push(key.pid);
             Ok(())
@@ -227,19 +318,112 @@ mod tests {
     }
 
     #[test]
-    fn critical_and_denied_do_nothing() {
+    fn critical_ones_do_nothing() {
         let mut l = List::default();
-        let mut denied = proc(60, 1, "elevated.exe");
-        denied.access = Access::ReadOnly;
-        l.set_procs(vec![proc(50, 1, "csrss.exe"), denied]);
+        l.set_procs(vec![
+            proc(50, 1, "csrss.exe"),
+            proc(51, 1, "winlogon.exe"),
+            proc(52, 1, "lsass.exe"),
+            proc(53, 1, "shellman-session.exe"),
+        ]);
         let (mut a, f) = (Actions::default(), Fake::default());
-        for pid in [50, 60] {
+        for pid in [50, 51, 52, 53] {
             l.select(Some(Key { pid, created: pid as i64 }));
             a.start(&l, Act::End, &f, 1);
             a.start(&l, Act::Tree, &f, 1);
             assert_eq!(a.ask, Ask::Nothing);
         }
         assert!(f.ended.borrow().is_empty() && f.closed.borrow().is_empty());
+    }
+
+    /// An actions whose elevator records what it was asked and answers `outcome`.
+    fn elevating(outcome: Outcome) -> (Actions, Arc<std::sync::Mutex<Vec<Vec<u32>>>>) {
+        let asked = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen = asked.clone();
+        let run: Elevator = Arc::new(move |keys: Vec<Key>| {
+            seen.lock().unwrap().push(keys.iter().map(|k| k.pid).collect());
+            outcome.clone()
+        });
+        (Actions::new(run), asked)
+    }
+
+    fn settle(a: &mut Actions) {
+        for _ in 0..500 {
+            a.poll();
+            if !matches!(a.ask, Ask::Waiting { .. }) {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        panic!("the elevated ending never answered");
+    }
+
+    fn elevated_list() -> List {
+        let mut l = List::default();
+        let mut svc = proc(60, 1, "elevated.exe");
+        svc.access = shellman_core::procs::Access::ReadOnly;
+        l.set_procs(vec![svc, proc(61, 60, "child.exe")]);
+        l.select(Some(Key { pid: 60, created: 60 }));
+        l
+    }
+
+    #[test]
+    fn what_windows_refuses_goes_to_the_helper_after_trying_unelevated() {
+        let l = elevated_list();
+        let (mut a, asked) = elevating(Outcome::Done);
+        let f = Fake { deny: vec![60], ..Default::default() };
+        a.start(&l, Act::Tree, &f, 1);
+        assert!(matches!(a.ask, Ask::Confirm { warning: Some(_), .. }), "a prompt is coming: confirm first");
+        a.confirm(&l, &f);
+        assert!(matches!(a.ask, Ask::Waiting { .. }));
+        settle(&mut a);
+        assert_eq!(a.ask, Ask::Nothing);
+        assert_eq!(*f.ended.borrow(), [61], "the child it could end itself was ended unelevated");
+        assert_eq!(*asked.lock().unwrap(), [[60]], "only the refused one went to the helper");
+    }
+
+    #[test]
+    fn nothing_refused_never_asks_for_administrator() {
+        let l = list_selecting(200);
+        let (mut a, asked) = elevating(Outcome::Done);
+        let f = Fake { gone: vec![200], ..Default::default() };
+        a.start(&l, Act::End, &f, 1);
+        a.end_now(&f);
+        assert_eq!(a.ask, Ask::Nothing, "already gone is fine");
+        assert!(asked.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn declining_the_prompt_says_nothing() {
+        let l = elevated_list();
+        let (mut a, _) = elevating(Outcome::Cancelled);
+        let f = Fake { deny: vec![60], ..Default::default() };
+        a.start(&l, Act::End, &f, 1);
+        a.confirm(&l, &f);
+        settle(&mut a);
+        assert_eq!(a.ask, Ask::Nothing);
+    }
+
+    #[test]
+    fn a_helper_failure_is_told_plainly() {
+        let l = elevated_list();
+        let (mut a, _) = elevating(Outcome::Failed("Windows did not allow the change.".into()));
+        let f = Fake { deny: vec![60], ..Default::default() };
+        a.start(&l, Act::End, &f, 1);
+        a.confirm(&l, &f);
+        settle(&mut a);
+        assert!(matches!(&a.ask, Ask::Note(n) if n.contains("not ended") && n.contains("did not allow")), "{:?}", a.ask);
+    }
+
+    #[test]
+    fn declining_still_tells_what_failed_for_other_reasons() {
+        let l = elevated_list();
+        let (mut a, _) = elevating(Outcome::Cancelled);
+        let f = Fake { deny: vec![60], refuse: Some(61), ..Default::default() };
+        a.start(&l, Act::Tree, &f, 1);
+        a.confirm(&l, &f);
+        settle(&mut a);
+        assert!(matches!(&a.ask, Ask::Note(n) if n.contains("1 of 2")), "{:?}", a.ask);
     }
 
     #[test]

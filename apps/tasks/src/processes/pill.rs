@@ -87,6 +87,10 @@ pub fn show(ui: &mut egui::Ui, rect: Rect, st: &mut State) {
                 st.actions.cancel();
             }
         }
+        Ask::Waiting { name } => {
+            row.x += 6.0;
+            row.text(&format!("Waiting for Windows' permission to end {name}..."), c.text);
+        }
         Ask::Note(note) => {
             row.x += 6.0;
             row.text(&note, c.warn);
