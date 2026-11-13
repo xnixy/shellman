@@ -1,14 +1,20 @@
 //! Screen brightness, per monitor: DDC/CI for external monitors (the monitor's own brightness
-//! setting, over the video cable), and the video driver for a laptop's built-in panel.
+//! setting, over the video cable), the video driver for a laptop's built-in panel, and, for a
+//! monitor running HDR, Windows' "SDR content brightness" (`display::sdr`): in HDR the monitor
+//! ignores its own brightness setting, and the level everyday content is drawn at is what counts.
 //!
 //! DDC/CI is slow (tens to hundreds of milliseconds a call) and some monitors never answer, so
 //! everything happens on a worker: monitors are opened and read when the watch starts, a
 //! monitor that does not answer is left out, and while a slider is dragged only the newest level
-//! is written, at most once per `WRITE_GAP` per monitor. Dropping the watch closes the monitors.
+//! is written, at most once per `WRITE_GAP` per monitor. HDR screens are read first (cheap) and
+//! looked at again every `POLL`, so HDR switched on or off, or the level changed by another tool,
+//! shows up while the watch runs. Dropping the watch closes the monitors.
 
 use super::backlight::Backlight;
+use super::display::sdr;
 use super::display_names;
 use super::live::{self, Mailbox, Wake};
+use std::collections::HashMap;
 use std::sync::mpsc::{channel, Receiver, RecvTimeoutError, Sender};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -26,6 +32,21 @@ use windows::Win32::Graphics::Gdi::{
 const VCP_BRIGHTNESS: u8 = 0x10;
 /// Monitors' controllers fall over when written to faster than this.
 pub const WRITE_GAP: Duration = Duration::from_millis(120);
+/// How often HDR state and levels are read again for changes made elsewhere.
+const POLL: Duration = Duration::from_millis(1500);
+/// After the last value of a drag, this long passes before it is sent as the final one.
+const SETTLE: Duration = Duration::from_millis(400);
+
+/// What a screen's slider changes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Kind {
+    /// The monitor's own brightness, over DDC/CI.
+    Monitor,
+    /// A laptop panel's backlight.
+    Builtin,
+    /// HDR is on: how bright everyday (SDR) content is drawn, as Windows' own slider sets it.
+    Hdr,
+}
 
 /// A screen whose brightness can be set.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -34,8 +55,25 @@ pub struct Screen {
     pub id: String,
     /// The monitor's own name, such as "DELL U2720Q".
     pub name: String,
-    /// 0..=100
+    /// 0..=100; for `Kind::Hdr` the position Windows' own slider shows.
     pub percent: u8,
+    pub kind: Kind,
+}
+
+impl Screen {
+    /// The slider's heading.
+    pub fn label(&self) -> &'static str {
+        match self.kind {
+            Kind::Hdr => "Brightness (HDR)",
+            _ => "Brightness",
+        }
+    }
+
+    /// A line saying what the slider does, when it is not the obvious.
+    pub fn hint(&self) -> Option<&'static str> {
+        (self.kind == Kind::Hdr)
+            .then_some("HDR is on, so this sets how bright apps and the desktop look. HDR games and video keep their own brightness.")
+    }
 }
 
 enum Cmd {
@@ -78,6 +116,9 @@ enum Control {
     /// Boxed: the monitor record carries its 256-byte description.
     Ddc { monitor: Box<PHYSICAL_MONITOR>, max: u32 },
     Builtin(Backlight),
+    /// Every monitor showing this picture (more than one when duplicated); `unsaved` is when the
+    /// last live value went out, until it has been sent again as the final one.
+    Sdr { targets: Vec<sdr::Target>, unsaved: Option<Instant> },
 }
 
 struct Panel {
@@ -87,8 +128,8 @@ struct Panel {
 }
 
 impl Panel {
-    fn write(&self, percent: u8) {
-        match &self.control {
+    fn write(&mut self, percent: u8, now: Instant) {
+        match &mut self.control {
             Control::Ddc { monitor, max } => {
                 // SAFETY: an open physical monitor handle.
                 unsafe {
@@ -98,7 +139,39 @@ impl Panel {
             Control::Builtin(b) => {
                 b.set_percent(percent);
             }
+            Control::Sdr { targets, unsaved } => {
+                for t in targets.iter() {
+                    sdr::set_white_level(*t, sdr::level_for(percent), false);
+                }
+                *unsaved = Some(now);
+            }
         }
+    }
+
+    /// When the last value of a drag goes out again as the final one.
+    fn settle_at(&self) -> Option<Instant> {
+        match &self.control {
+            Control::Sdr { unsaved: Some(at), .. } if self.debounce.pending.is_none() => Some(*at + SETTLE),
+            _ => None,
+        }
+    }
+
+    fn settle(&mut self, now: Instant) {
+        if !self.settle_at().is_some_and(|at| at <= now) {
+            return;
+        }
+        let level = sdr::level_for(self.screen.percent);
+        if let Control::Sdr { targets, unsaved } = &mut self.control {
+            for t in targets.iter() {
+                sdr::set_white_level(*t, level, true);
+            }
+            *unsaved = None;
+        }
+    }
+
+    /// Being changed from here: what is read back is not the truth yet.
+    fn busy(&self) -> bool {
+        self.debounce.pending.is_some() || matches!(self.control, Control::Sdr { unsaved: Some(_), .. })
     }
 
     fn close(self) {
@@ -111,26 +184,50 @@ impl Panel {
     }
 }
 
-fn run(rx: Receiver<Cmd>, out: Arc<Mailbox<Vec<Screen>>>, wake: Wake) {
-    let publish = |panels: &[Panel]| {
-        out.put(panels.iter().map(|p| p.screen.clone()).collect());
-        wake();
+/// The screens that get the HDR slider: each GDI device with HDR on, its monitors, and the
+/// slider position for its level. The others keep DDC or the backlight.
+pub fn hdr_screens(states: &[sdr::State]) -> Vec<(String, Vec<sdr::Target>, u8)> {
+    let mut out: Vec<(String, Vec<sdr::Target>, u8)> = Vec::new();
+    for s in states.iter().filter(|s| s.hdr) {
+        let Some(level) = s.level else { continue };
+        match out.iter_mut().find(|(d, _, _)| *d == s.device) {
+            Some((_, targets, _)) => targets.push(s.target),
+            None => out.push((s.device.clone(), vec![s.target], sdr::percent_for(level))),
+        }
+    }
+    out
+}
+
+/// Open every screen: the built-in panel, the HDR ones (instant), then DDC monitors one by one.
+fn open_panels(publish: &dyn Fn(&[Panel])) -> Vec<Panel> {
+    let names: HashMap<String, String> = display_names::friendly_names();
+    let name_of = |device: &str| {
+        let name = names.get(device).map(|n| n.trim().to_string()).filter(|n| !n.is_empty());
+        name.unwrap_or_else(|| "Display".into())
     };
     let mut panels: Vec<Panel> = Vec::new();
     if let Some(b) = Backlight::open() {
         if let Some(percent) = b.percent() {
-            let screen = Screen { id: "builtin".into(), name: "Built-in display".into(), percent };
+            let screen = Screen { id: "builtin".into(), name: "Built-in display".into(), percent, kind: Kind::Builtin };
             panels.push(Panel { screen, control: Control::Builtin(b), debounce: Debounce::default() });
         }
     }
-    let names = display_names::friendly_names();
+    let hdr = hdr_screens(&sdr::states());
+    for (device, targets, percent) in &hdr {
+        let screen = Screen { id: device.clone(), name: name_of(device), percent: *percent, kind: Kind::Hdr };
+        let control = Control::Sdr { targets: targets.clone(), unsaved: None };
+        panels.push(Panel { screen, control, debounce: Debounce::default() });
+    }
+    publish(&panels);
     for (device, monitor) in physical_monitors() {
         let mut max = 0u32;
         let mut now = 0u32;
+        let hdr_on = hdr.iter().any(|(d, _, _)| *d == device);
         // SAFETY: an open physical monitor handle and valid out-pointers.
-        let answered = unsafe {
-            GetVCPFeatureAndVCPFeatureReply(monitor.hPhysicalMonitor, VCP_BRIGHTNESS, None, &mut now, Some(&mut max))
-        } != 0;
+        let answered = !hdr_on
+            && unsafe {
+                GetVCPFeatureAndVCPFeatureReply(monitor.hPhysicalMonitor, VCP_BRIGHTNESS, None, &mut now, Some(&mut max))
+            } != 0;
         if !answered || max == 0 {
             // SAFETY: opened by GetPhysicalMonitorsFromHMONITOR, closed once.
             unsafe {
@@ -138,27 +235,33 @@ fn run(rx: Receiver<Cmd>, out: Arc<Mailbox<Vec<Screen>>>, wake: Wake) {
             }
             continue;
         }
-        let name = names.get(&device).map(|n| n.trim().to_string()).filter(|n| !n.is_empty());
-        let name = name.unwrap_or_else(|| "Display".into());
-        let screen = Screen { id: device, name, percent: to_percent(now, max) };
+        let screen = Screen { name: name_of(&device), id: device, percent: to_percent(now, max), kind: Kind::Monitor };
         panels.push(Panel { screen, control: Control::Ddc { monitor: Box::new(monitor), max }, debounce: Debounce::default() });
         publish(&panels);
     }
     publish(&panels);
+    panels
+}
+
+fn run(rx: Receiver<Cmd>, out: Arc<Mailbox<Vec<Screen>>>, wake: Wake) {
+    let publish = |panels: &[Panel]| {
+        out.put(panels.iter().map(|p| p.screen.clone()).collect());
+        wake();
+    };
+    let mut panels = open_panels(&publish);
+    let mut next_poll = Instant::now() + POLL;
 
     loop {
         let now = Instant::now();
-        let wait = panels.iter().filter_map(|p| p.debounce.wait(now)).min();
-        let cmd = match wait {
-            Some(wait) => match rx.recv_timeout(wait) {
-                Ok(cmd) => Some(cmd),
-                Err(RecvTimeoutError::Timeout) => None,
-                Err(RecvTimeoutError::Disconnected) => break,
-            },
-            None => match rx.recv() {
-                Ok(cmd) => Some(cmd),
-                Err(_) => break,
-            },
+        let wait = panels
+            .iter()
+            .filter_map(|p| p.debounce.wait(now))
+            .chain(panels.iter().filter_map(Panel::settle_at).map(|at| at.saturating_duration_since(now)))
+            .fold(next_poll.saturating_duration_since(now), Duration::min);
+        let cmd = match rx.recv_timeout(wait) {
+            Ok(cmd) => Some(cmd),
+            Err(RecvTimeoutError::Timeout) => None,
+            Err(RecvTimeoutError::Disconnected) => break,
         };
         match cmd {
             Some(Cmd::Stop) => break,
@@ -173,7 +276,34 @@ fn run(rx: Receiver<Cmd>, out: Arc<Mailbox<Vec<Screen>>>, wake: Wake) {
         let now = Instant::now();
         for p in &mut panels {
             if let Some(percent) = p.debounce.due(now) {
-                p.write(percent);
+                p.write(percent, now);
+            }
+            p.settle(now);
+        }
+        if now >= next_poll {
+            next_poll = now + POLL;
+            let hdr = hdr_screens(&sdr::states());
+            let had: Vec<&str> = panels.iter().filter(|p| p.screen.kind == Kind::Hdr).map(|p| p.screen.id.as_str()).collect();
+            let has: Vec<&str> = hdr.iter().map(|(d, _, _)| d.as_str()).collect();
+            if had != has {
+                // HDR went on or off somewhere, or a screen came or went: start again.
+                for p in std::mem::take(&mut panels) {
+                    p.close();
+                }
+                panels = open_panels(&publish);
+                continue;
+            }
+            let mut changed = false;
+            for (device, _, percent) in &hdr {
+                if let Some(p) = panels.iter_mut().find(|p| p.screen.id == *device && !p.busy()) {
+                    if p.screen.percent != *percent {
+                        p.screen.percent = *percent;
+                        changed = true;
+                    }
+                }
+            }
+            if changed {
+                publish(&panels);
             }
         }
     }
@@ -278,6 +408,37 @@ mod tests {
         }
     }
 
+    fn state(device: &str, id: u32, hdr: bool, level: u32) -> sdr::State {
+        sdr::State { device: device.into(), target: sdr::Target { adapter: (1, 0), id }, hdr, level: hdr.then_some(level) }
+    }
+
+    #[test]
+    fn hdr_monitors_get_the_hdr_slider_and_the_others_do_not() {
+        let states = [state("D1", 1, true, 3000), state("D2", 2, false, 1000), state("D3", 3, true, 6000)];
+        let got = hdr_screens(&states);
+        assert_eq!(got.len(), 2);
+        assert_eq!((got[0].0.as_str(), got[0].2), ("D1", 40));
+        assert_eq!((got[1].0.as_str(), got[1].2), ("D3", 100));
+    }
+
+    #[test]
+    fn duplicated_hdr_monitors_share_one_slider() {
+        let got = hdr_screens(&[state("D1", 1, true, 2000), state("D1", 2, true, 2000)]);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].1.len(), 2);
+        assert_eq!(got[0].2, 20);
+    }
+
+    #[test]
+    fn hdr_screens_say_so() {
+        let s = Screen { id: "D1".into(), name: "XG32".into(), percent: 40, kind: Kind::Hdr };
+        assert_eq!(s.label(), "Brightness (HDR)");
+        assert!(s.hint().is_some());
+        let s = Screen { kind: Kind::Monitor, ..s };
+        assert_eq!(s.label(), "Brightness");
+        assert!(s.hint().is_none());
+    }
+
     #[test]
     fn debounce_writes_first_at_once_then_the_newest_after_the_gap() {
         let t0 = Instant::now();
@@ -304,29 +465,32 @@ mod tests {
         println!("{:?}", watch.take());
     }
 
-    /// Nudges the first answering screen down two points and back; run by hand with `--ignored`.
+    /// Through the watch, as the sliders do: the screen named by SHELLMAN_BRIGHTNESS_SCREEN (a GDI
+    /// name; pick a secondary one) two points up and back, read back by a second watch each time.
+    /// By hand with `--ignored --nocapture`.
     #[test]
     #[ignore]
     fn nudge_a_screen_and_put_it_back() {
-        let watch = BrightnessWatch::start(Arc::new(|| {}));
-        std::thread::sleep(Duration::from_secs(2));
-        let Some(screen) = watch.take().and_then(|s| s.into_iter().next()) else {
-            println!("no screen answers");
-            return;
-        };
-        let was = screen.percent;
-        watch.set(&screen.id, was.saturating_sub(2));
-        std::thread::sleep(Duration::from_millis(600));
+        let Ok(id) = std::env::var("SHELLMAN_BRIGHTNESS_SCREEN") else { return };
         let read = || {
             let again = BrightnessWatch::start(Arc::new(|| {}));
             std::thread::sleep(Duration::from_secs(2));
-            again.take().and_then(|s| s.into_iter().find(|s| s.id == screen.id)).map(|s| s.percent)
+            again.take().and_then(|s| s.into_iter().find(|s| s.id == id))
         };
-        let lowered = read();
-        watch.set(&screen.id, was);
-        std::thread::sleep(Duration::from_millis(600));
-        let now = read();
-        println!("{} was {was}, lowered {lowered:?}, now {now:?}", screen.name);
+        let Some(screen) = read() else {
+            println!("{id} does not answer");
+            return;
+        };
+        let watch = BrightnessWatch::start(Arc::new(|| {}));
+        std::thread::sleep(Duration::from_secs(2));
+        let was = screen.percent;
+        watch.set(&id, (was + 2).min(100));
+        std::thread::sleep(Duration::from_millis(900));
+        let raised = read().map(|s| s.percent);
+        watch.set(&id, was);
+        std::thread::sleep(Duration::from_millis(900));
+        let now = read().map(|s| s.percent);
+        println!("{} ({:?}) was {was}, raised {raised:?}, now {now:?}", screen.name, screen.kind);
         assert_eq!(now, Some(was));
     }
 }
