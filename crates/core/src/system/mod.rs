@@ -36,6 +36,7 @@ pub mod sound_spatial;
 mod sound_worker;
 pub mod status;
 pub mod storage;
+pub mod transparency;
 pub mod update_history;
 pub mod update_logic;
 pub mod update_pause;

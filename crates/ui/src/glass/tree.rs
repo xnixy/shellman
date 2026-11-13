@@ -8,6 +8,7 @@
 //! whose islands are laid out every frame costs nothing while they stay put.
 
 use super::effect;
+use super::guard;
 use super::style::{Luminosity, Style};
 use std::cell::{Cell, OnceCell, RefCell};
 use windows::core::{Interface, Result};
@@ -179,7 +180,11 @@ impl Tree {
 
     /// Show one piece of glass at each of `placed`, coloured for `paint`, and hide the rest.
     /// Only what changed is touched.
+    ///
+    /// Everything goes through [`guard`] first: a piece of no size is hidden, never sized to 0.
     pub fn apply(&self, placed: &[Placed], paint: Paint) -> Result<()> {
+        let paint = guard::paint(paint);
+        let placed: Vec<Placed> = placed.iter().filter_map(guard::piece).collect();
         let repaint = self.painted.get() != Some(paint);
         if repaint {
             self.paint_shared(&paint)?;
@@ -279,7 +284,11 @@ impl Piece {
         rim_shape.SetStrokeThickness(1.0)?;
         rim_visual.Shapes()?.Append(&rim_shape)?;
 
+        // Made hidden, the shadow too: nothing shows (and DWM sizes no texture for it) until
+        // `place` has given every visual and the mask surface a real size.
+        caster.SetIsVisible(false)?;
         let group = c.CreateContainerVisual()?;
+        group.SetIsVisible(false)?;
         let children = group.Children()?;
         children.InsertAtTop(&caster)?;
         children.InsertAtTop(&body)?;
@@ -298,7 +307,7 @@ impl Piece {
             rim_visual,
             shapes,
             placed: Cell::new(None),
-            shown: Cell::new(true),
+            shown: Cell::new(false),
         })
     }
 
@@ -330,15 +339,22 @@ impl Piece {
         if self.placed.get() == Some(*p) {
             return Ok(());
         }
+        // Only ever a piece `guard::piece` passed: every side at least 1 px.
+        debug_assert!(p.size.0 >= 1 && p.size.1 >= 1);
         let before = self.placed.replace(Some(*p));
         self.group.SetOffset(v3(p.left as f32, p.top as f32))?;
-        self.group.SetOpacity(p.opacity.clamp(0.0, 1.0))?;
-        // Without a shadow the caster goes too: its opaque fill would show through a piece that
-        // is not fully opaque.
-        self.caster.SetIsVisible(p.shadow)?;
-        if before.is_some_and(|b| (b.size, b.radius) == (p.size, p.radius)) {
-            return Ok(());
+        self.group.SetOpacity(p.opacity)?;
+        if !before.is_some_and(|b| (b.size, b.radius) == (p.size, p.radius)) {
+            self.resize(p)?;
         }
+        // Without a shadow the caster goes too: its opaque fill would show through a piece that
+        // is not fully opaque. Only after the sizes, so the shadow never shows on a mask of no
+        // size.
+        self.caster.SetIsVisible(p.shadow)?;
+        Ok(())
+    }
+
+    fn resize(&self, p: &Placed) -> Result<()> {
         let size = v2(p.size.0 as f32, p.size.1 as f32);
         let r = p.radius;
         self.group.SetSize(size)?;
@@ -358,7 +374,7 @@ impl Piece {
         }
         let rim = &self.shapes[2];
         rim.SetOffset(v2(0.5, 0.5))?;
-        rim.SetSize(v2(size.X - 1.0, size.Y - 1.0))?;
+        rim.SetSize(v2((size.X - 1.0).max(0.0), (size.Y - 1.0).max(0.0)))?;
         rim.SetCornerRadius(v2((r - 0.5).max(0.0), (r - 0.5).max(0.0)))?;
         Ok(())
     }

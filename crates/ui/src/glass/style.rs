@@ -193,13 +193,15 @@ pub struct Geometry {
 
 impl Geometry {
     pub fn new(shape: (i32, i32), scale: f32, style: &Style) -> Self {
+        use super::guard::{finite, MAX_BLUR, MAX_OFFSET};
+        // A scale of 0 or NaN (from DPI maths) would make every number below NaN.
+        let scale = super::guard::scale(scale);
         let px = |pt: f32| pt * scale;
         // The radius can never be more than half the shorter side.
-        let radius = px(style.radius)
-            .min(shape.0.min(shape.1) as f32 / 2.0)
-            .max(0.0);
-        let blur = px(style.shadow.blur).max(0.0);
-        let offset = px(style.shadow.offset_y);
+        let half = (shape.0.min(shape.1) as f32 / 2.0).max(0.0);
+        let radius = finite(px(style.radius), 0.0, half, 0.0);
+        let blur = finite(px(style.shadow.blur), 0.0, MAX_BLUR, 0.0);
+        let offset = finite(px(style.shadow.offset_y), -MAX_OFFSET, MAX_OFFSET, 0.0);
         // A composition shadow is still visible one blur radius past its shape (seen at 300%,
         // where the window's edge cut it off); it is gone by two.
         let spread = (blur * 2.0).ceil() as i32;
@@ -218,8 +220,8 @@ impl Geometry {
     /// The backdrop window's size.
     pub fn window(&self) -> (i32, i32) {
         (
-            self.shape.0 + self.left + self.right,
-            self.shape.1 + self.top + self.bottom,
+            self.shape.0.saturating_add(self.left).saturating_add(self.right),
+            self.shape.1.saturating_add(self.top).saturating_add(self.bottom),
         )
     }
 
