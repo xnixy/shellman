@@ -15,6 +15,8 @@ pub struct Appearance {
     pub glass: f32,
     /// The text font: the default, or an installed family by name.
     pub font: FontChoice,
+    /// The apps' rail of pages shows icons only (see `rail`). Shared, so every app agrees.
+    pub rail_collapsed: bool,
 }
 
 impl Default for Appearance {
@@ -23,6 +25,7 @@ impl Default for Appearance {
             accent: AccentChoice::System,
             glass: theme::DEFAULT_GLASS,
             font: FontChoice::Default,
+            rail_collapsed: false,
         }
     }
 }
