@@ -38,7 +38,7 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPA
             LRESULT(0)
         }
         _ => {
-            crate::transparency::on_message(msg, lparam);
+            crate::transparency::on_message(msg, wparam, lparam);
             DefWindowProcW(hwnd, msg, wparam, lparam)
         }
     }

@@ -11,11 +11,12 @@ use crate::page;
 use crate::state::State;
 use egui::{CornerRadius, FontId, Sense, Vec2};
 use shellman_core::system::default_apps::{self as da, Entry};
+use shellman_core::apps_index::{App, AppIndex};
 use shellman_core::system::default_apps_change::{self as dc, Candidate};
 use shellman_core::thumbs::Thumbs;
 use shellman_ui::theme::{self, colors, glyph, icon_font};
 use shellman_ui::widgets::{draw_text, switch};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -48,6 +49,8 @@ pub struct DefaultAppsView {
     changed: Arc<AtomicBool>,
     watch: Option<dc::Watch>,
     chooser: Option<Chooser>,
+    /// The launcher's list of apps, for their icons (the Apps folder knows packaged apps' images).
+    index: AppIndex,
 }
 
 impl DefaultAppsView {
@@ -58,6 +61,8 @@ impl DefaultAppsView {
     fn start(&mut self, ctx: &egui::Context) {
         if !self.started {
             self.started = true;
+            let repaint = ctx.clone();
+            self.index.refresh_if_older(std::time::Duration::from_secs(60), move || repaint.request_repaint());
             self.read(ctx);
             // SHELLMAN_DEFAULT_APPS_OPEN=.pdf: start with that row's chooser open (for screenshots).
             if let Ok(key) = std::env::var("SHELLMAN_DEFAULT_APPS_OPEN") {
@@ -135,6 +140,7 @@ fn open_link(link: String) {
 pub fn show(ui: &mut egui::Ui, st: &mut State) {
     page::heading(ui, "Default apps", "Which app opens each kind of file and link.");
     st.default_apps.start(ui.ctx());
+    let apps = st.default_apps.index.apps();
     let entries = st.default_apps.entries.lock().ok().and_then(|g| g.clone());
     let Some(entries) = entries else {
         page::group(ui, "", |ui| {
@@ -178,7 +184,7 @@ pub fn show(ui: &mut egui::Ui, st: &mut State) {
     page::group(ui, "File types and links", |ui| {
         ui.spacing_mut().item_spacing.y = 4.0;
         for (i, e) in entries[..split].iter().enumerate() {
-            if row(ui, e, thumbs, host, open_at == Some(i)) {
+            if row(ui, e, &apps, thumbs, host, open_at == Some(i)) {
                 pressed = Some(i);
             }
         }
@@ -189,7 +195,7 @@ pub fn show(ui: &mut egui::Ui, st: &mut State) {
         if let Some(ch) = view.chooser.as_mut() {
             let (key, kind, title) = da::ITEMS[i];
             page::group(ui, &format!("{title}: choose the app"), |ui| {
-                close = chooser(ui, ch, key, kind, thumbs);
+                close = chooser(ui, ch, key, kind, &apps, thumbs);
             });
         }
         if close {
@@ -200,7 +206,7 @@ pub fn show(ui: &mut egui::Ui, st: &mut State) {
         page::group(ui, "", |ui| {
             ui.spacing_mut().item_spacing.y = 4.0;
             for (i, e) in entries.iter().enumerate().skip(split) {
-                if row(ui, e, &mut st.thumbs, host, false) {
+                if row(ui, e, &apps, &mut st.thumbs, host, false) {
                     pressed = Some(i);
                 }
             }
@@ -228,10 +234,24 @@ fn small_button(ui: &mut egui::Ui, text: &str, rect: egui::Rect) -> egui::Respon
     resp.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
+/// Where to take an app's icon from: its entry in the Apps folder when the launcher lists one of
+/// that name (packaged apps such as Photos have no program to ask, and the folder entry is what the
+/// launcher draws, through the icon pack), else the program or logo Windows named.
+fn icon_source(apps: &[App], name: Option<&str>, fallback: Option<&Path>) -> Option<PathBuf> {
+    let found = name
+        .map(str::trim)
+        .filter(|n| !n.is_empty())
+        .and_then(|n| apps.iter().find(|a| !a.direct && a.is_listed() && a.name.trim().eq_ignore_ascii_case(n)));
+    match found {
+        Some(app) => Some(PathBuf::from(app.shell_path())),
+        None => fallback.map(Path::to_path_buf),
+    }
+}
+
 /// The app's icon centred at `at`: its program's or logo's image, or a plain glyph.
-fn icon(ui: &mut egui::Ui, at: egui::Pos2, path: Option<&Path>, thumbs: &mut Thumbs) {
+fn icon(ui: &mut egui::Ui, at: egui::Pos2, source: Option<&Path>, thumbs: &mut Thumbs) {
     let c = colors();
-    match path.and_then(|p| shellman_ui::app_icon::get(ui.ctx(), p, true, thumbs)) {
+    match source.and_then(|p| shellman_ui::app_icon::get(ui.ctx(), p, true, thumbs)) {
         Some((id, size)) => {
             let scale = (ICON / size.x).min(ICON / size.y);
             egui::Image::from_texture((id, size)).paint_at(ui, egui::Rect::from_center_size(at, size * scale));
@@ -253,13 +273,13 @@ pub fn action_label(host: bool, open: bool) -> Option<&'static str> {
 }
 
 /// One type: icon, name over its app, the key as typed, and its button. True when pressed.
-fn row(ui: &mut egui::Ui, e: &Entry, thumbs: &mut Thumbs, host: bool, open: bool) -> bool {
+fn row(ui: &mut egui::Ui, e: &Entry, apps: &[App], thumbs: &mut Thumbs, host: bool, open: bool) -> bool {
     let c = colors();
     let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), ROW_H), Sense::hover());
     let fill = if open { c.control_hover } else { c.control };
     ui.painter().rect_filled(rect, CornerRadius::same(10), fill);
     let at = egui::pos2(rect.left() + 14.0 + ICON / 2.0, rect.center().y);
-    icon(ui, at, e.exe.as_deref(), thumbs);
+    icon(ui, at, icon_source(apps, e.app.as_deref(), e.exe.as_deref()).as_deref(), thumbs);
     let action = action_label(host, open);
     let button_w = if action.is_some() { 84.0 } else { 0.0 };
     let key_w = 90.0;
@@ -297,7 +317,7 @@ pub fn chooser_note(what: &str, sent: Option<&str>) -> String {
 }
 
 /// The apps for one type. Picking one opens its page in Windows' Settings. True to close.
-fn chooser(ui: &mut egui::Ui, ch: &mut Chooser, key: &str, kind: da::Kind, thumbs: &mut Thumbs) -> bool {
+fn chooser(ui: &mut egui::Ui, ch: &mut Chooser, key: &str, kind: da::Kind, apps: &[App], thumbs: &mut Thumbs) -> bool {
     let c = colors();
     let typed = type_words(key, kind);
     let loaded = ch.list.lock().ok().and_then(|g| g.clone());
@@ -316,7 +336,7 @@ fn chooser(ui: &mut egui::Ui, ch: &mut Chooser, key: &str, kind: da::Kind, thumb
         let fill = if resp.hovered() { c.control_hover } else { c.control };
         ui.painter().rect_filled(rect, CornerRadius::same(10), fill);
         let at = egui::pos2(rect.left() + 14.0 + ICON / 2.0, rect.center().y);
-        icon(ui, at, app.icon.as_deref(), thumbs);
+        icon(ui, at, icon_source(apps, Some(&app.name), app.icon.as_deref().or(app.exe.as_deref())).as_deref(), thumbs);
         let right = rect.right() - 150.0;
         let name = egui::Rect::from_min_max(egui::pos2(at.x + ICON / 2.0 + 12.0, rect.top()), egui::pos2(right, rect.bottom()));
         draw_text(ui, name, &app.name, FontId::proportional(14.0), c.text, false);
@@ -349,6 +369,22 @@ fn chooser(ui: &mut egui::Ui, ch: &mut Chooser, key: &str, kind: da::Kind, thumb
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_packaged_app_takes_its_icon_from_its_apps_folder_entry() {
+        let apps = vec![
+            App::new("Photos", "Microsoft.Windows.Photos_8wekyb3d8bbwe!App"),
+            App { direct: true, ..App::new("Notepad", r"C:\sm\Notepad.lnk") },
+        ];
+        let photos = icon_source(&apps, Some("photos "), None).unwrap();
+        assert_eq!(photos, PathBuf::from(r"shell:AppsFolder\Microsoft.Windows.Photos_8wekyb3d8bbwe!App"));
+        // The folder entry wins over the program Windows named; without one, that program is used.
+        assert_eq!(icon_source(&apps, Some("Photos"), Some(Path::new(r"C:\x\p.exe"))), Some(photos));
+        assert_eq!(icon_source(&apps, Some("Other"), Some(Path::new(r"C:\x\p.exe"))), Some(PathBuf::from(r"C:\x\p.exe")));
+        // A shortcut the folder lacks is not a folder entry.
+        assert_eq!(icon_source(&apps, Some("Notepad"), None), None);
+        assert_eq!(icon_source(&apps, None, None), None);
+    }
 
     #[test]
     fn rows_offer_change_only_when_settings_can_open() {

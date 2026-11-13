@@ -8,8 +8,13 @@ use std::time::{Duration, Instant};
 /// A choice that is not confirmed within this long goes back to unarmed.
 pub const CONFIRM_WITHIN: Duration = Duration::from_secs(4);
 
-/// The three choices, in the order they are shown.
+/// The three standing choices, in the order they are shown.
 pub const CHOICES: [Action; 3] = [Action::Restart, Action::ShutDown, Action::SignOut];
+
+/// "Update and restart", offered above the standing choices while updates wait for a restart.
+pub fn extra_choice(restart_pending: bool) -> Option<Action> {
+    restart_pending.then_some(Action::UpdateAndRestart)
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum PowerMenu {
@@ -80,6 +85,8 @@ pub fn label(action: Action, armed: bool) -> &'static str {
     match (action, armed) {
         (Action::Restart, false) => "Restart",
         (Action::Restart, true) => "Restart now",
+        (Action::UpdateAndRestart, false) => "Update and restart",
+        (Action::UpdateAndRestart, true) => "Update and restart now",
         (Action::ShutDown, false) => "Shut down",
         (Action::ShutDown, true) => "Shut down now",
         (Action::SignOut, false) => "Sign out",
@@ -92,6 +99,24 @@ pub fn label(action: Action, armed: bool) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn update_and_restart_is_offered_only_while_a_restart_is_pending() {
+        assert_eq!(extra_choice(true), Some(Action::UpdateAndRestart));
+        assert_eq!(extra_choice(false), None);
+        // Plain Restart stays among the standing choices either way.
+        assert!(CHOICES.contains(&Action::Restart));
+        assert_eq!(label(Action::UpdateAndRestart, false), "Update and restart");
+        assert_eq!(label(Action::Restart, false), "Restart");
+    }
+
+    #[test]
+    fn update_and_restart_asks_for_a_second_click_too() {
+        let t = Instant::now();
+        let mut m = PowerMenu::Open;
+        assert_eq!(m.press(Action::UpdateAndRestart, t), None);
+        assert_eq!(m.press(Action::UpdateAndRestart, t), Some(Action::UpdateAndRestart));
+    }
 
     #[test]
     fn one_click_only_arms() {

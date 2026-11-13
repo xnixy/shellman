@@ -33,12 +33,15 @@ pub struct App {
     /// A Windows app that shares its name with one of shellman's: shown with a quiet "Windows"
     /// line so the two can be told apart.
     pub windows_twin: bool,
+    /// The program an opaque Apps folder id stands for (`System.Link.TargetParsingPath`), empty
+    /// when the id says it itself or the shell has none. Only used to match Start menu shortcuts.
+    pub target: String,
 }
 
 impl App {
     /// An entry of the Apps folder.
     pub fn new(name: impl Into<String>, id: impl Into<String>) -> App {
-        App { name: name.into(), id: id.into(), direct: false, own: false, windows_twin: false }
+        App { name: name.into(), id: id.into(), direct: false, own: false, windows_twin: false, target: String::new() }
     }
 
     /// The path the shell understands for both launching and fetching the app's icon.

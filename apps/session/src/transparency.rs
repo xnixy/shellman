@@ -24,7 +24,12 @@ use windows::Win32::System::Registry::{
 use windows::Win32::System::Threading::{
     CreateEventW, OpenProcess, ResetEvent, SetEvent, WaitForMultipleObjects, INFINITE, PROCESS_SYNCHRONIZE,
 };
-use windows::Win32::UI::WindowsAndMessaging::{RegisterWindowMessageW, SendNotifyMessageW, HWND_BROADCAST, WM_SETTINGCHANGE};
+use windows::Win32::System::Power::RegisterPowerSettingNotification;
+use windows::Win32::System::SystemServices::GUID_POWER_SAVING_STATUS;
+use windows::Win32::UI::WindowsAndMessaging::{
+    RegisterWindowMessageW, SendNotifyMessageW, DEVICE_NOTIFY_WINDOW_HANDLE, HWND_BROADCAST, PBT_POWERSETTINGCHANGE,
+    WM_POWERBROADCAST, WM_SETTINGCHANGE,
+};
 
 pub const ENV: &str = "SHELLMAN_TRANSPARENCY";
 
@@ -55,14 +60,26 @@ pub fn start(test: bool) {
 }
 
 /// The session window's messages that may mean the state changed under shellman.
-pub fn on_message(msg: u32, lparam: LPARAM) {
+pub fn on_message(msg: u32, wparam: WPARAM, lparam: LPARAM) {
     let colours = msg == WM_SETTINGCHANGE && is_immersive_colors(lparam);
-    if colours || msg == refresh_message() {
+    // Energy saver went on or off (see `listen`).
+    let power = msg == WM_POWERBROADCAST && wparam.0 as u32 == PBT_POWERSETTINGCHANGE;
+    if colours || power || msg == refresh_message() {
         if let Some(&h) = POKE.get() {
             unsafe {
                 let _ = SetEvent(HANDLE(h as *mut _));
             }
         }
+    }
+}
+
+/// Ask Windows to tell `window` when energy saver changes (`WM_POWERBROADCAST`; the status GUID
+/// is `GUID_POWER_SAVING_STATUS`, which the newer headers also call `GUID_ENERGY_SAVER_STATUS`).
+/// Whatever the notification carries, `Keeper::check` reads the status itself.
+pub fn listen(window: windows::Win32::Foundation::HWND) {
+    let h = unsafe { RegisterPowerSettingNotification(HANDLE(window.0), &GUID_POWER_SAVING_STATUS, DEVICE_NOTIFY_WINDOW_HANDLE) };
+    if let Err(e) = h {
+        log::line(&format!("transparency: no energy saver notification: {e}"));
     }
 }
 
@@ -84,7 +101,7 @@ impl Keeper {
     /// Look, decide, act; one log line for what was done.
     fn check(&mut self, why: &str) {
         let before = t::read();
-        let wanted = t::setting();
+        let wanted = t::wanted(t::setting(), t::energy_saver());
         let shell = t::real_shell();
         let state = before.ok().and_then(|r| r.allowed);
         let stamp = |r: Result<t::Reading, i32>| match r {

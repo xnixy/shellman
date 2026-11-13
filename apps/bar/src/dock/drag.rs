@@ -146,6 +146,21 @@ mod tests {
     }
 
     #[test]
+    fn a_press_with_no_move_before_it_is_a_click_and_never_a_drag() {
+        // The first press of a session: the pointer was never seen moving, only at the press.
+        let mut m = pressed();
+        assert_eq!(m.update(p(100.0, 20.0), true, false), Step::Pending);
+        assert!(m.held().is_none());
+        assert_eq!(m.update(p(100.0, 20.0), false, false), Step::Click);
+        // A press that was released before the machine looked, then a second press.
+        let mut m = pressed();
+        m.cancel();
+        m.press("a", "app", egui::pos2(100.0, 20.0), 10.0);
+        assert!(m.is_for("a"));
+        assert_eq!(m.update(None, true, false), Step::Pending);
+    }
+
+    #[test]
     fn the_threshold_picks_the_icon_up() {
         let mut m = pressed();
         assert_eq!(m.update(p(105.0, 20.0), true, false), Step::Pending);

@@ -15,12 +15,16 @@
 //! `ULONGLONG`, so the state name is that 64-bit value; `WNF_CHANGE_STAMP` and `LOGICAL` are
 //! `ULONG`. Everything fails harmlessly: glass stays flat, as it was.
 //!
-//! Not handled: the real shell may also turn transparency off under energy saver (battery saver).
-//! Which signal it follows is not known yet; shellman publishes only the user's setting.
+//! Energy saver: Microsoft's documentation of energy saver (Windows 11 24H2 and later,
+//! learn.microsoft.com, "Energy saver" under component guidelines) lists "Transparency effects on
+//! window backgrounds is disabled" among what changes while it is on, and says applications read
+//! its status from `SYSTEM_POWER_STATUS` (`SystemStatusFlag`, 1 while on). So the value shellman
+//! publishes is the user's setting and not energy saver (`wanted`).
 
 use windows::core::{s, w, HSTRING, PCWSTR};
 use windows::Win32::Foundation::{HWND, MAX_PATH};
 use windows::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
+use windows::Win32::System::Power::{GetSystemPowerStatus, SYSTEM_POWER_STATUS};
 use windows::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_DWORD};
 use windows::Win32::System::Threading::{OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION};
 use windows::Win32::UI::WindowsAndMessaging::{FindWindowW, GetShellWindow, GetWindowThreadProcessId};
@@ -107,6 +111,19 @@ pub fn setting() -> bool {
     read.is_err() || value != 0
 }
 
+/// Whether energy saver (battery saver before Windows 11 24H2) is on now: `SystemStatusFlag` of
+/// `GetSystemPowerStatus` is 1. Off when Windows cannot say.
+pub fn energy_saver() -> bool {
+    let mut status = SYSTEM_POWER_STATUS::default();
+    // SAFETY: plain out-parameter.
+    unsafe { GetSystemPowerStatus(&mut status) }.is_ok() && status.SystemStatusFlag == 1
+}
+
+/// What transparency should be: the user's setting, unless energy saver turns it off.
+pub fn wanted(setting: bool, energy_saver: bool) -> bool {
+    setting && !energy_saver
+}
+
 /// The process of Windows' own immersive shell when one runs in this session (Explorer or
 /// ShellAppRuntime owns the shell window, or the immersive shell's window exists): it owns this
 /// state then, and shellman leaves it alone.
@@ -185,6 +202,14 @@ mod tests {
         assert_eq!(decode(&[0, 1, 0, 0]), Some(true));
         assert_eq!(decode(&[]), None);
         assert_eq!(decode(&[1, 0]), None);
+    }
+
+    #[test]
+    fn energy_saver_turns_transparency_off_and_never_on() {
+        assert!(wanted(true, false));
+        assert!(!wanted(true, true));
+        assert!(!wanted(false, false));
+        assert!(!wanted(false, true));
     }
 
     #[test]

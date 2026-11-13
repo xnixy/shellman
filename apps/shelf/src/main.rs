@@ -15,6 +15,7 @@
 mod actions;
 mod app;
 mod cards;
+mod drag_image;
 mod draw;
 mod drop;
 mod folders;
