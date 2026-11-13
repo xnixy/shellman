@@ -43,7 +43,7 @@ impl super::FileMan {
                     self.tab_strip(ui, plan.tabs_row, actions)
                 };
                 list.push(Island::pill(top));
-                self.window_controls(ui, plan.controls, actions);
+                self.window_controls(ui, plan.controls);
                 list.push(Island::pill(plan.controls));
                 self.toolbar(ui, plan.bar, actions);
                 list.push(Island::pill(plan.bar));
@@ -96,10 +96,6 @@ impl super::FileMan {
                     list.push(Island::pill(pill));
                 }
                 list.extend(extra.into_iter().map(Island::pill));
-                // Move to… / Copy to…, over the bar.
-                let mut popups = Vec::new();
-                self.dest_popup(ui.ctx(), &mut popups);
-                list.extend(popups.into_iter().map(|r| Island::new(r, 18.0)));
                 // The rail's hover labels are glass too.
                 list.extend(shellman_ui::hover::islands(ui.ctx()));
                 if !composed {

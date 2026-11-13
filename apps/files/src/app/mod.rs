@@ -209,8 +209,6 @@ pub(crate) struct FileMan {
     /// bring the active tab into view when either changes.
     tab_scroll: f32,
     tab_seen: (usize, usize),
-    /// The open Move to… / Copy to… list.
-    dest: Option<dest::DestMenu>,
     /// The details island's state and its worker.
     details: details::Details,
     /// The tag list shows its names as fields, to rename them.
@@ -311,7 +309,6 @@ impl FileMan {
             tags: tag_ui::Tags::load(),
             tab_scroll: 0.0,
             tab_seen: (usize::MAX, 0),
-            dest: None,
             details: details::Details::default(),
             tag_edit: false,
             details_sel: (None, Vec::new()),
@@ -698,6 +695,8 @@ impl eframe::App for FileMan {
         self.clip.poll();
         self.run_tag_check(ctx);
         self.track_system(ctx);
+        // The glass menu's window, once there has been a menu.
+        shellman_ui::menu::popup::declare(ctx);
         shellman_ui::app_icon::sync_window_icon(ctx, shellman_ui::app_icon::Kind::Files);
         let show_hidden = self.settings.show_hidden;
         for t in &mut self.tabs {

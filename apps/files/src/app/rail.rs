@@ -13,6 +13,8 @@ use shellman_ui::appearance::RailApp;
 use shellman_ui::glass::{Island, Style};
 use shellman_ui::rail::{self, Entry, Icon, Mode, Row};
 use shellman_ui::theme::glyph;
+use super::menu::item;
+use shellman_ui::menu::popup::Entry as MenuEntry;
 use std::path::PathBuf;
 
 /// The places shown on the rail and on This PC.
@@ -145,7 +147,7 @@ impl super::FileMan {
     ) {
         let current = self.tabs[self.active].loc.clone();
         let out = rail::show(ui, list, screen, top, &rows.entries, rows.selected(&current), mode, solid, super::RADIUS);
-        self.rail_background_menu(&out.background, actions);
+        self.rail_background_menu(&out.background);
         if out.toggled {
             self.look = shellman_ui::appearance::Appearance::toggle_rail_saved(RailApp::Files, self.look);
         }
@@ -163,38 +165,30 @@ impl super::FileMan {
             if resp.middle_clicked() && spot.usable() {
                 actions.push(Action::NewTab(spot.loc.clone()));
             }
-            self.rail_row_menu(resp, spot, actions);
+            self.rail_row_menu(resp, spot);
         }
     }
 
     /// The menu of a pinned folder or an app's place.
-    fn rail_row_menu(&self, resp: &egui::Response, spot: &Spot, actions: &mut Vec<Action>) {
-        let (Kind::Pin { .. } | Kind::App(_), Loc::Dir(path)) = (&spot.kind, &spot.loc) else { return };
-        resp.context_menu(|ui| {
-            super::controls::flat_items(ui);
-            if spot.usable() && super::controls::mi(ui, glyph::ADD, "Open in new tab", "") {
-                actions.push(Action::NewTab(spot.loc.clone()));
-                ui.close_menu();
-            }
-            match &spot.kind {
-                Kind::Pin { .. } => {
-                    if super::controls::mi(ui, glyph::UNPIN, "Unpin from sidebar", "") {
-                        actions.push(Action::TogglePin(path.clone()));
-                        ui.close_menu();
-                    }
-                }
-                Kind::App(id) => {
-                    if super::controls::mi(ui, glyph::CLOSE, "Hide from the sidebar", "") {
-                        actions.push(Action::HidePlace(id.clone()));
-                        ui.close_menu();
-                    }
-                }
-                _ => {}
-            }
-        });
+    fn rail_row_menu(&self, resp: &egui::Response, spot: &Spot) {
+        super::menu::on_right_click(resp, "rail-row", || row_entries(spot));
     }
 }
 
+/// What a sidebar row's menu offers: a pinned folder or an app's place; nothing for the rest.
+fn row_entries(spot: &Spot) -> Vec<MenuEntry<Action>> {
+    let (Kind::Pin { .. } | Kind::App(_), Loc::Dir(path)) = (&spot.kind, &spot.loc) else { return Vec::new() };
+    let mut e = Vec::new();
+    if spot.usable() {
+        e.push(item(Action::NewTab(spot.loc.clone()), glyph::ADD, "Open in new tab"));
+    }
+    match &spot.kind {
+        Kind::Pin { .. } => e.push(item(Action::TogglePin(path.clone()), glyph::UNPIN, "Unpin from sidebar")),
+        Kind::App(id) => e.push(item(Action::HidePlace(id.clone()), glyph::CLOSE, "Hide from the sidebar")),
+        _ => {}
+    }
+    e
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -207,6 +201,22 @@ mod tests {
         Loc::Dir(PathBuf::from(p))
     }
 
+    #[test]
+    fn row_menus() {
+        let label = |e: &MenuEntry<Action>| match e {
+            MenuEntry::Item(i) => i.label.clone(),
+            _ => "-".into(),
+        };
+        let pin = Spot { loc: dir(r"C:\a"), kind: Kind::Pin { there: true } };
+        assert_eq!(row_entries(&pin).iter().map(label).collect::<Vec<_>>(), ["Open in new tab", "Unpin from sidebar"]);
+        // A pinned folder that is gone can only be unpinned.
+        let gone = Spot { loc: dir(r"C:\gone"), kind: Kind::Pin { there: false } };
+        assert_eq!(row_entries(&gone).iter().map(label).collect::<Vec<_>>(), ["Unpin from sidebar"]);
+        let app = Spot { loc: dir(r"C:\Dropbox"), kind: Kind::App("dropbox".into()) };
+        assert_eq!(row_entries(&app).iter().map(label).collect::<Vec<_>>(), ["Open in new tab", "Hide from the sidebar"]);
+        // Places and drives have no menu.
+        assert!(row_entries(&Spot { loc: dir(r"C:\"), kind: Kind::Drive }).is_empty());
+    }
     #[test]
     fn empty_groups_have_no_heading_and_spots_line_up() {
         let rail = Rail::build(vec![

@@ -11,6 +11,8 @@ use super::tab::{Loc, SortKey};
 use super::{FileMan, Msg};
 use egui::{Align2, CornerRadius, Id, Rect, Sense, Ui};
 use shellman_core::recycle_bin::{self, BinItem, BinState, Handle};
+use super::menu::item;
+use shellman_ui::menu::popup::Entry;
 use shellman_ui::theme::{self, colors, glyph, icon_font};
 
 /// Width of the toolbar slot the two buttons take, in place of the view toggle.
@@ -263,40 +265,25 @@ fn pill(ui: &mut Ui, rect: Rect, g: char, label: &str, enabled: bool, tip: &str)
 }
 
 /// The right-click menu of an item in the bin.
-pub(super) fn item_menu(ui: &mut Ui, actions: &mut Vec<Action>) {
-    super::controls::flat_items(ui);
-    if super::controls::mi(ui, glyph::UNDO, "Restore", "") {
-        actions.push(Action::BinRestore);
-        ui.close_menu();
-    }
-    super::controls::msep(ui);
-    if super::controls::mi(ui, glyph::DELETE, "Delete permanently", "Del") {
-        actions.push(Action::BinDelete);
-        ui.close_menu();
-    }
-    if super::controls::mi(ui, glyph::FOLDER, "Show in original folder", "") {
-        actions.push(Action::BinShowOriginal);
-        ui.close_menu();
-    }
-    if super::controls::mi(ui, glyph::COPY, "Copy original path", "Ctrl+Shift+C") {
-        actions.push(Action::CopyPath);
-        ui.close_menu();
-    }
+pub(super) fn item_entries() -> Vec<Entry<Action>> {
+    vec![
+        item(Action::BinRestore, glyph::UNDO, "Restore"),
+        Entry::separator(),
+        item(Action::BinDelete, glyph::DELETE, "Delete permanently").hint("Del").danger(),
+        item(Action::BinShowOriginal, glyph::FOLDER, "Show in original folder"),
+        item(Action::CopyPath, glyph::COPY, "Copy original path").hint("Ctrl+Shift+C"),
+    ]
 }
 
 /// The right-click menu of the empty space in the bin.
-pub(super) fn backdrop_menu(ui: &mut Ui, no_items: bool, actions: &mut Vec<Action>) {
-    super::controls::flat_items(ui);
-    if !no_items && super::controls::mi(ui, glyph::DELETE, "Empty Recycle Bin", "") {
-        actions.push(Action::BinEmpty);
-        ui.close_menu();
+pub(super) fn backdrop_entries(no_items: bool) -> Vec<Entry<Action>> {
+    let mut e = Vec::new();
+    if !no_items {
+        e.push(item(Action::BinEmpty, glyph::DELETE, "Empty Recycle Bin").danger());
     }
-    if super::controls::mi(ui, glyph::REFRESH, "Refresh", "F5") {
-        actions.push(Action::Refresh);
-        ui.close_menu();
-    }
+    e.push(item(Action::Refresh, glyph::REFRESH, "Refresh").hint("F5"));
+    e
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -326,4 +313,28 @@ mod tests {
         assert_eq!(done_text("Restored", 1), "Restored 1 item");
         assert_eq!(done_text("Restored", 3), "Restored 3 items");
     }
-}
+
+    #[test]
+    fn the_bins_menus() {
+        let labels = |e: Vec<Entry<Action>>| -> Vec<(String, bool)> {
+            e.into_iter()
+                .map(|e| match e {
+                    Entry::Item(i) => (i.label, i.danger),
+                    _ => ("-".into(), false),
+                })
+                .collect()
+        };
+        assert_eq!(
+            labels(item_entries()),
+            [
+                ("Restore".into(), false),
+                ("-".into(), false),
+                ("Delete permanently".into(), true),
+                ("Show in original folder".into(), false),
+                ("Copy original path".into(), false)
+            ]
+        );
+        assert_eq!(labels(backdrop_entries(false)), [("Empty Recycle Bin".into(), true), ("Refresh".into(), false)]);
+        // An empty bin has nothing to empty.
+        assert_eq!(labels(backdrop_entries(true)), [("Refresh".to_string(), false)]);
+    }}

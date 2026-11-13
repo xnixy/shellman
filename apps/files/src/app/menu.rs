@@ -1,15 +1,24 @@
-//! The right-click menu of files, folders and a folder's background. Files' own entries come
+//! Files' menus, all of them shellman's glass popup menu (`shellman_ui::menu::popup`), the one
+//! the desktop and the dock use.
+//!
+//! The right-click menu of files, folders and a folder's background: Files' own entries come
 //! first and show at once; under them, the shell's (what Windows and installed apps add) appear
 //! as soon as the worker has read them, often before the click, since a walk starts when the
-//! right button goes down and when the selection settles.
+//! right button goes down and when the selection settles. The open menu is updated in place as
+//! they arrive.
+//!
+//! Files' other menus (the bin's, a tab's, the sidebar's, the Sort, Move to and file type
+//! dropdowns) are plain lists of [`Action`]s: the code that draws their button or row asks for
+//! one with [`request`], and the same popup shows it at the end of the frame.
 
 use super::actions::Action;
 use super::tab::Loc;
-use egui::{ColorImage, Context, Pos2, TextureHandle, TextureOptions, Vec2};
+use egui::{ColorImage, Context, Pos2, Rect, Response, TextureHandle, TextureOptions, Vec2};
 use shellman_core::fsops::Op;
 use shellman_core::shell_menu::{Cascade, Item, Loader, Palette, Route, Target};
-use shellman_ui::menu::{Event, Icon, Kind, Menu, Row};
+use shellman_ui::menu::popup::{Anchor, Entry, PopupMenu};
 use shellman_ui::theme::{colors, glyph};
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -18,9 +27,12 @@ use std::sync::Arc;
 const SETTLE: f64 = 0.3;
 /// Icon textures kept; past this they are dropped and made again as needed.
 const MAX_TEXTURES: usize = 512;
+/// A dropdown's button clicked this soon after its menu closed by that same click closes it,
+/// rather than opening it again.
+const TOGGLE: f64 = 0.4;
 
 /// What a menu row does.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub(super) enum Pick {
     Native(Action),
     /// The shell's entry at this path in the loader's view.
@@ -29,7 +41,7 @@ pub(super) enum Pick {
     Expand(Vec<usize>),
 }
 
-/// What the open menu is for.
+/// What the open right-click menu is for.
 struct Open {
     target: Target,
     /// The single folder the item menu is for, if it is one.
@@ -39,15 +51,50 @@ struct Open {
     has_clip: (bool, bool),
 }
 
+/// A plain menu asked for this frame: where, its entries, and the button it drops from.
+struct Request {
+    at: Anchor,
+    entries: Vec<Entry<Action>>,
+    key: &'static str,
+}
+
+thread_local! {
+    static REQUEST: RefCell<Option<Request>> = const { RefCell::new(None) };
+}
+
+/// Ask for a plain menu of Files' own actions at `at`. `key` names the button or row kind it
+/// belongs to: clicking a dropdown's button again closes its menu.
+pub(super) fn request(at: Anchor, key: &'static str, entries: Vec<Entry<Action>>) {
+    REQUEST.with(|r| *r.borrow_mut() = Some(Request { at, entries, key }));
+}
+
+/// On a right click on `resp`, ask for the menu `entries` builds, at the pointer.
+pub(super) fn on_right_click(resp: &Response, key: &'static str, entries: impl FnOnce() -> Vec<Entry<Action>>) {
+    if resp.secondary_clicked() {
+        let ctx = &resp.ctx;
+        let pos = resp
+            .interact_pointer_pos()
+            .or_else(|| ctx.input(|i| i.pointer.latest_pos()))
+            .unwrap_or(resp.rect.center());
+        request(Anchor::in_window(ctx, pos), key, entries());
+    }
+}
+
+/// An item with one of Files' glyphs.
+pub(super) fn item(a: Action, g: char, label: impl Into<String>) -> Entry<Action> {
+    Entry::item(a, label).icon(g)
+}
+
 pub(super) struct ContextMenu {
-    menu: Menu,
+    menu: PopupMenu<Pick>,
     loader: Loader,
     open: Option<Open>,
     textures: HashMap<u64, TextureHandle>,
     /// The target last seen, since when, and whether its walk was asked for yet.
     settling: Option<(Target, f64, bool)>,
-    /// The height the last menu of each kind had, so the next is placed once.
-    heights: HashMap<(bool, bool), f32>,
+    /// The plain menu open now, by its key; and the last one that closed, and when.
+    plain: Option<&'static str>,
+    closed: Option<(&'static str, f64)>,
     /// A New entry was picked: the folder, what was in it, and when to stop looking for the file
     /// it makes (0 until the next frame sets it).
     made: Option<(PathBuf, HashSet<PathBuf>, f64)>,
@@ -57,12 +104,13 @@ impl ContextMenu {
     pub(super) fn new(ctx: &Context, hwnd: isize) -> Self {
         let ctx2 = ctx.clone();
         Self {
-            menu: Menu::default(),
+            menu: PopupMenu::new(),
             loader: Loader::new(hwnd, Arc::new(move || ctx2.request_repaint())),
             open: None,
             textures: HashMap::new(),
             settling: None,
-            heights: HashMap::new(),
+            plain: None,
+            closed: None,
             made: None,
         }
     }
@@ -101,17 +149,39 @@ impl ContextMenu {
         None
     }
 
-    /// Open the menu at `pos` for `target`.
+    /// Open the right-click menu at `pos` (a point of the window) for `target`.
     pub(super) fn open(&mut self, ctx: &Context, pos: Pos2, target: Target, background: bool, has_clip: (bool, bool)) {
         let is_dir = target.items.len() == 1 && target.items[0].is_dir();
         self.loader.refresh(&target);
-        self.menu.open_at(ctx, pos);
-        self.menu.expect_height(self.heights.get(&(background, is_dir)).copied());
-        self.open = Some(Open { target, is_dir, background, has_clip });
+        let open = Open { target, is_dir, background, has_clip };
+        let entries = self.entries(ctx, &open);
+        self.menu.open(ctx, Anchor::in_window(ctx, pos), entries);
+        self.open = Some(open);
+        self.plain = None;
     }
 
-    /// Each frame: take in what the worker sent, draw the menu if open, and turn a pick into
-    /// actions.
+    /// The right-click menu's entries now: Files' own, then the shell's as far as they are read.
+    fn entries(&mut self, ctx: &Context, open: &Open) -> Vec<Entry<Pick>> {
+        let mut entries = native_entries(ctx, open);
+        if let Some(view) = self.loader.view(&open.target) {
+            let shell = shell_entries(ctx, &mut self.textures, view.items, &[]);
+            if !shell.is_empty() {
+                entries.push(Entry::separator());
+                entries.extend(shell);
+            } else if view.loading {
+                entries.push(Entry::separator());
+                entries.push(Entry::note("Loading more options…"));
+            }
+            if let Some(note) = view.note {
+                entries.push(Entry::separator());
+                entries.push(Entry::note(note));
+            }
+        }
+        entries
+    }
+
+    /// Each frame: take in what the worker sent, keep the open menu up to date, open a plain
+    /// menu asked for this frame, and turn a pick into actions.
     pub(super) fn show(&mut self, ctx: &Context, actions: &mut Vec<Action>) -> Option<String> {
         let c = colors();
         let rgb = |c: egui::Color32| u32::from(c.r()) | u32::from(c.g()) << 8 | u32::from(c.b()) << 16;
@@ -119,44 +189,41 @@ impl ContextMenu {
         self.loader.poll();
         let notice = self.loader.take_notice();
         self.find_made(ctx, actions);
-        let Some(open) = &self.open else { return notice };
-        if !self.menu.is_open() {
-            self.open = None;
-            return notice;
+        let now = ctx.input(|i| i.time);
+        // What was picked, before the entries are updated (a pick is looked up among them).
+        match self.menu.take_pick() {
+            Some(Pick::Native(a)) => actions.push(a),
+            Some(Pick::Shell(path)) => self.pick_shell(&path, actions),
+            _ => {}
         }
-        let mut rows = native_rows(ctx, open);
-        if let Some(view) = self.loader.view(&open.target) {
-            let shell = shell_rows(ctx, &mut self.textures, view.items, &[]);
-            if !shell.is_empty() {
-                rows.push(Row::separator());
-                rows.extend(shell);
-            } else if view.loading {
-                rows.push(Row::separator());
-                rows.push(Row::note("Loading more options…"));
-            }
-            if let Some(note) = view.note {
-                rows.push(Row::separator());
-                rows.push(Row::note(note));
-            }
-        }
-        let event = self.menu.show(ctx, egui::Id::new("files-context-menu"), &rows);
-        match event {
-            Some(Event::Picked(Pick::Native(a))) => actions.push(a),
-            Some(Event::Picked(Pick::Shell(path))) => self.pick_shell(&path, actions),
-            Some(Event::Opened(Pick::Expand(path))) => {
-                let open = self.open.as_ref().unwrap();
+        if let Some(Pick::Expand(path)) = self.menu.take_opened() {
+            if let Some(open) = &self.open {
                 let item = self.loader.view(&open.target).and_then(|v| chain(v.items, &path).last().cloned().cloned());
                 if let Some(item) = item {
                     self.loader.expand(&open.target, &item);
                 }
             }
-            _ => {}
-        }
-        if let (Some(h), Some(open)) = (self.menu.height(), &self.open) {
-            self.heights.insert((open.background, open.is_dir), h);
         }
         if !self.menu.is_open() {
             self.open = None;
+            if let Some(key) = self.plain.take() {
+                self.closed = Some((key, now));
+            }
+        }
+        if let Some(open) = self.open.take() {
+            let entries = self.entries(ctx, &open);
+            self.menu.update(entries);
+            self.open = Some(open);
+        }
+        if let Some(req) = REQUEST.with(|r| r.borrow_mut().take()) {
+            let toggled_off = self.closed.is_some_and(|(key, at)| key == req.key && now - at < TOGGLE);
+            if toggled_off {
+                self.closed = None;
+            } else {
+                self.open = None;
+                self.menu.open(ctx, req.at, req.entries.into_iter().map(lift).collect());
+                self.plain = Some(req.key);
+            }
         }
         notice
     }
@@ -219,6 +286,37 @@ impl ContextMenu {
     }
 }
 
+/// A plain menu's entry as the right-click menu's handle takes it.
+fn lift(e: Entry<Action>) -> Entry<Pick> {
+    match e {
+        Entry::Item(i) => {
+            let mut out = Entry::item(Pick::Native(i.id), i.label).hint(i.hint).enabled(i.enabled).checked(i.checked);
+            if let Some(g) = i.icon {
+                out = out.icon(g);
+            }
+            if let Some(t) = i.image {
+                out = out.image(t);
+            }
+            if i.danger {
+                out = out.danger();
+            }
+            out
+        }
+        Entry::Submenu { label, icon, image, enabled, entries, on_open } => Entry::Submenu {
+            label,
+            icon,
+            image,
+            enabled,
+            entries: entries.into_iter().map(lift).collect(),
+            on_open: on_open.map(Pick::Native),
+        },
+        Entry::Separator => Entry::Separator,
+        Entry::Heading(t) => Entry::Heading(t),
+        Entry::Note(t) => Entry::Note(t),
+        Entry::Picture { id, texture, size, enabled } => Entry::Picture { id: Pick::Native(id), texture, size, enabled },
+    }
+}
+
 /// The entries at each step of `path`, from the top.
 fn chain<'a>(items: &'a [Item], path: &[usize]) -> Vec<&'a Item> {
     let mut out = Vec::new();
@@ -231,120 +329,143 @@ fn chain<'a>(items: &'a [Item], path: &[usize]) -> Vec<&'a Item> {
     out
 }
 
+/// What decides Files' own entries, apart from the target's paths.
+#[derive(Clone, Debug, Default)]
+pub(super) struct Facts {
+    pub background: bool,
+    /// The one item is a folder.
+    pub is_dir: bool,
+    pub can_paste: bool,
+    pub can_paste_link: bool,
+    /// The folder the background menu is for, or the one folder the item menu is for.
+    pub dir: PathBuf,
+    /// "Pin to sidebar" or "Unpin from sidebar", for a folder.
+    pub pin_label: &'static str,
+    /// The six tags' names and whether the whole selection has each.
+    pub tags: Vec<(String, bool)>,
+}
+
 /// Files' own entries.
-fn native_rows(ctx: &Context, open: &Open) -> Vec<Row<Pick>> {
-    let act = |g, label: &str, key: &str, a: Action| Row::action(Icon::Glyph(g), label, key, Pick::Native(a));
-    let mut rows = Vec::new();
-    if open.background {
-        rows.push(act(glyph::NEW_FOLDER, "New folder", "Ctrl+Shift+N", Action::NewFolder));
+fn native_entries(ctx: &Context, open: &Open) -> Vec<Entry<Pick>> {
+    let dir = if open.background { open.target.folder.clone() } else { open.target.items.first().cloned().unwrap_or_default() };
+    let facts = Facts {
+        background: open.background,
+        is_dir: open.is_dir,
+        can_paste: open.has_clip.0,
+        can_paste_link: open.has_clip.1,
+        pin_label: if open.is_dir { super::pins::menu_label(ctx, &dir) } else { "" },
+        dir,
+        tags: ctx.data(|d| d.get_temp(egui::Id::new("tag_menu_state"))).unwrap_or_default(),
+    };
+    own_entries(&facts).into_iter().map(lift).collect()
+}
+
+/// Files' own entries for these facts, as plain actions.
+pub(super) fn own_entries(f: &Facts) -> Vec<Entry<Action>> {
+    let mut e = Vec::new();
+    if f.background {
+        e.push(item(Action::NewFolder, glyph::NEW_FOLDER, "New folder").hint("Ctrl+Shift+N"));
         // Always there, so the entry does not come and go; only usable with something to paste.
-        let mut paste = act(glyph::PASTE, "Paste", "Ctrl+V", Action::Paste);
-        paste.enabled = open.has_clip.0;
-        rows.push(paste);
-        let mut link = act(glyph::COPY, "Paste shortcut", "", Action::PasteShortcut);
-        link.enabled = open.has_clip.1;
-        rows.push(link);
-        rows.push(Row::separator());
-        rows.push(act(glyph::REFRESH, "Refresh", "F5", Action::Refresh));
-        rows.push(act(glyph::COPY, "Copy folder path", "", Action::CopyPath));
-        let dir = open.target.folder.clone();
-        rows.push(act(glyph::ADD, "Open in new tab", "", Action::NewTab(Loc::Dir(dir.clone()))));
-        rows.push(act(glyph::APP, "Open Terminal here", "", Action::OpenTerminal(dir)));
+        e.push(item(Action::Paste, glyph::PASTE, "Paste").hint("Ctrl+V").enabled(f.can_paste));
+        e.push(item(Action::PasteShortcut, glyph::COPY, "Paste shortcut").enabled(f.can_paste_link));
+        e.push(Entry::separator());
+        e.push(item(Action::Refresh, glyph::REFRESH, "Refresh").hint("F5"));
+        e.push(item(Action::CopyPath, glyph::COPY, "Copy folder path"));
+        e.push(item(Action::NewTab(Loc::Dir(f.dir.clone())), glyph::ADD, "Open in new tab"));
+        e.push(item(Action::OpenTerminal(f.dir.clone()), glyph::APP, "Open Terminal here"));
     } else {
-        rows.push(act(glyph::OPEN_EXTERNAL, "Open", "Enter", Action::OpenSelected));
-        if open.is_dir {
-            let dir: PathBuf = open.target.items[0].clone();
-            rows.push(act(glyph::ADD, "Open in new tab", "", Action::NewTab(Loc::Dir(dir.clone()))));
-            rows.push(act(glyph::APP, "Open Terminal here", "", Action::OpenTerminal(dir.clone())));
-            rows.push(act(glyph::PIN, super::pins::menu_label(ctx, &dir), "", Action::TogglePin(dir)));
+        e.push(item(Action::OpenSelected, glyph::OPEN_EXTERNAL, "Open").hint("Enter"));
+        if f.is_dir {
+            e.push(item(Action::NewTab(Loc::Dir(f.dir.clone())), glyph::ADD, "Open in new tab"));
+            e.push(item(Action::OpenTerminal(f.dir.clone()), glyph::APP, "Open Terminal here"));
+            e.push(item(Action::TogglePin(f.dir.clone()), glyph::PIN, f.pin_label));
         }
-        rows.push(Row::separator());
-        rows.push(act(glyph::CUT, "Cut", "Ctrl+X", Action::Clip(Op::Move)));
-        rows.push(act(glyph::COPY, "Copy", "Ctrl+C", Action::Clip(Op::Copy)));
-        rows.push(act(glyph::COPY, "Copy as path", "Ctrl+Shift+C", Action::CopyPath));
-        rows.push(Row::separator());
-        rows.push(act(glyph::RENAME, "Rename", "F2", Action::Rename));
-        rows.push(tags_row(ctx));
-        rows.push(act(glyph::DELETE, "Move to Recycle Bin", "Del", Action::Recycle));
+        e.push(Entry::separator());
+        e.push(item(Action::Clip(Op::Move), glyph::CUT, "Cut").hint("Ctrl+X"));
+        e.push(item(Action::Clip(Op::Copy), glyph::COPY, "Copy").hint("Ctrl+C"));
+        e.push(item(Action::CopyPath, glyph::COPY, "Copy as path").hint("Ctrl+Shift+C"));
+        e.push(Entry::separator());
+        e.push(item(Action::Rename, glyph::RENAME, "Rename").hint("F2"));
+        e.push(tags_entry(&f.tags));
+        e.push(item(Action::Recycle, glyph::DELETE, "Move to Recycle Bin").hint("Del").danger());
     }
-    rows.push(Row::separator());
-    rows.push(act(glyph::INFO, "Properties", "Alt+Enter", Action::Properties));
-    rows
+    e.push(Entry::separator());
+    e.push(item(Action::Properties, glyph::INFO, "Properties").hint("Alt+Enter"));
+    e
 }
 
 /// "Tags", a submenu of the six tags, each ticked when the whole selection has it, and a way to
 /// take them all off. The names and ticks are left in the context's memory each frame (see
-/// `FileMan::context_menu`), since the menu is drawn far from the tags.
-fn tags_row(ctx: &Context) -> Row<Pick> {
-    let state: Vec<(String, bool)> = ctx
-        .data(|d| d.get_temp(egui::Id::new("tag_menu_state")))
-        .unwrap_or_default();
-    let mut rows: Vec<Row<Pick>> = state
-        .iter()
-        .enumerate()
-        .map(|(i, (name, on))| {
-            let mut r = Row::action(Icon::None, name.clone(), "", Pick::Native(Action::ToggleTag(i)));
-            r.checked = *on;
-            r
-        })
-        .collect();
-    rows.push(Row::separator());
-    rows.push(Row::action(Icon::Glyph(glyph::CLOSE), "Remove all tags", "", Pick::Native(Action::ClearTags)));
-    Row {
-        icon: Icon::Glyph(glyph::PIN),
-        label: "Tags".into(),
-        shortcut: String::new(),
-        enabled: true,
-        checked: false,
-        mnemonic: None,
-        kind: Kind::Submenu { rows, on_open: None },
-    }
+/// `FileMan::context_menu`), since the menu is built far from the tags.
+fn tags_entry(state: &[(String, bool)]) -> Entry<Action> {
+    let mut sub: Vec<Entry<Action>> =
+        state.iter().enumerate().map(|(i, (name, on))| Entry::item(Action::ToggleTag(i), name.clone()).checked(*on)).collect();
+    sub.push(Entry::separator());
+    sub.push(item(Action::ClearTags, glyph::CLOSE, "Remove all tags"));
+    Entry::submenu("Tags", sub).icon(glyph::PIN)
 }
 
-/// The shell's entries as rows, `prefix` being the path of the submenu they are in.
-fn shell_rows(ctx: &Context, textures: &mut HashMap<u64, TextureHandle>, items: &[Item], prefix: &[usize]) -> Vec<Row<Pick>> {
-    let mut rows = Vec::with_capacity(items.len());
+/// A label with its keyboard letter marked with `&` again (the shell's menus give the letter on
+/// its own): before the first `letter` in it, else none. Any `&` in the text stays one.
+pub(super) fn with_mnemonic(label: &str, letter: Option<char>) -> String {
+    let escaped = label.replace('&', "&&");
+    let Some(m) = letter else { return escaped };
+    let mut out = String::with_capacity(escaped.len() + 1);
+    let mut done = false;
+    let mut chars = label.chars();
+    while let Some(c) = chars.next() {
+        if c == '&' {
+            out.push_str("&&");
+            continue;
+        }
+        if !done && c.to_lowercase().eq(m.to_lowercase()) {
+            out.push('&');
+            done = true;
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// The shell's entries, `prefix` being the path of the submenu they are in.
+fn shell_entries(ctx: &Context, textures: &mut HashMap<u64, TextureHandle>, items: &[Item], prefix: &[usize]) -> Vec<Entry<Pick>> {
+    let mut out = Vec::with_capacity(items.len());
+    let ppp = ctx.pixels_per_point();
     for (i, item) in items.iter().enumerate() {
         if item.separator {
-            rows.push(Row::separator());
+            out.push(Entry::separator());
             continue;
         }
         let mut path = prefix.to_vec();
         path.push(i);
-        let ppp = ctx.pixels_per_point();
-        let kind = if let Some(pic) = &item.drawn {
+        if let Some(pic) = &item.drawn {
             let size = Vec2::new(pic.size[0] as f32, pic.size[1] as f32) / ppp;
-            Kind::Picture(texture(ctx, textures, pic).id(), size, Pick::Shell(path.clone()))
-        } else if item.is_submenu() {
-            let mut sub = shell_rows(ctx, textures, &item.submenu, &path);
-            let mut on_open = None;
+            out.push(Entry::picture(Pick::Shell(path), texture(ctx, textures, pic).id(), size).enabled(item.enabled));
+            continue;
+        }
+        let label = with_mnemonic(&item.title(), item.mnemonic);
+        let mut entry = if item.is_submenu() {
+            let mut sub = shell_entries(ctx, textures, &item.submenu, &path);
+            let mut entry = None;
             match item.cascade {
-                Cascade::Pending if sub.is_empty() => sub.push(Row::note("Loading…")),
+                Cascade::Pending if sub.is_empty() => sub.push(Entry::note("Loading…")),
                 Cascade::Deferred => {
-                    sub.push(Row::note("Loading…"));
-                    on_open = Some(Pick::Expand(path.clone()));
+                    sub.push(Entry::note("Loading…"));
+                    entry = Some(Entry::submenu(label.clone(), std::mem::take(&mut sub)).on_open(Pick::Expand(path.clone())));
                 }
                 _ => {}
             }
-            Kind::Submenu { rows: sub, on_open }
+            entry.unwrap_or_else(|| Entry::submenu(label, sub))
         } else {
-            Kind::Action(Pick::Shell(path.clone()))
+            Entry::item(Pick::Shell(path), label).hint(item.shortcut.clone()).checked(item.checked)
         };
-        let icon = match &item.icon {
-            Some(pic) => Icon::Image(texture(ctx, textures, pic).id(), Vec2::splat(16.0)),
-            None => Icon::None,
-        };
-        rows.push(Row {
-            icon,
-            label: item.title(),
-            shortcut: item.shortcut.clone(),
-            enabled: item.enabled,
-            checked: item.checked,
-            mnemonic: item.mnemonic,
-            kind,
-        });
+        entry = entry.enabled(item.enabled);
+        if let Some(pic) = &item.icon {
+            entry = entry.image(texture(ctx, textures, pic).id());
+        }
+        out.push(entry);
     }
-    rows
+    out
 }
 
 /// One texture per distinct picture.
@@ -365,4 +486,133 @@ fn cursor() -> (i32, i32) {
         let _ = windows::Win32::UI::WindowsAndMessaging::GetCursorPos(&mut pt);
     }
     (pt.x, pt.y)
+}
+
+/// Where the Menu key and Shift+F10 open the menu: beside the row of the selection the cursor
+/// is on, when it was drawn last frame, else the pointer.
+pub(super) fn key_point(row_rect: Option<Rect>, pointer: Option<Pos2>, screen: Rect) -> Pos2 {
+    match row_rect {
+        Some(r) => egui::pos2(r.left() + 24.0_f32.min(r.width() / 2.0), r.center().y),
+        None => pointer.filter(|p| screen.contains(*p)).unwrap_or_else(|| screen.center()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn labels(e: &[Entry<Action>]) -> Vec<String> {
+        e.iter()
+            .map(|e| match e {
+                Entry::Item(i) => i.label.clone(),
+                Entry::Submenu { label, .. } => format!("{label} >"),
+                Entry::Separator => "-".into(),
+                Entry::Heading(t) | Entry::Note(t) => format!("({t})"),
+                Entry::Picture { .. } => "[picture]".into(),
+            })
+            .collect()
+    }
+
+    fn item_of<'a>(e: &'a [Entry<Action>], label: &str) -> &'a shellman_ui::menu::popup::Item<Action> {
+        e.iter()
+            .find_map(|e| match e {
+                Entry::Item(i) if i.label == label => Some(i),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("no {label}"))
+    }
+
+    fn tags() -> Vec<(String, bool)> {
+        ["Red", "Orange", "Yellow", "Green", "Blue", "Purple"].iter().enumerate().map(|(i, n)| (n.to_string(), i == 1)).collect()
+    }
+
+    #[test]
+    fn a_single_file() {
+        let e = own_entries(&Facts { tags: tags(), ..Default::default() });
+        assert_eq!(
+            labels(&e),
+            ["Open", "-", "Cut", "Copy", "Copy as path", "-", "Rename", "Tags >", "Move to Recycle Bin", "-", "Properties"]
+        );
+        assert_eq!(item_of(&e, "Open").hint, "Enter");
+        assert_eq!(item_of(&e, "Copy as path").hint, "Ctrl+Shift+C");
+        assert_eq!(item_of(&e, "Properties").hint, "Alt+Enter");
+        let bin = item_of(&e, "Move to Recycle Bin");
+        assert!(bin.danger && bin.hint == "Del");
+        let Some(Entry::Submenu { entries: sub, .. }) = e.iter().find(|e| matches!(e, Entry::Submenu { .. })) else { panic!() };
+        assert_eq!(labels(sub), ["Red", "Orange", "Yellow", "Green", "Blue", "Purple", "-", "Remove all tags"]);
+        assert!(item_of(sub, "Orange").checked && !item_of(sub, "Red").checked);
+    }
+
+    #[test]
+    fn a_folder_adds_tab_terminal_and_pin() {
+        let dir = PathBuf::from(r"C:\x\folder");
+        let e = own_entries(&Facts { is_dir: true, dir: dir.clone(), pin_label: "Pin to sidebar", ..Default::default() });
+        assert_eq!(
+            labels(&e)[..4],
+            ["Open".to_string(), "Open in new tab".into(), "Open Terminal here".into(), "Pin to sidebar".into()]
+        );
+        assert!(matches!(&item_of(&e, "Open Terminal here").id, Action::OpenTerminal(d) if *d == dir));
+        assert!(matches!(&item_of(&e, "Pin to sidebar").id, Action::TogglePin(d) if *d == dir));
+    }
+
+    #[test]
+    fn many_items_get_the_file_menu() {
+        // Several items (or one file): no folder-only entries; the actions act on the selection.
+        let e = own_entries(&Facts { is_dir: false, ..Default::default() });
+        assert!(!labels(&e).iter().any(|l| l == "Open in new tab" || l == "Open Terminal here"));
+        assert!(matches!(item_of(&e, "Cut").id, Action::Clip(Op::Move)));
+    }
+
+    #[test]
+    fn the_background_menu_and_paste() {
+        let dir = PathBuf::from(r"D:\work");
+        let f = Facts { background: true, dir: dir.clone(), ..Default::default() };
+        let e = own_entries(&f);
+        assert_eq!(
+            labels(&e),
+            [
+                "New folder",
+                "Paste",
+                "Paste shortcut",
+                "-",
+                "Refresh",
+                "Copy folder path",
+                "Open in new tab",
+                "Open Terminal here",
+                "-",
+                "Properties"
+            ]
+        );
+        assert!(!item_of(&e, "Paste").enabled && !item_of(&e, "Paste shortcut").enabled);
+        assert_eq!(item_of(&e, "New folder").hint, "Ctrl+Shift+N");
+        assert!(matches!(&item_of(&e, "Open Terminal here").id, Action::OpenTerminal(d) if *d == dir));
+        let e = own_entries(&Facts { can_paste: true, can_paste_link: true, ..f });
+        assert!(item_of(&e, "Paste").enabled && item_of(&e, "Paste shortcut").enabled);
+    }
+
+    #[test]
+    fn plain_entries_keep_everything_when_lifted() {
+        let e = lift(item(Action::Refresh, glyph::REFRESH, "Refresh").hint("F5").enabled(false).checked(true).danger());
+        let Entry::Item(i) = e else { panic!() };
+        assert!(matches!(i.id, Pick::Native(Action::Refresh)));
+        assert_eq!((i.icon, i.hint.as_str(), i.enabled, i.checked, i.danger), (Some(glyph::REFRESH), "F5", false, true, true));
+    }
+
+    #[test]
+    fn shell_letters_are_marked_again() {
+        assert_eq!(with_mnemonic("Open with", Some('h')), "Open wit&h");
+        assert_eq!(with_mnemonic("Send to", Some('n')), "Se&nd to");
+        assert_eq!(with_mnemonic("Tom & Jerry", Some('j')), "Tom && &Jerry");
+        assert_eq!(with_mnemonic("Plain", None), "Plain");
+        assert_eq!(with_mnemonic("Plain", Some('z')), "Plain");
+    }
+
+    #[test]
+    fn the_menu_key_opens_by_the_cursor_row() {
+        let screen = Rect::from_min_size(Pos2::ZERO, egui::vec2(800.0, 600.0));
+        let row = Rect::from_min_size(egui::pos2(100.0, 200.0), egui::vec2(400.0, 30.0));
+        assert_eq!(key_point(Some(row), None, screen), egui::pos2(124.0, 215.0));
+        assert_eq!(key_point(None, Some(egui::pos2(5.0, 5.0)), screen), egui::pos2(5.0, 5.0));
+        assert_eq!(key_point(None, Some(egui::pos2(-5.0, 5.0)), screen), screen.center());
+    }
 }

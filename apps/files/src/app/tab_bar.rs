@@ -8,6 +8,8 @@ use egui::{Align2, CornerRadius, FontId, Id, Rect, Sense, Ui, Vec2};
 use shellman_ui::chips::{round_icon, soft_colors};
 use shellman_ui::theme::{self, colors, glyph, icon_font};
 use shellman_ui::widgets::draw_text;
+use super::menu::item;
+use shellman_ui::menu::popup::Entry;
 
 /// Inside the pill, around the tabs.
 const PAD: f32 = 5.0;
@@ -28,6 +30,14 @@ pub(super) struct Strip {
     pub(super) max_offset: f32,
 }
 
+/// A tab's right-click menu: a copy of it, and closing it while there are others.
+fn tab_entries(loc: &Loc, i: usize, n: usize) -> Vec<Entry<Action>> {
+    let mut e = vec![item(Action::NewTab(loc.clone()), glyph::ADD, "Duplicate tab")];
+    if n > 1 {
+        e.push(item(Action::CloseTab(i), glyph::CLOSE, "Close tab").hint("Ctrl+W"));
+    }
+    e
+}
 /// The strip for `n` tabs in a row `room` wide and `height` tall, scrolled by `scroll` (kept
 /// within what can scroll).
 pub(super) fn strip(n: usize, room: f32, height: f32, scroll: f32) -> Strip {
@@ -180,17 +190,7 @@ impl super::FileMan {
                 loc.dir()
                     .map_or_else(|| loc.title(), |d| d.display().to_string()),
             );
-            resp.context_menu(|ui| {
-                super::controls::flat_items(ui);
-                if super::controls::mi(ui, glyph::ADD, "Duplicate tab", "") {
-                    actions.push(Action::NewTab(loc.clone()));
-                    ui.close_menu();
-                }
-                if n > 1 && super::controls::mi(ui, glyph::CLOSE, "Close tab", "Ctrl+W") {
-                    actions.push(Action::CloseTab(i));
-                    ui.close_menu();
-                }
-            });
+            super::menu::on_right_click(&resp, "tab", || tab_entries(&loc, i, n));
         }
         // Where tabs are cut off, a short line marks the edge, so it is plain there are more.
         for (show, x) in [(s.offset > 0.5, view.left()), (s.offset < s.max_offset - 0.5, view.right())] {
@@ -216,6 +216,16 @@ impl super::FileMan {
 mod tests {
     use super::*;
 
+    #[test]
+    fn a_tabs_menu() {
+        let loc = Loc::Dir(std::path::PathBuf::from(r"C:\x"));
+        let e = tab_entries(&loc, 2, 3);
+        let ids: Vec<String> = e.iter().map(|e| match e { Entry::Item(i) => format!("{:?} {} {}", i.id, i.label, i.hint), _ => "-".into() }).collect();
+        assert!(ids[0].starts_with("NewTab") && ids[0].ends_with("Duplicate tab "));
+        assert_eq!(ids[1], "CloseTab(2) Close tab Ctrl+W");
+        // The last tab cannot be closed from its menu.
+        assert_eq!(tab_entries(&loc, 0, 1).len(), 1);
+    }
     #[test]
     fn tabs_share_the_row_and_the_pill_hugs_them() {
         // One tab: as wide as a tab may be, and the pill no wider than it needs.

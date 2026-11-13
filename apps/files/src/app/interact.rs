@@ -106,11 +106,25 @@ pub(super) fn item_menu(
     r: usize,
     bin: bool,
 ) {
+    // Where the Menu key opens this row's menu, while it is on screen.
+    let frame = ui.ctx().cumulative_pass_nr();
+    ui.ctx().data_mut(|d| d.insert_temp(row_rect_id(r), (frame, resp.rect)));
     if bin {
-        resp.context_menu(|ui| super::bin::item_menu(ui, actions));
+        super::menu::on_right_click(resp, "bin-item", super::bin::item_entries);
     } else {
         menu_clicks(ui, resp, actions, Some(r));
     }
+}
+
+fn row_rect_id(r: usize) -> Id {
+    Id::new(("files-row-rect", r))
+}
+
+/// Where row `r` was drawn, if it was in the last two frames.
+pub(super) fn row_rect(ctx: &egui::Context, r: usize) -> Option<Rect> {
+    let now = ctx.cumulative_pass_nr();
+    let (frame, rect) = ctx.data(|d| d.get_temp::<(u64, Rect)>(row_rect_id(r)))?;
+    (now.saturating_sub(frame) <= 2).then_some(rect)
 }
 
 /// Right button down on `resp`: read its menu ahead. Right click: open it.
@@ -247,7 +261,8 @@ pub(super) fn folder_backdrop(ui: &mut Ui, island: Rect, tab: &mut Tab, actions:
         }
     }
     if tab.loc == super::tab::Loc::Bin {
-        bg.context_menu(|ui| super::bin::backdrop_menu(ui, tab.view.is_empty(), actions));
+        let empty = tab.view.is_empty();
+        super::menu::on_right_click(&bg, "bin-background", || super::bin::backdrop_entries(empty));
         return;
     }
     menu_clicks(ui, &bg, actions, None);
