@@ -132,6 +132,20 @@ impl Bucket {
             false
         }
     }
+
+    /// How long until one can be taken, from `now` (zero when one can be now). Only looks: it
+    /// takes nothing and changes nothing.
+    pub fn ready_in(&self, now: Instant) -> std::time::Duration {
+        let mut tokens = self.tokens;
+        if let Some(at) = self.at {
+            tokens = (tokens + now.saturating_duration_since(at).as_secs_f32() * Self::PER_SECOND).min(Self::BURST);
+        }
+        if tokens >= 1.0 {
+            std::time::Duration::ZERO
+        } else {
+            std::time::Duration::from_secs_f32((1.0 - tokens) / Self::PER_SECOND)
+        }
+    }
 }
 
 #[cfg(test)]
