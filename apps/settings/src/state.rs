@@ -2,7 +2,7 @@
 //! Edits apply by saving the same files the other apps watch.
 
 use crate::saver::Saver;
-use crate::sections::{AppsView, DisplayView, FontsView, IconsView, MouseView, PowerView, DateTimeView, StorageView, DefaultAppsView, Section, SoundView, StartupView};
+use crate::sections::{AppsView, DisplayView, FontsView, IconsView, MouseView, PowerView, DateTimeView, StorageView, DefaultAppsView, Section, SoundView, StartupView, UpdatesView};
 use shellman_core::settings::bar::BarSettings;
 use shellman_core::settings::dock::{self, DockSettings};
 use shellman_core::settings::launcher::LauncherSettings;
@@ -36,6 +36,8 @@ pub struct State {
     pub datetime: DateTimeView,
     /// The Power page's state; started or read when the page is shown.
     pub power: PowerView,
+    /// The Windows Update page's state; its worker runs while the page is shown.
+    pub updates: UpdatesView,
     /// The Apps page's live state; started when the page is shown.
     pub apps: AppsView,
     /// The Startup apps page's live state; started when the page is shown.
@@ -68,6 +70,7 @@ impl State {
             storage: StorageView::default(),
             datetime: DateTimeView::default(),
             power: PowerView::default(),
+            updates: UpdatesView::default(),
             apps: AppsView::default(),
             startup: StartupView::default(),
             fonts: FontsView::default(),

@@ -28,6 +28,8 @@ mod sound;
 mod sound_mixer;
 mod sound_rows;
 mod startup;
+mod updates;
+mod updates_rows;
 
 pub use apps::AppsView;
 pub use display::DisplayView;
@@ -40,6 +42,7 @@ pub use datetime::DateTimeView;
 pub use power::PowerView;
 pub use sound::SoundView;
 pub use startup::StartupView;
+pub use updates::UpdatesView;
 use crate::state::State;
 use shellman_ui::theme::glyph;
 
@@ -53,6 +56,7 @@ pub enum Section {
     DateTime,
     Storage,
     DefaultApps,
+    Updates,
     Apps,
     Startup,
     Fonts,
@@ -63,7 +67,7 @@ pub enum Section {
 }
 
 impl Section {
-    pub const ALL: [Section; 15] = [
+    pub const ALL: [Section; 16] = [
         Section::Appearance,
         Section::Sound,
         Section::Display,
@@ -72,6 +76,7 @@ impl Section {
         Section::DateTime,
         Section::Storage,
         Section::DefaultApps,
+        Section::Updates,
         Section::Apps,
         Section::Startup,
         Section::Fonts,
@@ -91,6 +96,7 @@ impl Section {
             Section::DateTime => "Date, time & region",
             Section::Storage => "Storage",
             Section::DefaultApps => "Default apps",
+            Section::Updates => "Windows Update",
             Section::Apps => "Apps",
             Section::Startup => "Startup apps",
             Section::Fonts => "Fonts",
@@ -112,6 +118,8 @@ impl Section {
             Section::DateTime => '\u{E823}',
             Section::Storage => glyph::DRIVE,
             Section::DefaultApps => '\u{E8E5}',
+            // Segoe Fluent Icons' Sync glyph, as Windows' own Settings shows for Windows Update.
+            Section::Updates => '\u{E895}',
             Section::Apps => '\u{E71D}',
             Section::Startup => '\u{E7E8}',
             // Segoe Fluent Icons' Font glyph.
@@ -133,6 +141,7 @@ impl Section {
             Section::DateTime => datetime::show(ui, state),
             Section::Storage => storage::show(ui, state),
             Section::DefaultApps => default_apps::show(ui, state),
+            Section::Updates => updates::show(ui, state),
             Section::Apps => apps::show(ui, state),
             Section::Startup => startup::show(ui, state),
             Section::Fonts => fonts::show(ui, state),
@@ -158,6 +167,7 @@ impl Section {
                 | Section::DateTime
                 | Section::Storage
                 | Section::DefaultApps
+                | Section::Updates
                 | Section::Apps
                 | Section::Startup
                 | Section::Fonts
@@ -179,6 +189,7 @@ impl Section {
             Section::DateTime => "datetime",
             Section::Storage => "storage",
             Section::DefaultApps => "default-apps",
+            Section::Updates => "windows-update",
             Section::Apps => "apps",
             Section::Startup => "startup",
             Section::Fonts => "fonts",

@@ -14,7 +14,7 @@ accent color, fast.
 | `apps/desktop` | wallpaper window, desktop icons | working: wallpaper per monitor; keeps Windows' modern-app host running. Next: desktop icons, right-click menu |
 | `apps/tasks` | Task Manager (Ctrl+Shift+Esc, through the switcher's hook) | working: Processes (apps and background, grouped, sort, search, End task / End process tree / details), Performance (CPU, memory, GPUs, disks, network), Services (read-only: status, startup type, PID, description, sort, search, go to process; read through the SCM in `crates/core/src/services`, off the UI thread, only while the page shows). End task / tree try unelevated first and, only when Windows refuses, go through `shellman-elevate`'s `end-processes <pid>:<start time>...` behind the UAC prompt (the helper rechecks start time and refuses critical processes); critical processes stay un-endable. Reads through `crates/core/src/procs` |
 | `apps/terminal` | Windows Terminal | stage 1: one shell in glass, GPU-drawn grid, scrollback. Next: tabs, selection, mouse, profiles |
-| `apps/settings` | Settings pages for the shell | working: Appearance, Dock, Top bar, Launcher, About; rebuilt Windows pages: Sound, Display, Apps, Startup, Fonts, Mouse & keyboard, Power, Date, time & region, Storage, Default apps (read-only) |
+| `apps/settings` | Settings pages for the shell | working: Appearance, Dock, Top bar, Launcher, About; rebuilt Windows pages: Sound, Display, Apps, Startup, Fonts, Mouse & keyboard, Power, Date, time & region, Storage, Default apps (read-only), Windows Update |
 | `apps/session` | the shell process itself | built, not yet the shell: starts and supervises the apps, runs startup items, safety net, `--install`/`--uninstall` (never run yet) |
 
 Shared code:
@@ -158,6 +158,20 @@ Rule: **the top bar is the system, the dock is apps.** Both are windows of one p
   `shellman-elevate`. Rows a machine lacks are hidden (no lid, no battery column on a desktop).
   Default apps is read-only: `UserChoice` is hash-protected, so there is no change button.
   Storage counts folders on workers, never follows reparse points, and only offers "Open in Files".
+- Windows Update talks to the Update Orchestrator through `Windows.Management.Update`
+  (`system::updates`; the second contract, missing from the `windows` crate, is generated into
+  `system::wu_api` and cast at the call, so older builds fall back to the first). Never WUA for
+  downloads or installs; WUA only for the history. A worker holds the manager while the page
+  shows and forwards Windows' events. Measured unelevated on 26300: "Check for updates"
+  (`StartScan(true)`) works and Windows then downloads and installs by itself; "restart needed"
+  comes from the orchestrator (`ReadyToReboot` / `Commit`), not WUA or the registry. Pause is
+  `UX\Settings` `Pause*` values (names found in `MoUsoCoreWorker.exe`; the next scan sets
+  `UpdatePolicy\Settings` `Paused*Status` and offers nothing; deleting them resumes). Active
+  hours and "latest updates as soon as available" are left out: written values changed nothing
+  Windows reports. Approving an optional update is built but untested (only drivers were offered),
+  so there is no elevate op for it. "Update and restart" is `power::update_and_restart`
+  (`InitiateShutdownW` restart + install updates; never run live); the Control Center's power
+  menu can offer it on the same signal (`updates::Snapshot` says a restart is needed).
 
 ## Modern apps without Explorer
 
