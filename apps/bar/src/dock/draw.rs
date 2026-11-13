@@ -64,6 +64,8 @@ pub struct Scene<'a> {
     pub lifted: Option<Lifted>,
     /// Files dragged in from another app, over this dock window.
     pub dropping: Option<DropMark>,
+    /// What each item's app told the taskbar (badge, progress, attention), by item.
+    pub status: &'a [super::status::Shown],
 }
 
 /// Where files dragged over the dock would go: an icon (by id), or a boundary between pins (its
@@ -209,8 +211,27 @@ pub fn paint(ui: &mut egui::Ui, scene: &Scene, thumbs: &mut Thumbs) -> Events {
             let shadow = egui::epaint::Shadow { offset: [0, 3], blur: 12, spread: 0, color: Color32::from_black_alpha(70) };
             painter.add(shadow.as_shape(shown, egui::CornerRadius::same((m.icon * 0.22) as u8)));
         }
+        let st = scene.status.get(i);
+        let attention = st.and_then(|s| s.attention);
+        if let Some(since) = attention {
+            // A call for attention: the icon glows amber a couple of times, gently.
+            let (pulse, _) = super::status::attention(std::time::Instant::now().saturating_duration_since(since));
+            if pulse > 0.0 {
+                let plate = icon.expand(5.0);
+                painter.rect_filled(plate, m.icon * 0.22 + 5.0, with_alpha(colors().warn, (120.0 * pulse) as u8));
+            }
+        }
         paint_icon(&ctx, &painter, item, shown, tint, ink.plate, thumbs);
-        paint_mark(&painter, item, scene.front, egui::pos2(at.center().x, glass.bottom() - m.pad / 2.0), &ink, appear);
+        let mark_at = egui::pos2(at.center().x, glass.bottom() - m.pad / 2.0);
+        if attention.is_some() {
+            // Then a steady amber dot, until the app is brought forward.
+            painter.circle_filled(mark_at, 2.5, colors().warn.gamma_multiply(appear));
+        } else {
+            paint_mark(&painter, item, scene.front, mark_at, &ink, appear);
+        }
+        if let Some(st) = st {
+            paint_status(&ctx, &painter, st, shown, &ink);
+        }
 
         if resp.hovered() && ui.input(|i| i.pointer.primary_pressed()) {
             if let Some(p) = ui.input(|i| i.pointer.interact_pos()) {
@@ -309,6 +330,44 @@ fn paint_icon(ctx: &egui::Context, painter: &egui::Painter, item: &Item, rect: R
     };
     let uv = Rect::from_min_max(Pos2::ZERO, egui::pos2(1.0, 1.0));
     painter.image(id, Rect::from_center_size(rect.center(), shown), uv, tint);
+}
+
+/// An app's badge and progress on its icon (`icon`, as drawn this frame). The badge's glass is
+/// an island of the dock window's own (see `Dock::frame`); its picture is drawn on it here.
+fn paint_status(ctx: &egui::Context, p: &egui::Painter, st: &super::status::Shown, icon: Rect, ink: &Ink) {
+    use super::status::{bar_of, badge_rect, sweep, Bar, BADGE, SWEEP_W};
+    use shellman_core::taskbar_list::Progress;
+    let c = colors();
+    if let Some((state, done)) = st.progress {
+        if let Some(bar) = bar_of(state) {
+            let color = match bar {
+                Bar::Accent => c.accent_fill,
+                Bar::Amber => c.warn,
+                Bar::Red => c.danger,
+            };
+            let track = Rect::from_center_size(egui::pos2(icon.center().x, icon.bottom() + 2.0), egui::vec2(icon.width() * 0.72, 3.0));
+            p.rect_filled(track, 1.5, ink.divider);
+            let (from, len) = if state == Progress::Indeterminate {
+                // Still in the middle on the docks of other monitors.
+                let at = if st.sweeping { sweep(ctx.input(|i| i.time) as f32) } else { (1.0 - SWEEP_W) / 2.0 };
+                (at, SWEEP_W)
+            } else {
+                (0.0, done.clamp(0.0, 1.0))
+            };
+            if len > 0.0 {
+                let left = track.left() + track.width() * from;
+                let fill = Rect::from_min_size(egui::pos2(left, track.top()), egui::vec2((track.width() * len).max(3.0), track.height()));
+                p.rect_filled(fill, 1.5, color);
+            }
+        }
+    }
+    if let Some(tex) = st.badge {
+        let disc = badge_rect(icon.left(), icon.top(), icon.width());
+        // A thin rim so the badge reads on any icon; the glass itself is under the window.
+        p.circle_stroke(disc.center(), BADGE / 2.0 - 0.5, egui::Stroke::new(1.0_f32, ink.divider));
+        let inner = Rect::from_center_size(disc.center(), egui::vec2(BADGE - 6.0, BADGE - 6.0));
+        p.image(tex, inner, Rect::from_min_max(Pos2::ZERO, egui::pos2(1.0, 1.0)), Color32::WHITE);
+    }
 }
 
 /// A running app's mark under its icon: a soft dot, and a wider, brighter pill for the app in

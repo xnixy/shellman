@@ -119,6 +119,24 @@ Rule: **the top bar is the system, the dock is apps.** Both are windows of one p
   aimed icon gets an accent plate and ring, a pin boundary an accent bar. Opening and recycling
   run on threads of their own; the dock never takes the focus.
 - Slots for progress and overlay badges; Files reports its copy progress directly.
+  Done (13 Nov, `dock::tasks`, `dock::status`, `core::taskbar_list`): `ITaskbarList3` runs inside
+  the calling app (explorerframe.dll) and sends window messages to the shell's taskbar window:
+  `WM_USER+64` progress value (0..65534), `+65` progress state (`TBPFLAG`), `+79` overlay
+  `HICON`, the app window in `wParam` (numbers from ManagedShell's `TasksService`, which Cairo
+  and RetroBar use as the shell; explorerframe.dll imports `FindWindowW`/`SendMessageTimeoutW`
+  and holds the string `Shell_TrayWnd`). The bar's tray window is both `Shell_TrayWnd` and the
+  task window (`SetTaskmanWindow`), and hands them to the dock; the overlay's pixels are copied
+  at once. Apps send them only once told their button exists, so while the bar is the task
+  window the dock posts `TaskbarButtonCreated` to each new app window. A test bar (`--no-shell`)
+  is neither, and hears them only on its own hook window, as a test sends them. Flashing
+  (`FlashWindowEx`) arrives as `HSHELL_FLASH` at a `RegisterShellHookWindow` window, which any
+  process may have. Shown: the badge on a small island of glass of its own at the icon's top
+  right; a thin bar under the icon (accent, paused amber, error red; indeterminate a segment
+  gliding at about 6 fps, only on the dock of the window's monitor, since a dock frame costs
+  about 14 ms); attention pulses the icon amber twice (1.8 s, 30 fps) then a steady amber dot
+  until the app comes forward. Repaints from other threads go through the host's frame
+  (`dock::wake_docks_from_thread`), and animations leave gaps between frames: a viewport
+  repainting without pause starved the other docks' repaints for as long as it ran.
 - Tray icons always stay in the top bar, in stable places; they are never folded into the dock,
   because many Windows apps close to the tray and their icon would hop between bars. When a tray
   app that also has a dock icon shows something new (an unread count, an alert), its dock icon

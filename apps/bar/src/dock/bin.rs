@@ -11,7 +11,7 @@
 //! start Explorer's folder window). Emptying is confirmed in the dock's own menu, in a second
 //! step that says how much goes; then it runs on a thread of its own.
 
-use crate::wake::Wake;
+
 use shellman_core::recycle_bin::{self, BinState};
 use shellman_core::watch::Watcher;
 use std::path::PathBuf;
@@ -38,12 +38,12 @@ struct Shared {
 pub struct Bin {
     watcher: Watcher,
     shared: Arc<Mutex<Shared>>,
-    wake: Wake,
+
 }
 
 impl Bin {
-    pub fn new(ctx: egui::Context, wake: Wake) -> Self {
-        let bin = Self { watcher: Watcher::new(ctx), shared: Arc::default(), wake };
+    pub fn new(ctx: egui::Context) -> Self {
+        let bin = Self { watcher: Watcher::new(ctx), shared: Arc::default() };
         bin.refresh();
         bin
     }
@@ -73,7 +73,7 @@ impl Bin {
             }
             s.busy = true;
         }
-        let (shared, wake) = (self.shared.clone(), self.wake.clone());
+        let shared = self.shared.clone();
         std::thread::spawn(move || loop {
             let state = recycle_bin::state();
             let mut dirs = recycle_bin::watch_dirs();
@@ -96,7 +96,7 @@ impl Bin {
             s.busy = false;
             drop(s);
             if changed {
-                wake.docks();
+                super::wake_docks_from_thread();
             }
             // The watcher's new folders are set in the next frame; make sure there is one.
             crate::host::request_frame();

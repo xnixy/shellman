@@ -6,6 +6,7 @@
 //! per monitor drawing it, so every dock shows the same apps in the same order. A click on any of
 //! them brings the window forward wherever it is.
 
+mod badges;
 mod bin;
 mod drag;
 mod draw;
@@ -15,6 +16,8 @@ mod items;
 mod menu;
 mod metrics;
 mod shown;
+mod status;
+pub(crate) mod tasks;
 
 pub use metrics::ABOVE;
 
@@ -65,6 +68,8 @@ pub struct Dock {
     drops: drop_target::Drops,
     /// The Recycle Bin's state, kept up to date off the UI thread.
     bin: bin::Bin,
+    /// Overlay badges uploaded as textures.
+    badge_tex: badges::Textures,
 }
 
 impl Dock {
@@ -78,8 +83,8 @@ impl Dock {
             fullscreen::request_check();
         });
         watcher.on_front_moved(fullscreen::request_check);
-        let bin = bin::Bin::new(ctx.clone(), wake.clone());
-        let _ = items::NAMED.set(wake.clone());
+        let bin = bin::Bin::new(ctx.clone());
+        tasks::start();
         let mut dock = Self {
             drops: drop_target::Drops::new(wake.clone()),
             wake,
@@ -98,6 +103,7 @@ impl Dock {
             menu_for: None,
             drag: drag::Machine::default(),
             bin,
+            badge_tex: badges::Textures::default(),
         };
         dock.rebuild();
         dock
@@ -124,6 +130,9 @@ impl Dock {
         self.windows = self.list.refresh();
         self.windows.retain(|w| !is_bar_window(w));
         self.front = winlist::foreground();
+        let hwnds: Vec<isize> = self.windows.iter().map(|w| w.hwnd).collect();
+        tasks::settle(&hwnds, self.front);
+        tasks::announce(&hwnds);
         self.rebuild();
     }
 
@@ -328,6 +337,17 @@ fn is_bar_window(w: &AppWindow) -> bool {
     w.exe.as_deref().and_then(|p| p.file_name()).is_some_and(|n| n.eq_ignore_ascii_case("shellman-bar.exe"))
 }
 
+/// Something the docks show changed on another thread (the bin, a badge, an app's name).
+static DOCKS_CHANGED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Repaint the docks, from any thread. A repaint asked for a dock viewport from a thread of
+/// our own did not reliably reach it (measured: badges sent from a test showed only at the next
+/// unrelated repaint), so the host's frame, which is reliably woken, wakes them.
+pub(crate) fn wake_docks_from_thread() {
+    DOCKS_CHANGED.store(true, std::sync::atomic::Ordering::Release);
+    crate::host::request_frame();
+}
+
 /// Start what a pin or icon opens: a pinned folder opens in Files, anything else through the
 /// shell. On a thread of its own: a pin on a sleeping or network drive, or a slow shell
 /// handler, would otherwise freeze every bar window.
@@ -387,6 +407,9 @@ impl Dock {
     /// wakes the bars whose picture changed: only those.
     pub fn catch_up(&mut self, ctx: &egui::Context) {
         self.bin.poll();
+        if DOCKS_CHANGED.swap(false, std::sync::atomic::Ordering::AcqRel) {
+            self.wake.docks();
+        }
         let icons = self.thumbs.poll(ctx);
         let renamed = self.watcher.take_front_renamed();
         let dirty = self.watcher.take_dirty();
@@ -442,13 +465,7 @@ impl Dock {
         let shown = ctx.animate_value_with_time(egui::Id::new(("dock width", salt)), width, draw::MOVE);
         let has_bin = shown_items.iter().any(|i| i.section == Section::Bin);
         let (glass, bin) = metrics::islands(window, shown, has_bin, &m);
-        let islands: Vec<Island> = std::iter::once(glass).chain(bin).map(|r| Island::new(r, m.radius)).collect();
-        let composed = surface::composed(hwnd);
-        // Files dragged in from other apps: where the icons are, and what is aimed at.
-        self.drops.register(hwnd);
-        for (pins, slot) in self.drops.take_pins() {
-            self.pin_dropped(pins, slot);
-        }
+        // Each icon's left edge where it settles (the drawing eases towards it).
         let lefts: Vec<f32> = shown_items
             .iter()
             .zip(&xs)
@@ -457,6 +474,24 @@ impl Dock {
                 None => glass.center().x + x - width / 2.0,
             })
             .collect();
+        // What the apps told the taskbar: badges (each a small island of glass of its own over
+        // the icon's corner), progress and calls for attention.
+        let statuses = self.statuses(ctx, &shown_items, hwnd);
+        let icon_top = glass.bottom() - m.pad - m.icon;
+        let badges: Vec<Island> = statuses
+            .iter()
+            .zip(&lefts)
+            .filter(|(s, _)| s.badge.is_some())
+            .map(|(_, &left)| Island::pill(status::badge_rect(left, icon_top, m.icon)))
+            .collect();
+        let islands: Vec<Island> =
+            std::iter::once(glass).chain(bin).map(|r| Island::new(r, m.radius)).chain(badges).collect();
+        let composed = surface::composed(hwnd);
+        // Files dragged in from other apps: where the icons are, and what is aimed at.
+        self.drops.register(hwnd);
+        for (pins, slot) in self.drops.take_pins() {
+            self.pin_dropped(pins, slot);
+        }
         let gaps = metrics::pin_gaps(&shown_items, &lefts, &m);
         self.drops.publish(hwnd, drop_map(hwnd, &shown_items, &lefts, &gaps, glass, &m, scale));
         let dropping = self.drops.hover_on(hwnd).map(|h| draw::DropMark {
@@ -472,7 +507,7 @@ impl Dock {
             .show(ctx, |ui| {
                 // Room under the icons for the islands' own fill, when it is painted here.
                 let under = ui.painter().add(egui::Shape::Noop);
-                let scene = draw::Scene { items: &shown_items, front: self.front, metrics: m, xs: &xs, width, glass, bin, salt, tint: style.tint, lifted: held.lifted, dropping };
+                let scene = draw::Scene { items: &shown_items, front: self.front, metrics: m, xs: &xs, width, glass, bin, salt, tint: style.tint, lifted: held.lifted, dropping, status: &statuses };
                 let events = draw::paint(ui, &scene, &mut self.thumbs);
                 if !composed {
                     // No composed glass: the islands are painted here, without blur or shadow.
