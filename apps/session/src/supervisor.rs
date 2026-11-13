@@ -5,6 +5,7 @@
 use crate::apps::App;
 use crate::policy::{Crashes, Next};
 use crate::proc::Proc;
+use crate::safety::Bar;
 use crate::{find, log, shutdown};
 use std::time::{Duration, Instant};
 use windows::Win32::Foundation::HANDLE;
@@ -90,13 +91,27 @@ impl Fleet {
         self.adopted
     }
 
-    pub fn bar_alive(&self) -> bool {
-        self.slots.iter().any(|s| s.app.is_bar() && s.proc.is_some())
+    /// Where the bar stands, and how long since its latest start (since the session's start when
+    /// the list has no bar).
+    pub fn bar(&self) -> (Bar, Duration) {
+        match self.slots.iter().find(|s| s.app.is_bar()) {
+            Some(s) => (Bar::of(s.proc.is_some(), s.due.is_some()), s.started.elapsed()),
+            None => (Bar::Absent, self.since_start()),
+        }
     }
 
-    /// The bar is gone for good: missing, or given up on, or ended on purpose.
-    pub fn bar_lost(&self) -> bool {
-        self.slots.iter().any(|s| s.app.is_bar() && s.proc.is_none() && s.due.is_none())
+    /// Supervise again after a park: Explorer did not take over (see `safety::resume`). Every
+    /// app that is not running is scheduled again in order, with a fresh crash budget.
+    pub fn resume(&mut self) {
+        shutdown::resume();
+        self.parked = false;
+        let now = Instant::now();
+        for (i, s) in self.slots.iter_mut().enumerate() {
+            if s.proc.is_none() {
+                s.crashes = Crashes::default();
+                s.due = Some(now + GAP * i as u32);
+            }
+        }
     }
 
     fn start(&mut self, i: usize) {

@@ -7,7 +7,7 @@ use std::sync::Mutex;
 use windows::core::BOOL;
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
 use windows::Win32::Foundation::{HANDLE, WAIT_TIMEOUT};
-use windows::Win32::System::Threading::{CreateEventW, SetEvent, WaitForMultipleObjects, WaitForSingleObject};
+use windows::Win32::System::Threading::{CreateEventW, ResetEvent, SetEvent, WaitForMultipleObjects, WaitForSingleObject};
 use windows::Win32::UI::WindowsAndMessaging::{
     EnumWindows, GetWindowThreadProcessId, PostMessageW, WM_CLOSE,
 };
@@ -77,6 +77,14 @@ pub fn stop() {
     STOPPING.store(true, Ordering::SeqCst);
     unsafe {
         let _ = SetEvent(stop_event());
+    }
+}
+
+/// Undo `stop` after a park that is being lifted (`Fleet::resume`): restarts are allowed again.
+pub fn resume() {
+    STOPPING.store(false, Ordering::SeqCst);
+    unsafe {
+        let _ = ResetEvent(stop_event());
     }
 }
 

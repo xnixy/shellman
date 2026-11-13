@@ -353,9 +353,14 @@ no egui, no `shellman-core`; it must be the most robust piece. Beside Explorer n
   `HKCU\Software\Classes\Local Settings\...\AppModel\SystemAppData\<package>\<task>` but
   there is no public call to run one; ShellAppRuntime (see above) does logon tasks.
 - **Safety net**: if Shift is held at the session's start, or the bar's exe is missing, or the bar
-  was given up on or ended, or there is no `Shell_TrayWnd` 20 s after start, the session starts
-  `explorer.exe` (unless one runs), logs why, and stops supervising (it stays alive, so Winlogon
-  does not restart it in a loop). Shift also skips every shellman app.
+  was given up on (crash budget spent) or ended with exit code 0, or a running bar has no
+  `Shell_TrayWnd` 20 s after its own latest (re)start, the session starts `explorer.exe` (unless
+  one runs), logs why, and stops supervising (it stays alive, so Winlogon does not restart it in a
+  loop). A bar whose restart is pending is never "lost" (a single crash after 80 minutes used to
+  hand the session to Explorer, because the 20 s were counted from the session's start). If
+  Explorer has not become the shell 15 s after a fallback (the modern-app host owns the shell
+  window, so it only opens a folder window), supervising resumes once with a fresh crash budget;
+  a second fallback stays parked. Never after Shift. Shift also skips every shellman app.
 - **Tests**: `SHELLMAN_SESSION_APPS="exe|arg|arg;exe2"` replaces the app list (and turns off
   startup items and the safety net, which `SHELLMAN_SESSION_SAFETY=on` brings back;
   `SHELLMAN_SESSION_FALLBACK=<exe>` stands in for explorer.exe). `examples/child.rs` is a
