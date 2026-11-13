@@ -4,6 +4,7 @@
 //! Enumerating takes a moment, so `AppIndex` does it on its own thread and the UI only ever reads
 //! the finished list from memory.
 
+pub mod activate;
 mod enumerate;
 mod launch;
 mod noise;

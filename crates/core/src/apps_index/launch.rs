@@ -7,7 +7,9 @@ use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
 
 /// Start an app the way the Start menu does.
 pub fn launch(app: &App) -> bool {
-    execute(&app.shell_path(), None)
+    let path = app.shell_path();
+    // Without Explorer the shell refuses Store apps; the activation manager does not.
+    execute(&path, None) || super::activate::retry(&path)
 }
 
 /// ShellExecute the text as typed: a path, a URL, a program name, or `program arguments`.

@@ -119,7 +119,8 @@ pub fn open(target: &str) -> bool {
         nShow: SW_SHOWNORMAL.0,
         ..Default::default()
     };
-    unsafe { ShellExecuteExW(&mut info) }.is_ok()
+    // A Store app's entry in the Apps folder is refused when no Explorer runs.
+    unsafe { ShellExecuteExW(&mut info) }.is_ok() || crate::apps_index::activate::retry(target)
 }
 
 #[cfg(test)]

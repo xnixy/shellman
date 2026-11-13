@@ -10,8 +10,10 @@ use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
 /// Open a file with its default app, or run it.
 pub fn open(path: &Path) {
     let p = HSTRING::from(path.as_os_str());
-    unsafe {
-        ShellExecuteW(None, &HSTRING::from("open"), &p, None, None, SW_SHOWNORMAL);
+    let result = unsafe { ShellExecuteW(None, &HSTRING::from("open"), &p, None, None, SW_SHOWNORMAL) };
+    // Above 32 is success. A Store app (a dock pin) is refused when no Explorer runs.
+    if result.0 as usize <= 32 {
+        crate::apps_index::activate::retry(&path.to_string_lossy());
     }
 }
 
