@@ -8,7 +8,7 @@ use windows::Win32::Foundation::{HWND, POINT, RECT};
 use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST};
 use windows::Win32::UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI};
 use windows::Win32::UI::WindowsAndMessaging::{
-    GetCursorPos, GetForegroundWindow, GetWindowRect, IsWindowVisible, ShowWindow, SW_HIDE, SW_SHOWNOACTIVATE,
+    GetCursorPos, GetForegroundWindow, GetWindowRect, IsWindowVisible, ShowWindow, SW_SHOWNOACTIVATE,
 };
 
 /// Where the cursor is, in physical pixels.
@@ -52,7 +52,8 @@ pub fn anchor(dock: isize, center_x: f32, top: f32, ppp: f32) -> Anchor {
     Anchor {
         center_x: at.left + (center_x * ppp).round() as i32,
         bottom: at.top + (top * ppp).round() as i32 - (DOCK_GAP * scale).round() as i32,
-        monitor: info.rcMonitor,
+        // The sides and top of the work area; the bottom is the dock's own band, below it.
+        work: RECT { bottom: info.rcMonitor.bottom, ..info.rcWork },
         scale,
     }
 }
@@ -64,11 +65,5 @@ pub fn show(hwnd: isize) {
         if !IsWindowVisible(hwnd).as_bool() {
             let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
         }
-    }
-}
-
-pub fn hide(hwnd: isize) {
-    unsafe {
-        let _ = ShowWindow(HWND(hwnd as *mut _), SW_HIDE);
     }
 }

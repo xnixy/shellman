@@ -96,6 +96,46 @@ pub fn window(size: (i32, i32)) -> Option<(i32, i32)> {
     Some((side(size.0)?, side(size.1)?))
 }
 
+/// The smallest side a popup glass window (a menu, a preview panel) is ever given, in pixels.
+pub const MIN_POPUP: i32 = 24;
+
+/// A popup glass window's size, if it is fit to give the window: each side at least
+/// [`MIN_POPUP`] (a smaller one is refused, never shrunk to nothing), and no larger than `work`
+/// (the monitor's work area) nor [`MAX_SIDE`].
+pub fn popup(size: (i32, i32), work: (i32, i32)) -> Option<(i32, i32)> {
+    if size.0 < MIN_POPUP || size.1 < MIN_POPUP {
+        return None;
+    }
+    let cap = |v: i32, lim: i32| v.min(lim.clamp(MIN_POPUP, MAX_SIDE));
+    Some((cap(size.0, work.0), cap(size.1, work.1)))
+}
+
+/// Keeps changes to a glass window's size at least a gap apart: a caller that would resize on
+/// every hover (sliding along a dock) is told to wait, and then applies only the latest size.
+#[derive(Clone, Copy, Debug)]
+pub struct Pace {
+    gap: std::time::Duration,
+    last: Option<Instant>,
+}
+
+impl Pace {
+    pub const fn new(gap: std::time::Duration) -> Self {
+        Self { gap, last: None }
+    }
+
+    /// May the window change now? `Err(wait)` says how long until it may.
+    pub fn take(&mut self, now: Instant) -> Result<(), std::time::Duration> {
+        if let Some(last) = self.last {
+            let due = last + self.gap;
+            if now < due {
+                return Err(due - now);
+            }
+        }
+        self.last = Some(now);
+        Ok(())
+    }
+}
+
 /// Allows a burst of [`Bucket::BURST`] and then [`Bucket::PER_SECOND`] a second: how often a
 /// thread may make a backdrop window, so a caller that attaches glass per click or per frame
 /// cannot make DWM create and destroy targets and textures at that pace.
@@ -270,6 +310,28 @@ mod tests {
         assert_eq!(piece(&placed(g.shape.0, g.shape.1, g.radius)), None);
         // The backdrop window is then only the shadow's room: valid, but showing no piece.
         assert!(window(g.window()).is_some());
+    }
+
+    #[test]
+    fn popups_are_never_tiny_nor_past_the_work_area() {
+        assert_eq!(popup((400, 200), (3840, 2000)), Some((400, 200)));
+        assert_eq!(popup((0, 200), (3840, 2000)), None);
+        assert_eq!(popup((400, -5), (3840, 2000)), None);
+        assert_eq!(popup((23, 400), (3840, 2000)), None);
+        assert_eq!(popup((9000, 3000), (3840, 2000)), Some((3840, 2000)));
+        assert_eq!(popup((i32::MAX, i32::MAX), (100_000, 100_000)), Some((MAX_SIDE, MAX_SIDE)));
+        // A nonsense work area still gives a sane window.
+        assert_eq!(popup((400, 200), (0, -1)), Some((MIN_POPUP, MIN_POPUP)));
+    }
+
+    #[test]
+    fn pace_spaces_changes_out() {
+        let t = Instant::now();
+        let mut p = Pace::new(Duration::from_millis(50));
+        assert!(p.take(t).is_ok());
+        assert_eq!(p.take(t + Duration::from_millis(20)), Err(Duration::from_millis(30)));
+        assert!(p.take(t + Duration::from_millis(50)).is_ok());
+        assert!(p.take(t + Duration::from_millis(60)).is_err());
     }
 
     #[test]

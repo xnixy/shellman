@@ -76,13 +76,14 @@ impl Shared {
     }
 
     /// A frame of the preview panel: the hovered app's windows, drawn, and what was clicked.
-    fn preview_frame(&mut self, ctx: &egui::Context) {
+    fn preview_frame(&mut self, ctx: &egui::Context, device: &str) {
         theme::set_light(light(ctx));
         self.dock.catch_up(ctx);
-        let Some(app) = self.preview.app_id() else { return };
-        let windows = self.dock.windows_of(&app);
+        if let Some(app) = self.preview.app_id() {
+            self.preview.update(self.dock.windows_of(&app));
+        }
         let dock = &mut self.dock;
-        match self.preview.frame(ctx, windows, &mut |ctx, path| dock.icon(ctx, path)) {
+        match self.preview.frame(ctx, device, &mut |ctx, path| dock.icon(ctx, path)) {
             Some(preview::Action::Show(hwnd)) => {
                 dock::Dock::show_window(hwnd);
                 self.preview.dismiss();
@@ -105,7 +106,8 @@ impl Shared {
     fn dock_frame(&mut self, ctx: &egui::Context, device: &str) {
         let Some(hwnd) = self.bars.dock_hwnd(device) else { return };
         let hover = self.dock.frame(ctx, hwnd, device);
-        self.preview.hover_dock(device, hover, hwnd, ctx.pixels_per_point());
+        let blocked = shellman_ui::menu::popup::any_open();
+        self.preview.hover_dock(device, hover, hwnd, ctx.pixels_per_point(), blocked);
     }
 }
 
@@ -144,7 +146,8 @@ impl Host {
     }
 
     /// Open (or keep open) every bar window. Windows not declared in a host frame are closed.
-    fn declare(&self, ctx: &egui::Context, bars: &Bars, preview_open: bool, notify_open: bool) {
+    fn declare(&self, ctx: &egui::Context, shared: &Shared, notify_open: bool) {
+        let bars = &shared.bars;
         for (view, device, primary) in bars.views() {
             let builder = egui::ViewportBuilder::default()
                 .with_title(view.title.clone())
@@ -168,11 +171,12 @@ impl Host {
                 font_atlas::end_frame(ctx);
             });
         }
-        // The preview panel exists only while open (see `preview`).
-        if preview_open {
+        // Each dock's preview panel, from its first preview on (see `preview`).
+        for panel in shared.preview.panels() {
             let shared = self.shared.clone();
-            ctx.show_viewport_deferred(preview::id(), preview::builder(), move |ctx, _| {
-                shared.lock().unwrap().preview_frame(ctx);
+            let device = panel.device.clone();
+            ctx.show_viewport_deferred(panel.id, preview::builder(&panel.device), move |ctx, _| {
+                shared.lock().unwrap().preview_frame(ctx, &device);
                 stress::glyphs(ctx);
                 font_atlas::end_frame(ctx);
             });
@@ -237,7 +241,9 @@ impl eframe::App for Host {
             shared.bars.requery();
             wake_all = true;
         }
-        let preview_open = shared.preview.tick(Instant::now());
+        let docks: Vec<String> = shared.bars.views().filter(|(v, _, _)| v.kind == Kind::Dock).map(|(_, d, _)| d.to_owned()).collect();
+        shared.preview.keep_docks(&docks.iter().map(String::as_str).collect::<Vec<_>>());
+        shared.preview.tick(Instant::now());
         let covered = shared.bars.primary_top().is_some_and(foreground_covers_monitor_of);
         let notify_open = shared.notify.tick(Instant::now(), self.settings.do_not_disturb, covered);
         // The badge in the top bars' clock follows the notifications.
@@ -251,12 +257,12 @@ impl eframe::App for Host {
         // for it ("egui window"), which then spins the event loop.
         let (tops, docks) = shared.bars.views().partition::<Vec<_>, _>(|(v, _, _)| v.kind == Kind::Top);
         self.wake.set(tops.iter().map(|(v, _, _)| v.id).collect(), docks.iter().map(|(v, _, _)| v.id).collect());
-        self.wake.set_others(preview_open.then(preview::id), notify_open.then(notify::id));
+        self.wake.set_others(shared.preview.current_id(), notify_open.then(notify::id));
         let tray_tops = shared.bars.views().filter(|(v, _, primary)| {
             v.kind == Kind::Top && (*primary || self.settings.tray == TrayMonitors::All)
         });
         self.wake.set_tray(tray_tops.map(|(v, _, _)| v.id).collect());
-        self.declare(ctx, &shared.bars, preview_open, notify_open);
+        self.declare(ctx, &shared, notify_open);
         // New windows exist only after this frame; look again on the next one.
         let dock_style = shared.dock.style();
         let bars_ready = shared.bars.adopt(dock_style);

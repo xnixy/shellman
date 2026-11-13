@@ -58,6 +58,13 @@ pub fn preview_size(source: Option<(f32, f32)>) -> (f32, f32) {
     ((PREVIEW_H * aspect).clamp(MIN_W, MAX_W), PREVIEW_H)
 }
 
+/// Whether a live picture of this size is worth a tile. A minimized window's thumbnail is the
+/// caption-sized stub Windows keeps of it (about 160 x 28 px), or nothing: then the tile shows
+/// the app's icon instead.
+pub fn worth_showing(source: Option<(f32, f32)>) -> bool {
+    source.is_some_and(|(w, h)| w >= 64.0 && h >= 48.0)
+}
+
 fn tile_height() -> f32 {
     PAD + PREVIEW_H + LABEL_GAP + LABEL_H + PAD
 }
@@ -247,6 +254,41 @@ mod tests {
         // Taller than the room above the dock: stays on the monitor.
         let r = panel_rect(960, -1000, (400, 300), above, 10);
         assert_eq!((r.top, r.bottom), (-1080, -780));
+    }
+
+    #[test]
+    fn minimized_stubs_are_not_pictures() {
+        assert!(!worth_showing(None));
+        assert!(!worth_showing(Some((160.0, 28.0))));
+        assert!(worth_showing(Some((800.0, 600.0))));
+    }
+
+    /// One to six windows at 100, 150 and 300 % on a 3840 px monitor, the icon at either edge
+    /// and in the middle: the panel always fits the work area, at least one tile wide, and the
+    /// tiles stay inside it.
+    #[test]
+    fn any_count_at_any_scale_stays_inside_the_work_area() {
+        let work = rect(-3840, 60, 0, 2160);
+        for scale in [1.0, 1.5, 3.0] {
+            for n in 1..=MAX_WINDOWS {
+                let sizes: Vec<_> = (0..n).map(|i| preview_size(if i % 2 == 0 { Some((1920.0, 1080.0)) } else { None })).collect();
+                let l = arrange(&sizes, max_width(work.right - work.left, scale));
+                assert_eq!(l.tiles.len(), n);
+                let all = Rect::from_min_size(pos2(0.0, 0.0), vec2(l.w, l.h));
+                assert!(l.tiles.iter().all(|t| all.contains_rect(t.outer)));
+                let size = size_px(&l, scale);
+                assert!(size.0 >= 24 && size.1 >= 24);
+                for center in [work.left + 5, -1920, work.right - 5] {
+                    let r = panel_rect(center, 2000, size, work, (8.0 * scale) as i32);
+                    assert!(r.left >= work.left && r.right <= work.right, "{scale} {n} {center}: {r:?}");
+                    assert!(r.top >= work.top && r.bottom <= 2000);
+                }
+            }
+        }
+        // At 300 % the 3840 px monitor is 1280 pt: six wide tiles wrap into rows.
+        let l = arrange(&[(240.0, PREVIEW_H); 6], max_width(3840, 3.0));
+        assert!(l.tiles.iter().any(|t| t.outer.min.y > l.tiles[0].outer.min.y));
+        assert!(l.w * 3.0 <= 3840.0);
     }
 
     #[test]

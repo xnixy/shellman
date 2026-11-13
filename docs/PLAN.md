@@ -80,7 +80,18 @@ Rule: **the top bar is the system, the dock is apps.** Both are windows of one p
 - Click activates. Clicking an app already in front with several windows steps through them in
   a fixed order (by handle), and so does scrolling. With one window, a click on the app in front
   minimizes it. Middle click opens a new window.
-- Hovering shows live DWM previews, and sliding along the dock scrubs them.
+- Hovering shows live DWM previews, and sliding along the dock scrubs them. Done (13 Nov): after
+  350 ms resting on an icon with windows, a glass island above it holds one tile per window (up
+  to six, wrapping into rows past the work area's width): the live picture and the title, a close
+  button on the tile under the pointer, middle click closes, click brings the window forward.
+  Another icon switches at once; leaving dock and panel closes it after 200 ms; a click, a drag,
+  an open menu, a fullscreen app, the dock hiding or another app coming forward close it. Each
+  dock has its own panel window, made at its first preview and then kept (parked cloaked, its
+  glass pieces and live pictures released), sized through `glass::guard::popup` and resized at
+  most every 40 ms (`guard::Pace`), on its own monitor at its scale, inside the work area. A
+  minimized window keeps its tile: DWM still serves its last frame (build 26300); a stub smaller
+  than 64 x 48 px gives the app icon on a plate instead. No peek (Aero Peek needs the
+  undocumented `DwmpActivateLivePreview`). `SHELLMAN_PREVIEW_LOG=<file>` traces the panels.
 - Right-click on an icon: shellman's glass popup menu (see the desktop's right-click menu) with
   Pin / Unpin and Close. On the Launcher
   icon: Settings. On the Recycle Bin: Open (in Files, never Explorer) and Empty Recycle Bin
@@ -1009,7 +1020,7 @@ images, and the shell and default terminal state.)
 
 ## Order of work
 
-1. Dock hover previews (in progress).
+1. Dock hover previews (done 13 Nov).
 2. Win+1-9 (the lone Win key is done).
 3. Dock: drag-and-drop onto icons, badges and progress, Recycle Bin empty / full.
 4. Top bar: "now" pill, notifications and calendar.
