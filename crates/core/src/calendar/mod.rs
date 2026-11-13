@@ -9,9 +9,12 @@
 pub mod caldav;
 pub mod client;
 pub mod expand;
+pub mod feed;
 pub mod ical;
+pub mod month;
 pub mod rrule;
 pub mod select;
+pub mod span;
 pub mod system;
 pub mod time;
 pub mod zone;
@@ -64,8 +67,20 @@ pub fn account_key(server: &str, username: &str) -> String {
 /// Read the account's calendars (all, or those `wanted` keeps) and their events from a day ago
 /// to [`AHEAD_DAYS`] ahead of `now`. One calendar that fails to answer leaves the rest.
 pub fn fetch(account: &Account, wanted: &dyn Fn(&CalendarRef) -> bool, now: i64) -> Result<Snapshot, CalError> {
+    let (from, to) = span::regular(now);
+    let (calendars, instances) = fetch_range(account, wanted, from, to)?;
+    Ok(Snapshot { fetched: now, account: account_key(&account.server, &account.username), calendars, instances })
+}
+
+/// The account's calendars and the events of `[from, to)` (UTC seconds), recurrences expanded
+/// for that range, sorted by start.
+pub fn fetch_range(
+    account: &Account,
+    wanted: &dyn Fn(&CalendarRef) -> bool,
+    from: i64,
+    to: i64,
+) -> Result<(Vec<CalendarRef>, Vec<Instance>), CalError> {
     let calendars = account.discover()?;
-    let (from, to) = (now - time::DAY, now + AHEAD_DAYS * time::DAY);
     let clock = system::SystemClock::new();
     let mut instances = Vec::new();
     let mut failures = 0;
@@ -91,8 +106,25 @@ pub fn fetch(account: &Account, wanted: &dyn Fn(&CalendarRef) -> bool, now: i64)
         }
     }
     instances.sort_by(|a, b| a.start.cmp(&b.start));
-    Ok(Snapshot { fetched: now, account: account_key(&account.server, &account.username), calendars, instances })
+    Ok((calendars, instances))
 }
+
+/// A calendar's colour: its own (`#3A87AD`), else one of a few by its place in the list. None
+/// for a calendar not in the list.
+pub fn color_of(calendars: &[CalendarRef], href: &str) -> Option<[u8; 3]> {
+    let i = calendars.iter().position(|c| c.href == href)?;
+    Some(calendars[i].color.as_deref().and_then(hex).unwrap_or(FALLBACK[i % FALLBACK.len()]))
+}
+
+/// `#3A87AD` (or `#3A87ADFF`) as red, green and blue.
+pub fn hex(s: &str) -> Option<[u8; 3]> {
+    let h = s.trim().strip_prefix('#')?;
+    let n = u32::from_str_radix(h.get(..6)?, 16).ok()?;
+    Some([(n >> 16) as u8, (n >> 8) as u8, n as u8])
+}
+
+/// A calendar without a colour of its own gets one of these, by its place in the list.
+const FALLBACK: [[u8; 3]; 5] = [[91, 140, 255], [244, 63, 142], [31, 209, 165], [251, 146, 60], [176, 107, 255]];
 
 fn cache_file() -> Option<PathBuf> {
     crate::config::cache_dir().map(|d| d.join("calendar.json"))

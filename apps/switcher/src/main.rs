@@ -7,6 +7,7 @@
 
 mod activate;
 mod keys;
+mod notifykey;
 mod layout;
 mod panel;
 mod select;

@@ -40,6 +40,10 @@ impl HourCycle {
 pub struct ClockSettings {
     pub hour_cycle: HourCycle,
     pub show_date: bool,
+    /// The weekday before the date ("Thu 12 Nov").
+    pub show_weekday: bool,
+    /// Seconds in the time (the bar then repaints every second).
+    pub show_seconds: bool,
 }
 
 impl Default for ClockSettings {
@@ -47,6 +51,90 @@ impl Default for ClockSettings {
         Self {
             hour_cycle: HourCycle::default(),
             show_date: true,
+            show_weekday: true,
+            show_seconds: false,
+        }
+    }
+}
+
+impl HourCycle {
+    /// The time pattern with seconds, or none for the user's own long time format.
+    pub fn pattern_with_seconds(self) -> Option<&'static str> {
+        match self {
+            HourCycle::System => None,
+            HourCycle::H12 => Some("h:mm:ss tt"),
+            HourCycle::H24 => Some("HH:mm:ss"),
+        }
+    }
+}
+
+/// The top bar's "now" pill: whether it shows, and what it may show.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(default)]
+pub struct NowSettings {
+    pub on: bool,
+    /// An event starting within 15 minutes or under way (needs a calendar).
+    pub events: bool,
+    /// What is playing.
+    pub media: bool,
+}
+
+impl Default for NowSettings {
+    fn default() -> Self {
+        Self { on: true, events: true, media: true }
+    }
+}
+
+/// Which display notifications pop up on.
+#[derive(Clone, Copy, Default, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ToastScreen {
+    /// The display with the window in front.
+    #[default]
+    Focused,
+    /// The main display.
+    Primary,
+}
+
+impl ToastScreen {
+    pub const ALL: [ToastScreen; 2] = [ToastScreen::Focused, ToastScreen::Primary];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            ToastScreen::Focused => "Display with the window in front",
+            ToastScreen::Primary => "Main display",
+        }
+    }
+}
+
+/// Week numbers in the calendar.
+#[derive(Clone, Copy, Default, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum WeekNumbers {
+    /// Shown where the region counts weeks the ISO way (first week with four days).
+    #[default]
+    Auto,
+    On,
+    Off,
+}
+
+impl WeekNumbers {
+    pub const ALL: [WeekNumbers; 3] = [WeekNumbers::Auto, WeekNumbers::On, WeekNumbers::Off];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            WeekNumbers::Auto => "As the region does",
+            WeekNumbers::On => "Show",
+            WeekNumbers::Off => "Hide",
+        }
+    }
+
+    /// Whether they show, for a region whose `iFirstWeekOfYear` is `first_week`.
+    pub fn shown(self, first_week: u32) -> bool {
+        match self {
+            WeekNumbers::Auto => first_week == 2,
+            WeekNumbers::On => true,
+            WeekNumbers::Off => false,
         }
     }
 }
@@ -59,6 +147,18 @@ pub struct BarSettings {
     pub tray: TrayMonitors,
     /// Do not disturb: notifications are counted and listed, but do not pop up.
     pub do_not_disturb: bool,
+    /// Do not disturb ends by itself at this time (UTC seconds), when set.
+    pub dnd_until: Option<i64>,
+    pub now: NowSettings,
+    pub toasts_on: ToastScreen,
+    pub week_numbers: WeekNumbers,
+}
+
+impl BarSettings {
+    /// Whether do-not-disturb is on at `now` (UTC seconds).
+    pub fn dnd_at(&self, now: i64) -> bool {
+        self.do_not_disturb && self.dnd_until.is_none_or(|until| now < until)
+    }
 }
 
 /// Which monitors get a dock. Every monitor always gets a top bar.
@@ -162,6 +262,34 @@ mod tests {
         let read = |json: &str| serde_json::from_str::<BarSettings>(json).unwrap().do_not_disturb;
         assert!(!read("{}"));
         assert!(read(r#"{ "do_not_disturb": true }"#));
+    }
+
+    #[test]
+    fn new_fields_default_sensibly() {
+        let s: BarSettings = serde_json::from_str("{}").unwrap();
+        assert!(s.now.on && s.now.events && s.now.media);
+        assert_eq!(s.toasts_on, ToastScreen::Focused);
+        assert_eq!(s.week_numbers, WeekNumbers::Auto);
+        assert!(s.clock.show_weekday && !s.clock.show_seconds);
+        let s: BarSettings = serde_json::from_str(r#"{ "toasts_on": "primary", "now": { "media": false } }"#).unwrap();
+        assert_eq!(s.toasts_on, ToastScreen::Primary);
+        assert!(s.now.on && !s.now.media);
+    }
+
+    #[test]
+    fn do_not_disturb_until_a_time() {
+        let mut s = BarSettings { do_not_disturb: true, ..Default::default() };
+        assert!(s.dnd_at(100));
+        s.dnd_until = Some(200);
+        assert!(s.dnd_at(199) && !s.dnd_at(200));
+        s.do_not_disturb = false;
+        assert!(!s.dnd_at(0));
+    }
+
+    #[test]
+    fn week_numbers_follow_the_region_unless_set() {
+        assert!(WeekNumbers::Auto.shown(2) && !WeekNumbers::Auto.shown(0));
+        assert!(WeekNumbers::On.shown(0) && !WeekNumbers::Off.shown(2));
     }
 
     #[test]

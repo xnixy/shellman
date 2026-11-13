@@ -33,10 +33,14 @@ impl TopBar {
         let settings = *self.settings.get_or_insert_with(BarSettings::load);
         let mid = row.center().y;
 
-        // Status: network, volume, battery, with one soft highlight around the group.
-        let st = self.status();
+        // Status: network, volume, battery, with one soft highlight around the group. Only what
+        // the watchers already sent: nothing is read here.
+        if let Some(feed) = &mut self.status {
+            feed.take();
+        }
+        let st = self.status.as_ref().map(|f| f.now.clone()).unwrap_or_default();
         let mut items: Vec<(char, Option<String>)> = Vec::new();
-        items.push(match st.network {
+        items.push(match st.network_or_offline() {
             status::Network::Internet => (GLOBE, None),
             status::Network::Local => (LOCAL_NET, None),
             status::Network::Offline => (GLOBE, Some("offline".into())),
@@ -53,10 +57,17 @@ impl TopBar {
             .iter()
             .map(|(_, t)| ICON + t.as_ref().map_or(0.0, |t| 5.0 + text_width(ui, t, small.clone())))
             .collect();
+        // The bell at the island's right end, the status group before it.
+        let (bell, asked) = super::bell::draw(ui, mid, right - END, self.badge);
+        self.bell_rect = Some(bell);
+        if asked.is_some() {
+            self.bell_asked = asked;
+        }
+        let status_right = bell.left() - 2.0;
         let inner = widths.iter().sum::<f32>() + ICON_GAP * (items.len() - 1) as f32;
         let group = egui::Rect::from_min_max(
-            egui::pos2(right - END - inner - 2.0 * PAD, mid - STATUS_H / 2.0),
-            egui::pos2(right - END, mid + STATUS_H / 2.0),
+            egui::pos2(status_right - inner - 2.0 * PAD, mid - STATUS_H / 2.0),
+            egui::pos2(status_right, mid + STATUS_H / 2.0),
         );
         let resp = ui.interact(group, egui::Id::new("status"), egui::Sense::click());
         highlight(ui, group, &resp, (STATUS_H / 2.0) as u8);
@@ -77,8 +88,10 @@ impl TopBar {
             let resp = resp.on_hover_text(format!("Volume {:.0}%", level * 100.0));
             let scroll = ui.input(|i| i.raw_scroll_delta.y);
             if resp.hovered() && scroll != 0.0 {
-                status::set_volume(level + scroll.signum() * 0.02);
-                self.status = None;
+                // Through the sound worker's kept endpoint, off this thread.
+                if let Some(feed) = &mut self.status {
+                    feed.scroll(scroll);
+                }
             }
         }
 

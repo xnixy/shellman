@@ -16,6 +16,8 @@ pub const NIF_MESSAGE: u32 = 0x01;
 pub const NIF_ICON: u32 = 0x02;
 pub const NIF_TIP: u32 = 0x04;
 pub const NIF_STATE: u32 = 0x08;
+/// A balloon notification (`szInfo`, `szInfoTitle`): Explorer shows these as toasts.
+pub const NIF_INFO: u32 = 0x10;
 pub const NIF_GUID: u32 = 0x20;
 pub const NIS_HIDDEN: u32 = 0x01;
 
@@ -33,6 +35,9 @@ pub struct Notify {
     pub state_mask: u32,
     pub version: u32,
     pub guid: Option<[u8; 16]>,
+    /// The balloon's text and title, when the request carries them.
+    pub info: String,
+    pub info_title: String,
 }
 
 fn u32_at(b: &[u8], at: usize) -> Option<u32> {
@@ -81,6 +86,8 @@ pub fn parse(bytes: &[u8]) -> Option<Notify> {
         } else {
             None
         },
+        info: if has(800) && flags & NIF_INFO != 0 { text_at(nid, 288, 256) } else { String::new() },
+        info_title: if has(932) && flags & NIF_INFO != 0 { text_at(nid, 804, 64) } else { String::new() },
     })
 }
 
@@ -181,6 +188,23 @@ mod tests {
         let left = rect_answer(1, [-1920, -10, -1894, 16]);
         assert_eq!(left as u32 as u16 as i16, -1920);
         assert_eq!((left as u32 >> 16) as u16 as i16, -10);
+    }
+
+    #[test]
+    fn reads_a_balloon() {
+        let mut b = request(956, "Backup");
+        b[8 + 12..8 + 16].copy_from_slice(&(NIF_INFO | NIF_TIP).to_le_bytes());
+        for (i, u) in "Backup finished".encode_utf16().enumerate() {
+            b[8 + 288 + i * 2..8 + 290 + i * 2].copy_from_slice(&u.to_le_bytes());
+        }
+        for (i, u) in "Done".encode_utf16().enumerate() {
+            b[8 + 804 + i * 2..8 + 806 + i * 2].copy_from_slice(&u.to_le_bytes());
+        }
+        let n = parse(&b).unwrap();
+        assert_eq!((n.info.as_str(), n.info_title.as_str()), ("Backup finished", "Done"));
+        // Without the flag the fields are not read.
+        b[8 + 12..8 + 16].copy_from_slice(&NIF_TIP.to_le_bytes());
+        assert!(parse(&b).unwrap().info.is_empty());
     }
 
     #[test]

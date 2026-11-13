@@ -59,19 +59,84 @@ Rule: **the top bar is the system, the dock is apps.** Both are windows of one p
 | Running and pinned apps, switching windows | dock |
 | Tray icons, all of them | top bar, right, on every monitor (up to 8, the rest behind a chevron) |
 | Network, volume, battery | top bar, one status pill |
-| Clock, calendar, notifications | top bar, right corner (the list opens under the clicked bar's clock, on that monitor, at its scale and work area) |
+| Clock, calendar | top bar, centre island (the calendar opens under the clicked bar's clock, on that monitor, at its scale and work area) |
+| Notifications | top bar, a bell at the right end of the right island (the list opens under the clicked bar's bell; toasts under the bell of the display with the window in front) |
 | Files, Recycle Bin | dock: Files after the launcher, the bin at the end |
 | Space for maximized windows | each monitor reserves its top bar and dock band |
 
 **Top bar**: 32 pt, full width, flush to the edge so edge pixels hit items.
 - Left: the launcher glyph in the corner, then the active app's name and window title.
-- Centre: empty, except a "now" pill for media, copy progress, or an app asking for attention.
-- Right: tray, overflow chevron, status pill (scroll for volume), clock ("Wed 11 Nov  14:32").
-  The clock wakes once a minute on the boundary, plus on time changes and resume.
+- Centre: the clock ("Thu 12 Nov  14:32"), with the "now" pill just left of it.
+- Right: tray, overflow chevron, status (scroll for volume), the notifications bell.
+- The clock wakes once a minute on the boundary (each second when it shows seconds), and at
+  once on `WM_TIMECHANGE` and on resume (`PBT_APMRESUMEAUTOMATIC` / `PBT_APMRESUMESUSPEND`),
+  which the host window hears; the battery is read again on `PBT_APMPOWERSTATUSCHANGE`. Volume,
+  mute and the network come from the Control Center's watchers (`SoundWatch`,
+  `ConnectivityWatch`), resident on their own threads; no frame reads them.
 - The tray appears on every monitor's top bar by default (`tray: all | primary` in `bar.json`).
   `Shell_NotifyIconGetRect` answers with the icon's place on the monitor where it was last
   hovered or clicked (else the primary's), and a click's anchor is that icon's bottom middle
   there, so an app's menu opens on the bar that was used.
+
+### Top bar: the "now" pill, the calendar, notifications (12 Nov)
+
+- **"Now" pill** (`topbar/now`): a fourth island of the top bar window, just left of the clock.
+  It shows one thing (`now::pick`, tested): an event starting within 15 min or under way
+  ("Design review · in 12 min", "… · now · until 15:00", the calendar's colour; only with a
+  calendar connected), else the media session (`core::system::media`: "Title · Artist", a still
+  equaliser mark, a play mark while paused; a paused track stays 10 min), else nothing (the pill
+  goes). The app in front is not repeated (the left island has it). Click: an event opens the
+  calendar on its day; a track plays or pauses; the wheel over a track is next / previous.
+  Things cross-fade (220 ms); the glass snaps to the new width once per change, never animated;
+  long text is cut with an ellipsis, the full text in the tip. Nothing ticks at rest (the
+  countdown moves with the clock's minute repaint; the track's progress is not shown). Settings
+  › Top bar: the pill on/off, events, media. Copy progress and "an app asking for attention"
+  are not in it yet (the dock owns those signals; not built).
+- **Calendar** (`calpanel`): clicking the clock opens one glass island under it: the month (the
+  region's first weekday and `iFirstWeekOfYear`; week numbers as the region does, or on/off in
+  Settings › Top bar), today on the accent, a dot under days with events, the chosen day's
+  events (time, colour bar, title, place) with "N more", previous/next month and "Today". It
+  never changes height. Its data is the shelf's calendar worker (`core::calendar::feed`, moved
+  from the shelf): the bar runs its own worker, but a regular reading another process cached less
+  than 15 min ago (after the password was saved) is taken from the cache, so the shelf and the bar
+  do not double the requests. A month outside the regular window (a day back, 14 ahead) is read
+  on demand off the UI thread (`core::calendar::span`, recurrences expanded for that range), kept
+  15 min, the last 4 months. No calendar: the grid works and "Connect a calendar…" opens
+  Settings › Desktop (where the account lives, beside the widgets that use it).
+- **Notifications** (`notify`, `topbar/bell`): the bell at the right end of the right island
+  (the mockup's count chip): a plain bell, the bell with an accent count (to "9+") of unseen
+  ones, a crossed bell while do-not-disturb is on. Click: the list under that bar's bell:
+  do-not-disturb (switch, "1 h"; "until 15:42" when timed), "Clear all", then the notifications
+  grouped by app, newest app first, each with its icon, name, "4 min", title and body (long ones
+  cut at three lines with "Show more"), buttons and reply box from the toast, ✕, and "Clear N"
+  on an app's newest when it has several; a click hands it to its app. Right-click: the glass
+  popup menu with Do not disturb, For 1 hour, Until tomorrow, Notification settings. Win+N opens
+  the list under the bell of the display with the window in front (the switcher's hook,
+  `notifykey`, swallows N and sends the mask key so Win's release opens nothing; the bar waits on
+  a named event, `notify::summon`).
+- **Toasts** pop up under the bell of the display with the window in front (default) or of the
+  main display (Settings › Top bar › "Show notifications on"), up to three, newest first; they
+  stay 6 s, held while hovered, never take the focus, wait while do-not-disturb is on or while a
+  fullscreen app covers that display (they are counted on the bell). A burst stays on the display
+  it started on.
+- Where they come from: Windows' own store, read with `UserNotificationListener` (needs the
+  user's "let apps read notifications" privacy switch; no package identity, no modern host
+  needed), noticed through the platform's event log; dismissing removes them from the store;
+  clicks, buttons and replies go to the app's COM toast activator, which packaged apps do not
+  offer (they are brought forward or started instead). Tray apps' balloons (`NIF_INFO`), which
+  Explorer turns into toasts, now become shellman notifications too (`tray::balloon`; a click
+  sends `NIN_BALLOONUSERCLICK`); they live only in the bar process. Not captured: anything an app
+  shows in its own window, toasts Windows itself suppresses (Focus, an app's notifications turned
+  off in Windows), and toasts while the privacy switch is off.
+- Windows: the notifications and calendar panels are one window each, made on first use and
+  kept, parked cloaked with no islands between uses, sized to their content (never to the
+  monitor; through `glass::guard`), placed in physical pixels on the clicked bar's monitor. One
+  panel at a time; Esc or a click outside closes it (`core::dismiss`, a watch per panel with its
+  own low-level hooks only while one is open; the clocks, pills and bells count as inside), and
+  so does another app coming forward. Measured (test copy, 150 % monitor): 0 ms of CPU in 10 s
+  with the notifications open, ~0 at rest; no `dwm.exe` errors.
+- Clock: hover tip with the long date (the region's `sLongDate`); Settings › Top bar: weekday,
+  seconds.
 
 **Dock**: bottom centre, a floating glass pill.
 - Size: a setting, small / medium / large icons (32 / 40 / 48 pt). Cell = icon + 12 pt;
@@ -1095,7 +1160,8 @@ what would happen and changes nothing.
 included), `shellman_pickhook.dll` (copied, never registered), licence files (`LICENSE*`,
 `NOTICE*`, `THIRD-PARTY*`), everything below an `extras\` folder there (or `--extras <dir>`),
 keeping sub-paths, and the lines of an `install-manifest` file (`[?] source [-> destination]`;
-the one in the folder, else the first in its parents, so the repo's serves `targetelease`).
+the one in the folder, else the first in its parents, so the repo's serves `target
+elease`).
 The terminal's `conpty.dll` and `OpenConsole.exe` go in as lines there once they exist in the repo.
 Icon packs are compiled into the exes; there are no font files.
 
@@ -1134,9 +1200,11 @@ from it (`--from <folder>` otherwise).
 (b) The developer loop:
 
     cargo build --release
-    targetelease\shellman-setup.exe update --restart
+    target
+elease\shellman-setup.exe update --restart
 
-(`status` shows each installed file against `targetelease`, which processes still run from old
+(`status` shows each installed file against `target
+elease`, which processes still run from old
 images, and the shell and default terminal state.)
 
 ## Icons
@@ -1164,7 +1232,8 @@ images, and the shell and default terminal state.)
    Left open: the design's live-activity pill beside the dock ("Copying · 64%"): this plan gives
    copy progress and attention to the top bar's "now" pill, so what the dock's pill would show
    besides it is undecided; not built.
-4. Top bar: "now" pill, notifications and calendar.
+4. Top bar: "now" pill, notifications and calendar: done (12 Nov); next: copy progress and
+   attention in the pill, once the dock has them.
 5. Desktop: arrange mode (drag the shelf and widgets about); widgets done (Today, Now playing).
 6. Task View.
 7. `session`: done, and it is the real shell (the swap is made; `--uninstall` puts the previous

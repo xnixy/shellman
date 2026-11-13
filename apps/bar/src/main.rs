@@ -8,9 +8,11 @@
 mod app;
 mod appbar;
 mod bars;
+mod calpanel;
 mod dock;
 mod fullscreen;
 mod host;
+mod live;
 mod monitors;
 mod notify;
 mod place;
@@ -76,6 +78,10 @@ fn main() -> eframe::Result {
                 }
             }
             let wake = wake::Wake::new(cc.egui_ctx.clone());
+            {
+                let wake = wake.clone();
+                host::set_wake_tops(move || wake.tops());
+            }
             // Become the tray first: without Explorer, app-bar requests then come to shellman,
             // which declines them, and work areas are set directly instead.
             let tray = if test {
@@ -102,10 +108,17 @@ fn main() -> eframe::Result {
             }
             let shared = app::Shared {
                 dock: dock::Dock::new(cc.egui_ctx.clone(), glass, wake.clone()),
-                top: topbar::TopBar::new(tray, test),
+                top: topbar::TopBar::new(tray, test, {
+                    let wake = wake.clone();
+                    std::sync::Arc::new(move || wake.tops())
+                }),
                 bars: bars::Bars::new(mode),
                 preview: preview::Preview::new(cc.egui_ctx.clone()),
                 notify: notify::Notify::new(cc.egui_ctx.clone(), dnd_was_on()),
+                calendar: calpanel::CalPanel::new(cc.egui_ctx.clone()),
+                bell_menu: shellman_ui::menu::popup::PopupMenu::new(),
+                live: live::Live::default(),
+                wake: Some(wake.clone()),
             };
             Ok(Box::new(app::Host::new(shared, wake, look, look_watch, minimized)))
         }),

@@ -191,11 +191,6 @@ impl Bars {
         self.sets.iter().find(|s| s.slot.device == device)?.top.hwnd
     }
 
-    /// The primary monitor's top bar window, once it exists.
-    pub fn primary_top(&self) -> Option<isize> {
-        self.sets.iter().find(|s| s.slot.primary)?.top.hwnd
-    }
-
     /// The dock window on `device`, once it exists.
     pub fn dock_hwnd(&self, device: &str) -> Option<isize> {
         self.sets.iter().find(|s| s.slot.device == device)?.dock.as_ref()?.hwnd

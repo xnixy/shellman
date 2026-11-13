@@ -193,6 +193,10 @@ unsafe extern "system" fn on_key(code: i32, wparam: WPARAM, lparam: LPARAM) -> L
         if crate::taskkey::on_key(vk, down, mods) {
             return LRESULT(1);
         }
+        // Win+N: shellman's notifications (`notifykey`).
+        if crate::notifykey::on_key(vk, down, mods) {
+            return LRESULT(1);
+        }
     }
     let watched = matches!(
         vk,

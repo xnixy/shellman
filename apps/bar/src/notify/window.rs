@@ -7,7 +7,7 @@ use windows::Win32::Foundation::{HWND, LPARAM, RECT};
 use windows::Win32::Graphics::Gdi::{EnumDisplayMonitors, GetMonitorInfoW, HDC, HMONITOR, MONITORINFO};
 use windows::Win32::UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI};
 use windows::Win32::UI::WindowsAndMessaging::{
-    IsWindowVisible, SetForegroundWindow, ShowWindow, SW_HIDE, SW_SHOWNOACTIVATE,
+    IsWindowVisible, SetForegroundWindow, ShowWindow, SW_SHOWNOACTIVATE,
 };
 
 /// Every monitor with its work area (the screen less the top bar's and the dock's reserved
@@ -37,6 +37,29 @@ pub fn areas() -> Vec<Area> {
     out.into_iter().map(|(_, a)| a).collect()
 }
 
+/// The device name (`\\.\DISPLAY1`) of the monitor the window in front is on, if any.
+pub fn foreground_device() -> Option<String> {
+    use windows::Win32::Graphics::Gdi::{MonitorFromWindow, MONITORINFOEXW, MONITOR_DEFAULTTONULL};
+    use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
+    unsafe {
+        let front = GetForegroundWindow();
+        if front.is_invalid() {
+            return None;
+        }
+        let monitor = MonitorFromWindow(front, MONITOR_DEFAULTTONULL);
+        if monitor.is_invalid() {
+            return None;
+        }
+        let mut info = MONITORINFOEXW::default();
+        info.monitorInfo.cbSize = size_of::<MONITORINFOEXW>() as u32;
+        if !GetMonitorInfoW(monitor, &mut info.monitorInfo).as_bool() {
+            return None;
+        }
+        let len = info.szDevice.iter().position(|&c| c == 0).unwrap_or(info.szDevice.len());
+        Some(String::from_utf16_lossy(&info.szDevice[..len]))
+    }
+}
+
 /// Show without activating, if it is not shown already.
 pub fn show(hwnd: isize) {
     let hwnd = HWND(hwnd as *mut _);
@@ -44,12 +67,6 @@ pub fn show(hwnd: isize) {
         if !IsWindowVisible(hwnd).as_bool() {
             let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
         }
-    }
-}
-
-pub fn hide(hwnd: isize) {
-    unsafe {
-        let _ = ShowWindow(HWND(hwnd as *mut _), SW_HIDE);
     }
 }
 

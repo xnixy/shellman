@@ -48,5 +48,20 @@ pub fn all() -> Vec<Monitor> {
         let _ = EnumDisplayMonitors(None, None, Some(visit), LPARAM((&raw mut out) as isize));
     }
     out.sort_by_key(|m| (!m.primary, m.rect.left, m.rect.top));
-    out
+    only_test_monitor(out)
+}
+
+/// `SHELLMAN_ONLY_MONITOR=<x>,<y>` (tests only, as the shelf has it) keeps a test bar to the
+/// monitor holding that point, taken as the primary.
+fn only_test_monitor(list: Vec<Monitor>) -> Vec<Monitor> {
+    let point = std::env::var("SHELLMAN_ONLY_MONITOR").ok().and_then(|v| {
+        let (x, y) = v.split_once(',')?;
+        Some((x.trim().parse::<i32>().ok()?, y.trim().parse::<i32>().ok()?))
+    });
+    let Some((x, y)) = point else { return list };
+    let hit = |m: &Monitor| x >= m.rect.left && x < m.rect.right && y >= m.rect.top && y < m.rect.bottom;
+    match list.into_iter().find(hit) {
+        Some(m) => vec![Monitor { primary: true, ..m }],
+        None => Vec::new(),
+    }
 }

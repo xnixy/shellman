@@ -213,6 +213,19 @@ fn apply(n: Notify) -> bool {
                 icon.image = super::icon::to_image(n.icon).map(Arc::new);
                 icon.rev += 1;
             }
+            if n.flags & data::NIF_INFO != 0 && !(n.info.trim().is_empty() && n.info_title.trim().is_empty()) {
+                let app = if icon.tip.trim().is_empty() { super::log::process_name(icon.pid) } else { icon.tip.clone() };
+                super::balloon::push(super::balloon::Balloon {
+                    hwnd: icon.hwnd,
+                    uid: icon.uid,
+                    pid: icon.pid,
+                    callback: icon.callback,
+                    version: icon.version,
+                    app,
+                    title: n.info_title.clone(),
+                    text: n.info.clone(),
+                });
+            }
             true
         }
         data::NIM_DELETE => {

@@ -7,6 +7,7 @@ pub mod calendar;
 pub mod config;
 pub mod credentials;
 pub mod desktop_menu;
+pub mod dismiss;
 pub mod elevate;
 pub mod foreground;
 pub mod frames;

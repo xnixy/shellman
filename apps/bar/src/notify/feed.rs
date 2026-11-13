@@ -94,6 +94,7 @@ impl Feed {
         self.popups.retain(|p| alive(&p.id));
         self.toasts = toasts;
         self.crowd(now);
+        self.unhold_if_empty();
         !same
     }
 
@@ -115,21 +116,30 @@ impl Feed {
             }
         }
         self.popups.retain(|p| p.leaving.is_none_or(|l| now < l + SLIDE_OUT));
+        self.unhold_if_empty();
         self.popups != before
     }
 
-    /// Hold the popups (true) or let them run again; held time is added to their stay.
+    /// Hold the popups (true) or let them run again; held time is added to their stay. A popup
+    /// that came while they were held is only held from when it came.
     pub fn hold(&mut self, held: bool, now: Instant) {
         match (held, self.paused) {
-            (true, None) => self.paused = Some(now),
+            (true, None) if !self.popups.is_empty() => self.paused = Some(now),
             (false, Some(since)) => {
                 self.paused = None;
-                let extra = now - since;
                 for p in &mut self.popups {
-                    p.until += extra;
+                    p.until += now.saturating_duration_since(since.max(p.appeared));
                 }
             }
             _ => {}
+        }
+    }
+
+    /// With no popups there is nothing to hold: a hold left over (the pointer was on a toast
+    /// that was clicked or dismissed, and no frame came to let go) must not stall the next one.
+    fn unhold_if_empty(&mut self) {
+        if self.popups.is_empty() {
+            self.paused = None;
         }
     }
 
@@ -168,12 +178,23 @@ impl Feed {
         self.toasts.retain(|t| t.id != id);
         self.unseen.remove(&id);
         self.popups.retain(|p| p.id != id);
+        self.unhold_if_empty();
+    }
+
+    /// One app's notifications gone from view at once; returns their ids for the store.
+    pub fn clear_app(&mut self, app_id: &str) -> Vec<u32> {
+        let ids: Vec<u32> = self.toasts.iter().filter(|t| t.app_id == app_id).map(|t| t.id).collect();
+        for id in &ids {
+            self.remove(*id);
+        }
+        ids
     }
 
     pub fn clear(&mut self) {
         self.toasts.clear();
         self.unseen.clear();
         self.popups.clear();
+        self.paused = None;
     }
 
     /// Open the list: everything is seen, and the popups give way to it.
@@ -256,6 +277,42 @@ mod tests {
     }
 
     #[test]
+    fn a_hold_left_by_a_clicked_toast_does_not_stall_the_next() {
+        let t0 = Instant::now();
+        let at = |s: u64| t0 + Duration::from_secs(s);
+        let mut f = Feed::default();
+        f.update(vec![], t0, false);
+        f.update(vec![sample(1, "a", "hi", 1)], t0, false);
+        // The pointer rests on it and clicks it: it goes, and no frame lets go of the hold.
+        f.hold(true, at(2));
+        f.remove(1);
+        assert!(!f.visible());
+        // Hours later a new toast comes; its first frame lets go of a hold that is no more.
+        f.update(vec![sample(2, "a", "next", 2)], at(3 * 3600), false);
+        f.hold(false, at(3 * 3600));
+        assert_eq!(f.due(at(3 * 3600)), Some(SHOW_FOR), "a normal stay, not hours");
+        assert!(f.tick(at(3 * 3600) + SHOW_FOR));
+        // Cleared or slid away while held: the same.
+        f.tick(at(3 * 3600) + SHOW_FOR + SLIDE_OUT);
+        assert!(f.popups().is_empty() && f.paused.is_none());
+    }
+
+    #[test]
+    fn a_popup_that_came_during_a_hold_is_held_only_from_then() {
+        let t0 = Instant::now();
+        let at = |s: u64| t0 + Duration::from_secs(s);
+        let mut f = Feed::default();
+        f.update(vec![], t0, false);
+        f.update(vec![sample(1, "a", "x", 1)], t0, false);
+        f.hold(true, at(1));
+        f.update(vec![sample(1, "a", "x", 1), sample(2, "a", "y", 2)], at(20), false);
+        f.hold(false, at(30));
+        let until = |id| f.popups().iter().find(|p| p.id == id).unwrap().until;
+        assert_eq!(until(1), t0 + SHOW_FOR + Duration::from_secs(29));
+        assert_eq!(until(2), at(20) + SHOW_FOR + Duration::from_secs(10));
+    }
+
+    #[test]
     fn do_not_disturb_counts_without_popping_up() {
         let now = Instant::now();
         let mut f = Feed::with_dnd(true);
@@ -296,6 +353,17 @@ mod tests {
         assert_eq!((f.popups().len(), f.unseen()), (0, 1));
         f.close_list();
         assert!(!f.visible());
+    }
+
+    #[test]
+    fn one_apps_notifications_clear_together() {
+        let now = Instant::now();
+        let mut f = Feed::default();
+        f.update(vec![sample(1, "a", "x", 1), sample(2, "b", "y", 2), sample(3, "a", "z", 3)], now, false);
+        assert_eq!(f.clear_app("a"), [1, 3]);
+        assert_eq!(f.toasts().iter().map(|t| t.id).collect::<Vec<_>>(), [2]);
+        assert_eq!(f.unseen(), 1);
+        assert!(f.clear_app("nobody").is_empty());
     }
 
     #[test]

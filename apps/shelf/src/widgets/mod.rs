@@ -143,7 +143,7 @@ impl State {
             let targets = self.targets.clone();
             let feeds = self.feeds.get_or_insert_with(|| {
                 let ctx = ctx.clone();
-                Feeds::start(move || repaint_all(&ctx, &targets))
+                Feeds::start(move || repaint_all(&ctx, &targets), |line| log::line(line))
             });
             let cal = &w.calendar;
             let fahrenheit = w.weather.units.fahrenheit(shellman_core::system::region::imperial());
