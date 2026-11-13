@@ -29,14 +29,8 @@ impl New {
 /// Make a new item in `dir`; returns its path.
 pub fn create(dir: &Path, what: New) -> Result<PathBuf, String> {
     match what {
-        New::Folder => {
-            let p = fsops::unique_child(dir, what.name());
-            std::fs::create_dir(&p).map(|()| p).map_err(|e| e.to_string())
-        }
-        New::Text | New::Note => {
-            let p = fsops::unique_file(dir, what.name());
-            std::fs::write(&p, b"").map(|()| p).map_err(|e| e.to_string())
-        }
+        New::Folder => fsops::create_new_dir(dir, what.name()).map_err(|e| e.to_string()),
+        New::Text | New::Note => fsops::create_new_file(dir, what.name(), b"").map_err(|e| e.to_string()),
     }
 }
 
@@ -75,10 +69,10 @@ pub fn bring(paths: Vec<PathBuf>, dir: &Path, effect: u32) {
     }
 }
 
-/// A new file in `dir` holding a dropped or pasted picture or text, named after `name`.
+/// A new file in `dir` holding a dropped or pasted picture or text, named after `name`
+/// (numbered when taken), never over an existing item.
 pub fn write_new(dir: &Path, name: &str, bytes: &[u8]) -> Result<PathBuf, String> {
-    let path = fsops::unique_file(dir, name);
-    std::fs::write(&path, bytes).map(|()| path).map_err(|e| e.to_string())
+    fsops::create_new_file(dir, name, bytes).map_err(|e| e.to_string())
 }
 
 /// What a drop brought, carried out. Blocking.

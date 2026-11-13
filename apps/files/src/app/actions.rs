@@ -223,9 +223,8 @@ impl super::FileMan {
                 let Some(dir) = self.tabs[self.active].loc.dir().map(Path::to_path_buf) else {
                     return;
                 };
-                let path = fsops::unique_child(&dir, "New folder");
-                match std::fs::create_dir(&path) {
-                    Ok(()) => {
+                match fsops::create_new_dir(&dir, "New folder") {
+                    Ok(path) => {
                         self.tabs[self.active].select_after_load = Some((path, true));
                         self.load(self.active);
                     }
@@ -442,13 +441,9 @@ impl super::FileMan {
             return;
         };
         let target = parent.join(new_name);
-        // A change of case only is allowed even though the target "exists".
-        let case_only = old_name.is_some_and(|o| o.eq_ignore_ascii_case(new_name));
-        if target.exists() && !case_only {
-            self.toast(format!("There is already an item named {new_name}"));
-            return;
-        }
-        match std::fs::rename(&r.path, &target) {
+        // Never over another item: no look first (something can appear between the look and the
+        // rename), the rename itself refuses. A change of case only renames the same item.
+        match fsops::rename_no_replace(&r.path, &target) {
             Ok(()) => {
                 if self.tags.store.rekey(&r.path, &target) {
                     self.tags_changed();
@@ -459,6 +454,9 @@ impl super::FileMan {
                     tab.select_after_load = Some((target, false));
                 }
                 self.load(self.active);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                self.toast(format!("There is already an item named {new_name}"))
             }
             Err(e) => self.toast(format!("Couldn't rename: {e}")),
         }
