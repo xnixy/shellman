@@ -36,7 +36,8 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPA
                 return LRESULT(0);
             }
             let data = std::slice::from_raw_parts((*cds).lpData as *const u8, (*cds).cbData as usize);
-            LRESULT(crate::restart::on_request(data, shutdown::quiet()) as isize)
+            let refuse = shutdown::quiet() || crate::restart::parked();
+            LRESULT(crate::restart::on_request(data, refuse) as isize)
         }
         WM_CLOSE => {
             shutdown::run("closed");

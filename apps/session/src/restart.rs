@@ -13,6 +13,7 @@
 //! and the safety net's 20 s tray deadline counts from the new copy's own start. A new copy that
 //! then crashes by itself is an ordinary crash again, so a broken update still ends in Explorer.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
 /// `dwData` of the COPYDATASTRUCT: "SHMR".
@@ -56,6 +57,19 @@ pub fn reply_for(known: &[String], name: &str, quiet: bool) -> Reply {
 
 static KNOWN: Mutex<Vec<String>> = Mutex::new(Vec::new());
 static QUEUE: Mutex<Vec<String>> = Mutex::new(Vec::new());
+/// The supervisor parked the fleet (the safety net handed over to Explorer). Kept apart from
+/// `shutdown`'s stopping state: a park is not the session ending.
+static PARKED: AtomicBool = AtomicBool::new(false);
+
+/// The supervisor says whether its fleet is parked.
+pub fn set_parked(parked: bool) {
+    PARKED.store(parked, Ordering::SeqCst);
+}
+
+/// Whether requests are refused because the fleet is parked.
+pub fn parked() -> bool {
+    PARKED.load(Ordering::SeqCst)
+}
 
 /// The supervisor says which apps it runs (once, at its start).
 pub fn publish_names(names: Vec<String>) {
