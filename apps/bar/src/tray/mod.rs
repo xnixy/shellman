@@ -3,6 +3,7 @@
 //! The tray only works while shellman owns the `Shell_TrayWnd` window, which means Explorer's
 //! taskbar is not running; otherwise `start` returns None and the bar runs without a tray.
 
+pub mod balloon;
 mod click;
 mod data;
 pub mod demo;

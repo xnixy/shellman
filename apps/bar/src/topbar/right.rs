@@ -57,10 +57,17 @@ impl TopBar {
             .iter()
             .map(|(_, t)| ICON + t.as_ref().map_or(0.0, |t| 5.0 + text_width(ui, t, small.clone())))
             .collect();
+        // The bell at the island's right end, the status group before it.
+        let (bell, asked) = super::bell::draw(ui, mid, right - END, self.badge);
+        self.bell_rect = Some(bell);
+        if asked.is_some() {
+            self.bell_asked = asked;
+        }
+        let status_right = bell.left() - 2.0;
         let inner = widths.iter().sum::<f32>() + ICON_GAP * (items.len() - 1) as f32;
         let group = egui::Rect::from_min_max(
-            egui::pos2(right - END - inner - 2.0 * PAD, mid - STATUS_H / 2.0),
-            egui::pos2(right - END, mid + STATUS_H / 2.0),
+            egui::pos2(status_right - inner - 2.0 * PAD, mid - STATUS_H / 2.0),
+            egui::pos2(status_right, mid + STATUS_H / 2.0),
         );
         let resp = ui.interact(group, egui::Id::new("status"), egui::Sense::click());
         highlight(ui, group, &resp, (STATUS_H / 2.0) as u8);

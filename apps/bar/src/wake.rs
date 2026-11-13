@@ -42,11 +42,11 @@ impl Wake {
         self.ids.lock().unwrap().tray = ids;
     }
 
-    /// The preview panel (while open) and the notifications window (while it exists).
-    pub fn set_others(&self, preview: Option<egui::ViewportId>, notify: Option<egui::ViewportId>) {
+    /// The preview panel (while open), and the notifications and calendar windows (once they exist).
+    pub fn set_others(&self, preview: Option<egui::ViewportId>, notify: Option<egui::ViewportId>, calendar: Option<egui::ViewportId>) {
         let mut ids = self.ids.lock().unwrap();
         ids.preview = preview;
-        ids.others = preview.into_iter().chain(notify).collect();
+        ids.others = preview.into_iter().chain(notify).chain(calendar).collect();
     }
 
     fn repaint(&self, pick: impl Fn(&Ids) -> Vec<egui::ViewportId>) {

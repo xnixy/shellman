@@ -1,8 +1,8 @@
 //! The top bar: three floating islands of glass along the top edge, the desktop showing between
 //! them. On the left, the launcher mark and the app in front; in the middle, the date and time
-//! with the count of unseen notifications (a click there opens them); on the right, the tray and
-//! the status icons. Tray icons join the right island once shellman owns the tray, on every
-//! monitor's bar (or the primary's only, by setting).
+//! (a click opens the calendar), with the "now" pill beside it; on the right, the tray, the status
+//! icons and the notifications bell. Tray icons join the right island once shellman owns the
+//! tray, on every monitor's bar (or the primary's only, by setting).
 //!
 //! Every monitor has a top bar window; they all draw this one `TopBar` (`bars.rs` owns the
 //! windows and their places). The window spans the monitor and is all reserved space; between the
@@ -10,8 +10,10 @@
 //! which opens the launcher as the corner always has.
 //!
 //! It repaints when the app in front changes, on its own input, when a status watcher hears a
-//! change (`status`), and once a minute for the clock; otherwise it is idle.
+//! change (`status`), and once a minute for the clock (once a second when it shows seconds);
+//! otherwise it is idle.
 
+pub mod bell;
 mod clock;
 mod layout;
 mod left;
@@ -41,10 +43,16 @@ pub struct TopBar {
     tray_textures: TrayTextures,
     /// Read on first use, and again whenever the settings folder changes.
     settings: Option<BarSettings>,
-    /// The notifications badge in the clock's island, as the notifications say.
+    /// What the bell shows, as the notifications say.
     pub badge: crate::notify::Badge,
-    /// The clock (which opens the notifications) was clicked since the last look.
-    badge_clicked: bool,
+    /// The calendar is open (the clock shows it pressed).
+    pub calendar_open: bool,
+    /// The clock (which opens the calendar) was clicked since the last look.
+    clock_clicked: bool,
+    /// What the bell was asked since the last look, and where the bell was last drawn (in the
+    /// window that drew it last; read right after that window's frame).
+    bell_asked: Option<bell::Asked>,
+    pub bell_rect: Option<egui::Rect>,
     /// The "now" pill, left of the clock.
     pub pill: now::Pill,
     /// What the pill was asked since the last look.
@@ -77,9 +85,14 @@ impl TopBar {
         }
     }
 
-    /// True once after the clock's island (the notifications) was clicked.
-    pub fn take_badge_click(&mut self) -> bool {
-        std::mem::take(&mut self.badge_clicked)
+    /// True once after the clock's island (the calendar) was clicked.
+    pub fn take_clock_click(&mut self) -> bool {
+        std::mem::take(&mut self.clock_clicked)
+    }
+
+    /// What the bell was asked since the last look.
+    pub fn take_bell(&mut self) -> Option<bell::Asked> {
+        self.bell_asked.take()
     }
 
     /// What the "now" pill was asked (a click or the wheel) since the last look.
@@ -102,10 +115,10 @@ impl TopBar {
     /// the window's glass.
     pub fn frame(&mut self, ctx: &egui::Context, front: Option<Front>, composed: bool, place: &Place) -> Vec<Island> {
         let islands = self.draw(ctx, front, composed, place);
-        ctx.request_repaint_after(system_clock::until_next_minute());
+        let seconds = self.settings.is_some_and(|s| s.clock.show_seconds);
+        ctx.request_repaint_after(if seconds { system_clock::until_next_second() } else { system_clock::until_next_minute() });
         islands
     }
-
 
     fn draw(&mut self, ctx: &egui::Context, front: Option<Front>, composed: bool, place: &Place) -> Vec<Island> {
         theme::set_light(crate::app::light(ctx));
@@ -120,14 +133,14 @@ impl TopBar {
                 let under = ui.painter().add(egui::Shape::Noop);
                 let right = self.right_side(ui, row, bar.right() - layout::SIDE, place);
                 let settings = *self.settings.get_or_insert_with(BarSettings::load);
-                let (centre, clicked) = clock::draw(ui, bar, row, right.left(), &settings, self.badge);
-                self.badge_clicked |= clicked;
+                let (centre, clicked) = clock::draw(ui, bar, row, right.left(), &settings, self.calendar_open);
+                self.clock_clicked |= clicked;
                 // The pill sits just left of the clock, when there is room for it.
                 let (pill, asked) = self.pill.draw(ui, row, centre.left() - layout::SPACE, bar.left() + layout::SIDE);
                 self.asked = asked.or(self.asked.take());
                 let left_ends = pill.map_or(centre.left(), |p| p.left()) - layout::SPACE;
                 let left = left::draw(ui, bar, row, front, left_ends);
-                // The clock stays second: notifications hang from islands[1].
+                // The clock stays second: the calendar hangs from islands[1].
                 let list: Vec<Island> = [left, centre, right].into_iter().chain(pill).map(Island::pill).collect();
                 if !composed {
                     // No composed glass: the islands are painted here, without blur or shadow.

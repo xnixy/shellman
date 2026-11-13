@@ -8,6 +8,7 @@
 mod app;
 mod appbar;
 mod bars;
+mod calpanel;
 mod dock;
 mod fullscreen;
 mod host;
@@ -110,6 +111,8 @@ fn main() -> eframe::Result {
                 bars: bars::Bars::new(mode),
                 preview: preview::Preview::new(cc.egui_ctx.clone()),
                 notify: notify::Notify::new(cc.egui_ctx.clone(), dnd_was_on()),
+                calendar: calpanel::CalPanel::new(cc.egui_ctx.clone()),
+                bell_menu: shellman_ui::menu::popup::PopupMenu::new(),
                 live: live::Live::default(),
                 wake: Some(wake.clone()),
             };

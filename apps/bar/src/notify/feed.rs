@@ -181,6 +181,15 @@ impl Feed {
         self.unhold_if_empty();
     }
 
+    /// One app's notifications gone from view at once; returns their ids for the store.
+    pub fn clear_app(&mut self, app_id: &str) -> Vec<u32> {
+        let ids: Vec<u32> = self.toasts.iter().filter(|t| t.app_id == app_id).map(|t| t.id).collect();
+        for id in &ids {
+            self.remove(*id);
+        }
+        ids
+    }
+
     pub fn clear(&mut self) {
         self.toasts.clear();
         self.unseen.clear();
@@ -344,6 +353,17 @@ mod tests {
         assert_eq!((f.popups().len(), f.unseen()), (0, 1));
         f.close_list();
         assert!(!f.visible());
+    }
+
+    #[test]
+    fn one_apps_notifications_clear_together() {
+        let now = Instant::now();
+        let mut f = Feed::default();
+        f.update(vec![sample(1, "a", "x", 1), sample(2, "b", "y", 2), sample(3, "a", "z", 3)], now, false);
+        assert_eq!(f.clear_app("a"), [1, 3]);
+        assert_eq!(f.toasts().iter().map(|t| t.id).collect::<Vec<_>>(), [2]);
+        assert_eq!(f.unseen(), 1);
+        assert!(f.clear_app("nobody").is_empty());
     }
 
     #[test]
