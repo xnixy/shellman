@@ -126,6 +126,9 @@ impl super::FileMan {
                 },
             );
             super::rail::label(ui, &resp, &tip);
+            if there {
+                super::dnd::zone(ui, resp.rect, super::dnd::Dest::Dir(path.clone()), 14.0);
+            }
             if resp.clicked() {
                 if there {
                     actions.push(Action::Navigate(loc.clone()));

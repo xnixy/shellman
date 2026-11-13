@@ -11,6 +11,7 @@ impl super::FileMan {
     pub(super) fn keyboard(&mut self, ctx: &egui::Context, actions: &mut Vec<Action>) {
         // The Menu key has no egui key, so it is read from the keyboard's state.
         let menu_key = menu_key_pressed(ctx);
+        let paste_key = paste_key_pressed(ctx);
         // An open menu has the keyboard: its arrows, Enter and Escape are its own.
         if self.dialog.is_some() || self.menu.is_open() {
             return;
@@ -100,17 +101,17 @@ impl super::FileMan {
             if key(Modifiers::CTRL, Key::A) {
                 actions.push(Action::SelectAll);
             }
-            // Ctrl+Shift+C before Ctrl+C, whose pattern would take it too.
-            if key(Modifiers::CTRL | Modifiers::SHIFT, Key::C) {
-                actions.push(Action::CopyPath);
+            // Ctrl+C, Ctrl+X and Ctrl+V reach egui as clipboard events, not keys (see `clip_keys`).
+            let (copy, cut, paste) = clip_keys(i, paste_key);
+            match copy {
+                Some(true) => actions.push(Action::CopyPath),
+                Some(false) => actions.push(Action::Clip(Op::Copy)),
+                None => {}
             }
-            if key(Modifiers::CTRL, Key::C) {
-                actions.push(Action::Clip(Op::Copy));
-            }
-            if key(Modifiers::CTRL, Key::X) {
+            if cut {
                 actions.push(Action::Clip(Op::Move));
             }
-            if key(Modifiers::CTRL, Key::V) {
+            if paste {
                 actions.push(Action::Paste);
             }
             // Arrow keys, Home and End move the cursor; Shift extends the selection. In the grid,
@@ -202,6 +203,40 @@ impl super::FileMan {
     }
 }
 
+/// Copy (with Shift held: copy as path), Cut and Paste, asked for this frame. The window layer
+/// turns Ctrl+C, Ctrl+X and Ctrl+V into clipboard events instead of keys, and sends Paste only
+/// when the clipboard holds text; so `paste_key` (the keys seen going down) stands in for it
+/// when files are there. Shift+Delete also comes as Cut, and is not one here.
+fn clip_keys(i: &egui::InputState, paste_key: bool) -> (Option<bool>, bool, bool) {
+    // The keys as the frame ends: a quick Ctrl+X can be let go by then, so only a Shift held
+    // without Ctrl (Shift+Delete) says it was not Ctrl+X.
+    let ctrl = i.modifiers.command || i.modifiers.ctrl;
+    let shift_delete = i.modifiers.shift && !ctrl;
+    let (mut copy, mut cut, mut paste) = (None, false, paste_key);
+    for e in &i.events {
+        match e {
+            egui::Event::Copy => copy = Some(i.modifiers.shift && ctrl),
+            egui::Event::Cut if !shift_delete => cut = true,
+            egui::Event::Paste(_) => paste = true,
+            _ => {}
+        }
+    }
+    (copy, cut, paste)
+}
+
+/// Whether Ctrl+V (or Shift+Insert) went down since the last frame, while this window has focus.
+fn paste_key_pressed(ctx: &egui::Context) -> bool {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        GetAsyncKeyState, VK_CONTROL, VK_INSERT, VK_SHIFT, VK_V,
+    };
+    static WAS_DOWN: AtomicBool = AtomicBool::new(false);
+    let held = |vk: u16| unsafe { GetAsyncKeyState(i32::from(vk)) } as u16 & 0x8000 != 0;
+    let down = (held(VK_CONTROL.0) && held(VK_V.0)) || (held(VK_SHIFT.0) && held(VK_INSERT.0));
+    let was = WAS_DOWN.swap(down, Ordering::Relaxed);
+    down && !was && ctx.input(|i| i.focused)
+}
+
 /// Whether the Menu (application) key went down since the last frame, while this window has focus.
 fn menu_key_pressed(ctx: &egui::Context) -> bool {
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -210,4 +245,39 @@ fn menu_key_pressed(ctx: &egui::Context) -> bool {
     let down = unsafe { GetAsyncKeyState(i32::from(VK_APPS.0)) } as u16 & 0x8000 != 0;
     let was = WAS_DOWN.swap(down, Ordering::Relaxed);
     down && !was && ctx.input(|i| i.focused)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn input(mods: Modifiers, events: Vec<egui::Event>) -> egui::InputState {
+        let raw = egui::RawInput {
+            modifiers: mods,
+            events,
+            ..Default::default()
+        };
+        egui::InputState::default().begin_pass(raw, false, 1.0, &egui::Options::default())
+    }
+
+    #[test]
+    fn clipboard_events_are_the_clipboard_keys() {
+        let i = input(Modifiers::CTRL, vec![egui::Event::Copy]);
+        assert_eq!(clip_keys(&i, false), (Some(false), false, false));
+        let i = input(Modifiers::CTRL | Modifiers::SHIFT, vec![egui::Event::Copy]);
+        assert_eq!(clip_keys(&i, false), (Some(true), false, false), "copy as path");
+        let i = input(Modifiers::CTRL, vec![egui::Event::Cut]);
+        assert_eq!(clip_keys(&i, false), (None, true, false));
+        // Ctrl already let go when the frame ends: still the keys' own events.
+        assert_eq!(clip_keys(&input(Modifiers::NONE, vec![egui::Event::Cut]), false), (None, true, false));
+        assert_eq!(clip_keys(&input(Modifiers::NONE, vec![egui::Event::Copy]), false).0, Some(false));
+        // Shift+Delete arrives as Cut: not a cut here.
+        let i = input(Modifiers::SHIFT, vec![egui::Event::Cut]);
+        assert_eq!(clip_keys(&i, false), (None, false, false));
+        // Paste comes as an event with text, or only as the keys with files.
+        let i = input(Modifiers::CTRL, vec![egui::Event::Paste("x".into())]);
+        assert!(clip_keys(&i, false).2);
+        assert!(clip_keys(&input(Modifiers::CTRL, vec![]), true).2);
+        assert_eq!(clip_keys(&input(Modifiers::NONE, vec![]), false), (None, false, false));
+    }
 }

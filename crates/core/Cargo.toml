@@ -11,6 +11,7 @@ name = "shellman_core"
 [dependencies]
 dirs.workspace = true
 egui.workspace = true
+png.workspace = true
 # Toast XML (notifications): small, pure Rust, no dependencies.
 roxmltree = "0.21"
 serde.workspace = true

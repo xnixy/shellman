@@ -103,6 +103,7 @@ impl super::FileMan {
                 Id::new(("tab", tab_id)),
                 Sense::click(),
             );
+            super::dnd::zone(ui, rect.intersect(clip), super::dnd::Dest::Tab(i), h / 2.0);
             let hovered = resp.hovered();
             let r = CornerRadius::same((h / 2.0) as u8);
             let (soft, soft_hover, line) = soft_colors(c.light);

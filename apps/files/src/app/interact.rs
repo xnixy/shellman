@@ -50,6 +50,8 @@ fn mods_of(m: Modifiers, ctrl_down: bool, shift_down: bool) -> select::Mods {
 pub(super) struct ItemEvents {
     clicked: Option<(usize, select::Mods)>,
     secondary: Option<usize>,
+    /// An item dragged past the system's threshold: drag it (or the selection) out.
+    pub(super) drag_out: Option<usize>,
     pub(super) commit_rename: bool,
     pub(super) cancel_rename: bool,
 }
@@ -70,6 +72,11 @@ impl ItemEvents {
         }
         if resp.secondary_clicked() {
             self.secondary = Some(r);
+        }
+        // A drag that starts on an item is the item's: never a rubber band.
+        let primary = ui.input(|i| i.pointer.primary_down());
+        if primary && resp.is_pointer_button_down_on() && super::dnd::past_threshold(ui.ctx()) {
+            self.drag_out = Some(r);
         }
     }
 
@@ -215,6 +222,12 @@ fn backdrop_id() -> Id {
 /// reach the gaps under it, so the island never moves the window.
 pub(super) fn folder_backdrop(ui: &mut Ui, island: Rect, tab: &mut Tab, actions: &mut Vec<Action>) {
     let bg = ui.interact(island, backdrop_id(), Sense::click_and_drag());
+    // Dropped on the empty space: into the folder shown (or the bin).
+    match &tab.loc {
+        super::tab::Loc::Dir(p) => super::dnd::zone(ui, island, super::dnd::Dest::Dir(p.clone()), super::RADIUS),
+        super::tab::Loc::Bin => super::dnd::zone(ui, island, super::dnd::Dest::Bin, super::RADIUS),
+        _ => {}
+    }
     if bg.clicked() && !click_mods(ui).ctrl {
         tab.selected.clear();
         tab.cursor = None;

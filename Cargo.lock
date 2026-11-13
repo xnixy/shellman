@@ -2051,6 +2051,7 @@ version = "0.1.0"
 dependencies = [
  "dirs",
  "egui",
+ "png 0.18.1",
  "resvg",
  "roxmltree 0.21.2",
  "serde",

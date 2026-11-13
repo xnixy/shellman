@@ -145,6 +145,9 @@ impl super::FileMan {
                 for (g, name, path) in places {
                     let loc = Loc::Dir(path);
                     let resp = glyph_item(ui, g, name, current == loc);
+                    if let Loc::Dir(p) = &loc {
+                        super::dnd::zone(ui, resp.rect, super::dnd::Dest::Dir(p.clone()), 14.0);
+                    }
                     if resp.clicked() {
                         actions.push(Action::Navigate(loc.clone()));
                     }
@@ -155,6 +158,7 @@ impl super::FileMan {
                 // A picker has no use for the bin.
                 if !self.pick_hides(&Loc::Bin) {
                     let bin = glyph_item(ui, glyph::DELETE, "Recycle Bin", current == Loc::Bin);
+                    super::dnd::zone(ui, bin.rect, super::dnd::Dest::Bin, 14.0);
                     if bin.clicked() {
                         actions.push(Action::Navigate(Loc::Bin));
                     }
@@ -175,6 +179,7 @@ impl super::FileMan {
                 for d in &self.drives {
                     let loc = Loc::Dir(d.root.clone());
                     let resp = glyph_item(ui, glyph::DRIVE, &d.title(), current == loc);
+                    super::dnd::zone(ui, resp.rect, super::dnd::Dest::Dir(d.root.clone()), 14.0);
                     if resp.clicked() {
                         actions.push(Action::Navigate(loc.clone()));
                     }

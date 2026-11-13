@@ -89,7 +89,73 @@ impl Tags {
     }
 }
 
+/// The background check of tagged items (see `tags::check`): asked for when something may have
+/// moved them, run on a worker, at most every `CHECK_EVERY` seconds.
+#[derive(Default)]
+pub(super) struct Checking {
+    pub(super) running: bool,
+    wanted: bool,
+    last: Option<f64>,
+}
+
+const CHECK_EVERY: f64 = 2.0;
+
 impl super::FileMan {
+    /// Ask for a check of the tagged items.
+    pub(super) fn want_tag_check(&mut self) {
+        self.tag_check.wanted = true;
+    }
+
+    /// Start a check that was asked for, when none is running and the last was long enough ago.
+    pub(super) fn run_tag_check(&mut self, ctx: &egui::Context) {
+        let c = &mut self.tag_check;
+        if !c.wanted || c.running {
+            return;
+        }
+        if self.tags.store.items.is_empty() {
+            c.wanted = false;
+            return;
+        }
+        let now = ctx.input(|i| i.time);
+        if let Some(last) = c.last {
+            if now - last < CHECK_EVERY {
+                ctx.request_repaint_after(std::time::Duration::from_secs_f64(CHECK_EVERY - (now - last)));
+                return;
+            }
+        }
+        c.wanted = false;
+        c.running = true;
+        c.last = Some(now);
+        let items: Vec<(String, crate::tags::Item)> =
+            self.tags.store.items.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+        let (tx, ctx) = (self.tx.clone(), self.ctx.clone());
+        std::thread::spawn(move || {
+            use crate::tags::check;
+            let results = check::run(items, &check::RealDisk);
+            let _ = tx.send(super::Msg::TagCheck(results));
+            ctx.request_repaint();
+        });
+    }
+
+    /// Take in what a check found; `relist` lists the open tag places again when it changed
+    /// anything (not when the check came from listing one).
+    pub(super) fn tag_results(&mut self, results: &[(String, PathBuf, crate::tags::check::Verdict)], relist: bool) {
+        if !self.tags.store.apply(results, crate::tags::now_secs()) {
+            return;
+        }
+        set_names(&self.tags.store);
+        if let Err(e) = self.tags.save() {
+            self.toast(format!("Couldn't save the tags: {e}"));
+        }
+        if relist {
+            for i in 0..self.tabs.len() {
+                if matches!(self.tabs[i].loc, Loc::Tag(_)) {
+                    self.load(i);
+                }
+            }
+        }
+    }
+
     /// Flip tag `i` on every selected item (all on when any lacks it, else all off).
     pub(super) fn toggle_tag(&mut self, i: usize) {
         let paths: Vec<PathBuf> = self.tabs[self.active]
@@ -139,6 +205,8 @@ impl super::FileMan {
     }
 
     pub(super) fn tags_changed(&mut self) {
+        // New items' identities are learned soon after.
+        self.want_tag_check();
         set_names(&self.tags.store);
         if let Err(e) = self.tags.save() {
             self.toast(format!("Couldn't save the tags: {e}"));

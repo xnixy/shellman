@@ -4,6 +4,7 @@
 //! conflict, and undo handling. They run on a worker thread so the window never blocks.
 
 mod drives;
+pub mod identity;
 mod link;
 mod listing;
 mod names;
@@ -13,8 +14,8 @@ pub(crate) mod time;
 pub use drives::{drives, Drive};
 pub use link::{link_target, make_link};
 pub use listing::{entry_for, list_dir, Entry};
-pub use names::{check_name, natural_cmp, unique_child};
-pub use shell::{open, shell_op, Op};
+pub use names::{check_name, natural_cmp, unique_child, unique_file};
+pub use shell::{open, shell_op, shell_op_mapped, Op};
 
 pub fn format_size(bytes: u64) -> String {
     const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];

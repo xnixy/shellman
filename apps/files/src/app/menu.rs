@@ -35,7 +35,8 @@ struct Open {
     /// The single folder the item menu is for, if it is one.
     is_dir: bool,
     background: bool,
-    has_clip: bool,
+    /// What the clipboard holds: anything to paste, and files (for shortcuts to them).
+    has_clip: (bool, bool),
 }
 
 pub(super) struct ContextMenu {
@@ -101,7 +102,7 @@ impl ContextMenu {
     }
 
     /// Open the menu at `pos` for `target`.
-    pub(super) fn open(&mut self, ctx: &Context, pos: Pos2, target: Target, background: bool, has_clip: bool) {
+    pub(super) fn open(&mut self, ctx: &Context, pos: Pos2, target: Target, background: bool, has_clip: (bool, bool)) {
         let is_dir = target.items.len() == 1 && target.items[0].is_dir();
         self.loader.refresh(&target);
         self.menu.open_at(ctx, pos);
@@ -238,10 +239,10 @@ fn native_rows(ctx: &Context, open: &Open) -> Vec<Row<Pick>> {
         rows.push(act(glyph::NEW_FOLDER, "New folder", "Ctrl+Shift+N", Action::NewFolder));
         // Always there, so the entry does not come and go; only usable with something to paste.
         let mut paste = act(glyph::PASTE, "Paste", "Ctrl+V", Action::Paste);
-        paste.enabled = open.has_clip;
+        paste.enabled = open.has_clip.0;
         rows.push(paste);
         let mut link = act(glyph::COPY, "Paste shortcut", "", Action::PasteShortcut);
-        link.enabled = open.has_clip;
+        link.enabled = open.has_clip.1;
         rows.push(link);
         rows.push(Row::separator());
         rows.push(act(glyph::REFRESH, "Refresh", "F5", Action::Refresh));
@@ -258,7 +259,7 @@ fn native_rows(ctx: &Context, open: &Open) -> Vec<Row<Pick>> {
         rows.push(Row::separator());
         rows.push(act(glyph::CUT, "Cut", "Ctrl+X", Action::Clip(Op::Move)));
         rows.push(act(glyph::COPY, "Copy", "Ctrl+C", Action::Clip(Op::Copy)));
-        rows.push(act(glyph::COPY, "Copy path", "Ctrl+Shift+C", Action::CopyPath));
+        rows.push(act(glyph::COPY, "Copy as path", "Ctrl+Shift+C", Action::CopyPath));
         rows.push(Row::separator());
         rows.push(act(glyph::RENAME, "Rename", "F2", Action::Rename));
         rows.push(tags_row(ctx));
