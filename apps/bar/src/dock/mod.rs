@@ -436,6 +436,12 @@ impl Dock {
         if let Some((i, origin, grab)) = events.pressed {
             if shown_items[i].pinnable() && !held.busy {
                 self.drag.press(salt, &shown_items[i].app_id, origin, grab);
+                // A press and its release can arrive in one frame (a quick click on an idle
+                // bar). Nothing would then wake the window to see the release, and the stale
+                // press would swallow the next one: it is a click, which egui reports itself.
+                if !ctx.input(|i| i.pointer.primary_down()) {
+                    self.drag.cancel();
+                }
             }
         }
         if held.busy {
