@@ -13,6 +13,7 @@ pub mod brightness;
 pub mod clock;
 pub mod display;
 pub mod default_apps;
+pub mod default_apps_change;
 pub mod display_names;
 pub mod live;
 pub mod media;

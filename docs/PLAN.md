@@ -15,7 +15,7 @@ accent color, fast.
 | `apps/shelf` | desktop icons, the desktop's right-click menu | stage 1 working: the shelf (drop zone, Desktop / Downloads / Recent stacks that fan open, drag out, drop in), the right-click menu, Settings › Desktop. Next: widgets top right (stage 2) |
 | `apps/tasks` | Task Manager (Ctrl+Shift+Esc, through the switcher's hook) | working: Processes (apps and background, grouped, sort, search, End task / End process tree / details), Performance (CPU, memory, GPUs, disks, network), Services (read-only: status, startup type, PID, description, sort, search, go to process; read through the SCM in `crates/core/src/services`, off the UI thread, only while the page shows). End task / tree try unelevated first and, only when Windows refuses, go through `shellman-elevate`'s `end-processes <pid>:<start time>...` behind the UAC prompt (the helper rechecks start time and refuses critical processes); critical processes stay un-endable. Reads through `crates/core/src/procs` |
 | `apps/terminal` | Windows Terminal | stage 1: one shell in glass, GPU-drawn grid, scrollback. Next: tabs, selection, mouse, profiles |
-| `apps/settings` | Settings pages for the shell | working: Appearance, Desktop, Dock, Top bar, Launcher, About; rebuilt Windows pages: Sound, Display, Apps, Startup, Fonts, Mouse & keyboard, Power, Date, time & region, Storage, Default apps (read-only) |
+| `apps/settings` | Settings pages for the shell | working: Appearance, Desktop, Dock, Top bar, Launcher, About; rebuilt Windows pages: Sound, Display, Apps, Startup, Fonts, Mouse & keyboard, Power, Date, time & region, Storage, Default apps (changes through Windows Settings) |
 | `apps/session` | the shell process itself | built, not yet the shell: starts and supervises the apps, runs startup items, safety net, `--install`/`--uninstall` (never run yet) |
 
 Shared code:
@@ -221,7 +221,18 @@ tested), else the activation manager, else PowerShell.
   (`powrprof`), the time zone (`SeTimeZonePrivilege` is held by Users, switched on for the call),
   daylight saving and the `HKCU\Control Panel\International` values all work; nothing needs
   `shellman-elevate`. Rows a machine lacks are hidden (no lid, no battery column on a desktop).
-  Default apps is read-only: `UserChoice` is hash-protected, so there is no change button.
+  Default apps: "Change" lists the apps that claim the type (`RegisteredApplications`) and opens
+  Windows Settings on the picked one (`ms-settings:defaultapps?registeredAppMachine=` /
+  `registeredAppUser=` / `registeredAUMID=`, all three seen working on 26300); Settings writes the
+  choice, protected types too, and the page follows `FileExts`/`UrlAssociations` with
+  `RegNotifyChangeKeyValue`. Without the host the page offers the modern-apps switch instead.
+  Measured on 26300 without Explorer and not usable: `IAssocHandler::MakeDefault` (S_OK, writes
+  nothing, even for a made-up type), `SHOpenWithDialog` with the register flags (only a notice
+  "go to Settings > Apps > Default apps"), `OpenWith.exe` / `OpenAs_RunDLL` (start, show nothing:
+  the flyout is immersive and needs Explorer, also with the host on); a deep link with the host off
+  fails at once (0x80040900). `UCPD.sys` (4.9.0.720417) guards `UserChoice`/`UserChoiceLatest` of
+  `http`, `https`, `.pdf`, `.htm(l)`, `.doc(x)`, `.xls(x)`, `.ppt(x)`. shellman never writes
+  `UserChoice`, never computes its hash and never touches UCPD.
   Storage counts folders on workers, never follows reparse points, and only offers "Open in Files".
 
 ## Modern apps without Explorer
