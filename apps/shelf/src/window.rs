@@ -28,7 +28,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
     IsWindowVisible, PostMessageW, SetWindowLongPtrW, SetWindowPos, GWL_EXSTYLE, GWL_STYLE, GW_HWNDNEXT,
     HWND_BOTTOM, HWND_NOTOPMOST, HWND_TOP, HWND_TOPMOST, SPI_SETWORKAREA, STYLESTRUCT, SWP_FRAMECHANGED, SWP_NOACTIVATE,
     SWP_NOMOVE, SWP_NOOWNERZORDER, SWP_NOSIZE, SWP_NOZORDER, WINDOWPOS, WM_APP, WM_DISPLAYCHANGE, WM_DPICHANGED,
-    WM_DWMCOMPOSITIONCHANGED, WM_MOUSEACTIVATE, WM_SETTINGCHANGE, WM_STYLECHANGING, WM_WINDOWPOSCHANGING,
+    WM_DWMCOMPOSITIONCHANGED, WM_MOUSEACTIVATE, WM_POWERBROADCAST, WM_SETTINGCHANGE, WM_STYLECHANGING, WM_WINDOWPOSCHANGING,
     WS_CAPTION, WS_EX_APPWINDOW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_MAXIMIZEBOX, WS_MINIMIZEBOX,
     WS_SYSMENU, WS_THICKFRAME,
 };
@@ -51,6 +51,8 @@ static RAISED: Mutex<Vec<isize>> = Mutex::new(Vec::new());
 static COVERED: Mutex<Vec<isize>> = Mutex::new(Vec::new());
 /// The monitors or work areas changed since the window was last placed.
 static LAYOUT: AtomicBool = AtomicBool::new(true);
+/// The machine woke from sleep since this was last asked.
+static RESUMED: AtomicBool = AtomicBool::new(false);
 /// Where the desktop asked for its menu, not yet taken.
 static MENU_AT: Mutex<Option<(i32, i32)>> = Mutex::new(None);
 
@@ -198,6 +200,11 @@ fn check_all() -> bool {
     changed
 }
 
+/// True once after the machine woke from sleep.
+pub fn take_resumed() -> bool {
+    RESUMED.swap(false, Ordering::AcqRel)
+}
+
 /// Have the windows placed again (the settings moved or resized the shelf).
 pub fn ask_layout() {
     LAYOUT.store(true, Ordering::Release);
@@ -306,6 +313,11 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPA
             return r;
         }
         WM_DWMCOMPOSITIONCHANGED => extend_frame(hwnd),
+        // PBT_APMRESUMEAUTOMATIC: back from sleep (the widgets read their data again).
+        WM_POWERBROADCAST if wparam.0 == 0x12 => {
+            RESUMED.store(true, Ordering::Release);
+            repaint();
+        }
         m if m != 0 && m == shellman_core::desktop_menu::message() => {
             if let Ok(mut at) = MENU_AT.lock() {
                 *at = Some(shellman_core::desktop_menu::unpack(wparam, lparam));

@@ -12,7 +12,7 @@ accent color, fast.
 | `apps/launcher` | Start menu and search | working: Spotlight-style panel, app grid, ranked search, most used, the Win key (through the switcher's hook) |
 | `apps/switcher` | Alt+Tab, Task View | working: Alt+Tab with live previews. Next: Task View (Win+Tab) |
 | `apps/desktop` | wallpaper window | working: wallpaper per monitor; keeps Windows' modern-app host running; hands a right-click to the shelf |
-| `apps/shelf` | desktop icons, the desktop's right-click menu | stage 1 working: the shelf on every monitor or the primary only (drop zone, Desktop / Downloads / Recent stacks that fan open, drag out, drop in), the right-click menu on every monitor, Settings › Desktop. Next: widgets top right (stage 2) |
+| `apps/shelf` | desktop icons, the desktop's right-click menu | stage 1 working: the shelf on every monitor or the primary only (drop zone, Desktop / Downloads / Recent stacks that fan open, drag out, drop in), the right-click menu on every monitor, Settings › Desktop; stage 2 working: the Today and Now playing widgets top right (primary or every monitor), Edit desktop…. Next: arrange mode |
 | `apps/tasks` | Task Manager (Ctrl+Shift+Esc, through the switcher's hook) | working: Processes (apps and background, grouped, sort, search, End task / End process tree / details), Performance (CPU, memory, GPUs, disks, network), Services (read-only: status, startup type, PID, description, sort, search, go to process; read through the SCM in `crates/core/src/services`, off the UI thread, only while the page shows). End task / tree try unelevated first and, only when Windows refuses, go through `shellman-elevate`'s `end-processes <pid>:<start time>...` behind the UAC prompt (the helper rechecks start time and refuses critical processes); critical processes stay un-endable. Reads through `crates/core/src/procs` |
 | `apps/terminal` | Windows Terminal | stage 2: tabs, selection, mouse, profiles; `-d`/`-p`/`-e`/`--hold`; shellman's "Open Terminal here" opens it; can be Windows' default terminal (`--register-default-terminal`). Next: Settings controls, find, splits |
 | `apps/settings` | Settings pages for the shell | working: Appearance, Desktop, Dock, Top bar, Launcher, About; rebuilt Windows pages: Sound, Display, Apps, Startup, Fonts, Mouse & keyboard, Power, Date, time & region, Storage, Default apps (changes through Windows Settings), Windows Update |
@@ -159,9 +159,10 @@ Rule: **the top bar is the system, the dock is apps.** Both are windows of one p
 - `IDesktopWallpaper` needs Explorer. As the shell, it reads the classic settings instead: one
   picture for all monitors, no slideshow.
 - No icon grid. The design (`docs/design/desktop-concepts.html`, "Shelf + Widgets") puts a shelf
-  on the left edge and, later, two widgets top right; "Clean" (wallpaper only) is the other style.
+  on the left edge and two widgets top right; "Clean" (wallpaper only) is the other style.
   Settings in `desktop.json` (`settings::desktop`): style, shelf on/off, edge, stacks, where
-  dropped files go, and the widgets' switches (read by nothing yet).
+  dropped files go, and the widgets (on/off each, which displays, the calendar account without its
+  password, the weather's place and units).
 
 ### The shelf: its own process
 
@@ -231,7 +232,9 @@ the foreground (it received the click, so it may), and posts the shelf window a 
 with the point (`core::desktop_menu`; `--menu x y` starts a shelf that opens it when none runs).
 The shelf shows shellman's glass popup menu there, the component the dock's menu uses: New (Folder,
 Text document, Markdown note), Paste (greyed with nothing to paste), Open in Files, Open Terminal
-here, Change wallpaper…, Desktop settings, Display settings. "Edit desktop…" comes with the widgets.
+here, Edit desktop…, Change wallpaper…, Desktop settings, Display settings. "Edit desktop…" opens
+Settings on the Desktop page (`--page desktop`, as "Desktop settings" does); the design's arrange
+mode (dragging the shelf and widgets about) is not built: the widgets are a fixed stack top right.
 It works on every monitor: shellman's wallpaper window covers each monitor (one per monitor in
 the desktop process), each hands its right-click over with the point, and the popup takes the
 work area and scale of the monitor at that point (checked at 150% left of the primary and 300%
@@ -239,9 +242,6 @@ below right). A shelf started at 18:39 on 12 Nov from the stage-1 build kept run
 install was replaced, and showed an older menu (white, no icons, no glass) on the 300% monitor; the
 running processes must be restarted after an install.
 
-Widgets (stage 2), when built: on the primary only by default (top right of its work area, as
-the mockup), with a "Show widgets on" setting like the shelf's (`Primary` / `All`), made the
-same way: a small window per monitor sized to the widgets, never the monitor.
 No shortcut hints: none of these has a shortcut on the desktop yet.
 
 A first version drew shellman's own menu on glass in an egui window as large as the clicked
@@ -252,6 +252,66 @@ every frame); a monitor-sized topmost window also made the bar hide as for a ful
 from it: never a window as large as a monitor for a popup, never create glass per click, never a
 size that has not been checked.
 
+### The widgets (stage 2)
+
+Today and Now playing, as the design's "Shelf + Widgets": a fixed stack top right of the work
+area (372 pt wide, 40 pt from the right, 16 pt under the top bar, 16 pt apart, radius 22), real
+glass islands following the glass slider, dark and light.
+
+- Where: in the shelf process (`apps/shelf/src/widgets`), not an app of their own: it already has
+  desktop-level glass windows that never activate, are never in Alt+Tab, step aside for a
+  fullscreen app per monitor, and follow `desktop.json` live. Each monitor with widgets gets one
+  more immediate viewport (`shellman shelf widgets <device>`), with the shelf windows' manners
+  (`window::prepare_other`), its glass attached once. Size (`widgets::place`): the widgets'
+  column plus the shadow, as tall as the tallest stack (Today with three rows and a heading, then
+  Now playing), cut to the work area: 452x569 pt (678x854 px at 150%), never the monitor (and at most half its width),
+  through `glass::guard::window` unchanged; worked out per monitor and scale, never per frame.
+  Only the islands show and take clicks; an island changes size only when its content does.
+- On: Settings › Desktop › "Show widgets on" (`widgets.on`: `Primary` default, or `All`).
+  Off in Clean, with "Show widgets" off, or with both widgets off.
+- Idle: no repaint loop. Frames come from data arriving (the feeds worker, the media session),
+  the pointer, a minute tick for the date and the "in 25 min" chips, and a one-second tick only
+  while something plays (its time and progress line); none while a fullscreen app covers the
+  monitor. Measured 0 ms of CPU in 15 s at rest (debug build, no media session).
+- Today: weekday, the day's number large (Segoe UI Light, `theme::light_font`), the month; the
+  weather beside it (icon, temperature, "London · light rain", "H 8° · L 3°"); then up to three
+  rows of what is left of today (all-day first, then by time; a calendar colour dot; the next one
+  heavier with a chip "in 1 h 19 min" or "now"), or tomorrow's under a heading when today is done.
+  Never blank: "Calendar not connected", "Sign-in failed", "Connecting to your calendar…", "Can't
+  reach the calendar" (cached events still show), "Nothing on today or tomorrow"; the first two
+  open Settings › Desktop on a click.
+- Calendar (`core::calendar`): CalDAV, built for Fastmail (`https://caldav.fastmail.com/`, any
+  server URL works): `/.well-known/caldav` (redirects followed by hand; credentials only ever go
+  to the configured host, and over HTTPS unless it is localhost), current-user-principal,
+  calendar-home-set, the calendars (Depth 1, VEVENT ones), then a `calendar-query` REPORT per shown
+  calendar for a day back to 14 days ahead. iCalendar parsed here (`ical`): folding, parameters,
+  escapes, DATE / floating / UTC / TZID times, DURATION; zones from the calendar's VTIMEZONEs, then
+  ICU (in Windows) for names it does not define, the viewer's zone from Windows; recurrences
+  expanded in the event's wall time (`rrule`: DAILY/WEEKLY/MONTHLY/YEARLY, INTERVAL, COUNT, UNTIL,
+  BYDAY with ordinals, BYMONTHDAY, BYMONTH, BYYEARDAY, BYSETPOS, WKST), EXDATE, RDATE, overridden
+  and cancelled instances. Every 15 min, on wake (`WM_POWERBROADCAST`) and on a network change
+  (`NotifyNetworkConnectivityHintChange`), 30 s then 2 min after a failure. Cached (events only)
+  in `%LOCALAPPDATA%\shellman\cache\calendar.json` and shown at once at the start.
+- Password: only in Windows Credential Manager (generic credential `shellman/caldav`, UTF-16 as
+  Windows' tools write it; `shellman/caldav/<instance>` for a test copy). Never in a json file,
+  a log or a debug print. Settings writes it on "Test connection" and bumps `calendar.saved` so
+  the shelf tries it at once; "Forget password" deletes it.
+- Fastmail: user name = the Fastmail address; an app password from Fastmail › Settings › Privacy
+  & Security › App passwords (Manage app passwords and access) › New app password, with access to
+  Calendars (CalDAV). Not yet run against Fastmail itself: built and tested on recorded answers
+  and a local mock server.
+- Weather (`core::weather`): Open-Meteo forecast (current temperature, weather code, is_day;
+  today's max/min), no key, generic User-Agent `shellman`, only the coordinates sent. The place
+  is typed in Settings and found once through Open-Meteo's geocoding, saved as name + lat/lon; no
+  lookup by IP. Units from the Windows region (`iMeasure`) unless set to °C or °F. Every 30 min,
+  cached in `cache\weather.json`; a cached reading shows for up to 6 hours without the network.
+- HTTP: `core::net`, WinHTTP (system TLS and proxy, no crate, no async runtime), on worker
+  threads; redirects are not followed automatically; 15 s timeouts.
+- Now playing: `core::system::media` (the Control Center's watcher, now also with the album and
+  the timeline): art 54 pt, title, "artist · 1:52 / 4:03", a 4 pt progress line, previous /
+  play-pause / next. Hidden when there is no session (the design has no empty state).
+- `SHELLMAN_ONLY_MONITOR=<x>,<y>` (tests only) keeps a test copy of the shelf process to the
+  monitor holding that point, taken as the primary.
 ### The glass popup menu (`shellman_ui::menu::popup`)
 
 The one menu of every shellman app: the desktop's (shelf), the dock's (bar), every menu in Files
@@ -871,7 +931,7 @@ images, and the shell and default terminal state.)
 2. Win+1-9 (the lone Win key is done).
 3. Dock: drag-and-drop onto icons, badges and progress, Recycle Bin empty / full.
 4. Top bar: "now" pill, notifications and calendar.
-5. Desktop: widgets (Today, Now playing) and arrange mode.
+5. Desktop: arrange mode (drag the shelf and widgets about); widgets done (Today, Now playing).
 6. Task View.
 7. `session`: done, and it is the real shell (the swap is made; `--uninstall` puts the previous
    value back).

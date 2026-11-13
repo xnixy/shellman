@@ -46,6 +46,11 @@ impl Family {
             .find_map(|w| self.face(w))
     }
 
+    /// A light face, for large numerals, if the family has one.
+    pub fn light(&self) -> Option<&Face> {
+        self.face(Weight::Light)
+    }
+
     /// The face for names and headings: Semibold, else Bold, else the regular one.
     pub fn semibold(&self) -> Option<&Face> {
         [Weight::Semibold, Weight::Bold]

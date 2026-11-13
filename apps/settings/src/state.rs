@@ -2,7 +2,7 @@
 //! Edits apply by saving the same files the other apps watch.
 
 use crate::saver::Saver;
-use crate::sections::{AppsView, DisplayView, FontsView, IconsView, MouseView, PowerView, DateTimeView, StorageView, DefaultAppsView, Section, SoundView, StartupView, UpdatesView};
+use crate::sections::{WidgetsView, AppsView, DisplayView, FontsView, IconsView, MouseView, PowerView, DateTimeView, StorageView, DefaultAppsView, Section, SoundView, StartupView, UpdatesView};
 use shellman_core::settings::bar::BarSettings;
 use shellman_core::settings::desktop::DesktopSettings;
 use shellman_core::settings::dock::{self, DockSettings};
@@ -17,6 +17,8 @@ pub struct State {
     pub desktop: DesktopSettings,
     /// The Desktop page's folder picker for dropped files, while it is open.
     pub desktop_pick: Option<crate::pick::Pick>,
+    /// The Desktop page's widget rows: what is typed, and the connection test.
+    pub widgets_view: WidgetsView,
     pub dock: DockSettings,
     /// What each pin is called, in the pins' order. Looking a name up touches the shell, so it is
     /// done when the pins change, not on every frame.
@@ -62,6 +64,7 @@ impl State {
             look,
             desktop: DesktopSettings::load(),
             desktop_pick: None,
+            widgets_view: WidgetsView::default(),
             dock: DockSettings::load(),
             dock_names: Vec::new(),
             bar: BarSettings::load(),

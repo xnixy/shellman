@@ -13,6 +13,15 @@ pub fn config_dir() -> Option<PathBuf> {
     pick_dir(std::env::var_os(DIR_OVERRIDE), dirs::config_dir())
 }
 
+/// Where apps keep what they can fetch again (the widgets' last calendar and weather):
+/// `%LOCALAPPDATA%\shellman\cache`, or `cache` in the `SHELLMAN_CONFIG_DIR` folder.
+pub fn cache_dir() -> Option<PathBuf> {
+    match std::env::var_os(DIR_OVERRIDE).filter(|o| !o.is_empty()) {
+        Some(dir) => Some(PathBuf::from(dir).join("cache")),
+        None => dirs::data_local_dir().map(|d| d.join("shellman").join("cache")),
+    }
+}
+
 /// The override when it is set and not empty, else the standard folder's `shellman`.
 fn pick_dir(over: Option<std::ffi::OsString>, base: Option<PathBuf>) -> Option<PathBuf> {
     match over.filter(|o| !o.is_empty()) {

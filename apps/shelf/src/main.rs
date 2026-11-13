@@ -3,9 +3,10 @@
 //!
 //! The shelf is one slim island of glass on an edge of each monitor (or the primary only, as
 //! Settings › Desktop says): a drop zone, then a stack per folder (Desktop, Downloads, Recent)
-//! that fans open on click. It lives at desktop
-//! level, above the wallpaper and below every window. The right-click menu is asked for by the
-//! desktop process (see `shellman_core::desktop_menu`) and shown here, on any monitor.
+//! that fans open on click. The widgets (Today, Now playing) sit top right (`widgets`). All of
+//! it lives at desktop level, above the wallpaper and below every window. The right-click menu
+//! is asked for by the desktop process (see `shellman_core::desktop_menu`) and shown here, on
+//! any monitor.
 //!
 //! Its own process, apart from the desktop's: the desktop process stays plain Win32 (it carries
 //! Windows' modern-app host and must not fall over), while this one loads egui, the GPU and the
@@ -25,9 +26,11 @@ mod geometry;
 mod log;
 mod menu;
 mod stacks;
+mod test_monitor;
 mod text;
 mod views;
 mod wallpaper;
+mod widgets;
 mod window;
 
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
@@ -106,8 +109,14 @@ fn main() -> eframe::Result {
         }
         return Ok(());
     }
+    let mut viewport = egui::ViewportBuilder::default();
+    // A test copy kept to one monitor makes its first window there too (hidden until placed;
+    // the 1.5 only needs to land it on that monitor, the placing then puts it exactly).
+    if let Some((x, y)) = test_monitor::point() {
+        viewport = viewport.with_position([x as f32 / 1.5, y as f32 / 1.5]);
+    }
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
+        viewport: viewport
             .with_title(shellman_core::desktop_menu::shelf_title())
             .with_inner_size([geometry::window_width(), 600.0])
             .with_decorations(false)

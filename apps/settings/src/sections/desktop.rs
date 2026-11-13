@@ -1,6 +1,6 @@
 //! Desktop: the desktop's style (Shelf + widgets, or Clean) as two preview tiles, and the shelf's
-//! rows: on or off, which displays, which edge, which stacks, and where dropped files go. The shelf follows the
-//! file as it changes. The widgets' rows come with the widgets.
+//! rows: on or off, which displays, which edge, which stacks, and where dropped files go; then the
+//! widgets, their calendar and weather (`desktop_widgets`). The shelf follows the file as it changes.
 
 use crate::page;
 use crate::pick::Pick;
@@ -46,6 +46,7 @@ pub fn show(ui: &mut Ui, st: &mut State) {
     if changed {
         st.save_desktop();
     }
+    super::desktop_widgets::show(ui, st, clean);
     // A folder chosen for dropped files.
     if let Some(pick) = &mut st.desktop_pick {
         ui.ctx().request_repaint_after(std::time::Duration::from_millis(250));
@@ -60,7 +61,7 @@ pub fn show(ui: &mut Ui, st: &mut State) {
 }
 
 /// One row: the label on the left, `add` on the right, a hairline above.
-fn row(ui: &mut Ui, label: &str, first: bool, add: impl FnOnce(&mut Ui) -> bool) -> bool {
+pub(super) fn row(ui: &mut Ui, label: &str, first: bool, add: impl FnOnce(&mut Ui) -> bool) -> bool {
     let c = colors();
     let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), ROW_H), Sense::hover());
     if !first {

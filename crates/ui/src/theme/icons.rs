@@ -96,6 +96,16 @@ pub fn semibold_font(size: f32) -> egui::FontId {
     }
 }
 
+/// Text in a light weight, for large numerals (the Today widget's date and temperature): the
+/// family's Light face, else Segoe UI Light, else the regular face.
+pub fn light_font(size: f32) -> egui::FontId {
+    if HAS_SEMIBOLD.load(std::sync::atomic::Ordering::Relaxed) {
+        egui::FontId::new(size, egui::FontFamily::Name("light".into()))
+    } else {
+        egui::FontId::proportional(size)
+    }
+}
+
 pub fn icon(c: char, size: f32) -> RichText {
     RichText::new(c.to_string()).font(icon_font(size))
 }
