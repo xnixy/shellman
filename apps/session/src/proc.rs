@@ -4,7 +4,8 @@ use crate::apps::App;
 use std::os::windows::process::CommandExt;
 use windows::Win32::Foundation::{CloseHandle, HANDLE};
 use windows::Win32::System::Threading::{
-    GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE,
+    GetExitCodeProcess, OpenProcess, TerminateProcess, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE,
+    PROCESS_TERMINATE,
 };
 
 const STILL_ACTIVE: u32 = 259;
@@ -49,8 +50,15 @@ impl Proc {
 
     pub fn open(pid: u32) -> Option<Proc> {
         let handle =
-            unsafe { OpenProcess(PROCESS_SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, false, pid) }.ok()?;
+            unsafe { OpenProcess(PROCESS_SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_TERMINATE, false, pid) }.ok()?;
         Some(Proc { pid, handle })
+    }
+
+    /// End it. Only for a requested restart of an app that ignored the request to close.
+    pub fn terminate(&self) {
+        unsafe {
+            let _ = TerminateProcess(self.handle, 1);
+        }
     }
 
     /// The exit code, or `None` while it still runs.

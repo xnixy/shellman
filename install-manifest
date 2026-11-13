@@ -1,0 +1,12 @@
+# Extra files `shellman-setup install` / `update` copy next to the exes, besides every
+# `shellman-*.exe`, `shellman_pickhook.dll` and licence file found in the source folder.
+#
+# Format, one per line:   [?] source [-> destination]
+#   source       relative to THIS file's folder (the repo root; in a release zip, the zip's root)
+#   destination  relative name in the install folder (default: the file's own name); no `..`
+#   ?            optional: say nothing when the file is not there
+# Everything below an `extras\` folder in the source folder is also copied, keeping its sub-path.
+#
+# Redistributables the terminal brings, once they are added to the repo, go here, e.g.:
+# ? redist/conpty.dll
+# ? redist/OpenConsole.exe

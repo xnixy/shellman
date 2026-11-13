@@ -13,4 +13,5 @@ egui.workspace = true
 shellman-ui.workspace = true
 
 [build-dependencies]
+shellman-buildinfo.workspace = true
 winresource.workspace = true

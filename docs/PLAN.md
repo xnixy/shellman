@@ -17,6 +17,7 @@ accent color, fast.
 | `apps/terminal` | Windows Terminal | stage 2: tabs, selection, mouse, profiles; `-d`/`-p`/`-e`/`--hold`; shellman's "Open Terminal here" opens it; can be Windows' default terminal (`--register-default-terminal`). Next: Settings controls, find, splits |
 | `apps/settings` | Settings pages for the shell | working: Appearance, Desktop, Dock, Top bar, Launcher, About; rebuilt Windows pages: Sound, Display, Apps, Startup, Fonts, Mouse & keyboard, Power, Date, time & region, Storage, Default apps (changes through Windows Settings), Windows Update |
 | `apps/session` | the shell process itself | the shell: the per-user Winlogon `Shell` value points at it (in daily use since 2026-11-12). Starts and supervises the apps, runs startup items, safety net, `--install`/`--uninstall` |
+| `apps/setup` | the installer | `shellman-setup`: `install`, `update [--restart]`, `status`, `uninstall`; a console tool that also works from a release folder (see Install and update) |
 
 Shared code:
 
@@ -25,6 +26,9 @@ Shared code:
   menu, folder watching, the app index (the shell's Apps folder), live DWM previews
   (`live_thumb`), shared settings types (`settings::{dock,bar,launcher}`), and settings files
   under `%APPDATA%\shellman`. `SHELLMAN_CONFIG_DIR` overrides that folder, for tests.
+- `crates/buildinfo`: the build stamp (`<crate version>+<git describe> <commit date>`, or
+  `SHELLMAN_BUILD_STAMP`) every exe carries as its `ProductVersion`, put there by each app's
+  `build.rs` (`shellman_buildinfo::apply`).
 - `crates/icons`: shellman's own app icons, drawn in code. The build-time `.ico` generator in
   `tools/icongen` and the running apps share it.
 
@@ -647,6 +651,18 @@ beside Explorer for tests.
   is adopted if there is one. Any other code is a crash: restart after 0.5 s, 2 s, then 8 s; five
   crashes within a minute and the app is given up on. All decisions are in `policy.rs`, pure and
   tested. Log: `%LOCALAPPDATA%\shellman\session.log` (64 KB, rotated).
+- **Restart requests**: `WM_COPYDATA` (`dwData` `SHMR`, text `restart <app>`) to the session's
+  window (class `ShellmanSession`, title `shellman session[ <instance>]`; `restart.rs`), sent by
+  `shellman-setup update --restart`. The window answers at once: 1 queued, 0 not an app it
+  supervises (on demand: Files, Settings, Tasks, Terminal), 2 ending or parked. The supervisor
+  posts WM_CLOSE to the app's windows and records that its exit was asked for; when the process
+  ends (any exit code) it starts again at once through `Crashes::on_requested_exit`: nothing is
+  added to the crash list, no 0.5/2/8 s pause, no give-up. For the bar the slot goes running ->
+  start scheduled, never "lost", and the 20 s `Shell_TrayWnd` deadline counts from the new copy's
+  own start, so the safety net cannot fire because of a requested restart; a new copy that then
+  crashes by itself is an ordinary crash (a broken update still ends in Explorer). An app that has
+  not closed after 6 s is ended (still a requested restart). Nothing restarts while the session is
+  ending or parked.
 - **Single instance**: mutex `Local\shellman-session[-<SHELLMAN_INSTANCE>]`.
 - **Adoption**: at start, an app whose exe already runs in this logon session is held, not
   started again (a session that crashed and was restarted by Winlogon, or a bar started by hand).
@@ -743,6 +759,66 @@ If the screen is empty after the swap: hold Shift at sign-in (the safety net sta
 Ctrl+Alt+Del, Task Manager, Run new task, `explorer.exe` (then `shellman-session --uninstall`
 from a terminal); or `reg delete "HKCU\Software\Microsoft\Windows NT\CurrentVersion\Winlogon" /v Shell /f`
 from Run new task with `cmd`. Signing in as another user is unaffected (the value is per user).
+
+## Install and update
+
+`apps/setup` is `shellman-setup.exe`, a console tool with no UI. Everything it touches can be
+redirected for tests: `--prefix` / `SHELLMAN_SETUP_PREFIX` (install folder, default
+`%LOCALAPPDATA%\Programs\shellman`), `--start-menu` / `SHELLMAN_SETUP_START_MENU`
+(`%APPDATA%\Microsoft\Windows\Start Menu\Programs\shellman`), `SHELLMAN_SETUP_CONFIG` /
+`SHELLMAN_SETUP_DATA` (`%APPDATA%\shellman`, `%LOCALAPPDATA%\shellman`, only for
+`--purge-config`), `SHELLMAN_INSTANCE` (which session to talk to; a test session has its own),
+`SHELLMAN_SETUP_SHELL` / `SHELLMAN_SETUP_TERMINAL` (stand-ins for the Winlogon `Shell` and
+`DelegationTerminal` values, `none` = absent). `--dry-run` on install, update and uninstall prints
+what would happen and changes nothing.
+
+**What is installed** (`manifest.rs`): every `shellman-*.exe` in the source folder (setup itself
+included), `shellman_pickhook.dll` (copied, never registered), licence files (`LICENSE*`,
+`NOTICE*`, `THIRD-PARTY*`), everything below an `extras\` folder there (or `--extras <dir>`),
+keeping sub-paths, and the lines of an `install-manifest` file (`[?] source [-> destination]`;
+the one in the folder, else the first in its parents, so the repo's serves `targetelease`).
+The terminal's `conpty.dll` and `OpenConsole.exe` go in as lines there once they exist in the repo.
+Icon packs are compiled into the exes; there are no font files.
+
+**Safety**: destinations are checked relative names (`paths.rs`: no `..`, drive, device name;
+re-checked with link resolution before every write, rename or delete). A file is copied to
+`<name>.new<pid>.tmp`, hash-verified, then the installed one is renamed aside to
+`<name>.old<HHmmss>.ext` (works for a running exe) and the new one renamed in; if that fails the
+aside is renamed back. A named mutex per install folder stops two setups interleaving. The
+`shellman-install.txt` record in the install folder lists what setup put there (uninstall removes
+exactly that, and its asides).
+
+**Updating a running app**: the file differs by SHA-256; a running exe goes aside and the report
+says "replaced (running: takes effect when the app restarts)". Without `--restart` nothing is
+closed or restarted. With `--restart` setup asks the session (see Session, Restart requests)
+to restart each replaced app that runs; the session itself is only replaced on disk ("takes effect
+at next sign-in"); apps the session does not supervise are never closed: setup lists their open
+windows as still on the old build. The session clears leftovers at its start; setup also removes
+the ones whose process has ended.
+
+**Not done by setup**: making shellman the Windows shell (`shellman-session --install`, an explicit
+separate step that setup only tells you about), registering the terminal as the default
+(`shellman-terminal --register-default-terminal`), registering the picker hook (`register.ps1`).
+`uninstall` refuses while shellman is the Winlogon shell or the default terminal, and while a
+process runs from the install folder.
+
+(a) Installing from a release folder (unzipped anywhere):
+
+    .\shellman-setup.exe install                 :: or  install --dry-run  first
+    .\shellman-setup.exe status
+    :: then, when you want it as your shell:
+    %LOCALAPPDATA%\Programs\shellman\shellman-session.exe --install   :: next sign-in; undo: --uninstall
+
+Updating later: unzip the new release anywhere and run `.\shellman-setup.exe update --restart`
+from it (`--from <folder>` otherwise).
+
+(b) The developer loop:
+
+    cargo build --release
+    targetelease\shellman-setup.exe update --restart
+
+(`status` shows each installed file against `targetelease`, which processes still run from old
+images, and the shell and default terminal state.)
 
 ## Icons
 

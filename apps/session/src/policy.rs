@@ -39,6 +39,12 @@ impl Crashes {
         }
         Next::Restart(DELAYS[(n - 1).min(DELAYS.len() - 1)])
     }
+
+    /// The process ended because the session asked it to (`restart.rs`): start it again at once.
+    /// Not a crash, so it is not counted, never gives up and never waits. Whatever the exit code.
+    pub fn on_requested_exit(&self) -> Next {
+        Next::Restart(Duration::ZERO)
+    }
 }
 
 #[cfg(test)]
@@ -65,6 +71,23 @@ mod tests {
         assert_eq!(c.on_exit(0xC000_0005, secs(5)), Next::Restart(secs(8)));
         assert_eq!(c.on_exit(101, secs(14)), Next::Restart(secs(8)));
         assert_eq!(c.on_exit(1, secs(23)), Next::GiveUp);
+    }
+
+    #[test]
+    fn a_requested_restart_is_not_a_crash() {
+        let mut c = Crashes::default();
+        // Even right after the budget is nearly spent, and with any exit code, asking changes nothing.
+        for t in 1..=4 {
+            c.on_exit(1, secs(t));
+        }
+        for _ in 0..10 {
+            assert_eq!(c.on_requested_exit(), Next::Restart(Duration::ZERO));
+        }
+        // The list still holds the four crashes (the fifth gives up) and nothing was added.
+        assert_eq!(c.on_exit(1, secs(5)), Next::GiveUp);
+        let mut fresh = Crashes::default();
+        fresh.on_requested_exit();
+        assert_eq!(fresh.on_exit(1, secs(1)), Next::Restart(DELAYS[0]), "the first real crash is still the first");
     }
 
     #[test]

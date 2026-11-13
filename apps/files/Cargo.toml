@@ -19,4 +19,5 @@ shellman-ui.workspace = true
 windows.workspace = true
 
 [build-dependencies]
+shellman-buildinfo.workspace = true
 winresource.workspace = true

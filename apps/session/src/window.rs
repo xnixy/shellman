@@ -3,12 +3,13 @@
 
 use crate::{log, shutdown};
 use std::sync::atomic::Ordering;
-use windows::core::w;
+use windows::core::{w, HSTRING};
+use windows::Win32::System::DataExchange::COPYDATASTRUCT;
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, PostQuitMessage, RegisterClassW, CW_USEDEFAULT, WM_CLOSE,
-    WM_DESTROY, WM_ENDSESSION, WM_QUERYENDSESSION, WNDCLASSW, WS_EX_TOOLWINDOW, WS_POPUP,
+    WM_COPYDATA, WM_DESTROY, WM_ENDSESSION, WM_QUERYENDSESSION, WNDCLASSW, WS_EX_TOOLWINDOW, WS_POPUP,
 };
 
 unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
@@ -28,6 +29,15 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPA
             }
             LRESULT(0)
         }
+        // "Restart app X" from shellman-setup (`restart.rs`): answered at once, handled by the supervisor.
+        WM_COPYDATA => {
+            let cds = lparam.0 as *const COPYDATASTRUCT;
+            if cds.is_null() || (*cds).dwData != crate::restart::MAGIC || (*cds).lpData.is_null() || (*cds).cbData > 256 {
+                return LRESULT(0);
+            }
+            let data = std::slice::from_raw_parts((*cds).lpData as *const u8, (*cds).cbData as usize);
+            LRESULT(crate::restart::on_request(data, shutdown::quiet()) as isize)
+        }
         WM_CLOSE => {
             shutdown::run("closed");
             let _ = DestroyWindow(hwnd);
@@ -44,6 +54,16 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPA
     }
 }
 
+/// The window's title: tells a test session (`SHELLMAN_INSTANCE`) from the real one, so a request
+/// meant for one never reaches the other.
+pub fn title(instance: &str) -> String {
+    if instance.is_empty() {
+        "shellman session".to_string()
+    } else {
+        format!("shellman session {instance}")
+    }
+}
+
 pub fn create() -> Option<HWND> {
     unsafe {
         let hinst = GetModuleHandleW(None).ok()?.into();
@@ -53,7 +73,7 @@ pub fn create() -> Option<HWND> {
         CreateWindowExW(
             WS_EX_TOOLWINDOW,
             class,
-            w!("shellman session"),
+            &HSTRING::from(title(&std::env::var("SHELLMAN_INSTANCE").unwrap_or_default())),
             WS_POPUP,
             CW_USEDEFAULT,
             CW_USEDEFAULT,
@@ -65,5 +85,14 @@ pub fn create() -> Option<HWND> {
             None,
         )
         .ok()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn title_names_the_instance() {
+        assert_eq!(super::title(""), "shellman session");
+        assert_eq!(super::title("t1"), "shellman session t1");
     }
 }
