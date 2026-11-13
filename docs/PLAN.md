@@ -404,6 +404,23 @@ monitor-sized glass popups, no glass made per click or per frame.
 "Open Terminal here" is one function (`shelf::terminal`), to be replaced by shellman's own
 terminal: Windows Terminal through its app alias `wt.exe -d <folder>` (starts without Explorer,
 tested), else the activation manager, else PowerShell.
+
+## Files: what it never does silently
+
+- Delete: before Del (or a drop on the Recycle Bin in the rail or a tab) does anything, a worker
+  asks `fsops::recycle::unrecyclable` which items cannot go to the bin: a volume without one
+  (network share, removable drive, optical/RAM drive; `GetDriveTypeW` of `GetVolumePathNameW`),
+  the drive's "Don't move files to the Recycle Bin" (`BitBucket\Volume\{guid}\NukeOnDelete`) or
+  the `NoRecycleFiles` policy, or an item bigger than the bin's `MaxCapacity` (a folder is added
+  up over at most 50,000 entries, metadata only). All can: the usual "Move to Recycle Bin?" (a
+  drop goes straight to the bin). Any cannot: a glass "Delete N items permanently?" that names
+  how many will be lost, red "Delete permanently", Enter and Esc cancel. The bin operation itself
+  carries `FOF_WANTNUKEWARNING`, so a wrong guess makes Windows ask rather than delete for good;
+  only after the user agreed (`Op::RecycleOrDelete`) is it left out. Files' dialogs sit on a piece of
+  the window's glass of their own while open (its shadow and rim), filled opaque in the glass's
+  colour: the glass lies under all Files draws, so a clear dialog would show the list through it.
+  Real blur behind a dialog needs a window of its own, as the popup menu has.
+
 ## Settings
 
 - One app writes the shared files under `%APPDATA%\shellman`. Every app follows them through its

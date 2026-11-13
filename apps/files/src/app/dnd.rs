@@ -338,9 +338,8 @@ impl super::FileMan {
             return;
         }
         match (d.payload, d.dest) {
-            (Payload::Files(paths), Some(Dest::Bin)) => {
-                self.run_op(shellman_core::fsops::Op::Recycle, "Delete", paths, None)
-            }
+            // Straight to the bin when all can go there; else it asks first, as a delete does.
+            (Payload::Files(paths), Some(Dest::Bin)) => self.recycle(paths, false),
             (Payload::Files(paths), Some(Dest::Dir(dir))) => self.transfer_files(paths, &dir, d.effect, None),
             (Payload::Image(png), Some(Dest::Dir(dir))) => self.write_new(dir, "Dropped image.png", png),
             (Payload::Text(t), Some(Dest::Dir(dir))) => self.write_new(dir, "Dropped text.txt", t.into_bytes()),

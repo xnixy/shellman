@@ -8,6 +8,7 @@ pub mod identity;
 mod link;
 mod listing;
 mod names;
+pub mod recycle;
 mod shell;
 pub(crate) mod time;
 

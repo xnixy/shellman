@@ -89,6 +89,9 @@ pub(super) struct Rename {
 
 pub(super) enum Dialog {
     Recycle(Vec<PathBuf>),
+    /// A delete of `paths`, of which `doomed` cannot go to the Recycle Bin and would be deleted
+    /// for good.
+    Permanent { paths: Vec<PathBuf>, doomed: Vec<PathBuf> },
     /// Items to delete for good, and their names for the question.
     BinDelete(Vec<Handle>, Vec<String>),
     /// Emptying the whole bin, with what is in it.
@@ -213,9 +216,7 @@ impl super::FileMan {
                     .into_iter()
                     .map(|e| e.path)
                     .collect();
-                if !paths.is_empty() {
-                    self.dialog = Some(Dialog::Recycle(paths));
-                }
+                self.recycle(paths, true);
             }
             Action::Clip(op) => self.clip_put(op == Op::Move),
             Action::Paste => self.paste(),

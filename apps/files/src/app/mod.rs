@@ -97,7 +97,7 @@ enum Msg {
     /// A file made from a pasted or dropped picture or text.
     Created(Result<PathBuf, String>),
     Toast(String),
-    /// The folder picker for Move to… or Copy to… answered.
+    /// The folder picker for Move toâ€¦ or Copy toâ€¦ answered.
     Chosen {
         op: Op,
         items: Vec<PathBuf>,
@@ -105,6 +105,32 @@ enum Msg {
     },
     /// The details island's reading of the selection.
     Details(details::Reading),
+    /// Which of the items to delete cannot go to the Recycle Bin; `ask` when the user is still to
+    /// confirm the delete itself (a drop on the bin is its own confirmation).
+    RecycleChecked {
+        paths: Vec<PathBuf>,
+        doomed: Vec<PathBuf>,
+        ask: bool,
+    },
+}
+
+/// What to do with a delete once it is known which items cannot go to the Recycle Bin.
+#[derive(Debug, PartialEq, Eq)]
+enum DeleteStep {
+    /// Ask "Move to the Recycle Bin?".
+    AskRecycle,
+    /// Recycle straight away.
+    Recycle,
+    /// Say that these will be deleted for good, and ask.
+    AskPermanent,
+}
+
+fn delete_step(doomed: usize, ask: bool) -> DeleteStep {
+    match (doomed, ask) {
+        (0, true) => DeleteStep::AskRecycle,
+        (0, false) => DeleteStep::Recycle,
+        _ => DeleteStep::AskPermanent,
+    }
 }
 
 /// Where each of a plan's items arrived, as the disk shows it afterwards: (from, to) for those
@@ -125,7 +151,7 @@ fn arrivals(plan: &OpPlan, renamed: &[(PathBuf, PathBuf)]) -> Vec<(PathBuf, Path
             let arrived = match plan.op {
                 Op::Move => !src.exists() && to.exists(),
                 Op::Copy | Op::Duplicate => key(&to) != key(src) && to.exists(),
-                Op::Recycle => false,
+                Op::Recycle | Op::RecycleOrDelete => false,
             };
             arrived.then(|| (src.clone(), to))
         })
@@ -412,6 +438,21 @@ impl FileMan {
         });
     }
 
+    /// Delete `paths` to the Recycle Bin: first, on a worker, find which cannot go there (a network
+    /// share, a removable drive, a bin turned off or too small), so that is said before anything
+    /// is deleted for good. `ask`: confirm the delete itself too.
+    pub(super) fn recycle(&self, paths: Vec<PathBuf>, ask: bool) {
+        if paths.is_empty() {
+            return;
+        }
+        let (tx, ctx) = (self.tx.clone(), self.ctx.clone());
+        std::thread::spawn(move || {
+            let doomed = fsops::recycle::unrecyclable(&paths, &fsops::recycle::RealProbe);
+            let _ = tx.send(Msg::RecycleChecked { paths, doomed, ask });
+            ctx.request_repaint();
+        });
+    }
+
     /// Run a shell operation on a worker. Afterwards the worker works out where each item
     /// arrived (under its own name, or the one a conflict gave it), for the tags to follow.
     fn run_plan(&self, plan: OpPlan) {
@@ -509,6 +550,11 @@ impl FileMan {
                 }
                 Msg::Chosen { op, items, dest } => self.send_to(op, items, dest),
                 Msg::Details(reading) => self.details.arrived(reading),
+                Msg::RecycleChecked { paths, doomed, ask } => match delete_step(doomed.len(), ask) {
+                    DeleteStep::AskRecycle => self.dialog = Some(Dialog::Recycle(paths)),
+                    DeleteStep::Recycle => self.run_op(Op::Recycle, "Delete", paths, None),
+                    DeleteStep::AskPermanent => self.dialog = Some(Dialog::Permanent { paths, doomed }),
+                },
                 Msg::DragEnded(ended) => {
                     self.dnd.dragging_out = false;
                     // A target that moved the items (or will): the folders change.
@@ -529,7 +575,7 @@ impl FileMan {
                         retagged |= match plan.op {
                             Op::Move => self.tags.store.rekey(from, to),
                             Op::Copy | Op::Duplicate => self.tags.store.copy_tree(from, to),
-                            Op::Recycle => false,
+                            Op::Recycle | Op::RecycleOrDelete => false,
                         };
                     }
                     if retagged {
@@ -691,8 +737,9 @@ impl eframe::App for FileMan {
         self.keyboard(ctx, &mut actions);
         self.dnd_begin(ctx, &mut actions);
 
-        self.layout(ctx, &mut actions);
+        // Before the layout, which hands the open dialog to the glass with the islands.
         self.dialogs(ctx);
+        self.layout(ctx, &mut actions);
 
         for a in actions {
             self.apply(a);
@@ -733,6 +780,15 @@ mod tests {
             to: Some(to.to_path_buf()),
             clear_clip: None,
         }
+    }
+
+    #[test]
+    fn nothing_is_deleted_for_good_without_saying_so() {
+        assert_eq!(delete_step(0, true), DeleteStep::AskRecycle);
+        // A drop on the bin is the confirmation, as long as everything goes there.
+        assert_eq!(delete_step(0, false), DeleteStep::Recycle);
+        assert_eq!(delete_step(1, true), DeleteStep::AskPermanent);
+        assert_eq!(delete_step(3, false), DeleteStep::AskPermanent);
     }
 
     #[test]
