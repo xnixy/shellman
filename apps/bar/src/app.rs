@@ -243,6 +243,14 @@ impl eframe::App for Host {
         let preview_open = shared.preview.tick(Instant::now());
         let covered = shared.bars.primary_top().is_some_and(foreground_covers_monitor_of);
         let notify_open = shared.notify.tick(Instant::now(), self.settings.do_not_disturb, covered);
+        if host::take_clock() {
+            // The clock jumped or the machine woke: the top bars were woken by the host window;
+            // the notifications' "4 min" redraw too.
+            self.wake.tops();
+            if notify_open {
+                ctx.request_repaint_of(notify::id());
+            }
+        }
         // The badge in the top bars' clock follows the notifications.
         let badge = shared.notify.badge();
         if badge != self.badge {
