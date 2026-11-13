@@ -191,7 +191,8 @@ impl TasksApp {
             list.push(Island::pill(title));
             self.title(ui, title);
             let top = title.bottom() + MARGIN;
-            self.rail(ui, &mut list, screen, top);
+            // The rail runs the window's whole height, level with the title pill.
+            self.rail(ui, &mut list, screen, title.top());
             let area = Rect::from_min_max(pos2(left, top), pos2(screen.right() - MARGIN, screen.bottom() - MARGIN));
             match self.page {
                 Page::Processes => processes::show(ui, area, &mut self.st, &mut list),

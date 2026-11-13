@@ -1,9 +1,9 @@
 //! Where the islands go, from the window's size alone: pure geometry, tested without a window.
 //!
 //! ```text
-//!            [ tabs pill ]                         [ sort | - [] x ]
-//!            [ < > ^ o  Home / Projects / shellman      search  ##  ]
-//!  [rail]    content (cards straight on the desktop, or a list on an island)
+//!  [rail]    [ tabs pill ]                         [ sort | - [] x ]
+//!  [ .. ]    [ < > ^ o  Home / Projects / shellman      search  ##  ]
+//!  [ .. ]    content (cards straight on the desktop, or a list on an island)
 //!  [ .. ]
 //!                     [ 3 selected  12 MB  Copy  Rename  Delete ]
 //! ```
@@ -38,7 +38,7 @@ pub(super) struct Plan {
     pub(super) tabs_row: Rect,
     pub(super) controls: Rect,
     pub(super) bar: Rect,
-    /// Where the rail may grow, down from its top.
+    /// The rail's column, the window's whole height.
     pub(super) rail_area: Rect,
     pub(super) content: Rect,
     /// Where the bottom pill sits, centred under the content.
@@ -74,7 +74,8 @@ impl Plan {
             pos2(inner_left, content_top),
             pos2(content_right, content_bottom),
         );
-        let rail_area = Rect::from_min_max(pos2(left, content_top), pos2(left + rail_w, bottom));
+        // The rail runs the window's whole height, level with the tabs at the top.
+        let rail_area = Rect::from_min_max(pos2(left, top), pos2(left + rail_w, bottom));
         Self {
             tabs_row,
             controls,
@@ -158,7 +159,8 @@ mod tests {
             let p = Plan::new(screen(1100.0, 700.0), false, rail_w);
             assert_eq!(p.content.left(), p.bar.left());
             assert_eq!(p.content.right(), p.bar.right());
-            assert_eq!(p.rail_area.top(), p.content.top());
+            assert_eq!(p.rail_area.top(), p.tabs_row.top());
+            assert_eq!(p.rail_area.bottom(), p.band.bottom());
             assert_eq!(p.controls.right(), p.bar.right());
             assert_eq!(p.content.left() - p.rail_area.right(), GAP);
             assert_eq!(p.tabs_row.left(), p.content.left());

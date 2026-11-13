@@ -277,7 +277,8 @@ tested), else the activation manager, else PowerShell.
   "shellman Settings" row.
 - Single instance.
 - Sidebars: Settings, Files and Task Manager draw their left rail with one component
-  (`shellman_ui::rail`): a blurred-glass island, icon and name per row, group headings (a thin
+  (`shellman_ui::rail`): a blurred-glass island the window's whole height (level with the top
+  pill, so no empty corner above it), icon and name per row, group headings (a thin
   line when folded), a fold button at its foot, names as glass pills on hover when folded. Below
   800 px the window shows icons only, whatever the choice. Rule: Appearance › Sidebars ("Show
   names" / "Icons only", `appearance.json` `rail_collapsed`) is the default for every app; an
