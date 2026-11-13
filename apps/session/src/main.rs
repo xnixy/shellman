@@ -3,13 +3,14 @@
 //! apps, restarts them when they crash, runs the user's startup items, and ends them in order at
 //! logoff. Plain Win32, no egui, nothing that can wait on anything else: the most robust piece.
 //!
-//! Beside Explorer nothing changes: this is only started by hand (for tests) or, later, by
-//! Winlogon after `--install`.
+//! Winlogon starts it as the user's shell after `--install`; by hand (for tests) it runs beside
+//! Explorer.
 
 mod apps;
 mod cli;
 mod fallback;
 mod find;
+mod leftovers;
 mod log;
 mod policy;
 mod proc;
@@ -41,6 +42,11 @@ fn main() {
     // The safety net is for the real shell. A test run may switch it on to try it.
     let safety = !test || std::env::var("SHELLMAN_SESSION_SAFETY").is_ok_and(|v| v == "on");
     log::line(&format!("session starts, {} apps{}", apps.len(), if test { " (test list)" } else { "" }));
+    if !test {
+        if let Some(dir) = std::env::current_exe().ok().and_then(|e| e.parent().map(std::path::Path::to_path_buf)) {
+            log::line(&format!("removed {} leftover *.old*.exe files", leftovers::sweep(&dir)));
+        }
+    }
     // Before any app: glass made while DWM does not allow transparency stays flat.
     transparency::start(test);
     let Some(_window) = window::create() else {

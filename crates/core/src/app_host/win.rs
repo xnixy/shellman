@@ -155,8 +155,9 @@ pub fn announce_taskbar() {
 }
 
 /// Ask every shellman glass panel to make its backdrop again (`shellman_ui::glass`'s
-/// `REFRESH_MESSAGE`). DWM serves the host backdrop flat until the immersive shell is up, and a
-/// backdrop made before then stays flat.
+/// `REFRESH_MESSAGE`). Blur does not wait for the host (the session publishes the transparency
+/// state itself, `system::transparency`), but a backdrop made before that state was published
+/// stays flat, so the broadcast is still a cheap way to make panels draw theirs again.
 pub fn refresh_glass() {
     unsafe {
         let message = RegisterWindowMessageW(w!("shellman-glass-refresh"));

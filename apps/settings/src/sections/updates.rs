@@ -8,7 +8,7 @@
 //! switch here could do nothing. Pausing was seen to take hold (see `update_pause`).
 
 use super::sound_rows::link_row;
-use super::updates_rows::{bar, button, history_row, toggle_row, update_row};
+use super::updates_rows::{bar, button, history_row, row_button, toggle_row, update_row};
 use crate::page;
 use crate::state::State;
 use egui::{Align, Align2, Layout, RichText, Sense, Vec2};
@@ -247,7 +247,7 @@ fn pause_group(ui: &mut egui::Ui, v: &mut UpdatesView, snap: &Snapshot, now: i64
             Some(until) => {
                 ui.label(format!("Paused until {}.", date(until)));
                 ui.add_space(8.0);
-                if button(ui, "Resume updates", false, true).clicked() {
+                if row_button(ui, "Resume updates", true).clicked() {
                     if let Some(w) = v.watch() {
                         w.resume();
                     }
@@ -264,7 +264,7 @@ fn pause_group(ui: &mut egui::Ui, v: &mut UpdatesView, snap: &Snapshot, now: i64
                 ui.horizontal(|ui| {
                     page::segmented(ui, &mut v.weeks, &opts);
                     ui.add_space(8.0);
-                    if button(ui, "Pause", false, true).clicked() {
+                    if row_button(ui, "Pause", true).clicked() {
                         if let Some(w) = v.watch() {
                             w.pause(v.weeks);
                         }

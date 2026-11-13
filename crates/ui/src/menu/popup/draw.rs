@@ -124,8 +124,10 @@ pub fn paint(painter: &Painter, origin: Pos2, level: &Level, rows: &[Row], lit: 
         let open = lit.open == Some(i);
         let hot = lit.hot == Some(i) || open;
         if hot && r.enabled {
-            // The accent, faint (made legible against the theme when the accent is not).
-            painter.rect_filled(rect, CornerRadius::same(ROW_RADIUS), c.row_selected);
+            // The mockup's quiet hover (--hover: 9 % white, 6 % black), as it shows over glass.
+            // The accent is for what is checked, not for where the pointer is.
+            let hover = if c.light { Color32::from_black_alpha(15) } else { Color32::from_white_alpha(23) };
+            painter.rect_filled(rect, CornerRadius::same(ROW_RADIUS), crate::glass::islands::shows_as(hover));
         }
         let fg = match () {
             _ if !r.enabled => theme::with_alpha(c.muted, if c.light { 190 } else { 140 }),

@@ -16,7 +16,7 @@ accent color, fast.
 | `apps/tasks` | Task Manager (Ctrl+Shift+Esc, through the switcher's hook) | working: Processes (apps and background, grouped, sort, search, End task / End process tree / details), Performance (CPU, memory, GPUs, disks, network), Services (read-only: status, startup type, PID, description, sort, search, go to process; read through the SCM in `crates/core/src/services`, off the UI thread, only while the page shows). End task / tree try unelevated first and, only when Windows refuses, go through `shellman-elevate`'s `end-processes <pid>:<start time>...` behind the UAC prompt (the helper rechecks start time and refuses critical processes); critical processes stay un-endable. Reads through `crates/core/src/procs` |
 | `apps/terminal` | Windows Terminal | stage 1: one shell in glass, GPU-drawn grid, scrollback. Next: tabs, selection, mouse, profiles |
 | `apps/settings` | Settings pages for the shell | working: Appearance, Desktop, Dock, Top bar, Launcher, About; rebuilt Windows pages: Sound, Display, Apps, Startup, Fonts, Mouse & keyboard, Power, Date, time & region, Storage, Default apps (changes through Windows Settings), Windows Update |
-| `apps/session` | the shell process itself | built, not yet the shell: starts and supervises the apps, runs startup items, safety net, `--install`/`--uninstall` (never run yet) |
+| `apps/session` | the shell process itself | the shell: the per-user Winlogon `Shell` value points at it (in daily use since 2026-11-12). Starts and supervises the apps, runs startup items, safety net, `--install`/`--uninstall` |
 
 Shared code:
 
@@ -527,7 +527,9 @@ each; `SHELLMAN_TERMINAL_STATS=<file>` logs frame times):
 ## Session
 
 `apps/session` (`shellman-session.exe`) is the one process Windows starts as the shell. Plain Win32,
-no egui, no `shellman-core`; it must be the most robust piece. Beside Explorer nothing starts it.
+no egui; it must be the most robust piece (`shellman-core` only for the registry and startup-item
+code Settings shares). Winlogon starts it as the user's shell (`--install`); by hand it runs
+beside Explorer for tests.
 
 - **Starts** next to its own exe, in order: desktop, bar, shelf, switcher, launcher `--background`,
   control `--background` (250 ms apart). Every child gets `SHELLMAN_SESSION=1`. The bar then leaves
@@ -541,6 +543,9 @@ no egui, no `shellman-core`; it must be the most robust piece. Beside Explorer n
 - **Single instance**: mutex `Local\shellman-session[-<SHELLMAN_INSTANCE>]`.
 - **Adoption**: at start, an app whose exe already runs in this logon session is held, not
   started again (a session that crashed and was restarted by Winlogon, or a bar started by hand).
+  An image renamed aside by an update while it ran (`shellman-bar.oldHHMMSS.exe`, which is the
+  path Windows then reports) still counts as that app. At start the session also deletes
+  `shellman-*.old<digits>.exe` files beside itself that are not in use.
 - **Logoff**: a hidden top-level window answers WM_QUERYENDSESSION with yes at once; on
   WM_ENDSESSION (or WM_CLOSE) it posts WM_CLOSE to every top-level window of the children, waits up
   to 4 s, logs who is left, never kills.
@@ -657,4 +662,5 @@ from Run new task with `cmd`. Signing in as another user is unaffected (the valu
 4. Top bar: "now" pill, notifications and calendar.
 5. Desktop: widgets (Today, Now playing) and arrange mode.
 6. Task View.
-7. `session`: built. Next: try the swap on a spare user account, then on the real one.
+7. `session`: done, and it is the real shell (the swap is made; `--uninstall` puts the previous
+   value back).

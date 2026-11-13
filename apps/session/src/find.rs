@@ -17,6 +17,31 @@ pub fn normal(path: &str) -> String {
     path.trim_start_matches("\\\\?\\").replace('/', "\\").to_lowercase()
 }
 
+/// Is `image` (a running process's exe) this app `want`? Same path, or the same file renamed
+/// aside by an update: Windows reports the renamed path for a running image, so a bar replaced
+/// while it ran shows up as `shellman-bar.old123456.exe` in the same folder.
+pub fn same_app(want: &str, image: &str) -> bool {
+    let (want, image) = (normal(want), normal(image));
+    if want == image {
+        return true;
+    }
+    let split = |p: &str| match p.rfind('\\') {
+        Some(i) => (p[..i].to_string(), p[i + 1..].to_string()),
+        None => (String::new(), p.to_string()),
+    };
+    let ((wd, wn), (id, inn)) = (split(&want), split(&image));
+    let Some(stem) = wn.strip_suffix(".exe") else { return false };
+    wd == id && is_old_name(&inn, stem)
+}
+
+/// `<stem>.old<something without dots>.exe`, lower-case input.
+fn is_old_name(name: &str, stem: &str) -> bool {
+    name.strip_prefix(stem)
+        .and_then(|r| r.strip_prefix(".old"))
+        .and_then(|r| r.strip_suffix(".exe"))
+        .is_some_and(|mid| !mid.is_empty() && !mid.contains(['.', '\\']))
+}
+
 fn image_of(pid: u32) -> Option<String> {
     unsafe {
         let h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
@@ -39,7 +64,7 @@ fn my_session() -> u32 {
 
 /// Pids of processes in this logon session whose exe is `exe`, other than this one.
 pub fn by_exe(exe: &std::path::Path) -> Vec<u32> {
-    let want = normal(&exe.to_string_lossy());
+    let want = exe.to_string_lossy().into_owned();
     let (me, session) = (unsafe { GetCurrentProcessId() }, my_session());
     let mut found = Vec::new();
     unsafe {
@@ -51,7 +76,7 @@ pub fn by_exe(exe: &std::path::Path) -> Vec<u32> {
             if pid != me {
                 let mut s = u32::MAX;
                 let _ = ProcessIdToSessionId(pid, &mut s);
-                if s == session && image_of(pid).is_some_and(|i| normal(&i) == want) {
+                if s == session && image_of(pid).is_some_and(|i| same_app(&want, &i)) {
                     found.push(pid);
                 }
             }
@@ -67,6 +92,26 @@ mod tests {
     #[test]
     fn paths_compare_loosely() {
         assert_eq!(super::normal("\\\\?\\C:\\A/b.EXE"), "c:\\a\\b.exe");
+    }
+
+    #[test]
+    fn a_renamed_image_is_still_the_app() {
+        let want = "C:\\P\\shellman-bar.exe";
+        assert!(super::same_app(want, "c:\\p\\SHELLMAN-BAR.exe"));
+        assert!(super::same_app(want, "C:\\P\\shellman-bar.old123456.exe"));
+        assert!(super::same_app(want, "\\\\?\\C:\\P\\shellman-bar.old1.exe"));
+    }
+
+    #[test]
+    fn nothing_else_matches() {
+        let want = "C:\\P\\shellman-bar.exe";
+        assert!(!super::same_app(want, "C:\\P\\shellman-barx.exe"));
+        assert!(!super::same_app(want, "C:\\P\\shellman-bar.old1.txt"));
+        assert!(!super::same_app(want, "C:\\P\\shellman-bar.old.exe.exe"));
+        assert!(!super::same_app(want, "C:\\P\\shellman-bar.old1.2.exe"));
+        assert!(!super::same_app(want, "C:\\Q\\shellman-bar.old1.exe"));
+        assert!(!super::same_app(want, "C:\\P\\sub\\shellman-bar.old1.exe"));
+        assert!(!super::same_app(want, "C:\\P\\shellman-shelf.old1.exe"));
     }
 
     #[test]
