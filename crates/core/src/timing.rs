@@ -59,11 +59,12 @@ pub fn init(app: &str) {
     };
     let file = dir.and_then(|d| {
         let _ = std::fs::create_dir_all(&d);
-        std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(d.join(format!("timing-{app}.log")))
-            .ok()
+        let path = d.join(format!("timing-{app}.log"));
+        // Left on for days, a log is started afresh past 1 MB (the last one kept as .old).
+        if std::fs::metadata(&path).is_ok_and(|m| m.len() > 1 << 20) {
+            let _ = std::fs::rename(&path, path.with_extension("old.log"));
+        }
+        std::fs::OpenOptions::new().create(true).append(true).open(path).ok()
     });
     let _ = SINK.set(Sink { app: app.to_owned(), created, file: Mutex::new(file) });
     write(created, "process created", "");

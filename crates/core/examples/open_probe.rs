@@ -26,6 +26,12 @@ fn main() {
         Some("signal") => signal(args.get(1).expect("event name")),
         Some("adapters") => adapters(),
         Some("now") => println!("{}", shellman_core::timing::now()),
+        Some("spawn") => {
+            // Start an exe as `sibling::start` does, and print the time just before.
+            let t = shellman_core::timing::now();
+            let _ = std::process::Command::new(args.get(1).expect("exe")).args(&args[2..]).spawn();
+            println!("{t}");
+        }
         Some("gl") => gl(),
         Some("d3d") => d3d(),
         _ => eprintln!("usage: open_probe fleet | signal <event> | adapters | now | gl | d3d"),

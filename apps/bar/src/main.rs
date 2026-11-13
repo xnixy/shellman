@@ -36,6 +36,7 @@ fn dnd_was_on() -> bool {
 }
 
 fn main() -> eframe::Result {
+    shellman_core::timing::init("bar");
     let test = std::env::args().any(|a| a == "--no-shell");
     let options = eframe::NativeOptions {
         // The host: one pixel, cloaked, never seen (see `host.rs`).
