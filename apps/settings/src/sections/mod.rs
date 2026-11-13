@@ -69,7 +69,7 @@ pub enum Section {
 }
 
 impl Section {
-    pub const ALL: [Section; 16] = [
+    pub const ALL: [Section; 17] = [
         Section::Appearance,
         Section::Desktop,
         Section::Sound,
