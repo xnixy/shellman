@@ -23,8 +23,6 @@ pub(super) enum Action {
     Paste,
     /// Shortcuts to the clipboard's items, in this folder.
     PasteShortcut,
-    /// Select this new item and start renaming it (a file the shell just made).
-    SelectRename(PathBuf),
     NewFolder,
     CopyPath,
     /// In the Recycle Bin: go to the folder the selected item came from and select it there.
@@ -89,6 +87,9 @@ pub(super) struct Rename {
 
 pub(super) enum Dialog {
     Recycle(Vec<PathBuf>),
+    /// A delete of `paths`, of which `doomed` cannot go to the Recycle Bin and would be deleted
+    /// for good.
+    Permanent { paths: Vec<PathBuf>, doomed: Vec<PathBuf> },
     /// Items to delete for good, and their names for the question.
     BinDelete(Vec<Handle>, Vec<String>),
     /// Emptying the whole bin, with what is in it.
@@ -213,26 +214,17 @@ impl super::FileMan {
                     .into_iter()
                     .map(|e| e.path)
                     .collect();
-                if !paths.is_empty() {
-                    self.dialog = Some(Dialog::Recycle(paths));
-                }
+                self.recycle(paths, true);
             }
             Action::Clip(op) => self.clip_put(op == Op::Move),
             Action::Paste => self.paste(),
             Action::PasteShortcut => self.paste_shortcut(),
-            Action::SelectRename(path) => {
-                if path.parent() == self.tabs[self.active].loc.dir() {
-                    self.tabs[self.active].select_after_load = Some((path, true));
-                    self.load(self.active);
-                }
-            }
             Action::NewFolder => {
                 let Some(dir) = self.tabs[self.active].loc.dir().map(Path::to_path_buf) else {
                     return;
                 };
-                let path = fsops::unique_child(&dir, "New folder");
-                match std::fs::create_dir(&path) {
-                    Ok(()) => {
+                match fsops::create_new_dir(&dir, "New folder") {
+                    Ok(path) => {
                         self.tabs[self.active].select_after_load = Some((path, true));
                         self.load(self.active);
                     }
@@ -293,12 +285,8 @@ impl super::FileMan {
                     }
                 });
             }
-            Action::Reveal(path) => {
-                if let Some(parent) = path.parent().filter(|p| p.is_dir()) {
-                    self.navigate(Loc::Dir(parent.to_path_buf()));
-                    self.tabs[self.active].select_after_load = Some((path, false));
-                }
-            }
+            // Whether its folder is there is looked at on a worker (see `probed`).
+            Action::Reveal(path) => self.probe(super::Probed::Reveal(path)),
             Action::Properties => {
                 let tab = &self.tabs[self.active];
                 let target = match tab.selection().first() {
@@ -377,8 +365,10 @@ impl super::FileMan {
         tab.cursor = None;
         tab.anchor = None;
         tab.filter.clear();
+        tab.expect_new = None;
         tab.list_offset = 0.0;
         self.thumbs.cancel_pending();
+        self.counts.cancel();
         self.bin_sort(self.active);
         self.rename = None;
         self.editing_path = None;
@@ -416,7 +406,13 @@ impl super::FileMan {
             self.tabs[self.active].selected.clear();
         }
         let has_clip = (self.clip.can_paste(), self.clip.has_files());
-        self.menu.open(&self.ctx, pos, target, background, has_clip);
+        // Whether the one item is a folder, from the listing: the disk is not asked here.
+        let tab = &self.tabs[self.active];
+        let is_dir = match target.items.as_slice() {
+            [one] => tab.row_of(one).is_some_and(|r| tab.entry(r).is_dir),
+            _ => false,
+        };
+        self.menu.open(&self.ctx, pos, target, is_dir, background, has_clip);
     }
 
     fn open_entry(&mut self, e: &Entry, many: bool) {
@@ -446,19 +442,22 @@ impl super::FileMan {
             return;
         };
         let target = parent.join(new_name);
-        // A change of case only is allowed even though the target "exists".
-        let case_only = old_name.is_some_and(|o| o.eq_ignore_ascii_case(new_name));
-        if target.exists() && !case_only {
-            self.toast(format!("There is already an item named {new_name}"));
-            return;
-        }
-        match std::fs::rename(&r.path, &target) {
+        // Never over another item: no look first (something can appear between the look and the
+        // rename), the rename itself refuses. A change of case only renames the same item.
+        match fsops::rename_no_replace(&r.path, &target) {
             Ok(()) => {
                 if self.tags.store.rekey(&r.path, &target) {
                     self.tags_changed();
                 }
-                self.tabs[self.active].select_after_load = Some((target, false));
+                // The item stays selected under its new name; alone, the cursor goes to it too.
+                let tab = &mut self.tabs[self.active];
+                if tab.renamed(&r.path, &target) {
+                    tab.select_after_load = Some((target, false));
+                }
                 self.load(self.active);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                self.toast(format!("There is already an item named {new_name}"))
             }
             Err(e) => self.toast(format!("Couldn't rename: {e}")),
         }

@@ -40,8 +40,9 @@ pub(super) fn total_text(t: &Total) -> (String, String) {
     (parts.join(", "), size)
 }
 
-/// The line under the name: "PNG image · 3840 × 2160 · 4.2 MB", or for a folder its type.
-pub(super) fn subline(e: &Entry, pixels: Option<(u32, u32)>) -> String {
+/// The line under the name: "PNG image · 3840 × 2160 · 4.2 MB", or for a folder its type. A
+/// cloud item whose content is not on this disk says so (its pixels and lines were not read).
+pub(super) fn subline(e: &Entry, pixels: Option<(u32, u32)>, online_only: bool) -> String {
     let mut parts = vec![if e.is_dir {
         "Folder".to_owned()
     } else {
@@ -52,6 +53,9 @@ pub(super) fn subline(e: &Entry, pixels: Option<(u32, u32)>) -> String {
     }
     if !e.is_dir {
         parts.push(fsops::format_size(e.size));
+    }
+    if online_only {
+        parts.push("Available online only".to_owned());
     }
     parts.join(" · ")
 }
@@ -162,7 +166,7 @@ impl super::FileMan {
         // The name and what it is.
         let (name, sub) = match sel.as_slice() {
             [] => (loc.title(), text::count(view_len, "item")),
-            [e] => (e.name.clone(), subline(e, reading.pixels)),
+            [e] => (e.name.clone(), subline(e, reading.pixels, reading.online_only)),
             many => {
                 let files: u64 = many.iter().filter(|e| !e.is_dir).map(|e| e.size).sum();
                 let quick = text::count(many.len(), "item");
@@ -433,9 +437,10 @@ mod tests {
             kind: "PNG file".into(),
             hidden: false,
         };
-        let s = subline(&e, Some((3840, 2160)));
+        let s = subline(&e, Some((3840, 2160)), false);
         assert!(s.starts_with("PNG · 3840 × 2160 · "), "{s}");
         let dir = Entry { is_dir: true, kind: "Folder".into(), ..e };
-        assert_eq!(subline(&dir, None), "Folder");
+        assert_eq!(subline(&dir, None, false), "Folder");
+        assert_eq!(subline(&dir, None, true), "Folder · Available online only");
     }
 }

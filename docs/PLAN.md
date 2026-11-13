@@ -314,7 +314,8 @@ glass islands following the glass slider, dark and light.
 - Where: in the shelf process (`apps/shelf/src/widgets`), not an app of their own: it already has
   desktop-level glass windows that never activate, are never in Alt+Tab, step aside for a
   fullscreen app per monitor, and follow `desktop.json` live. Each monitor with widgets gets one
-  more immediate viewport (`shellman shelf widgets <device>`), with the shelf windows' manners
+  more viewport (`shellman shelf widgets <device>`), deferred, so it is drawn when it asks and
+  not with every frame of the shelves; its state lives on the window thread. It has the shelf windows' manners
   (`window::prepare_other`), its glass attached once. Size (`widgets::place`): the widgets'
   column plus the shadow, as tall as the tallest stack (Today with three rows and a heading, then
   Now playing), cut to the work area: 452x569 pt (678x854 px at 150%), never the monitor (and at most half its width),
@@ -325,7 +326,10 @@ glass islands following the glass slider, dark and light.
 - Idle: no repaint loop. Frames come from data arriving (the feeds worker, the media session),
   the pointer, a minute tick for the date and the "in 25 min" chips, and a one-second tick only
   while something plays (its time and progress line); none while a fullscreen app covers the
-  monitor. Measured 0 ms of CPU in 15 s at rest (debug build, no media session).
+  monitor. The ticks, the feeds and the media session ask for a frame of the widget windows only;
+  the shelves are not drawn for them (before, every tick drew every shelf and widget window).
+  Anything that draws the shelves also draws the widgets once. Measured 0 ms of CPU in 15 s at
+  rest (debug build, no media session).
 - Today: weekday, the day's number large (Segoe UI Light, `theme::light_font`), the month; the
   weather beside it (icon, temperature, "London · light rain", "H 8° · L 3°"); then up to three
   rows of what is left of today (all-day first, then by time; a calendar colour dot; the next one
@@ -447,6 +451,36 @@ monitor-sized glass popups, no glass made per click or per frame.
 "Open Terminal here" is one function (`shelf::terminal`), to be replaced by shellman's own
 terminal: Windows Terminal through its app alias `wt.exe -d <folder>` (starts without Explorer,
 tested), else the activation manager, else PowerShell.
+
+## Files: what it never does silently
+
+- Delete: before Del (or a drop on the Recycle Bin in the rail or a tab) does anything, a worker
+  asks `fsops::recycle::unrecyclable` which items cannot go to the bin: a volume without one
+  (network share, removable drive, optical/RAM drive; `GetDriveTypeW` of `GetVolumePathNameW`),
+  the drive's "Don't move files to the Recycle Bin" (`BitBucket\Volume\{guid}\NukeOnDelete`) or
+  the `NoRecycleFiles` policy, or an item bigger than the bin's `MaxCapacity` (a folder is added
+  up over at most 50,000 entries, metadata only). All can: the usual "Move to Recycle Bin?" (a
+  drop goes straight to the bin). Any cannot: a glass "Delete N items permanently?" that names
+  how many will be lost, red "Delete permanently", Enter and Esc cancel. The bin operation itself
+  carries `FOF_WANTNUKEWARNING`, so a wrong guess makes Windows ask rather than delete for good;
+  only after the user agreed (`Op::RecycleOrDelete`) is it left out. Files' dialogs sit on a piece of
+  the window's glass of their own while open (its shadow and rim), filled opaque in the glass's
+  colour: the glass lies under all Files draws, so a clear dialog would show the list through it.
+  Real blur behind a dialog needs a window of its own, as the popup menu has.
+- Cloud files (OneDrive, iCloud and other Files On-Demand placeholders: attributes OFFLINE,
+  RECALL_ON_OPEN or RECALL_ON_DATA_ACCESS, `fsops::not_local`) are never read unasked: the
+  details island reads no pixels or first lines of them ("Available online only" in their line)
+  and does not walk such a folder; folder cards do not count one; thumbnails and program icons
+  (`core::thumbs`, so Files, the shelf, the dock and the rest) come from the shell's cache only
+  (`SIIGBF_INCACHEONLY`). The details island reads an image's header only for image names
+  (png, jpg, gif, bmp, webp), never the start of any other file.
+- The window's thread never lists a folder or asks whether a path is there (a disconnected
+  network path blocks for seconds): a typed path, Reveal / Open file location, the bin's "show
+  original" and a drop on a picker are looked at on a worker (`Msg::Probed`; dropped when the
+  tab went elsewhere meanwhile); an item menu takes "is a folder" from the listing. After
+  "New ▸ …" the tab keeps the paths it listed and its next listings (the folder watcher's, on a
+  worker) select and rename the first item not there before, for up to 10 s.
+
 ## Settings
 
 - One app writes the shared files under `%APPDATA%\shellman`. Every app follows them through its

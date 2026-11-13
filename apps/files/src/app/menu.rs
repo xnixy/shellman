@@ -19,7 +19,7 @@ use shellman_core::shell_menu::{Cascade, Item, Loader, Palette, Route, Target};
 use shellman_ui::menu::popup::{Anchor, Entry, PopupMenu};
 use shellman_ui::theme::{colors, glyph};
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -95,9 +95,9 @@ pub(super) struct ContextMenu {
     /// The plain menu open now, by its key; and the last one that closed, and when.
     plain: Option<&'static str>,
     closed: Option<(&'static str, f64)>,
-    /// A New entry was picked: the folder, what was in it, and when to stop looking for the file
-    /// it makes (0 until the next frame sets it).
-    made: Option<(PathBuf, HashSet<PathBuf>, f64)>,
+    /// A New entry was picked in this folder: the tab looks for the item it makes when its
+    /// listing next comes back (see `take_made`).
+    made: Option<PathBuf>,
 }
 
 impl ContextMenu {
@@ -124,9 +124,10 @@ impl ContextMenu {
         self.loader.want(target);
     }
 
-    /// Open the right-click menu at `pos` (a point of the window) for `target`.
-    pub(super) fn open(&mut self, ctx: &Context, pos: Pos2, target: Target, background: bool, has_clip: (bool, bool)) {
-        let is_dir = target.items.len() == 1 && target.items[0].is_dir();
+    /// Open the right-click menu at `pos` (a point of the window) for `target`. `is_dir`: the one
+    /// item is a folder, as the listing says (the disk is not asked on the window's thread).
+    pub(super) fn open(&mut self, ctx: &Context, pos: Pos2, target: Target, is_dir: bool, background: bool, has_clip: (bool, bool)) {
+        let is_dir = target.items.len() == 1 && is_dir;
         let open = Open { target, is_dir, background, has_clip };
         let entries = self.entries(ctx, &open);
         self.menu.open(ctx, Anchor::in_window(ctx, pos), entries);
@@ -172,7 +173,6 @@ impl ContextMenu {
         self.loader.set_palette(Palette { text: rgb(c.text), background: rgb(c.popup) });
         self.loader.poll();
         let notice = self.loader.take_notice();
-        self.find_made(ctx, actions);
         let now = ctx.input(|i| i.time);
         // What was picked, before the entries are updated (a pick is looked up among them).
         match self.menu.take_pick() {
@@ -215,26 +215,11 @@ impl ContextMenu {
         notice
     }
 
-    /// After a New entry: the first file that appears in the folder is selected and renamed, as
-    /// Explorer does. The shell makes it a moment after the pick, so the folder is looked at
-    /// until it shows up.
-    fn find_made(&mut self, ctx: &Context, actions: &mut Vec<Action>) {
-        let now = ctx.input(|i| i.time);
-        let Some((dir, before, until)) = &mut self.made else { return };
-        if *until == 0.0 {
-            *until = now + 10.0;
-        }
-        let fresh = std::fs::read_dir(&*dir)
-            .ok()
-            .and_then(|d| d.flatten().map(|e| e.path()).find(|p| !before.contains(p)));
-        match fresh {
-            Some(path) => {
-                actions.push(Action::SelectRename(path));
-                self.made = None;
-            }
-            None if now > *until => self.made = None,
-            None => ctx.request_repaint_after(std::time::Duration::from_millis(120)),
-        }
+    /// The folder a New entry was just picked in, once. The shell makes the file a moment
+    /// later; the folder's watcher re-lists it on a worker, and the tab then selects and renames
+    /// the item that was not there before (see `Tab::expect_new`), as Explorer does.
+    pub(super) fn take_made(&mut self) -> Option<PathBuf> {
+        self.made.take()
     }
 
     fn pick_shell(&mut self, path: &[usize], actions: &mut Vec<Action>) {
@@ -247,10 +232,7 @@ impl ContextMenu {
             && owned.len() > 1
             && owned.last().and_then(|i| i.verb.as_deref()).is_some_and(|v| v.starts_with('.') || v == "newlink");
         if makes_file {
-            let before: HashSet<PathBuf> = std::fs::read_dir(&open.target.folder)
-                .map(|d| d.flatten().map(|e| e.path()).collect())
-                .unwrap_or_default();
-            self.made = Some((open.target.folder.clone(), before, 0.0));
+            self.made = Some(open.target.folder.clone());
         }
         let refs: Vec<&Item> = owned.iter().collect();
         let point = cursor();

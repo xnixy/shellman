@@ -97,7 +97,7 @@ enum Msg {
     /// A file made from a pasted or dropped picture or text.
     Created(Result<PathBuf, String>),
     Toast(String),
-    /// The folder picker for Move to… or Copy to… answered.
+    /// The folder picker for Move toâ€¦ or Copy toâ€¦ answered.
     Chosen {
         op: Op,
         items: Vec<PathBuf>,
@@ -105,6 +105,53 @@ enum Msg {
     },
     /// The details island's reading of the selection.
     Details(details::Reading),
+    /// Which of the items to delete cannot go to the Recycle Bin; `ask` when the user is still to
+    /// confirm the delete itself (a drop on the bin is its own confirmation).
+    RecycleChecked {
+        paths: Vec<PathBuf>,
+        doomed: Vec<PathBuf>,
+        ask: bool,
+    },
+    /// What a path turned out to be, looked at on a worker (a network path can take seconds):
+    /// Some(true) a folder, Some(false) a file, None nothing there. `asked` is the tab and where
+    /// it was when asked; the answer is dropped if it has moved on since.
+    Probed {
+        what: Probed,
+        kind: Option<bool>,
+        asked: (u64, Loc),
+    },
+}
+
+/// Why a path was looked at (see `FileMan::probe`).
+#[derive(Debug)]
+pub(super) enum Probed {
+    /// A path typed in the address bar.
+    Typed(String, PathBuf),
+    /// Go to the folder `path` is in and select it: the folder was looked at.
+    Reveal(PathBuf),
+    /// The bin's "show original": the original's folder was looked at.
+    BinOriginal(PathBuf),
+    /// Dropped on a picker: a folder is where to go, a file is shown in its folder.
+    Dropped(PathBuf),
+}
+
+/// What to do with a delete once it is known which items cannot go to the Recycle Bin.
+#[derive(Debug, PartialEq, Eq)]
+enum DeleteStep {
+    /// Ask "Move to the Recycle Bin?".
+    AskRecycle,
+    /// Recycle straight away.
+    Recycle,
+    /// Say that these will be deleted for good, and ask.
+    AskPermanent,
+}
+
+fn delete_step(doomed: usize, ask: bool) -> DeleteStep {
+    match (doomed, ask) {
+        (0, true) => DeleteStep::AskRecycle,
+        (0, false) => DeleteStep::Recycle,
+        _ => DeleteStep::AskPermanent,
+    }
 }
 
 /// Where each of a plan's items arrived, as the disk shows it afterwards: (from, to) for those
@@ -125,7 +172,7 @@ fn arrivals(plan: &OpPlan, renamed: &[(PathBuf, PathBuf)]) -> Vec<(PathBuf, Path
             let arrived = match plan.op {
                 Op::Move => !src.exists() && to.exists(),
                 Op::Copy | Op::Duplicate => key(&to) != key(src) && to.exists(),
-                Op::Recycle => false,
+                Op::Recycle | Op::RecycleOrDelete => false,
             };
             arrived.then(|| (src.clone(), to))
         })
@@ -412,6 +459,74 @@ impl FileMan {
         });
     }
 
+    /// Delete `paths` to the Recycle Bin: first, on a worker, find which cannot go there (a network
+    /// share, a removable drive, a bin turned off or too small), so that is said before anything
+    /// is deleted for good. `ask`: confirm the delete itself too.
+    pub(super) fn recycle(&self, paths: Vec<PathBuf>, ask: bool) {
+        if paths.is_empty() {
+            return;
+        }
+        let (tx, ctx) = (self.tx.clone(), self.ctx.clone());
+        std::thread::spawn(move || {
+            let doomed = fsops::recycle::unrecyclable(&paths, &fsops::recycle::RealProbe);
+            let _ = tx.send(Msg::RecycleChecked { paths, doomed, ask });
+            ctx.request_repaint();
+        });
+    }
+
+    /// Look at the path `what` is about on a worker, never on the window's thread: a disconnected network path
+    /// blocks for seconds. The answer comes back as `Msg::Probed`.
+    pub(super) fn probe(&self, what: Probed) {
+        let path = match &what {
+            Probed::Typed(_, p) | Probed::Dropped(p) => p.clone(),
+            Probed::Reveal(p) | Probed::BinOriginal(p) => match p.parent() {
+                Some(parent) => parent.to_path_buf(),
+                None => return,
+            },
+        };
+        let tab = &self.tabs[self.active];
+        let asked = (tab.id, tab.loc.clone());
+        let (tx, ctx) = (self.tx.clone(), self.ctx.clone());
+        std::thread::spawn(move || {
+            let kind = std::fs::metadata(&path).ok().map(|m| m.is_dir());
+            let _ = tx.send(Msg::Probed { what, kind, asked });
+            ctx.request_repaint();
+        });
+    }
+
+    /// A path looked at by `probe`, now known.
+    fn probed(&mut self, what: Probed, kind: Option<bool>, asked: (u64, Loc)) {
+        // The user went elsewhere meanwhile: a late answer must not take them away.
+        let tab = &self.tabs[self.active];
+        if (tab.id, &tab.loc) != (asked.0, &asked.1) {
+            return;
+        }
+        match (what, kind) {
+            (Probed::Typed(_, p), Some(true)) => self.apply(actions::Action::Navigate(Loc::Dir(p))),
+            // In a picker, a typed file is the one chosen.
+            (Probed::Typed(_, p), Some(false)) if self.pick.is_some() => self.pick_typed_path(&p),
+            (Probed::Typed(_, p), Some(false)) => fsops::open(&p),
+            (Probed::Typed(typed, _), None) => self.toast(format!("Can't find {typed}")),
+            (Probed::Reveal(path), Some(true)) => {
+                if let Some(parent) = path.parent() {
+                    self.apply(actions::Action::Navigate(Loc::Dir(parent.to_path_buf())));
+                    self.tabs[self.active].select_after_load = Some((path, false));
+                }
+            }
+            (Probed::Reveal(_), _) => {}
+            (Probed::BinOriginal(original), Some(true)) => {
+                if let Some(parent) = original.parent() {
+                    self.apply(actions::Action::Navigate(Loc::Dir(parent.to_path_buf())));
+                    self.tabs[self.active].select_after_load = Some((original, false));
+                }
+            }
+            (Probed::BinOriginal(_), _) => self.toast("That folder no longer exists"),
+            (Probed::Dropped(p), Some(true)) => self.apply(actions::Action::Navigate(Loc::Dir(p))),
+            (Probed::Dropped(p), Some(false)) => self.apply(actions::Action::Reveal(p)),
+            (Probed::Dropped(_), None) => {}
+        }
+    }
+
     /// Run a shell operation on a worker. Afterwards the worker works out where each item
     /// arrived (under its own name, or the one a conflict gave it), for the tags to follow.
     fn run_plan(&self, plan: OpPlan) {
@@ -440,6 +555,7 @@ impl FileMan {
                     // A folder changed: a tagged item in it may have been renamed by another app.
                     self.want_tag_check();
                     let show_hidden = self.settings.show_hidden;
+                    let now = self.ctx.input(|i| i.time);
                     let Some(t) = self.tabs.iter_mut().find(|t| t.id == tab && t.gen == gen) else {
                         continue;
                     };
@@ -453,6 +569,14 @@ impl FileMan {
                             t.error = Some(e);
                             t.entries.clear();
                             t.view.clear();
+                        }
+                    }
+                    // After a New entry: the item it made, once this listing has it.
+                    if let Some((before, until)) = t.expect_new.take() {
+                        match t.first_new(&before) {
+                            Some(made) => t.select_after_load = Some((made, true)),
+                            None if now < until => t.expect_new = Some((before, until)),
+                            None => {}
                         }
                     }
                     if let Some((path, rename)) = t.select_after_load.take() {
@@ -509,6 +633,12 @@ impl FileMan {
                 }
                 Msg::Chosen { op, items, dest } => self.send_to(op, items, dest),
                 Msg::Details(reading) => self.details.arrived(reading),
+                Msg::Probed { what, kind, asked } => self.probed(what, kind, asked),
+                Msg::RecycleChecked { paths, doomed, ask } => match delete_step(doomed.len(), ask) {
+                    DeleteStep::AskRecycle => self.dialog = Some(Dialog::Recycle(paths)),
+                    DeleteStep::Recycle => self.run_op(Op::Recycle, "Delete", paths, None),
+                    DeleteStep::AskPermanent => self.dialog = Some(Dialog::Permanent { paths, doomed }),
+                },
                 Msg::DragEnded(ended) => {
                     self.dnd.dragging_out = false;
                     // A target that moved the items (or will): the folders change.
@@ -529,7 +659,7 @@ impl FileMan {
                         retagged |= match plan.op {
                             Op::Move => self.tags.store.rekey(from, to),
                             Op::Copy | Op::Duplicate => self.tags.store.copy_tree(from, to),
-                            Op::Recycle => false,
+                            Op::Recycle | Op::RecycleOrDelete => false,
                         };
                     }
                     if retagged {
@@ -631,6 +761,14 @@ impl FileMan {
         if let Some(notice) = self.menu.show(ctx, &mut picked) {
             self.toast(notice);
         }
+        // A New entry: remember what the folder held, so its next listing shows what was made.
+        if let Some(folder) = self.menu.take_made() {
+            let until = ctx.input(|i| i.time) + 10.0;
+            let tab = &mut self.tabs[self.active];
+            if tab.loc.dir() == Some(folder.as_path()) {
+                tab.expect_new = Some((tab.entries.iter().map(|e| e.path.clone()).collect(), until));
+            }
+        }
         for a in picked {
             self.apply(a);
         }
@@ -691,8 +829,9 @@ impl eframe::App for FileMan {
         self.keyboard(ctx, &mut actions);
         self.dnd_begin(ctx, &mut actions);
 
-        self.layout(ctx, &mut actions);
+        // Before the layout, which hands the open dialog to the glass with the islands.
         self.dialogs(ctx);
+        self.layout(ctx, &mut actions);
 
         for a in actions {
             self.apply(a);
@@ -733,6 +872,15 @@ mod tests {
             to: Some(to.to_path_buf()),
             clear_clip: None,
         }
+    }
+
+    #[test]
+    fn nothing_is_deleted_for_good_without_saying_so() {
+        assert_eq!(delete_step(0, true), DeleteStep::AskRecycle);
+        // A drop on the bin is the confirmation, as long as everything goes there.
+        assert_eq!(delete_step(0, false), DeleteStep::Recycle);
+        assert_eq!(delete_step(1, true), DeleteStep::AskPermanent);
+        assert_eq!(delete_step(3, false), DeleteStep::AskPermanent);
     }
 
     #[test]

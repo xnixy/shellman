@@ -7,6 +7,20 @@ use std::time::SystemTime;
 
 const FILE_ATTRIBUTE_HIDDEN: u32 = 0x2;
 const FILE_ATTRIBUTE_SYSTEM: u32 = 0x4;
+/// Offline, recall on open, recall on data access: a cloud item (OneDrive, iCloud and other Files
+/// On-Demand providers) whose content is not on this disk. Reading it downloads it.
+pub const ATTR_NOT_LOCAL: u32 = 0x1000 | 0x4_0000 | 0x40_0000;
+
+/// Whether attributes say the content is not on this disk (see [`ATTR_NOT_LOCAL`]).
+pub fn attrs_not_local(attrs: u32) -> bool {
+    attrs & ATTR_NOT_LOCAL != 0
+}
+
+/// Whether `path`'s content is not on this disk, so nothing should read it unasked (a preview,
+/// a thumbnail, an icon, a count). Only the attributes are read, which downloads nothing.
+pub fn not_local(path: &Path) -> bool {
+    std::fs::symlink_metadata(path).is_ok_and(|m| attrs_not_local(m.file_attributes()))
+}
 
 #[derive(Clone, Debug)]
 pub struct Entry {
@@ -108,6 +122,20 @@ mod tests {
         let f = list.iter().find(|e| e.name == "a.txt").unwrap();
         assert_eq!((f.size, f.is_dir, f.kind.as_str()), (2, false, "TXT file"));
         assert_eq!(unique_child(&dir, "New folder"), dir.join("New folder (2)"));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn cloud_placeholders_are_not_local() {
+        assert!(attrs_not_local(0x1000), "offline");
+        assert!(attrs_not_local(0x4_0000 | 0x10), "recall on open (a folder)");
+        assert!(attrs_not_local(0x40_0000 | 0x400 | 0x20), "recall on data access (a OneDrive file)");
+        // Pinned or hydrated cloud files and plain ones are local.
+        assert!(!attrs_not_local(0x20 | 0x400 | 0x8_0000));
+        assert!(!attrs_not_local(0x80));
+        let dir = std::env::temp_dir().join(format!("shellman-local-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        assert!(!not_local(&dir));
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

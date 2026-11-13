@@ -8,7 +8,7 @@ use super::actions::Action;
 use super::tab::Loc;
 use crate::settings::ViewMode;
 use egui::{Align, Align2, CornerRadius, FontId, Id, Key, Rect, RichText, Sense, Stroke, Ui, Vec2};
-use shellman_core::fsops::{self, Drive};
+use shellman_core::fsops::Drive;
 use shellman_ui::chips::{chip, chip_width, round_icon, soft_colors, Chip, CHIP_H};
 use shellman_ui::theme::{self, colors, glyph, icon_font};
 use shellman_ui::widgets::select_all;
@@ -359,15 +359,9 @@ impl super::FileMan {
         let p = PathBuf::from(expand_env(typed));
         if typed.eq_ignore_ascii_case("this pc") || typed.is_empty() {
             actions.push(Action::Navigate(Loc::Pc));
-        } else if p.is_dir() {
-            actions.push(Action::Navigate(Loc::Dir(p)));
-        } else if p.is_file() && self.pick.is_some() {
-            // In a picker, a typed file is the one chosen.
-            self.pick_typed_path(&p);
-        } else if p.is_file() {
-            fsops::open(&p);
         } else {
-            self.toast(format!("Can't find {typed}"));
+            // A folder, a file, or nothing: looked at on a worker (see `probed`).
+            self.probe(super::Probed::Typed(typed.to_owned(), p));
         }
     }
 }

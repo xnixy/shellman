@@ -135,10 +135,9 @@ impl super::FileMan {
     }
 }
 
-/// A new file in `dir` named after `name` (numbered when taken).
+/// A new file in `dir` named after `name` (numbered when taken), never over an existing item.
 pub(super) fn write_new(dir: &Path, name: &str, bytes: &[u8]) -> Result<PathBuf, String> {
-    let path = shellman_core::fsops::unique_file(dir, name);
-    std::fs::write(&path, bytes).map(|()| path).map_err(|e| e.to_string())
+    shellman_core::fsops::create_new_file(dir, name, bytes).map_err(|e| e.to_string())
 }
 
 #[cfg(test)]

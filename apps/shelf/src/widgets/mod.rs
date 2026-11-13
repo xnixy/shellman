@@ -29,12 +29,35 @@ use shellman_core::settings::desktop::DesktopSettings;
 use shellman_core::system::media::{MediaWatch, NowPlaying};
 use shellman_core::system::media_art::Art;
 use shellman_ui::glass::{self, GlassPanel, Island, Style};
-use std::sync::Arc;
+use std::cell::RefCell;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use view::WidgetView;
 
+thread_local! {
+    /// The widgets' state, on the window thread. Their windows are deferred viewports, which
+    /// eframe draws on this thread whenever one of them asks: the once-a-second tick of Now
+    /// playing and the minute tick of Today redraw that window alone, never the shelves (which an
+    /// immediate viewport would, being drawn only inside the shelf's own frame).
+    static STATE: RefCell<Option<State>> = const { RefCell::new(None) };
+}
+
+/// The state, if this is the window thread and it is not in use (it never is re-entered).
+fn with_state<R>(f: impl FnOnce(&mut State) -> R) -> Option<R> {
+    STATE.with(|s| s.try_borrow_mut().ok()?.as_mut().map(f))
+}
+
+/// The shelf's handle on the widgets; their state lives in `STATE`.
 pub struct Widgets {
+    /// Not Send: the state is on this thread.
+    _here: std::marker::PhantomData<*const ()>,
+}
+
+struct State {
     views: Vec<WidgetView>,
+    /// The widget windows, for the feeds and the media session to ask for a frame of them
+    /// (from their own threads) without one of the shelves.
+    targets: Arc<Mutex<Vec<egui::ViewportId>>>,
     feeds: Option<Feeds>,
     media: Option<MediaWatch>,
     data: feeds::State,
@@ -53,10 +76,50 @@ fn now_utc() -> f64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0.0, |d| d.as_secs_f64())
 }
 
+/// Ask for a frame of each widget window.
+fn repaint_all(ctx: &egui::Context, targets: &Mutex<Vec<egui::ViewportId>>) {
+    for id in targets.lock().map(|t| t.clone()).unwrap_or_default() {
+        ctx.request_repaint_of(id);
+    }
+}
+
 impl Widgets {
     pub fn new() -> Self {
+        STATE.with(|s| *s.borrow_mut() = Some(State::new()));
+        Self { _here: std::marker::PhantomData }
+    }
+
+    /// See `State::apply`.
+    pub fn apply(&mut self, settings: &DesktopSettings, ctx: &egui::Context) -> bool {
+        with_state(|s| s.apply(settings, ctx)).unwrap_or(false)
+    }
+
+    /// See `State::lay_out`.
+    pub fn lay_out(&mut self, monitors: &[Monitor]) {
+        with_state(|s| s.lay_out(monitors));
+    }
+
+    /// In the shelf's frame: keep every widget window declared, and have it drawn again after
+    /// this frame (whatever made the shelf draw, the settings, the look or a fullscreen app, may
+    /// change it too). Their own ticks do not come through here.
+    pub fn frame(&mut self, ctx: &egui::Context) {
+        let views: Vec<(egui::ViewportId, egui::ViewportBuilder)> =
+            with_state(|s| s.views.iter().map(|v| (v.id, v.builder())).collect()).unwrap_or_default();
+        for (id, builder) in views {
+            ctx.show_viewport_deferred(id, builder, move |vctx, _| {
+                with_state(|s| s.frame_of(vctx, id));
+                shellman_ui::font_atlas::end_frame(vctx);
+            });
+            ctx.request_repaint_of(id);
+        }
+    }
+}
+
+impl State {
+    fn new() -> Self {
         Self {
             views: Vec::new(),
+            targets: Arc::new(Mutex::new(Vec::new())),
             feeds: None,
             media: None,
             data: feeds::State::default(),
@@ -77,9 +140,10 @@ impl Widgets {
         let relayout = shown != self.settings.widgets_shown() || settings.widgets.on != self.settings.widgets.on;
         let w = &settings.widgets;
         if shown && w.today {
+            let targets = self.targets.clone();
             let feeds = self.feeds.get_or_insert_with(|| {
                 let ctx = ctx.clone();
-                Feeds::start(move || ctx.request_repaint_of(egui::ViewportId::ROOT))
+                Feeds::start(move || repaint_all(&ctx, &targets))
             });
             let cal = &w.calendar;
             let fahrenheit = w.weather.units.fahrenheit(shellman_core::system::region::imperial());
@@ -97,8 +161,8 @@ impl Widgets {
         }
         if shown && w.now_playing {
             if self.media.is_none() {
-                let ctx = ctx.clone();
-                self.media = Some(MediaWatch::start(Arc::new(move || ctx.request_repaint_of(egui::ViewportId::ROOT))));
+                let (ctx, targets) = (ctx.clone(), self.targets.clone());
+                self.media = Some(MediaWatch::start(Arc::new(move || repaint_all(&ctx, &targets))));
             }
         } else if self.media.take().is_some() {
             self.playing = None;
@@ -109,7 +173,7 @@ impl Widgets {
     }
 
     /// The machine woke or the network came back: read again.
-    pub fn refresh(&self) {
+    fn refresh(&self) {
         if let Some(f) = &self.feeds {
             f.refresh();
         }
@@ -129,6 +193,9 @@ impl Widgets {
                 }
                 None => self.views.push(WidgetView::new(m)),
             }
+        }
+        if let Ok(mut t) = self.targets.lock() {
+            *t = self.views.iter().map(|v| v.id).collect();
         }
     }
 
@@ -153,9 +220,10 @@ impl Widgets {
         }
     }
 
-    /// The widgets' frames: take new data, draw every window, and ask for the next frame only
-    /// when something on screen will change by itself.
-    pub fn frame(&mut self, ctx: &egui::Context) {
+    /// The frame of the widget window `id`, in its own viewport's `ctx`: take new data, draw it,
+    /// and ask for its next frame (its own, not the shelves') only when something on it will
+    /// change by itself.
+    fn frame_of(&mut self, ctx: &egui::Context, id: egui::ViewportId) {
         if window::take_resumed() {
             log::line("resumed: reading the widgets' data again");
             self.refresh();
@@ -174,16 +242,9 @@ impl Widgets {
         let today = w.today.then(|| model::today(&self.data, !w.calendar.username.trim().is_empty(), now as i64, &offset, self.h24));
         let playing = if w.now_playing { self.playing.as_ref().map(|n| model::now_playing(n, now)) } else { None };
         let mut events = Vec::new();
-        let mut visible = false;
-        for i in 0..self.views.len() {
-            let (id, builder) = (self.views[i].id, self.views[i].builder());
-            let (today, playing, icons, art) = (&today, &playing, &mut self.icons, self.art.as_ref().map(|(_, t)| t.clone()));
-            let view = &mut self.views[i];
-            ctx.show_viewport_immediate(id, builder, |vctx, _| {
-                visible |= view_frame(vctx, view, today.as_ref(), playing.as_ref(), art.as_ref(), icons, &mut events);
-                shellman_ui::font_atlas::end_frame(vctx);
-            });
-        }
+        let art = self.art.as_ref().map(|(_, t)| t.clone());
+        let Some(view) = self.views.iter_mut().find(|v| v.id == id) else { return };
+        let visible = view_frame(ctx, view, today.as_ref(), playing.as_ref(), art.as_ref(), &mut self.icons, &mut events);
         for e in events {
             match e {
                 paint::Event::Media(a) => {

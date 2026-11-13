@@ -1,4 +1,5 @@
-//! One monitor's widget window: an egui viewport drawn with the shelf's (immediate), with the
+//! One monitor's widget window: an egui viewport of its own (deferred: drawn when it asks, not with
+//! every frame of the shelves), with the
 //! shelf windows' manners (desktop level, never activated, not in Alt+Tab, steps aside for a
 //! fullscreen app). Made once for its monitor, its glass attached once when first found, placed
 //! again only when the monitors change; dropped (glass first) when its monitor goes.

@@ -98,6 +98,10 @@ pub(super) struct Tab {
     pub(super) list_height: f32,
     /// After the next load, select this item, and maybe start renaming it.
     pub(super) select_after_load: Option<(PathBuf, bool)>,
+    /// A New entry was picked here: the paths the tab listed then, and until when (in egui's
+    /// time) to look for the item it makes. Each listing is checked; the first item not there
+    /// before is selected and renamed.
+    pub(super) expect_new: Option<(HashSet<PathBuf>, f64)>,
     /// The Recycle Bin's items by their stored path, for the original location and the handles
     /// restore and delete need. Empty in every other place.
     pub(super) bin: HashMap<PathBuf, BinItem>,
@@ -116,8 +120,8 @@ pub(super) struct Tab {
     order: Vec<usize>,
     /// Sort the cached `order` was built for; `None` means it must be rebuilt.
     sorted_for: Option<(SortKey, bool)>,
-    /// Identity of `entries` when `order` was built, so replacing them is noticed even when the
-    /// loader assigns the field directly instead of calling `set_entries`.
+    /// Identity of `entries` when `order` and `index` were built, so replacing them is noticed
+    /// even when the loader assigns the field directly instead of calling `set_entries`.
     entries_sig: (usize, usize),
     /// Entry index by path, for O(1) selection stats and `row_of`.
     index: HashMap<PathBuf, usize>,
@@ -148,6 +152,7 @@ impl Tab {
             list_offset: 0.0,
             list_height: 0.0,
             select_after_load: None,
+            expect_new: None,
             bin: HashMap::new(),
             sort_before_bin: None,
             only: None,
@@ -162,10 +167,12 @@ impl Tab {
         }
     }
 
-    /// Replace the entries (a fresh listing). Forces one re-sort on the next `rebuild_view`.
+    /// Replace the entries (a fresh listing). Forces one re-sort and a new path index on the
+    /// next `rebuild_view`.
     pub(super) fn set_entries(&mut self, entries: Vec<Entry>) {
         self.entries = entries;
         self.sorted_for = None;
+        self.entries_sig = (usize::MAX, 0);
     }
 
     /// Re-sorts only when the entries or the sort changed; otherwise just re-filters the cached
@@ -175,6 +182,15 @@ impl Tab {
         if sig != self.entries_sig {
             self.entries_sig = sig;
             self.sorted_for = None;
+            // Every time the entries change: a rename in the middle of a folder changes neither
+            // the count nor the first or last path, and a stale index loses the renamed item and
+            // keeps a ghost selection.
+            self.index = self
+                .entries
+                .iter()
+                .enumerate()
+                .map(|(i, e)| (e.path.clone(), i))
+                .collect();
         }
         if self.sorted_for != Some((self.sort, self.ascending)) {
             self.resort();
@@ -198,9 +214,9 @@ impl Tab {
         if !self.selected.is_empty() {
             let (index, rows) = (&self.index, &self.rows);
             self.selected.retain(|p| {
-                index
-                    .get(p)
-                    .is_some_and(|&i| rows.get(i).is_some_and(|&r| r != u32::MAX))
+                index.get(p).is_some_and(|&i| {
+                    entries.get(i).is_some_and(|e| e.path == *p) && rows.get(i).is_some_and(|&r| r != u32::MAX)
+                })
             });
         }
         self.cursor = self.cursor.filter(|&c| c < self.view.len());
@@ -231,25 +247,6 @@ impl Tab {
         });
         self.order = order;
         self.sorted_for = Some((key, asc));
-        // The path index depends only on the entries, so rebuild it only when they changed.
-        if self.index.len() != entries.len() || !self.index_matches() {
-            self.index = entries
-                .iter()
-                .enumerate()
-                .map(|(i, e)| (e.path.clone(), i))
-                .collect();
-        }
-    }
-
-    /// Cheap spot check that the index still describes `entries` after a sort-only rebuild.
-    fn index_matches(&self) -> bool {
-        self.entries
-            .first()
-            .is_none_or(|e| self.index.get(&e.path) == Some(&0))
-            && self
-                .entries
-                .last()
-                .is_none_or(|e| self.index.get(&e.path) == Some(&(self.entries.len() - 1)))
     }
 
     pub(super) fn entry(&self, row: usize) -> &Entry {
@@ -322,6 +319,21 @@ impl Tab {
         self.cursor = sel.cursor.filter(|&r| r < n);
     }
 
+    /// The item a New entry made, once the listing has it: the first not listed before.
+    pub(super) fn first_new(&self, before: &HashSet<PathBuf>) -> Option<PathBuf> {
+        self.entries.iter().map(|e| &e.path).find(|p| !before.contains(*p)).cloned()
+    }
+
+    /// Files renamed `old` to `new`: the selection keeps it under its new name, so the next
+    /// listing shows it still selected. True when it is all that is selected (then the cursor
+    /// should land on it too).
+    pub(super) fn renamed(&mut self, old: &Path, new: &Path) -> bool {
+        if self.selected.remove(old) {
+            self.selected.insert(new.to_path_buf());
+        }
+        self.selected.is_empty() || (self.selected.len() == 1 && self.selected.contains(new))
+    }
+
     pub(super) fn select_only(&mut self, row: usize) {
         self.selected.clear();
         self.selected.insert(self.entry(row).path.clone());
@@ -336,5 +348,87 @@ impl Tab {
             self.selected.insert(self.entry(r).path.clone());
         }
         self.cursor = Some(to);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn entry(dir: &str, name: &str, size: u64) -> Entry {
+        Entry {
+            name: name.into(),
+            key: name.to_lowercase(),
+            path: Path::new(dir).join(name),
+            is_dir: false,
+            size,
+            modified: None,
+            modified_text: String::new(),
+            kind: "File".into(),
+            hidden: false,
+        }
+    }
+
+    fn listing(names: &[(&str, u64)]) -> Vec<Entry> {
+        names.iter().map(|(n, s)| entry(r"C:\d", n, *s)).collect()
+    }
+
+    #[test]
+    fn a_rename_in_the_middle_leaves_no_ghost_and_finds_the_new_name() {
+        let mut t = Tab::new(1, Loc::Dir(PathBuf::from(r"C:\d")));
+        t.set_entries(listing(&[("a", 1), ("b", 10), ("c", 100)]));
+        t.rebuild_view(false);
+        let b = PathBuf::from(r"C:\d\b");
+        t.selected.insert(b.clone());
+        assert_eq!(t.selection_stats(), (1, 10));
+        // "b" renamed to "bb": same count, same first and last item. The listing comes back in
+        // the disk's order, with the item where "b" was.
+        t.set_entries(listing(&[("a", 1), ("bb", 20), ("c", 100)]));
+        t.rebuild_view(false);
+        assert!(t.selected.is_empty(), "the old name is gone, not a ghost: {:?}", t.selected);
+        assert_eq!(t.selection_stats(), (0, 0));
+        let bb = PathBuf::from(r"C:\d\bb");
+        // Found through the index, not a scan.
+        assert_eq!(t.index.get(&bb), Some(&1));
+        assert_eq!(t.row_of(&bb), Some(1));
+        t.select_only(1);
+        assert_eq!(t.selection_stats(), (1, 20));
+    }
+
+    #[test]
+    fn a_rename_by_files_keeps_the_selection() {
+        let mut t = Tab::new(1, Loc::Dir(PathBuf::from(r"C:\d")));
+        t.set_entries(listing(&[("a", 1), ("b", 10), ("c", 100)]));
+        t.rebuild_view(false);
+        let (a, b, bb) = (PathBuf::from(r"C:\d\a"), PathBuf::from(r"C:\d\b"), PathBuf::from(r"C:\d\bb"));
+        t.selected.extend([a.clone(), b.clone()]);
+        assert!(!t.renamed(&b, &bb), "two selected: the cursor is left alone");
+        t.set_entries(listing(&[("a", 1), ("bb", 10), ("c", 100)]));
+        t.rebuild_view(false);
+        assert_eq!(t.selected, HashSet::from([a.clone(), bb.clone()]));
+        assert_eq!(t.selection_stats(), (2, 11));
+        t.selected = HashSet::from([bb.clone()]);
+        assert!(t.renamed(&bb, Path::new(r"C:\d\z")));
+    }
+
+    #[test]
+    fn a_new_item_is_found_in_the_next_listing() {
+        let mut t = Tab::new(1, Loc::Dir(PathBuf::from(r"C:\d")));
+        t.set_entries(listing(&[("a", 1), ("b", 1)]));
+        let before: HashSet<PathBuf> = t.entries.iter().map(|e| e.path.clone()).collect();
+        assert_eq!(t.first_new(&before), None, "not made yet");
+        t.set_entries(listing(&[("a", 1), ("New Text Document.txt", 0), ("b", 1)]));
+        assert_eq!(t.first_new(&before), Some(PathBuf::from(r"C:\d\New Text Document.txt")));
+    }
+
+    #[test]
+    fn the_index_follows_entries_assigned_directly() {
+        let mut t = Tab::new(1, Loc::Dir(PathBuf::from(r"C:\d")));
+        t.entries = listing(&[("a", 1), ("b", 2), ("c", 3)]);
+        t.rebuild_view(false);
+        t.entries = listing(&[("a", 1), ("x", 2), ("c", 3)]);
+        t.rebuild_view(false);
+        assert_eq!(t.index.get(Path::new(r"C:\d\x")), Some(&1));
+        assert!(!t.index.contains_key(Path::new(r"C:\d\b")));
     }
 }

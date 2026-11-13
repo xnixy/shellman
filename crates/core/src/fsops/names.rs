@@ -72,6 +72,66 @@ pub fn unique_file(dir: &Path, name: &str) -> PathBuf {
         .unwrap()
 }
 
+/// The names `unique_file` tries for `name`, in order: "a.png", "a (2).png", "a (3).png", …
+fn file_names(name: &str) -> impl Iterator<Item = String> + '_ {
+    let (stem, ext) = match name.rfind('.') {
+        Some(i) if i > 0 => name.split_at(i),
+        _ => (name, ""),
+    };
+    std::iter::once(name.to_owned()).chain((2..).map(move |n| format!("{stem} ({n}){ext}")))
+}
+
+/// How many numbered names are tried before giving up.
+const MAX_TRIES: usize = 10_000;
+
+/// Write `bytes` to a new file in `dir` named after `name` (numbered when taken, as
+/// `unique_file`). The file is made only if no item has that name, in the same step: something
+/// made under that name between a look and the write is never written over.
+pub fn create_new_file(dir: &Path, name: &str, bytes: &[u8]) -> std::io::Result<PathBuf> {
+    use std::io::{ErrorKind, Write};
+    for candidate in file_names(name).take(MAX_TRIES) {
+        let path = dir.join(candidate);
+        match std::fs::OpenOptions::new().write(true).create_new(true).open(&path) {
+            Ok(mut f) => {
+                f.write_all(bytes)?;
+                return Ok(path);
+            }
+            Err(e) if e.kind() == ErrorKind::AlreadyExists => continue,
+            // A folder by that name: Windows says "access denied" rather than "exists".
+            Err(e) if e.kind() == ErrorKind::PermissionDenied && std::fs::symlink_metadata(&path).is_ok() => continue,
+            Err(e) => return Err(e),
+        }
+    }
+    Err(std::io::Error::new(ErrorKind::AlreadyExists, "every name is taken"))
+}
+
+/// A new folder in `dir` named `base`, or "base (2)" and up when taken; made in the same step as
+/// the name is found free, so it never fails on, or takes, a folder made meanwhile.
+pub fn create_new_dir(dir: &Path, base: &str) -> std::io::Result<PathBuf> {
+    use std::io::ErrorKind;
+    let names = std::iter::once(base.to_owned()).chain((2..).map(|n| format!("{base} ({n})")));
+    for candidate in names.take(MAX_TRIES) {
+        let path = dir.join(candidate);
+        match std::fs::create_dir(&path) {
+            Ok(()) => return Ok(path),
+            Err(e) if e.kind() == ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e),
+        }
+    }
+    Err(std::io::Error::new(ErrorKind::AlreadyExists, "every name is taken"))
+}
+
+/// Rename `from` to `to`, never replacing an item already at `to` (`std::fs::rename` does replace
+/// on Windows). A change of case only works, as the same item; in a case-sensitive folder where
+/// another item has that name, it fails. AlreadyExists when the name is taken.
+pub fn rename_no_replace(from: &Path, to: &Path) -> std::io::Result<()> {
+    use windows::core::PCWSTR;
+    use windows::Win32::Storage::FileSystem::{MoveFileExW, MOVE_FILE_FLAGS};
+    let (a, b) = (super::shell::wide_path(from), super::shell::wide_path(to));
+    unsafe { MoveFileExW(PCWSTR(a.as_ptr()), PCWSTR(b.as_ptr()), MOVE_FILE_FLAGS(0)) }
+        .map_err(|e| std::io::Error::from_raw_os_error(e.code().0 & 0xFFFF))
+}
+
 /// Checks a new name before renaming, with the reason Windows would refuse it.
 pub fn check_name(name: &str) -> Result<(), &'static str> {
     let name = name.trim();
@@ -120,6 +180,51 @@ mod tests {
         assert_eq!(natural_cmp("日本1", "日本01"), Ordering::Equal);
         assert_eq!(natural_cmp("日本", "日本語"), Ordering::Less);
         assert_eq!(natural_cmp("ä", "ö"), Ordering::Less);
+    }
+
+    fn temp(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("shellman-names-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn new_files_never_write_over_an_item() {
+        let dir = temp("new");
+        std::fs::write(dir.join("a.txt"), b"keep").unwrap();
+        // Taken meanwhile (made after any look): the next number, the old file untouched.
+        std::fs::write(dir.join("a (2).txt"), b"keep2").unwrap();
+        let made = create_new_file(&dir, "a.txt", b"new").unwrap();
+        assert_eq!(made, dir.join("a (3).txt"));
+        assert_eq!(std::fs::read(dir.join("a.txt")).unwrap(), b"keep");
+        assert_eq!(std::fs::read(dir.join("a (2).txt")).unwrap(), b"keep2");
+        assert_eq!(std::fs::read(&made).unwrap(), b"new");
+        // A folder by that name is taken too.
+        std::fs::create_dir(dir.join("b")).unwrap();
+        assert_eq!(create_new_file(&dir, "b", b"").unwrap(), dir.join("b (2)"));
+        assert_eq!(create_new_dir(&dir, "b").unwrap(), dir.join("b (3)"));
+        assert_eq!(create_new_dir(&dir, "c").unwrap(), dir.join("c"));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_rename_never_replaces() {
+        let dir = temp("rename");
+        let (a, b) = (dir.join("a.txt"), dir.join("b.txt"));
+        std::fs::write(&a, b"a").unwrap();
+        std::fs::write(&b, b"b").unwrap();
+        let err = rename_no_replace(&a, &b).unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists, "{err}");
+        assert_eq!(std::fs::read(&b).unwrap(), b"b");
+        assert_eq!(std::fs::read(&a).unwrap(), b"a");
+        // A change of case only: the same item, renamed.
+        rename_no_replace(&a, &dir.join("A.txt")).unwrap();
+        let names: Vec<String> = std::fs::read_dir(&dir).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+        assert!(names.contains(&"A.txt".to_owned()), "{names:?}");
+        rename_no_replace(&dir.join("A.txt"), &dir.join("c.txt")).unwrap();
+        assert_eq!(std::fs::read(dir.join("c.txt")).unwrap(), b"a");
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

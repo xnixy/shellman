@@ -328,19 +328,15 @@ impl super::FileMan {
             // In a picker, a dropped file is where to go: its folder, with it selected.
             if let Payload::Files(paths) = d.payload {
                 if let Some(p) = paths.into_iter().next() {
-                    if p.is_dir() {
-                        self.apply(Action::Navigate(Loc::Dir(p)));
-                    } else {
-                        self.apply(Action::Reveal(p));
-                    }
+                    // Folder or file: looked at on a worker (see `probed`).
+                    self.probe(super::Probed::Dropped(p));
                 }
             }
             return;
         }
         match (d.payload, d.dest) {
-            (Payload::Files(paths), Some(Dest::Bin)) => {
-                self.run_op(shellman_core::fsops::Op::Recycle, "Delete", paths, None)
-            }
+            // Straight to the bin when all can go there; else it asks first, as a delete does.
+            (Payload::Files(paths), Some(Dest::Bin)) => self.recycle(paths, false),
             (Payload::Files(paths), Some(Dest::Dir(dir))) => self.transfer_files(paths, &dir, d.effect, None),
             (Payload::Image(png), Some(Dest::Dir(dir))) => self.write_new(dir, "Dropped image.png", png),
             (Payload::Text(t), Some(Dest::Dir(dir))) => self.write_new(dir, "Dropped text.txt", t.into_bytes()),

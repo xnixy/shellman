@@ -111,15 +111,26 @@ fn parse_line(line: &str) -> Option<Prop> {
     Some(Prop { name: name.trim().to_ascii_uppercase(), params, value: line[at + 1..].to_owned() })
 }
 
+/// How deep components may nest. Real calendars go three deep (VCALENDAR, VEVENT, VALARM);
+/// deeper ones are skipped with all they hold, so a hostile body of 100,000 nested BEGINs
+/// cannot build a tree whose walk or drop overflows the stack.
+pub const MAX_DEPTH: usize = 16;
+
 /// The components in `text` (usually one `VCALENDAR`). Anything malformed is skipped, never
-/// fatal: a calendar from any server must not take the widget down.
+/// fatal: a calendar from any server must not take the widget down. Components nested deeper
+/// than [`MAX_DEPTH`] are left out.
 pub fn parse(text: &str) -> Vec<Component> {
     let mut stack: Vec<Component> = Vec::new();
     let mut top = Vec::new();
+    // BEGINs past the depth limit not yet ENDed: everything until their END is ignored.
+    let mut skipped = 0usize;
     for line in unfold(text) {
         let Some(prop) = parse_line(&line) else { continue };
         match prop.name.as_str() {
+            "BEGIN" if skipped > 0 || stack.len() >= MAX_DEPTH => skipped += 1,
             "BEGIN" => stack.push(Component { name: prop.value.trim().to_ascii_uppercase(), ..Default::default() }),
+            "END" if skipped > 0 => skipped -= 1,
+            _ if skipped > 0 => {}
             "END" => {
                 let Some(done) = stack.pop() else { continue };
                 match stack.last_mut() {
@@ -250,6 +261,33 @@ pub fn duration(s: &str) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn depth(c: &Component) -> usize {
+        1 + c.children.iter().map(depth).max().unwrap_or(0)
+    }
+
+    #[test]
+    fn deep_nesting_is_cut_off_and_cannot_overflow() {
+        let n = 100_000;
+        let mut text = String::from("BEGIN:VCALENDAR\r\n");
+        text.push_str(&"BEGIN:X\r\n".repeat(n));
+        text.push_str("SUMMARY:deep\r\n");
+        text.push_str(&"END:X\r\n".repeat(n));
+        text.push_str("BEGIN:VEVENT\r\nUID:after\r\nSUMMARY:Still read\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n");
+        let comps = parse(&text);
+        assert_eq!(comps.len(), 1);
+        assert!(depth(&comps[0]) <= MAX_DEPTH, "{}", depth(&comps[0]));
+        let mut events = Vec::new();
+        comps[0].find_all("VEVENT", &mut events);
+        assert_eq!(events.len(), 1, "the event after the deep part is still there");
+        assert_eq!(events[0].text("UID").as_deref(), Some("after"));
+        let mut xs = Vec::new();
+        comps[0].find_all("X", &mut xs);
+        assert!(xs.len() < MAX_DEPTH);
+        assert!(xs.iter().all(|x| x.prop("SUMMARY").is_none()), "the cut-off part's lines are not given to an ancestor");
+        // Dropping it is no trouble either (it is shallow).
+        drop(comps);
+    }
 
     #[test]
     fn folded_lines_params_and_nesting() {

@@ -98,6 +98,8 @@ impl super::FileMan {
                 list.extend(extra.into_iter().map(Island::pill));
                 // The rail's hover labels are glass too.
                 list.extend(shellman_ui::hover::islands(ui.ctx()));
+                // An open dialog floats on glass of its own.
+                list.extend(super::dialogs::island(ui.ctx()));
                 if !composed {
                     ui.painter()
                         .set(under, Shape::Vec(islands::solid_shapes(&list, &style)));
