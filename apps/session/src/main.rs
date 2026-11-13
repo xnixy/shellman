@@ -20,6 +20,7 @@ mod single;
 mod startup;
 mod supervisor;
 mod swap;
+mod transparency;
 mod window;
 
 use cli::Mode;
@@ -40,6 +41,8 @@ fn main() {
     // The safety net is for the real shell. A test run may switch it on to try it.
     let safety = !test || std::env::var("SHELLMAN_SESSION_SAFETY").is_ok_and(|v| v == "on");
     log::line(&format!("session starts, {} apps{}", apps.len(), if test { " (test list)" } else { "" }));
+    // Before any app: glass made while DWM does not allow transparency stays flat.
+    transparency::start(test);
     let Some(_window) = window::create() else {
         log::line("could not create the session window, stopping");
         return;

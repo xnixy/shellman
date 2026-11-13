@@ -28,13 +28,20 @@
 //! `SHELLMAN_NO_COMPOSITION` is set, to see this path), the window paints its own rounded surface
 //! with [`content_frame`], without blur or shadow.
 //!
-//! DWM serves the host backdrop as a flat colour while it does not allow transparency, and a
-//! backdrop set up then stays flat after DWM starts allowing it (measured without Explorer: the
-//! bar's glass stayed flat once Windows' app host brought the immersive shell up, while new
-//! windows blurred). So the backdrop window and its visuals are made again when DWM may have
-//! changed its mind: DWM restarted or changed colours, the immersive colours changed, or another
-//! shellman process asks with [`REFRESH_MESSAGE`] (the desktop does, once the host is up).
-//! `SHELLMAN_GLASS_LOG=1` prints what made a panel do so.
+//! DWM serves the host backdrop as a flat colour while a session WNF state says transparency is
+//! not allowed (or nobody has published it: without Explorer or Windows' app host, until the
+//! session publishes it; see `shellman_core::system::transparency`), and a backdrop set up then
+//! stays flat after DWM starts allowing it (measured: the bar's glass stayed flat once the state
+//! was published, while new windows blurred). So the backdrop window and its visuals are made
+//! again when DWM may have changed its mind: DWM restarted or changed colours, the immersive
+//! colours changed, or another shellman process asks with [`REFRESH_MESSAGE`] (the session does
+//! after it changed the state, the desktop once the app host is up). Rebuilds are coalesced, at
+//! most one per [`REBUILD_GAP`]. `SHELLMAN_GLASS_LOG=1` prints what made a panel do so.
+//!
+//! The panel defends DWM against its callers: every size goes through `guard` (a piece of no
+//! size is hidden, never sized to 0; nothing past 8192 px; no NaN), and a thread makes at most a
+//! few backdrop windows a second. Still, callers should not make glass per click or per frame,
+//! nor a monitor-sized glass popup: make one window, sized to its content, once, and keep it.
 //!
 //! Using it: attach a panel once the window exists, paint the content inside
 //! [`content_frame`]`(panel.composed(), ..)`, and pass the theme's style to
@@ -56,6 +63,7 @@
 mod backdrop;
 mod effect;
 mod cloak;
+mod guard;
 pub mod islands;
 mod style;
 mod tree;
@@ -67,6 +75,7 @@ pub use style::{content_frame, Geometry, Luminosity, Shadow, Style};
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::sync::OnceLock;
+use std::time::{Duration, Instant};
 use tree::{Paint, Placed, Tree};
 use windows::Win32::Foundation::POINT;
 use windows::Win32::Graphics::Gdi::ClientToScreen;
@@ -83,15 +92,24 @@ use windows::Win32::Graphics::Gdi::{
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::Shell::{DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass};
 use windows::Win32::UI::WindowsAndMessaging::{
-    DestroyWindow, GetWindowRect, IsIconic, IsWindowVisible, PostMessageW, RegisterWindowMessageW,
-    SetWindowPos, SWP_HIDEWINDOW, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
-    SWP_SHOWWINDOW, WM_DPICHANGED, WM_DWMCOLORIZATIONCOLORCHANGED, WM_DWMCOMPOSITIONCHANGED,
+    DestroyWindow, GetWindowRect, IsIconic, IsWindowVisible, KillTimer, PostMessageW,
+    RegisterWindowMessageW, SetTimer, SetWindowPos, SWP_HIDEWINDOW, SWP_NOACTIVATE, SWP_NOMOVE,
+    SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW, WM_DPICHANGED, WM_TIMER, WM_DWMCOLORIZATIONCOLORCHANGED, WM_DWMCOMPOSITIONCHANGED,
     WM_NCDESTROY, WM_SETTINGCHANGE, WM_WINDOWPOSCHANGED,
 };
 use windows::UI::ViewManagement::UISettings;
 
 /// The subclass id on the served window.
 const SUBCLASS: usize = 0x6c61_7373;
+/// The timer on the served window that runs a rebuild put off by [`REBUILD_GAP`].
+const REBUILD_TIMER: usize = 0x6c61_7374;
+/// The least time between two rebuilds of one panel.
+pub const REBUILD_GAP: Duration = Duration::from_millis(500);
+
+thread_local! {
+    /// How many backdrop windows this thread may still make right now (`guard::Bucket`).
+    static BACKDROPS: Cell<guard::Bucket> = Cell::new(guard::Bucket::default());
+}
 
 /// A rounded glass surface under one window. Dropping it removes the surface.
 pub struct GlassPanel {
@@ -105,6 +123,12 @@ struct Inner {
     composed: RefCell<Option<Composed>>,
     /// A rebuild of `composed` has been asked for and not yet done.
     rebuild_pending: Cell<bool>,
+    /// A rebuild is running (never two at once).
+    rebuilding: Cell<bool>,
+    /// When the last rebuild ran, for [`REBUILD_GAP`].
+    rebuilt: Cell<Option<Instant>>,
+    /// Rebuilds in a row that could not make a new backdrop.
+    retries: Cell<u8>,
     style: Cell<Style>,
     /// Where the surface is, in the window's pixels from its top-left; None for all of it.
     shape: Cell<Option<RECT>>,
@@ -168,6 +192,9 @@ impl GlassPanel {
             target,
             composed: RefCell::new(compose(hwnd)),
             rebuild_pending: Cell::new(false),
+            rebuilding: Cell::new(false),
+            rebuilt: Cell::new(None),
+            retries: Cell::new(0),
             style: Cell::new(style),
             shape: Cell::new(None),
             also: Cell::new(None),
@@ -237,6 +264,8 @@ impl GlassPanel {
     }
 
     fn put_islands(&self, islands: &[Island], scale: f32, hit: Hit) {
+        // A NaN scale would never compare equal, and lay the islands out again every frame.
+        let scale = guard::scale(scale);
         {
             let mut current = self.inner.islands.borrow_mut();
             if current.as_ref().is_some_and(|(list, s)| list == islands && *s == scale)
@@ -269,6 +298,7 @@ impl Drop for GlassPanel {
         }
         cloak::forget(inner.target);
         unsafe {
+            let _ = KillTimer(Some(inner.target), REBUILD_TIMER);
             let _ = RemoveWindowSubclass(inner.target, Some(follow_proc), SUBCLASS);
             if let Some(composed) = &composed {
                 let _ = DestroyWindow(composed.window);
@@ -284,6 +314,17 @@ fn compose(hwnd: isize) -> Option<Composed> {
         return None;
     }
     let compositor = tree::compositor()?;
+    // A caller making glass per click or per frame would have DWM create and destroy a target
+    // and its textures at that pace; past a short burst, a few a second.
+    if !BACKDROPS.with(|b| {
+        let mut bucket = b.get();
+        let ok = bucket.take(Instant::now());
+        b.set(bucket);
+        ok
+    }) {
+        trace(|| format!("glass {hwnd:#x}: backdrop windows made too often, none made now"));
+        return None;
+    }
     let window = backdrop::create()?;
     match Tree::new(&compositor, window) {
         Ok(tree) => Some(Composed {
@@ -311,13 +352,40 @@ impl Inner {
     /// Make the backdrop window and its visuals again, in place of the old ones, and lay them
     /// out. Keeps the old ones when new ones cannot be made.
     fn rebuild(&self) {
-        self.rebuild_pending.set(false);
-        if !self.alive.get() || self.composed.borrow().is_none() {
+        if self.rebuilding.get() {
             return;
         }
-        let Some(fresh) = compose(self.target.0 as isize) else {
+        if !self.alive.get() || self.composed.borrow().is_none() {
+            self.rebuild_pending.set(false);
+            return;
+        }
+        // At most one per REBUILD_GAP: a later one waits for the timer, and asks meanwhile
+        // join it (`rebuild_pending` stays set).
+        let wait = self
+            .rebuilt
+            .get()
+            .map_or(Duration::ZERO, |at| REBUILD_GAP.saturating_sub(at.elapsed()));
+        if !wait.is_zero() {
+            self.later(wait);
+            return;
+        }
+        self.rebuild_pending.set(false);
+        self.rebuilt.set(Some(Instant::now()));
+        self.rebuilding.set(true);
+        let fresh = compose(self.target.0 as isize);
+        let Some(fresh) = fresh else {
+            self.rebuilding.set(false);
+            // Not allowed yet (or Windows refused): keep the old one and try again later, a
+            // few times.
+            let tries = self.retries.get();
+            if tries < 3 {
+                self.retries.set(tries + 1);
+                self.rebuild_pending.set(true);
+                self.later(REBUILD_GAP);
+            }
             return;
         };
+        self.retries.set(0);
         cloak::remember(self.target, fresh.window);
         let old = self.composed.replace(Some(fresh));
         self.effects.set(effects_enabled());
@@ -330,7 +398,16 @@ impl Inner {
                 let _ = DestroyWindow(old.window);
             }
         }
+        self.rebuilding.set(false);
         trace(|| format!("glass {:?}: backdrop made again", self.target.0));
+    }
+
+    /// Run the pending rebuild after `wait` (the served window's timer; one at a time).
+    fn later(&self, wait: Duration) {
+        let ms = wait.as_millis().clamp(10, u32::MAX as u128) as u32;
+        unsafe {
+            SetTimer(Some(self.target), REBUILD_TIMER, ms, None);
+        }
     }
 
     /// Ask for a rebuild once the current message is done; several asks make one rebuild.
@@ -414,17 +491,21 @@ impl Inner {
                         right: window.0,
                         bottom: window.1,
                     });
-                    let shape = (area.right - area.left, area.bottom - area.top);
+                    let shape = (
+                        area.right.saturating_sub(area.left),
+                        area.bottom.saturating_sub(area.top),
+                    );
                     let mut geo = Geometry::new(shape, scale, &style);
                     // The backdrop window covers the whole served window (and the shadow's room
                     // around it), and the shape moves inside it. So a shape that changes every
                     // frame (the dock growing as an app opens) only changes the visuals, which
                     // land on screen together with the window's own next frame; moving the
                     // backdrop window as well would show it a frame ahead of them.
-                    geo.left += area.left;
-                    geo.top += area.top;
-                    geo.right += window.0 - area.right;
-                    geo.bottom += window.1 - area.bottom;
+                    // Saturating: a caller's shape may be anything (`guard` sorts out the rest).
+                    geo.left = geo.left.saturating_add(area.left);
+                    geo.top = geo.top.saturating_add(area.top);
+                    geo.right = geo.right.saturating_add(window.0.saturating_sub(area.right));
+                    geo.bottom = geo.bottom.saturating_add(window.1.saturating_sub(area.bottom));
                     let placed = vec![Placed {
                         left: geo.left,
                         top: geo.top,
@@ -461,7 +542,7 @@ impl Inner {
                     let region = CreateRectRgn(0, 0, 0, 0);
                     for (e, radius) in pieces {
                         let r = ((radius - 2.0).max(0.0).round() as i32) * 2;
-                        let piece = CreateRoundRectRgn(e[0], e[1], e[2] + 1, e[3] + 1, r, r);
+                        let piece = CreateRoundRectRgn(e[0], e[1], e[2].saturating_add(1), e[3].saturating_add(1), r, r);
                         CombineRgn(Some(region), Some(region), Some(piece), RGN_OR);
                         let _ = DeleteObject(piece.into());
                     }
@@ -483,8 +564,8 @@ impl Inner {
                     let region = CreateRoundRectRgn(
                         area.left,
                         area.top,
-                        area.right + 1,
-                        area.bottom + 1,
+                        area.right.saturating_add(1),
+                        area.bottom.saturating_add(1),
                         r,
                         r,
                     );
@@ -497,16 +578,25 @@ impl Inner {
                 }
             }
             if let Some(composed) = &*self.composed.borrow() {
-                let (w, h) = geo.window();
-                let _ = SetWindowPos(
-                    composed.window,
-                    Some(self.target),
-                    rc.left - (geo.left - area.left),
-                    rc.top - (geo.top - area.top),
-                    w,
-                    h,
-                    SWP_SHOWWINDOW | SWP_NOACTIVATE,
-                );
+                // A window of no size (or one smaller than the shape's room) shows no backdrop
+                // window at all rather than one sized to 0.
+                match guard::window(geo.window()).filter(|_| window.0 > 0 && window.1 > 0) {
+                    Some((w, h)) => {
+                        let _ = SetWindowPos(
+                            composed.window,
+                            Some(self.target),
+                            rc.left.saturating_sub(geo.left.saturating_sub(area.left)),
+                            rc.top.saturating_sub(geo.top.saturating_sub(area.top)),
+                            w,
+                            h,
+                            SWP_SHOWWINDOW | SWP_NOACTIVATE,
+                        );
+                    }
+                    None => {
+                        let flags = SWP_HIDEWINDOW | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER;
+                        let _ = SetWindowPos(composed.window, None, 0, 0, 0, 0, flags | SWP_NOACTIVATE);
+                    }
+                }
             }
         }
     }
@@ -565,8 +655,9 @@ fn watch_effects(hwnd: isize) -> Option<(UISettings, i64)> {
 }
 
 /// The name of the message that makes every glass panel make its backdrop again, broadcast by
-/// another shellman process when DWM may have started serving backdrops (Windows' app host
-/// brought the immersive shell up). Register it with `RegisterWindowMessageW`.
+/// another shellman process when DWM may have started serving backdrops (the session published
+/// the transparency state, or Windows' app host brought the immersive shell up). Register it
+/// with `RegisterWindowMessageW`.
 pub const REFRESH_MESSAGE: &str = "shellman-glass-refresh";
 
 fn refresh_message() -> u32 {
@@ -645,6 +736,13 @@ unsafe extern "system" fn follow_proc(
         }
         _ if msg == rebuild_message() => {
             inner.rebuild();
+            LRESULT(0)
+        }
+        WM_TIMER if wparam.0 == REBUILD_TIMER => {
+            let _ = KillTimer(Some(hwnd), REBUILD_TIMER);
+            if inner.rebuild_pending.get() {
+                inner.rebuild();
+            }
             LRESULT(0)
         }
         _ if msg == effects_message() => {

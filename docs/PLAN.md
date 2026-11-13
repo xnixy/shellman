@@ -203,6 +203,20 @@ a fullscreen app. Rule from it: never a window as large as a monitor for a popup
 create glass per click. A glass menu should come back as one window, sized to the menu, made once
 and kept.
 
+`dwm.exe` crashed 16 times that day (10:24, 12:06, 18:00), always the same fail-fast in
+`dwmcore` after `CreateTexture2D` returned E_INVALIDARG: a texture of size 0, negative or past
+16384. Glass now defends itself (`glass::guard`, the one choke point before Windows.UI.Composition
+and the backdrop window): every side 1 to 8192 px (below 1 the piece or backdrop window is
+hidden, never sized to 0; above, clamped), offsets clamped, corner radius at most half the
+shorter side, shadow blur and offset clamped, a scale of 0/NaN/inf taken as 1; pieces are made
+hidden and their shadow shows only after the mask surface has its size; a panel rebuilds at
+most once per 500 ms and never during a rebuild; a thread makes at most 8 backdrop windows in a
+burst, then 3 a second (more attaches get no composition and paint their own surface).
+`examples/glass_stress.rs` drives a panel through 0x0, 1x1, inverted and absurd shapes, NaN
+islands, minimise, hide, resize to nothing, a DPI message, 20 refreshes and 30 attaches in half
+a second; run on a secondary monitor it left no dwm event. The rule for callers stays: no
+monitor-sized glass popups, no glass made per click or per frame.
+
 "Open Terminal here" is one function (`shelf::terminal`), to be replaced by shellman's own
 terminal: Windows Terminal through its app alias `wt.exe -d <folder>` (starts without Explorer,
 tested), else the activation manager, else PowerShell.
@@ -274,6 +288,9 @@ the longest lived and first started app). Measured on 26300 (build 10.0.26100.98
   Windows' Start (see the switcher's `winkey`). Win+A opens Quick settings; Win+R, Win+V, Win+S,
   Win+N, Win+Shift+S open nothing; Win+Tab only focuses an empty staging window.
 - `IDesktopWallpaper` is still unavailable with it running.
+- Blur does not need it: DWM only needs the transparency state its immersive shell publishes,
+  and the session publishes that itself (see "Transparency" under the session). With the host
+  on, the host owns the state and the session leaves it alone.
 
 The supervisor starts it when nobody owns the shell window and no Explorer runs, waits on its
 process, and when Winlogon replaces it with Explorer stops that one Explorer (started after the
@@ -484,6 +501,25 @@ no egui, no `shellman-core`; it must be the most robust piece. Beside Explorer n
   Explorer has not become the shell 15 s after a fallback (the modern-app host owns the shell
   window, so it only opens a folder window), supervising resumes once with a fresh crash budget;
   a second fallback stays parked. Never after Shift. Shift also skips every shellman app.
+- **Transparency (blur)**: DWM draws every blur (the glass's host backdrop, acrylic, Mica) flat
+  unless the session WNF state `0x0F950324A3BC4035` (family IMSN, probably
+  `WNF_IMSN_TRANSPARENCYPOLICY`; read from uDWM's `CWindowList` on 10.0.26300) holds a non-zero
+  u32. Windows' immersive shell (`twinui.pcshell`, in Explorer or ShellAppRuntime) publishes it;
+  without either it has no data and everything is flat. Its security descriptor lets INTERACTIVE
+  users publish, so the session does (`core::system::transparency`, `NtUpdateWnfStateData` with
+  no type id, the current session's scope, no stamp check): at its start, before any app, with
+  the user's `HKCU\...\Themes\Personalize` `EnableTransparency` (default 1). It queries first and
+  writes only when the state is empty or differs, never while Explorer or ShellAppRuntime owns the
+  shell window (or the immersive shell's window exists): that shell owns the state then. A thread
+  follows the setting's key, that shell's end, and the session window's `ImmersiveColorSet` and
+  `shellman-glass-refresh` messages; after a publish that changed the value it broadcasts
+  `shellman-glass-refresh` (a backdrop made while DWM said no stays flat). One session-log line
+  each time (`transparency (start): published 1 (stamp 0 value none -> stamp 1 value 1)`, or the
+  NTSTATUS). The kernel keeps the data until the logon ends, so blur survives the host stopping.
+  Only the real session; a test session with `SHELLMAN_TRANSPARENCY=on`, `off` stops it. Measured:
+  a write of the value already there succeeds and bumps the stamp (1 -> 2); flat -> blur at a
+  fresh sign-in is still to be seen. Not handled: the real shell may also turn it off under
+  energy saver; which signal it follows is not known yet.
 - **Tests**: `SHELLMAN_SESSION_APPS="exe|arg|arg;exe2"` replaces the app list (and turns off
   startup items and the safety net, which `SHELLMAN_SESSION_SAFETY=on` brings back;
   `SHELLMAN_SESSION_FALLBACK=<exe>` stands in for explorer.exe). `examples/child.rs` is a

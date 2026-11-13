@@ -53,11 +53,15 @@ impl Island {
 /// area at `scale` pixels per point. Edges are rounded to whole pixels the way egui places its
 /// own drawing, so the glass and the content painted on it line up.
 pub fn to_pixels(island: &Island, scale: f32) -> ([i32; 4], f32) {
+    use super::guard::{finite, MAX_COORD};
     let r = island.rect;
-    let px = |v: f32| (v * scale).round() as i32;
+    let scale = super::guard::scale(scale);
+    // NaN becomes 0 and anything huge stays far from overflowing i32 in the sums made later.
+    let limit = (MAX_COORD * 4) as f32;
+    let px = |v: f32| finite(v * scale, -limit, limit, 0.0).round() as i32;
     let edges = [px(r.left()), px(r.top()), px(r.right()), px(r.bottom())];
     let (w, h) = (edges[2] - edges[0], edges[3] - edges[1]);
-    let radius = (island.radius * scale).min(w.min(h) as f32 / 2.0).max(0.0);
+    let radius = finite(island.radius * scale, 0.0, (w.min(h) as f32 / 2.0).max(0.0), 0.0);
     (edges, radius)
 }
 
@@ -158,6 +162,23 @@ mod tests {
             8.0,
         );
         assert_eq!(to_pixels(&empty, 2.0).1, 0.0);
+    }
+
+    #[test]
+    fn hostile_islands_give_finite_whole_pixels() {
+        let bad = [
+            Island::new(Rect::from_min_max(pos2(f32::NAN, 0.0), pos2(10.0, f32::INFINITY)), f32::NAN),
+            Island::new(Rect::from_min_max(pos2(-1e30, -1e30), pos2(1e30, 1e30)), 1e30),
+            Island::new(Rect::from_min_max(pos2(50.0, 50.0), pos2(10.0, 10.0)), 8.0),
+        ];
+        for i in &bad {
+            for scale in [0.0, -1.0, f32::NAN, f32::INFINITY, 1.0, 2.5] {
+                let (e, r) = to_pixels(i, scale);
+                assert!(r.is_finite() && r >= 0.0, "{i:?} at {scale}: {r}");
+                // Widths can be taken without overflow.
+                let _ = (e[2] - e[0], e[3] - e[1]);
+            }
+        }
     }
 
     /// What a colour painted by egui adds over black on a transparent window, 0 to 1.
