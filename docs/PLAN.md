@@ -1054,7 +1054,10 @@ images, and the shell and default terminal state.)
 
 1. Dock hover previews (done 13 Nov).
 2. Win+1-9 (the lone Win key is done).
-3. Dock: drag-and-drop onto icons, badges and progress, Recycle Bin empty / full.
+3. Dock: drag-and-drop onto icons, badges and progress, Recycle Bin empty / full (done 13 Nov).
+   Left open: the design's live-activity pill beside the dock ("Copying · 64%"): this plan gives
+   copy progress and attention to the top bar's "now" pill, so what the dock's pill would show
+   besides it is undecided; not built.
 4. Top bar: "now" pill, notifications and calendar.
 5. Desktop: arrange mode (drag the shelf and widgets about); widgets done (Today, Now playing).
 6. Task View.
