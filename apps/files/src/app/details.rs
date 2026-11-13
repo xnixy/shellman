@@ -29,6 +29,38 @@ pub(crate) struct Reading {
     pub(crate) created: Option<String>,
     /// Inside a folder, or the whole selection: items and bytes, through every level.
     pub(crate) total: Option<Total>,
+    /// The one item is a cloud file or folder whose content is not on this disk: nothing of it
+    /// was read (that would download it).
+    pub(crate) online_only: bool,
+}
+
+/// What of a file is read for the island.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Peek {
+    Nothing,
+    /// The header, for the size in pixels.
+    Image,
+    /// The first lines.
+    Text,
+}
+
+/// What to read of the file `p` with attributes `attrs`: nothing of one whose content is not on
+/// this disk (reading would download it), the header of an image, the start of a text file.
+pub(crate) fn peek(p: &Path, attrs: u32) -> Peek {
+    if shellman_core::fsops::attrs_not_local(attrs) {
+        Peek::Nothing
+    } else if is_image_name(p) {
+        Peek::Image
+    } else if is_text_name(p) {
+        Peek::Text
+    } else {
+        Peek::Nothing
+    }
+}
+
+fn attrs_of(p: &Path) -> u32 {
+    use std::os::windows::fs::MetadataExt;
+    std::fs::symlink_metadata(p).map_or(0, |m| m.file_attributes())
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -103,15 +135,22 @@ fn read(gen: u64, items: &[(PathBuf, bool)], cancel: &AtomicBool, send: &dyn Fn(
     };
     if let [(path, is_dir)] = items {
         r.created = created(path);
+        let attrs = attrs_of(path);
+        r.online_only = shellman_core::fsops::attrs_not_local(attrs);
         if !is_dir {
-            r.pixels = image_size_of(path);
-            if r.pixels.is_none() && is_text_name(path) {
-                r.lines = text_preview(path);
+            match peek(path, attrs) {
+                Peek::Image => r.pixels = image_size_of(path),
+                Peek::Text => r.lines = text_preview(path),
+                Peek::Nothing => {}
             }
             send(r);
             return;
         }
         send(r.clone());
+        // A cloud folder not on this disk: listing it would fetch it.
+        if r.online_only {
+            return;
+        }
     }
     // Folders, or several items: count through everything, saying how far it got now and then.
     let mut total = Total::default();
@@ -129,6 +168,9 @@ fn read(gen: u64, items: &[(PathBuf, bool)], cancel: &AtomicBool, send: &dyn Fn(
         if *is_dir {
             if items.len() > 1 {
                 total.folders += 1;
+            }
+            if shellman_core::fsops::not_local(path) {
+                continue;
             }
             if !walk(path, &mut total, cancel, &mut tick) {
                 return;
@@ -155,7 +197,14 @@ pub(crate) fn walk(dir: &Path, total: &mut Total, cancel: &AtomicBool, tick: &mu
             let Ok(ft) = item.file_type() else { continue };
             if ft.is_dir() {
                 total.folders += 1;
-                stack.push(item.path());
+                // A cloud folder not on this disk is counted, not opened: that would fetch it.
+                let local = item.metadata().map_or(true, |m| {
+                    use std::os::windows::fs::MetadataExt;
+                    !shellman_core::fsops::attrs_not_local(m.file_attributes())
+                });
+                if local {
+                    stack.push(item.path());
+                }
             } else if !ft.is_symlink() {
                 total.files += 1;
                 total.bytes += item.metadata().map_or(0, |m| m.len());
@@ -213,6 +262,12 @@ fn civil_from_days(z: i64) -> (i64, i64, i64) {
     let d = doy - (153 * mp + 2) / 5 + 1;
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
     (yoe + era * 400 + i64::from(m <= 2), m, d)
+}
+
+/// Images whose header `image_size` reads.
+pub(crate) fn is_image_name(p: &Path) -> bool {
+    let ext = p.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
+    matches!(ext.as_str(), "png" | "jpg" | "jpeg" | "jfif" | "gif" | "bmp" | "webp")
 }
 
 /// Files whose first lines are worth showing.
@@ -351,6 +406,23 @@ mod tests {
 
         assert_eq!(image_size(b"not an image"), None);
         assert_eq!(image_size(b"\x89PNG\r\n\x1a\n"), None, "cut short");
+    }
+
+    #[test]
+    fn nothing_is_read_of_a_file_that_is_not_on_this_disk() {
+        let p = |s: &str| PathBuf::from(s);
+        const ARCHIVE: u32 = 0x20;
+        assert_eq!(peek(&p(r"C:\a.png"), ARCHIVE), Peek::Image);
+        assert_eq!(peek(&p(r"C:\a.JPG"), ARCHIVE), Peek::Image);
+        assert_eq!(peek(&p(r"C:\a.txt"), ARCHIVE), Peek::Text);
+        // Not an image by name: its start is not read (a 2 GB video, say).
+        assert_eq!(peek(&p(r"C:\a.mp4"), ARCHIVE), Peek::Nothing);
+        assert_eq!(peek(&p(r"C:\a.bin"), ARCHIVE), Peek::Nothing);
+        // OneDrive / iCloud placeholders: offline, recall on open, recall on data access.
+        for cloud in [0x1000, 0x4_0000, 0x40_0000 | 0x400] {
+            assert_eq!(peek(&p(r"C:\OneDrive\a.png"), ARCHIVE | cloud), Peek::Nothing);
+            assert_eq!(peek(&p(r"C:\OneDrive\a.txt"), ARCHIVE | cloud), Peek::Nothing);
+        }
     }
 
     #[test]

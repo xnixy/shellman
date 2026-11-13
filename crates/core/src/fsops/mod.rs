@@ -14,7 +14,7 @@ pub(crate) mod time;
 
 pub use drives::{drives, Drive};
 pub use link::{link_target, make_link};
-pub use listing::{entry_for, list_dir, Entry};
+pub use listing::{attrs_not_local, entry_for, list_dir, not_local, Entry, ATTR_NOT_LOCAL};
 pub use names::{check_name, natural_cmp, unique_child, unique_file};
 pub use shell::{open, shell_op, shell_op_mapped, Op};
 

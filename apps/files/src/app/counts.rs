@@ -19,8 +19,13 @@ impl Counts {
         let ctx = ctx.clone();
         std::thread::spawn(move || {
             for dir in asks {
-                // Hidden items count, as Explorer's "items" do in its details.
-                let n = std::fs::read_dir(&dir).ok().map(|d| d.count());
+                // Hidden items count, as Explorer's "items" do in its details. A cloud folder
+                // whose content is not on this disk is not listed: that would fetch it.
+                let n = if shellman_core::fsops::not_local(&dir) {
+                    None
+                } else {
+                    std::fs::read_dir(&dir).ok().map(|d| d.count())
+                };
                 if reply.send((dir, n)).is_err() {
                     return;
                 }

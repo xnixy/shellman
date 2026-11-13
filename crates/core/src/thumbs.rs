@@ -18,7 +18,8 @@ use windows::Win32::Graphics::Gdi::{
 };
 use windows::Win32::System::Com::{CoInitializeEx, COINIT_APARTMENTTHREADED};
 use windows::Win32::UI::Shell::{
-    IShellItemImageFactory, SHCreateItemFromParsingName, SIIGBF_BIGGERSIZEOK, SIIGBF_RESIZETOFIT,
+    IShellItemImageFactory, SHCreateItemFromParsingName, SIIGBF, SIIGBF_BIGGERSIZEOK, SIIGBF_INCACHEONLY,
+    SIIGBF_RESIZETOFIT,
 };
 
 /// Sizes asked of the shell, in pixels: a list row's 24 point tile and a grid tile's 88 point
@@ -248,7 +249,10 @@ fn worker(queue: Queue, tx: Sender<(Key, Option<ColorImage>)>, ctx: egui::Contex
         let image = if crate::icon_pack::raster::is_svg(&key.0) {
             crate::icon_pack::raster::svg_file(&key.0, px as u32)
         } else {
-            shell_image(&key.0, px).map(|i| if trim { crop_to_opaque(i) } else { i })
+            // A cloud file whose content is not here: only what the thumbnail cache already has,
+            // so a preview (or a program's icon) never downloads the file.
+            let cached_only = crate::fsops::not_local(&key.0);
+            shell_image_as(&key.0, px, image_flags(cached_only)).map(|i| if trim { crop_to_opaque(i) } else { i })
         };
         if tx.send((key, image)).is_err() {
             return;
@@ -260,14 +264,26 @@ fn worker(queue: Queue, tx: Sender<(Key, Option<ColorImage>)>, ctx: egui::Contex
 /// The shell's image for a file: a preview where there is one, else the file's own icon. The
 /// calling thread must have COM initialised.
 pub fn shell_image(path: &Path, px: i32) -> Option<ColorImage> {
+    shell_image_as(path, px, image_flags(false))
+}
+
+/// What the shell is asked for: fitted, any size up; for a file not on this disk, only from the
+/// cache (no hydration: extracting an icon or a preview would read the whole file).
+fn image_flags(cached_only: bool) -> SIIGBF {
+    let flags = SIIGBF_RESIZETOFIT | SIIGBF_BIGGERSIZEOK;
+    if cached_only {
+        flags | SIIGBF_INCACHEONLY
+    } else {
+        flags
+    }
+}
+
+fn shell_image_as(path: &Path, px: i32, flags: SIIGBF) -> Option<ColorImage> {
     unsafe {
         let factory: IShellItemImageFactory =
             SHCreateItemFromParsingName(&HSTRING::from(path.as_os_str()), None).ok()?;
         let hbmp = factory
-            .GetImage(
-                SIZE { cx: px, cy: px },
-                SIIGBF_RESIZETOFIT | SIIGBF_BIGGERSIZEOK,
-            )
+            .GetImage(SIZE { cx: px, cy: px }, flags)
             .ok()?;
         let image = to_color_image(hbmp);
         let _ = DeleteObject(HGDIOBJ(hbmp.0));
@@ -367,6 +383,13 @@ mod tests {
         assert!(wants_thumb("setup.exe"));
         assert!(!wants_thumb("notes.txt"));
         assert!(!wants_thumb("Makefile"));
+    }
+
+    #[test]
+    fn files_not_on_this_disk_are_drawn_from_the_cache_only() {
+        assert!(image_flags(true).contains(SIIGBF_INCACHEONLY));
+        assert!(!image_flags(false).contains(SIIGBF_INCACHEONLY));
+        assert!(image_flags(true).contains(SIIGBF_RESIZETOFIT | SIIGBF_BIGGERSIZEOK));
     }
 
     #[test]

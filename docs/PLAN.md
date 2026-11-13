@@ -420,6 +420,13 @@ tested), else the activation manager, else PowerShell.
   the window's glass of their own while open (its shadow and rim), filled opaque in the glass's
   colour: the glass lies under all Files draws, so a clear dialog would show the list through it.
   Real blur behind a dialog needs a window of its own, as the popup menu has.
+- Cloud files (OneDrive, iCloud and other Files On-Demand placeholders: attributes OFFLINE,
+  RECALL_ON_OPEN or RECALL_ON_DATA_ACCESS, `fsops::not_local`) are never read unasked: the
+  details island reads no pixels or first lines of them ("Available online only" in their line)
+  and does not walk such a folder; folder cards do not count one; thumbnails and program icons
+  (`core::thumbs`, so Files, the shelf, the dock and the rest) come from the shell's cache only
+  (`SIIGBF_INCACHEONLY`). The details island reads an image's header only for image names
+  (png, jpg, gif, bmp, webp), never the start of any other file.
 
 ## Settings
 
