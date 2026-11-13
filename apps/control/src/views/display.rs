@@ -2,7 +2,7 @@
 
 use super::kit::{self, label_font, small_font, GAP};
 use egui::{Ui, Vec2};
-use shellman_core::system::brightness::{BrightnessWatch, Screen};
+use shellman_core::system::brightness::{BrightnessWatch, Kind, Screen};
 use shellman_ui::theme::{colors, glyph};
 
 /// The last known screens, kept while the panel is hidden, and the one being dragged.
@@ -63,17 +63,21 @@ impl DisplayView {
 }
 
 /// Each screen's label: none when there is only one; its name otherwise, with its display
-/// number when two share a name (two of the same model).
+/// number when two share a name (two of the same model). A screen running HDR says so, since its
+/// slider then sets how bright everyday content looks rather than the monitor itself.
 pub fn labels(screens: &[Screen]) -> Vec<Option<String>> {
-    if screens.len() < 2 {
-        return vec![None; screens.len()];
-    }
+    let several = screens.len() > 1;
     screens
         .iter()
         .map(|s| {
             let twins = screens.iter().filter(|o| o.name == s.name).count() > 1;
             let number = s.id.trim_start_matches(|c: char| !c.is_ascii_digit());
-            Some(if twins && !number.is_empty() { format!("{} · {number}", s.name) } else { s.name.clone() })
+            let name = several.then(|| if twins && !number.is_empty() { format!("{} · {number}", s.name) } else { s.name.clone() });
+            match (name, s.kind) {
+                (Some(n), Kind::Hdr) => Some(format!("{n} (HDR)")),
+                (None, Kind::Hdr) => Some(s.label().to_string()),
+                (n, _) => n,
+            }
         })
         .collect()
 }
@@ -83,7 +87,15 @@ mod tests {
     use super::*;
 
     fn screen(id: &str, name: &str) -> Screen {
-        Screen { id: id.into(), name: name.into(), percent: 50 }
+        Screen { id: id.into(), name: name.into(), percent: 50, kind: Kind::Monitor }
+    }
+
+    #[test]
+    fn hdr_screens_say_so() {
+        let one = Screen { kind: Kind::Hdr, ..screen(r"\\.\DISPLAY1", "XG32") };
+        assert_eq!(labels(std::slice::from_ref(&one)), vec![Some("Brightness (HDR)".into())]);
+        let s = [one, screen(r"\\.\DISPLAY2", "XG32")];
+        assert_eq!(labels(&s), vec![Some("XG32 · 1 (HDR)".into()), Some("XG32 · 2".into())]);
     }
 
     #[test]

@@ -254,6 +254,12 @@ tested), else the activation manager, else PowerShell.
   so there is no elevate op for it. "Update and restart" is `power::update_and_restart`
   (`InitiateShutdownW` restart + install updates; never run live); the Control Center's power
   menu can offer it on the same signal (`updates::Snapshot` says a restart is needed).
+- Brightness (Display page and Control Center, one `brightness::BrightnessWatch`): a monitor with
+  HDR on gets "Brightness (HDR)", Windows' SDR content brightness (`display::sdr`): read with the
+  documented `GET_SDR_WHITE_LEVEL`, set with the private `DisplayConfigSetDeviceInfo` type -18
+  (header + level + final flag, 1000..6000 = 80..480 nits, the slider's 0..100 as in Windows).
+  Windows stores it itself (`MonitorDataStore\<monitor>\SDRWhiteLevel`). HDR off: DDC/CI or the
+  backlight as before (HDR monitors such as the ASUS XG32 OLEDs ignore DDC brightness in HDR).
 
 ## Modern apps without Explorer
 

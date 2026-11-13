@@ -246,11 +246,20 @@ fn monitor_section(ui: &mut egui::Ui, v: &mut DisplayView, m: &Monitor) {
         ui.add_space(10.0);
     }
     if let Some(screen) = v.screens.iter().find(|s| s.id == m.id) {
-        page::label(ui, "Brightness");
+        page::label(ui, screen.label());
+        if let Some(hint) = screen.hint() {
+            ui.label(theme::muted(hint).size(12.0));
+            ui.add_space(4.0);
+        }
         let id = egui::Id::new(("display-brightness", &m.id));
         let level = ui.horizontal(|ui| level_slider(ui, id, screen.percent as f32 / 100.0, false, 0.0)).inner;
         if let (Some(level), Some(b)) = (level, &v.brightness) {
-            b.set(&m.id, (level * 100.0).round() as u8);
+            let percent = (level * 100.0).round() as u8;
+            b.set(&m.id, percent);
+            // Kept here too, so the knob stays where it was let go until the watch reads it back.
+            if let Some(s) = v.screens.iter_mut().find(|s| s.id == m.id) {
+                s.percent = percent;
+            }
         }
         ui.add_space(10.0);
     }

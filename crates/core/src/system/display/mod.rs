@@ -10,6 +10,7 @@ mod os_read;
 pub mod page;
 pub mod revert;
 pub mod scale;
+pub mod sdr;
 mod worker;
 
 pub use worker::DisplayPage;
@@ -48,6 +49,34 @@ mod tests {
                 println!("   {} {:?}{}", g.label(), g.rates, if g.recommended { " recommended" } else { "" });
             }
         }
+    }
+
+    /// Every path's SDR white level and advanced-colour state; reads only. `--ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn dump_sdr_white_levels() {
+        let (snap, _) = os_read::query().expect("a configuration");
+        for p in &snap.paths {
+            let t = sdr::Target::of(p);
+            println!("{:?} {:?} hdr {} level {:?} info2 {:?}", os_read::source_name(p), t, sdr::hdr_on(t), sdr::white_level(t), sdr::advanced_color_2(t));
+        }
+    }
+
+    /// Sets the SDR white level of the monitor named by SHELLMAN_SDR_DEVICE (a GDI name) to
+    /// SHELLMAN_SDR_LEVEL, reads it back. By hand only.
+    #[test]
+    #[ignore]
+    fn set_sdr_white_level_by_hand() {
+        let (Some(dev), Some(level)) = (std::env::var("SHELLMAN_SDR_DEVICE").ok(), std::env::var("SHELLMAN_SDR_LEVEL").ok()) else { return };
+        let level: u32 = level.parse().unwrap();
+        let fin = std::env::var_os("SHELLMAN_SDR_FINAL").is_some();
+        let (snap, _) = os_read::query().expect("a configuration");
+        let p = os_read::path_of(&snap, &dev).expect("that device");
+        let t = sdr::Target::of(p);
+        let before = sdr::white_level(t);
+        let ok = sdr::set_white_level(t, level, fin);
+        std::thread::sleep(Duration::from_millis(300));
+        println!("{dev}: before {before:?}, set {level} final {fin} -> {ok}, now {:?}", sdr::white_level(t));
     }
 
     /// Validation only: asks Windows whether a plan would be accepted and applies nothing.
