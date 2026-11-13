@@ -158,6 +158,10 @@ Rule: **the top bar is the system, the dock is apps.** Both are windows of one p
   bitmap each. No egui.
 - `IDesktopWallpaper` needs Explorer. As the shell, it reads the classic settings instead: one
   picture for all monitors, no slideshow.
+- Pictures are decoded on a worker, one at a time: a monitor, DPI, wallpaper or resume change
+  while one runs only marks one more run for the latest monitors, and a result is shown only for
+  the latest generation (older ones never replace newer ones), so recreated windows always get
+  their picture.
 - No icon grid. The design (`docs/design/desktop-concepts.html`, "Shelf + Widgets") puts a shelf
   on the left edge and two widgets top right; "Clean" (wallpaper only) is the other style.
   Settings in `desktop.json` (`settings::desktop`): style, shelf on/off, edge, stacks, where

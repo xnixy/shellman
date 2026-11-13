@@ -39,17 +39,68 @@ const PBT_APMRESUMEAUTOMATIC: usize = 0x0012;
 static CONTROLLER: AtomicIsize = AtomicIsize::new(0);
 
 /// The worker's finished surfaces, waiting for the UI thread.
-static READY: Mutex<Option<(u32, Vec<Surface>)>> = Mutex::new(None);
+static READY: Mutex<Option<(u64, Vec<Surface>)>> = Mutex::new(None);
 
 struct State {
     monitors: Vec<Area>,
     windows: Vec<HWND>,
-    /// Bumped for every worker run; results for an older number are dropped.
-    generation: u32,
+    jobs: Jobs,
 }
 
 thread_local! {
-    static STATE: RefCell<State> = const { RefCell::new(State { monitors: Vec::new(), windows: Vec::new(), generation: 0 }) };
+    static STATE: RefCell<State> = const { RefCell::new(State { monitors: Vec::new(), windows: Vec::new(), jobs: Jobs::new() }) };
+}
+
+/// The picture workers, coalesced: at most one runs at a time. A refresh while one runs only
+/// marks the work as pending; when the running one finishes, one more run is made for the
+/// latest state. A result is shown only when it is for the latest generation (the windows it
+/// was made for are the ones that exist). One monitor or DPI change on three monitors used to
+/// start three or more 4K decodes at once, and an older one finishing last overwrote the newer
+/// result, which was then dropped as stale: the new windows stayed black until the next change.
+struct Jobs {
+    /// The latest generation asked for (bumped by every refresh).
+    current: u64,
+    /// The generation a worker is preparing right now.
+    running: Option<u64>,
+    /// A refresh came while a worker ran: run once more when it finishes.
+    pending: bool,
+}
+
+impl Jobs {
+    const fn new() -> Jobs {
+        Jobs { current: 0, running: None, pending: false }
+    }
+
+    /// A refresh: the generation to start a worker for now, or `None` when one runs already.
+    fn ask(&mut self) -> Option<u64> {
+        self.current += 1;
+        if self.running.is_some() {
+            self.pending = true;
+            return None;
+        }
+        self.running = Some(self.current);
+        Some(self.current)
+    }
+
+    /// The worker for `generation` finished: whether its result is current, and the generation
+    /// to start the next worker for, if one is pending.
+    fn done(&mut self, generation: u64) -> (bool, Option<u64>) {
+        if self.running == Some(generation) {
+            self.running = None;
+        }
+        let rerun = (self.running.is_none() && std::mem::take(&mut self.pending)).then(|| {
+            self.running = Some(self.current);
+            self.current
+        });
+        (generation == self.current, rerun)
+    }
+}
+
+/// Put a finished result in the slot, unless the slot already holds a newer one.
+fn offer<T>(slot: &mut Option<(u64, T)>, generation: u64, value: T) {
+    if slot.as_ref().is_none_or(|(g, _)| *g < generation) {
+        *slot = Some((generation, value));
+    }
 }
 
 pub fn controller() -> Option<HWND> {
@@ -134,7 +185,7 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPA
             LRESULT(0)
         }
         WM_READY => {
-            install();
+            install(hwnd, wparam.0 as u64);
             LRESULT(0)
         }
         WM_DESTROY => {
@@ -146,10 +197,10 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPA
 }
 
 /// Bring the windows in line with the monitors (re-creating them if those changed), then start
-/// preparing the pictures.
+/// preparing the pictures, or mark that as pending while a worker runs (`Jobs`).
 fn refresh(ctl: HWND) {
     let now = monitors::list();
-    let generation = STATE.with(|s| {
+    let start = STATE.with(|s| {
         let mut s = s.borrow_mut();
         if s.monitors != now || s.windows.is_empty() {
             for w in s.windows.drain(..) {
@@ -160,15 +211,32 @@ fn refresh(ctl: HWND) {
             s.windows = now.iter().filter_map(|m| surface::create(*m)).collect();
             s.monitors = now.clone();
         }
-        s.generation = s.generation.wrapping_add(1);
-        s.generation
+        s.jobs.ask()
     });
+    if let Some(generation) = start {
+        spawn_worker(generation, now, ctl);
+    }
+}
+
+fn spawn_worker(generation: u64, monitors: Vec<Area>, ctl: HWND) {
     let ctl = ctl.0 as isize;
-    std::thread::spawn(move || prepare(generation, now, ctl));
+    let started = std::thread::Builder::new().name("wallpaper".into()).spawn(move || {
+        // Whatever happens, the UI thread hears that this generation is over, or no worker
+        // would ever run again.
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| prepare(generation, monitors)));
+        unsafe {
+            let _ = PostMessageW(Some(HWND(ctl as *mut _)), WM_READY, WPARAM(generation as usize), LPARAM(0));
+        }
+    });
+    if started.is_err() {
+        unsafe {
+            let _ = PostMessageW(Some(HWND(ctl as *mut _)), WM_READY, WPARAM(generation as usize), LPARAM(0));
+        }
+    }
 }
 
 /// Worker: read the settings, decode and scale each monitor's picture, hand the lot over.
-fn prepare(generation: u32, monitors: Vec<Area>, ctl: isize) {
+fn prepare(generation: u64, monitors: Vec<Area>) {
     unsafe {
         let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
     }
@@ -193,24 +261,130 @@ fn prepare(generation: u32, monitors: Vec<Area>, ctl: isize) {
     unsafe {
         CoUninitialize();
     }
-    let stale = READY.lock().ok().and_then(|mut slot| slot.replace((generation, surfaces)));
-    drop(stale);
-    unsafe {
-        let _ = PostMessageW(Some(HWND(ctl as *mut _)), WM_READY, WPARAM(generation as usize), LPARAM(0));
+    if let Ok(mut slot) = READY.lock() {
+        offer(&mut slot, generation, surfaces);
     }
 }
 
-/// UI thread: show the worker's result if it is still the latest.
-fn install() {
-    let Some((got, surfaces)) = READY.lock().ok().and_then(|mut slot| slot.take()) else { return };
-    STATE.with(|s| {
-        let s = s.borrow();
-        if got == s.generation && surfaces.len() == s.windows.len() {
-            for (hwnd, surface) in s.windows.iter().zip(surfaces) {
-                surface::set(*hwnd, surface);
-            }
-        } else {
-            drop(surfaces);
-        }
+/// UI thread: the worker for `generation` is over. Show its result if it is still the latest,
+/// and start the pending run if a refresh came meanwhile.
+fn install(ctl: HWND, generation: u64) {
+    let result = READY.lock().ok().and_then(|mut slot| match slot.as_ref() {
+        Some((g, _)) if *g <= generation => slot.take(),
+        _ => None,
     });
+    let rerun = STATE.with(|s| {
+        let mut s = s.borrow_mut();
+        let (current, rerun) = s.jobs.done(generation);
+        if let Some((got, surfaces)) = result {
+            if current && got == generation && surfaces.len() == s.windows.len() {
+                for (hwnd, surface) in s.windows.iter().zip(surfaces) {
+                    surface::set(*hwnd, surface);
+                }
+            }
+        }
+        rerun.map(|g| (g, s.monitors.clone()))
+    });
+    if let Some((g, monitors)) = rerun {
+        spawn_worker(g, monitors, ctl);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{offer, Jobs};
+
+    /// A fake decoder: each worker's "picture" is the monitor layout it was started for.
+    struct Desk {
+        jobs: Jobs,
+        layout: u32,
+        /// Workers running: (generation, layout they decode for).
+        workers: Vec<(u64, u32)>,
+        slot: Option<(u64, u32)>,
+        shown: Option<u32>,
+        started: usize,
+    }
+
+    impl Desk {
+        fn new() -> Desk {
+            Desk { jobs: Jobs::new(), layout: 0, workers: Vec::new(), slot: None, shown: None, started: 0 }
+        }
+        fn refresh(&mut self, layout: u32) {
+            self.layout = layout;
+            if let Some(g) = self.jobs.ask() {
+                self.workers.push((g, layout));
+                self.started += 1;
+            }
+        }
+        /// Worker `i` (in start order) finishes and the UI thread hears of it.
+        fn finish(&mut self, i: usize) {
+            let (g, layout) = self.workers.remove(i);
+            offer(&mut self.slot, g, layout);
+            let result = match self.slot {
+                Some((sg, _)) if sg <= g => self.slot.take(),
+                _ => None,
+            };
+            let (current, rerun) = self.jobs.done(g);
+            if let Some((got, picture)) = result {
+                if current && got == g {
+                    self.shown = Some(picture);
+                }
+            }
+            if let Some(g) = rerun {
+                self.workers.push((g, self.layout));
+                self.started += 1;
+            }
+        }
+    }
+
+    #[test]
+    fn refreshes_during_a_decode_coalesce_into_one_more_run() {
+        let mut d = Desk::new();
+        d.refresh(1);
+        // A monitor change on three monitors: several refreshes while the first decode runs.
+        d.refresh(2);
+        d.refresh(2);
+        d.refresh(3);
+        assert_eq!(d.workers.len(), 1, "one decode at a time");
+        d.finish(0);
+        assert_eq!(d.shown, None, "the first result is for windows that are gone");
+        assert_eq!(d.workers, [(4, 3)], "one more run, for the latest layout");
+        d.finish(0);
+        assert_eq!(d.shown, Some(3));
+        assert!(d.workers.is_empty());
+        assert_eq!(d.started, 2);
+    }
+
+    #[test]
+    fn a_quiet_refresh_shows_its_result() {
+        let mut d = Desk::new();
+        d.refresh(1);
+        d.finish(0);
+        assert_eq!(d.shown, Some(1));
+        d.refresh(1);
+        d.finish(0);
+        assert_eq!(d.shown, Some(1));
+        assert_eq!(d.started, 2);
+    }
+
+    #[test]
+    fn an_older_result_never_replaces_a_newer_one() {
+        let mut slot = None;
+        offer(&mut slot, 5, "new");
+        offer(&mut slot, 4, "old");
+        assert_eq!(slot, Some((5, "new")));
+        offer(&mut slot, 6, "newer");
+        assert_eq!(slot, Some((6, "newer")));
+    }
+
+    #[test]
+    fn a_worker_that_failed_still_frees_the_next_run() {
+        let mut j = Jobs::new();
+        assert_eq!(j.ask(), Some(1));
+        assert_eq!(j.ask(), None);
+        // Generation 1 ended without a result (a panic in the decoder): the pending run starts.
+        assert_eq!(j.done(1), (false, Some(2)));
+        assert_eq!(j.done(2), (true, None));
+        assert_eq!(j.ask(), Some(3));
+    }
 }
