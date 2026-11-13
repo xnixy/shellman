@@ -17,6 +17,7 @@ mod fonts_tabs;
 mod fonts_view;
 mod fonts_worker;
 mod launcher;
+mod power;
 mod mouse;
 mod slider_row;
 mod sound;
@@ -29,6 +30,7 @@ pub use display::DisplayView;
 pub use fonts_view::FontsView;
 pub use icon_pack::IconsView;
 pub use mouse::MouseView;
+pub use power::PowerView;
 pub use sound::SoundView;
 pub use startup::StartupView;
 use crate::state::State;
@@ -40,6 +42,7 @@ pub enum Section {
     Sound,
     Display,
     Mouse,
+    Power,
     Apps,
     Startup,
     Fonts,
@@ -50,11 +53,12 @@ pub enum Section {
 }
 
 impl Section {
-    pub const ALL: [Section; 11] = [
+    pub const ALL: [Section; 12] = [
         Section::Appearance,
         Section::Sound,
         Section::Display,
         Section::Mouse,
+        Section::Power,
         Section::Apps,
         Section::Startup,
         Section::Fonts,
@@ -70,6 +74,7 @@ impl Section {
             Section::Sound => "Sound",
             Section::Display => "Display",
             Section::Mouse => "Mouse & keyboard",
+            Section::Power => "Power",
             Section::Apps => "Apps",
             Section::Startup => "Startup apps",
             Section::Fonts => "Fonts",
@@ -87,6 +92,7 @@ impl Section {
             Section::Display => glyph::DESKTOP,
             // Segoe Fluent Icons' Mouse glyph.
             Section::Mouse => '\u{E962}',
+            Section::Power => glyph::BATTERY,
             Section::Apps => '\u{E71D}',
             Section::Startup => '\u{E7E8}',
             // Segoe Fluent Icons' Font glyph.
@@ -104,6 +110,7 @@ impl Section {
             Section::Sound => sound::show(ui, state),
             Section::Display => display::show(ui, state),
             Section::Mouse => mouse::show(ui, state),
+            Section::Power => power::show(ui, state),
             Section::Apps => apps::show(ui, state),
             Section::Startup => startup::show(ui, state),
             Section::Fonts => fonts::show(ui, state),
@@ -125,6 +132,7 @@ impl Section {
                 | Section::Sound
                 | Section::Display
                 | Section::Mouse
+                | Section::Power
                 | Section::Apps
                 | Section::Startup
                 | Section::Fonts
@@ -142,6 +150,7 @@ impl Section {
             Section::Sound => "sound",
             Section::Display => "display",
             Section::Mouse => "mouse",
+            Section::Power => "power",
             Section::Apps => "apps",
             Section::Startup => "startup",
             Section::Fonts => "fonts",
