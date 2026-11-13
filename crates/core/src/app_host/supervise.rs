@@ -194,8 +194,9 @@ fn start(st: &mut State, pause: Duration) {
     }
 }
 
-/// Glass made before the immersive shell was up shows flat; ask it to make itself again a few
-/// times while the shell comes up (it is ready some time after the host owns the shell window).
+/// Blur no longer depends on the host (the session publishes the transparency state), but glass
+/// made before that state was published shows flat; ask it to make itself again a few times
+/// while the shell comes up, which is harmless when it is already right.
 fn refresh_glass_soon() {
     let _ = std::thread::Builder::new().name("glass refresh".into()).spawn(|| {
         for wait in [0, 2, 5, 15] {

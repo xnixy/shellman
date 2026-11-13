@@ -3,8 +3,8 @@
 //! apps, restarts them when they crash, runs the user's startup items, and ends them in order at
 //! logoff. Plain Win32, no egui, nothing that can wait on anything else: the most robust piece.
 //!
-//! Beside Explorer nothing changes: this is only started by hand (for tests) or, later, by
-//! Winlogon after `--install`.
+//! Winlogon starts it as the user's shell after `--install`; by hand (for tests) it runs beside
+//! Explorer.
 
 mod apps;
 mod cli;
