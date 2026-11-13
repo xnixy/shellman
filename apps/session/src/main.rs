@@ -49,10 +49,11 @@ fn main() {
     }
     // Before any app: glass made while DWM does not allow transparency stays flat.
     transparency::start(test);
-    let Some(_window) = window::create() else {
+    let Some(window) = window::create() else {
         log::line("could not create the session window, stopping");
         return;
     };
+    transparency::listen(window);
     // Shift at start is the user's way out: Explorer, and no shellman apps at all.
     if safety && fallback::shift_held() {
         log::line(&format!("falling back to Explorer: {}", safety::Reason::Shift.text()));
