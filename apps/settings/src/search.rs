@@ -78,6 +78,13 @@ const ENTRIES: &[Entry] = &[
     e(Section::TopBar, "Show tray icons on", "notification area monitors"),
     e(Section::Launcher, "", "search start menu"),
     e(Section::Launcher, "Most used", "history clear recent"),
+    e(Section::Terminal, "", "console shell command prompt powershell cmd wsl"),
+    e(Section::Terminal, "Default profile", "shell powershell cmd command prompt wsl bash tab"),
+    e(Section::Terminal, "Font", "font family size cascadia consolas monospace zoom text"),
+    e(Section::Terminal, "History and copying", "scrollback lines history buffer copy on select selection clipboard"),
+    e(Section::Terminal, "New terminal opens in", "new window new tab instance second"),
+    e(Section::Terminal, "Open Terminal here uses", "windows terminal wt custom command default terminal folder"),
+    e(Section::Terminal, "Console programs", "default terminal application console host handoff conhost all console programs"),
     e(Section::About, "", "version info"),
     e(Section::About, "Windows apps", "classic control panel"),
     e(Section::About, "Settings folder", "files config json"),
@@ -199,6 +206,14 @@ mod tests {
         assert!(find("pause").contains(&Hit { section: Section::Updates, group: "Pause updates" }));
         assert!(find("check for updates").iter().any(|h| h.section == Section::Updates));
         assert!(find("history").contains(&Hit { section: Section::Updates, group: "Update history" }));
+    }
+
+    #[test]
+    fn the_terminal_page_and_its_groups_are_found() {
+        assert_eq!(find("terminal")[0], Hit { section: Section::Terminal, group: "" });
+        assert!(find("scrollback").contains(&Hit { section: Section::Terminal, group: "History and copying" }));
+        assert!(find("default terminal").iter().any(|h| h.section == Section::Terminal));
+        assert!(find("copy on select").iter().any(|h| *h == Hit { section: Section::Terminal, group: "History and copying" }));
     }
 
     #[test]

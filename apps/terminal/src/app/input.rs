@@ -30,6 +30,8 @@ pub enum Shortcut {
     ZoomIn,
     ZoomOut,
     ZoomReset,
+    /// Ctrl+Shift+F: find in the scrollback.
+    Find,
 }
 
 /// The shortcut for a key, if it is one. `physical` is the key's place on the keyboard, for the
@@ -55,6 +57,7 @@ pub fn shortcut(key: egui::Key, physical: Option<egui::Key>, m: Mods) -> Option<
     Some(match key {
         K::T if ctrl_shift => Shortcut::NewTab,
         K::W if ctrl_shift => Shortcut::CloseTab,
+        K::F if ctrl_shift => Shortcut::Find,
         K::Tab if m.ctrl && !m.alt => {
             if m.shift {
                 Shortcut::PrevTab
@@ -78,6 +81,58 @@ pub fn shortcut(key: egui::Key, physical: Option<egui::Key>, m: Mods) -> Option<
     })
 }
 
+/// egui's key for a virtual-key code, for the keys the terminal's shortcuts use.
+fn egui_key(vk: u16) -> Option<egui::Key> {
+    use egui::Key as K;
+    const LETTERS: [K; 26] = [
+        K::A, K::B, K::C, K::D, K::E, K::F, K::G, K::H, K::I, K::J, K::K, K::L, K::M, K::N, K::O, K::P, K::Q, K::R, K::S, K::T, K::U, K::V,
+        K::W, K::X, K::Y, K::Z,
+    ];
+    const DIGITS: [K; 10] = [K::Num0, K::Num1, K::Num2, K::Num3, K::Num4, K::Num5, K::Num6, K::Num7, K::Num8, K::Num9];
+    Some(match vk {
+        0x41..=0x5A => LETTERS[(vk - 0x41) as usize],
+        0x30..=0x39 => DIGITS[(vk - 0x30) as usize],
+        0x60..=0x69 => DIGITS[(vk - 0x60) as usize],
+        0x09 => K::Tab,
+        0xBB => K::Equals,
+        0x6B => K::Plus,
+        0xBD | 0x6D => K::Minus,
+        _ => return None,
+    })
+}
+
+/// Whether the terminal keeps a key while the console takes whole key events (win32-input-mode):
+/// its shortcuts, paste, copying its own selection (Ctrl+C, Ctrl+Insert, Enter, Escape only while
+/// there is one), paging through the history, and Alt+F4 / Alt+Space for the window. Everything
+/// else goes to the console. `vk` is the virtual-key code.
+pub fn keeps(vk: u16, m: Mods, selection: bool) -> bool {
+    const ENTER: u16 = 0x0D;
+    const ESCAPE: u16 = 0x1B;
+    const SPACE: u16 = 0x20;
+    const PAGE_UP: u16 = 0x21;
+    const PAGE_DOWN: u16 = 0x22;
+    const INSERT: u16 = 0x2D;
+    const F4: u16 = 0x73;
+    let only = |shift: bool, ctrl: bool, alt: bool| m == Mods { shift, ctrl, alt };
+    if let Some(k) = egui_key(vk) {
+        if shortcut(k, Some(k), m).is_some() {
+            return true;
+        }
+    }
+    match vk {
+        // Paste.
+        0x56 if only(false, true, false) || only(true, true, false) => true,
+        INSERT if only(true, false, false) => true,
+        // Copy: Ctrl+Shift+C always; Ctrl+C and Ctrl+Insert when there is a selection.
+        0x43 if only(true, true, false) => true,
+        0x43 | INSERT if only(false, true, false) => selection,
+        ENTER | ESCAPE if only(false, false, false) => selection,
+        PAGE_UP | PAGE_DOWN if only(true, false, false) => true,
+        F4 | SPACE if only(false, false, true) => true,
+        _ => false,
+    }
+}
+
 impl super::TerminalApp {
     /// Keys, typed text and pastes go to the shown tab's shell, after the terminal's own.
     pub(super) fn input(&mut self, ctx: &egui::Context) {
@@ -88,13 +143,39 @@ impl super::TerminalApp {
             }
             return;
         }
+        if self.find.has_focus(ctx) {
+            // The find pill has the keyboard (it takes Enter and Escape itself); the terminal's
+            // own shortcuts still work.
+            let events = ctx.input(|i| i.events.clone());
+            for event in events {
+                if let egui::Event::Key { key, physical_key, pressed: true, modifiers, .. } = event {
+                    let mods = Mods { shift: modifiers.shift, ctrl: modifiers.ctrl, alt: modifiers.alt };
+                    if let Some(s) = shortcut(key, physical_key, mods) {
+                        self.run(ctx, s);
+                    }
+                }
+            }
+            return;
+        }
         let events = ctx.input(|i| i.events.clone());
         let mut out = Vec::new();
         let mut typed = false;
+        // Keys the console took whole (win32-input-mode) came first, through the window
+        // procedure; egui then only sees the terminal's own keys (`keeps`).
+        if let Some(gate) = &self.win32_keys {
+            let keys = gate.take();
+            if !keys.is_empty() {
+                out.extend(keys);
+                typed = true;
+            }
+        }
+        let whole_keys = self.win32_keys.as_ref().is_some_and(|g| g.active());
         for event in events {
             let mode = self.tabs.current().session.mode();
             let app_cursor = mode.contains(TermMode::APP_CURSOR);
             match event {
+                // Typed text came as key events already.
+                egui::Event::Text(_) if whole_keys => {}
                 egui::Event::Text(text) | egui::Event::Ime(egui::ImeEvent::Commit(text)) => {
                     let alt = self.keys.alt_key.take().is_some();
                     out.extend(keys::text_bytes(&text, alt));
@@ -121,6 +202,14 @@ impl super::TerminalApp {
                             self.copy_selection(ctx);
                         }
                         session.with_term_mut(|t| t.selection = None);
+                        continue;
+                    }
+                    if whole_keys {
+                        // Only the terminal's own keys reach egui then (paging the history).
+                        if let Some(Local::ScrollPage(dir)) = map_key(key, mods).and_then(|k| keys::local(k, mods)) {
+                            let s = &self.tabs.current().session;
+                            s.scroll(dir * (s.size().rows as i32 - 1).max(1));
+                        }
                         continue;
                     }
                     let Some(k) = map_key(key, mods) else { continue };
@@ -154,11 +243,12 @@ impl super::TerminalApp {
                         if !m.shift {
                             self.tabs.current().session.with_term_mut(|t| t.selection = None);
                         }
-                    } else if m.ctrl && !m.shift {
+                    } else if m.ctrl && !m.shift && !whole_keys {
                         out.push(0x03);
                         typed = true;
                     }
                 }
+                egui::Event::Cut if whole_keys => {}
                 egui::Event::Cut => {
                     let m = ctx.input(|i| i.modifiers);
                     if m.ctrl {
@@ -220,6 +310,7 @@ impl super::TerminalApp {
             Shortcut::ZoomIn => self.zoom(Some(1.0)),
             Shortcut::ZoomOut => self.zoom(Some(-1.0)),
             Shortcut::ZoomReset => self.zoom(None),
+            Shortcut::Find => self.find.show(),
         }
     }
 }
@@ -286,6 +377,8 @@ mod tests {
         // Ctrl+T and Ctrl+W alone are the shell's (readline's transpose, delete word).
         assert_eq!(shortcut(K::T, None, CTRL), None);
         assert_eq!(shortcut(K::W, None, CTRL), None);
+        assert_eq!(shortcut(K::F, None, CTRL_SHIFT), Some(Shortcut::Find));
+        assert_eq!(shortcut(K::F, None, CTRL), None);
     }
 
     #[test]
@@ -315,6 +408,35 @@ mod tests {
         // AltGr+7 is '{' on German: not Ctrl+Alt+7 (switch to tab 7), since AltGr carries no
         // Ctrl or Alt.
         assert_eq!(shortcut(K::Num7, Some(K::Num7), Mods::NONE), None);
+    }
+
+    #[test]
+    fn with_whole_key_events_the_terminal_keeps_only_its_own_keys() {
+        const SHIFT: Mods = Mods { shift: true, ctrl: false, alt: false };
+        const ALT: Mods = Mods { shift: false, ctrl: false, alt: true };
+        // Its shortcuts, by key code.
+        assert!(keeps(0x54, CTRL_SHIFT, false)); // Ctrl+Shift+T
+        assert!(keeps(0x09, CTRL, false)); // Ctrl+Tab
+        assert!(keeps(0x33, CTRL_ALT, false)); // Ctrl+Alt+3
+        assert!(keeps(0xBB, CTRL, false)); // Ctrl+=
+        assert!(keeps(0x21, SHIFT, false)); // Shift+PgUp
+        assert!(keeps(0x56, CTRL, false) && keeps(0x2D, SHIFT, false)); // paste
+        assert!(keeps(0x73, ALT, false)); // Alt+F4
+        // Ctrl+C is the console's (PSReadLine copies its own selection, or it interrupts),
+        // unless the terminal has a selection.
+        assert!(!keys_kept(0x43, CTRL));
+        assert!(keeps(0x43, CTRL, true));
+        assert!(keeps(0x43, CTRL_SHIFT, false));
+        assert!(!keeps(0x0D, Mods::NONE, false) && keeps(0x0D, Mods::NONE, true));
+        // Everything else goes whole: Shift+arrows, Ctrl+Alt letters, plain typing.
+        assert!(!keys_kept(0x25, SHIFT));
+        assert!(!keys_kept(0x41, CTRL_ALT));
+        assert!(!keys_kept(0x41, Mods::NONE));
+        assert!(!keys_kept(0x54, CTRL)); // Ctrl+T alone is the shell's
+    }
+
+    fn keys_kept(vk: u16, m: Mods) -> bool {
+        keeps(vk, m, false)
     }
 
     #[test]

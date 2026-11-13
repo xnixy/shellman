@@ -600,9 +600,22 @@ entry points open it, and it can be Windows' default terminal (below).
   The choice is `default_terminal` in `terminal.json`: `"shellman"` (default), `"windows-terminal"`
   or `"custom"` with `custom_terminal` (a command line, `{dir}` for the folder). A missing choice
   falls back: shellman's terminal (sibling exe), Windows Terminal (app alias `wt.exe -d`, then the
-  activation manager), Command Prompt in a new console. **Owed**: a control for it in Settings
-  (not added while Settings is being edited elsewhere); `terminal.json` is the place for now.
-- **Windows' default terminal** (`defterm/`, `handoff_pty.rs`): where a console program shows
+  activation manager), Command Prompt in a new console. Settings › Terminal sets it (below).
+- **Settings › Terminal** (stage 3, `apps/settings/src/sections/terminal.rs`; rail entry and
+  search words): default profile (the names from `shellman_core::terminal::profiles`, which the
+  terminal now builds its profiles from too), font family and size, lines of history,
+  copy-on-select, "New terminal opens in" (`new_instance`), "Open Terminal here uses"
+  (`default_terminal`, `custom_terminal`), and "Use shellman Terminal for all console programs".
+  `terminal.json` is read and written whole through `shellman_core::terminal::file::File`, so
+  fields the page does not know are kept (tested). A running terminal follows the file (its
+  settings-folder watch): font family and size, history length (`Term::set_options`),
+  copy-on-select, default profile and `new_instance` apply live. The console switch shows the
+  registry's `DelegationTerminal` (`terminal::handoff::current`: shellman, Windows Terminal,
+  Windows decides, or another CLSID) and runs the installed `shellman-terminal.exe`'s own
+  `--register-default-terminal` / `--unregister-default-terminal` beside Settings, off the UI
+  thread, then reads the state again; it is disabled without Windows Terminal (one line says
+  why). Tested: the state from the value and the command it runs; the switch was not flipped.
+- **Windows' default terminal** (`defterm/`, `pty.rs`): where a console program shows
   when it starts with no terminal (a `.bat`, Win+R `cmd`, a program spawning `powershell`). Off
   until `shellman-terminal --register-default-terminal`; `--unregister-default-terminal` undoes
   it. Both are per user, no admin, and print the pair before and after.
@@ -626,7 +639,7 @@ entry points open it, and it can be Windows' default terminal (below).
     (`REGCLS_SINGLEUSE`: one console, one window, as WT's default "new window"). The call's
     `[in]` handles are checked (signal is a pipe, server and client are processes) and
     duplicated; we make the input and output pipes and return OpenConsole's ends.
-    `HandoffPty` drives them as `alacritty_terminal`'s `Pty` would: output read on a thread and
+    `pty::Pty` drives them as `alacritty_terminal`'s `Pty` would: output read on a thread and
     posted to the poller, input queued to a writer thread, resize as the 6-byte signal packet
     (`PTY_SIGNAL_RESIZE_WINDOW` = 8, cols, rows), the end when the client (or the console) exits;
     dropping it closes signal, reference, then the console's process, as `ClosePseudoConsole`
@@ -644,12 +657,33 @@ entry points open it, and it can be Windows' default terminal (below).
     `OpenConsoleProxy.dll` (~40 KB) registered as the proxy-stub for the handoff IIDs under HKCU
     `Interface\{…}\ProxyStubClsid32`, which one third-party report (SonicTerm #1655) found broke
     every terminal's handoff while installed, so it must be tested against WT side by side. The
-    same bundle would also give the newer `conpty.dll` (`Microsoft.Windows.Console.ConPTY`) for
-    throughput. Packaging (an MSIX/sparse package, which needs a signed package) is only needed
+    `OpenConsole.exe` bundled since stage 3 (for throughput, above) does not change this: it is
+    Microsoft's build, with Windows Terminal's `CConsoleHandoff` CLSID compiled in, and the
+    NuGet package has no `OpenConsoleProxy.dll`. Using it as the delegation console would mean
+    registering WT's CLSID per user to it (clashing with WT's own packaged registration while WT
+    is installed) plus a proxy-stub for the handoff interfaces, so the rebuild with a CLSID of our
+    own (above) is still the clean way. Packaging (an MSIX/sparse package, which needs a signed package) is only needed
     to be listed in Windows Settings' picker, which is unreachable here anyway.
 
-- **Emulation**: `alacritty_terminal` 0.26: grid, scrollback, VT parser and the pseudo-console
-  (ConPTY, or a `conpty.dll` found on PATH or beside the exe), on a thread of its own per tab.
+- **ConPTY** (`conpty.rs`, `pty.rs`; stage 3): pseudo-consoles are made through Microsoft's
+  redistributable ConPTY, `conpty.dll` + `OpenConsole.exe` from NuGet
+  `Microsoft.Windows.Console.ConPTY` 1.25.260930003 (MIT, Microsoft-signed; files, hashes and
+  source in `third_party/conpty/README.md`), when both sit beside `shellman-terminal.exe`; else
+  through Windows' own API (inbox conhost). `apps/terminal/build.rs` copies the two x64 files next
+  to the exe in `target\<profile>`; **the install must put both in the same folder as
+  `shellman-terminal.exe`** (and, like the exes, rename them aside rather than overwrite them while
+  terminals run: the dll is loaded and each tab runs an OpenConsole). The dll is loaded by full
+  path only (alacritty's own ConPTY code also tried `conpty.dll` from PATH, and it leaked the
+  console's pipe ends). Created with `PSEUDOCONSOLE_GLYPH_WIDTH_WCSWIDTH`, so OpenConsole measures
+  emoji per code point as the emulator does. The tab's pty is ours for both kinds (created and
+  handed over): output read on a thread into a 1 MiB buffer, input on a writer thread. The console
+  host is released (`ReleasePseudoConsole`) once the program started, so it exits after its last
+  program and its output pipe breaks: a program's end is told to the emulator only after that
+  and after the parser took every byte (at most 3 s, for a program that left a child on the
+  console; a handed-over console, which is not released, waits for output to go quiet). That
+  fixed stage 2's lost last line of a program that exits at once.
+- **Emulation**: `alacritty_terminal` 0.26: grid, scrollback and VT parser, on a thread of its own
+  per tab.
   Its listener answers the pty directly (cursor reports, OSC 4/10/11 colour queries from the
   theme's palette) and wakes the window. The pty's output passes through `osc.rs` on its way:
   OSC 7 / OSC 9;9 (the shell's directory) and DECSET 9 (X10 mouse), which the emulator does not
@@ -683,6 +717,16 @@ entry points open it, and it can be Windows' default terminal (below).
   Terminal's way); Esc drops it; copy-on-select is `copy_on_select` in `terminal.json`. Copied
   text joins soft-wrapped lines, trims trailing blanks, uses CR LF, and a whole-line copy has no
   final line break. Paste: Ctrl+V, Ctrl+Shift+V, Shift+Insert, bracketed when asked.
+- **Find** (stage 3, `app/find.rs`): Ctrl+Shift+F opens a glass pill in the top row between the
+  tabs and the window buttons (as Files' search pill sits in its bar; the tabs' pill gives way).
+  It searches as you type, literally (`alacritty_terminal`'s regex search, metacharacters
+  escaped), case-insensitive unless "Aa" is lit; Enter goes to the next match up (older),
+  Shift+Enter down, wrapping once all are counted; "3 of 120" (a "+" while counting, "No
+  results"); Esc or × closes. Matches on screen are marked amber, the current one in the accent,
+  inside the cells (so they ride the row hashes like the selection). The count walks the whole
+  history bottom-up in 2 000-line slices, 4 ms a frame, so 100 000 lines never stall the window
+  (tested: 100k lines counted in slices); the screen's matches are searched afresh per snapshot,
+  and the count starts over when output came (at most every 0.4 s), keeping to the view.
 - **Mouse to programs**: X10 (9), 1000, 1002, 1003 tracking; normal, UTF-8 (1005) and SGR
   (1006) encodings; focus (1004, also on tab switches); wheel as buttons 64/65 when tracking,
   arrows on the alternate screen with 1007, else scrollback. Shift takes the mouse back.
@@ -692,11 +736,28 @@ entry points open it, and it can be Windows' default terminal (below).
 - **Cursor**: DECSCUSR shapes; blinking at Windows' caret rate, only while focused, stopping
   (shown) after 15 s without input or output, so an idle window draws nothing.
 - **Drawing**: a GPU renderer inside egui's frame (an `egui_glow` paint callback). Glyphs by
-  DirectWrite (`crossfont`, with font fallback) into a 2048 px greyscale atlas; box drawing
+  DirectWrite (`crossfont`, with font fallback) into a 2048 px greyscale atlas (colour emoji on a page of their own, above); box drawing
   (light, heavy, double, rounded), blocks, shades, quadrants and Powerline triangles / half
   discs are drawn cell-sized by `render/boxdraw.rs` so they join without gaps (dashes and
   diagonals stay the font's). Three instanced draws: background runs, glyphs, then lines and the
   thin cursor; per-row slots and hashes, only changed rows are sent.
+- **Colour emoji** (stage 3, `emoji.rs`, `render/color.rs`): a wide character in the emoji
+  blocks, or one with VS16 or a keycap mark, is drawn in colour: Direct2D draws it with
+  DirectWrite's colour font (Segoe UI Emoji) into a premultiplied bitmap through WIC (software,
+  no device, no window), once, onto a 1024 px BGRA colour page of its own, drawn by a fourth
+  instanced draw. Cell widths stay `wcwidth`'s (the emulator's, and ConPTY measures the same way,
+  see ConPTY above), so the cursor never drifts; a ZWJ sequence (👨‍👩‍👧‍👦, four wide cells) or an
+  emoji with a skin tone (👍🏽, two) is shaped by DirectWrite into one glyph in the first two cells
+  and the cells it took after them stay blank, as `wcwidth` terminals show it. Cells name a
+  cluster by number (never reused, so row hashes stay true). No emoji on screen: no colour page,
+  no draw, nothing rasterised. Flags stay text (Windows' emoji font has none). VS15 keeps text.
+- **Palette** (stage 3, `palette.rs`): the 16 ANSI colours come in two sets. Backgrounds, and
+  text on a coloured background (or inverse), use Campbell in both themes, so bright white on red
+  is white in the light theme too (it was the light set's dark grey, unreadable). Text on the
+  glass uses the theme's set, each colour at least 3:1 (WCAG) against its glass, tested: the
+  light set as before (3.2 to 17:1), the dark set Campbell with red, blue, magenta and bright
+  magenta lifted (they were 2.0 to 2.7:1 on the dark glass, now 3.2 to 3.9). Black on the dark
+  glass is left as it is (meant for light backgrounds).
 - **Glass and colour**: as stage 1: cells with the default background draw nothing, so the
   island is the shared glass and follows the slider live; the tab strip, window buttons, the
   profile menu and hover labels are islands too.
@@ -708,6 +769,20 @@ entry points open it, and it can be Windows' default terminal (below).
   Zoom: Ctrl+wheel, Ctrl+plus/minus, Ctrl+0.
 - **Keyboard**: text comes as Windows composed it (dead keys, AltGr, IME commits), so layouts
   are not assumed; AltGr reaches egui without Ctrl and Alt and its characters go as text.
+- **win32-input-mode** (stage 3; `keys.rs` `Win32Key`/`Composer`, `app/win32_input.rs`): ConPTY
+  asks for it at its start (`CSI ? 9001 h`, seen by `osc.rs`); from then on keys go to the console
+  as whole key events, `CSI Vk;Sc;Uc;Kd;Cs;Rc _` (microsoft/terminal spec #4999), so console
+  programs get real key-downs and key-ups with scan codes and modifier state (PSReadLine's own
+  Shift+arrow selection and Ctrl+C copy, Ctrl+Alt combinations, Shift on its own). egui has no
+  key-ups or scan codes, so a subclass of the window procedure reads `WM_KEYDOWN`/`UP` and the
+  `WM_CHAR`s `TranslateMessage` already queued for them (a dead key sends nothing, the next key
+  carries the composed character; a key that types nothing goes bare; key-ups carry their
+  character by `ToUnicodeEx` without touching the dead-key state) and keeps those messages from
+  egui, except the terminal's own keys (`input::keeps`: its shortcuts, paste, Ctrl+C / Enter /
+  Escape only while it has a selection, Shift+PgUp/PgDn, Alt+F4 / Alt+Space), modifiers (sent and
+  also left to egui) and IME keys (committed text goes as text). The encoding is tested against
+  the spec's examples; live, a `ReadKey` loop saw Shift's own key-down and key-up (which the VT
+  path never sends).
 
 Measured (release, a 1800x1100 px window on a 4K monitor at 150 %, 240 Hz, same placement for
 each; `SHELLMAN_TERMINAL_STATS=<file>` logs frame times):
@@ -718,13 +793,17 @@ each; `SHELLMAN_TERMINAL_STATS=<file>` logs frame times):
   never finished (the stall above). During it the system ConPTY's conhost uses a whole core and
   the terminal 1.2 (parser thread and UI); frames take 0.25 ms of CPU at 241 fps. So the gap is
   ConPTY: Windows Terminal brings its own (OpenConsole), which passes output through.
+- Stage 3, the bundled ConPTY (release, a 1758x1095 px window on the left 4K monitor at 150 %,
+  medians of 3, measured while a game ran on the primary monitor, so absolute times are noisy;
+  the ratio is the point; final runs interleaved, 3 each): `cat` of the 100 MB file in WSL,
+  stage 2 (inbox conhost) 9.6 s, stage 3 through Windows' ConPTY (the fallback) 7.95 s, stage 3
+  with the bundled OpenConsole 2.4 s (Windows Terminal was 2.4 s in stage 2);
+  `dir /s C:\Windows\System32` 1.62 s, 1.60 s, 1.53 s.
 - Idle 20 s: 0.000 CPU-s focused, 0.016 unfocused. A blinking cursor: 2 frames a second for
   15 s, then none. A tab flooding output in the background: no frames.
-- Not yet: colour emoji (drawn in one colour), find in scrollback, splits, a Settings page,
-  win32-input-mode (ConPTY's `?9001`: exact key events; without it PSReadLine's own Ctrl+C copy
-  of its selection did not reach the clipboard in a test), bundling OpenConsole/`conpty.dll`,
+- Not yet: splits,
   OSC 10/11 answers through the system ConPTY (it does not forward the queries; the answering is
-  in place), a light palette that keeps bright white readable on coloured backgrounds.
+  in place).
 
 ## Session
 

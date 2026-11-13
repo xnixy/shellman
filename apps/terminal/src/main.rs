@@ -7,14 +7,16 @@ mod app;
 mod cli;
 mod clip;
 mod config;
+mod conpty;
 mod defterm;
-mod handoff_pty;
+mod emoji;
 mod instance;
 mod keys;
 mod mouse;
 mod osc;
 mod palette;
 mod profiles;
+mod pty;
 mod render;
 mod select;
 mod session;
@@ -134,15 +136,17 @@ fn run_window(launch: cli::Launch, handoff: Option<defterm::server::Arrived>) ->
             look.apply(&cc.egui_ctx);
             theme::apply(&cc.egui_ctx);
             let mut panel = None;
+            let mut hwnd = None;
             if let Ok(handle) = cc.window_handle() {
                 if let RawWindowHandle::Win32(win32) = handle.as_raw() {
-                    let hwnd = win32.hwnd.get();
-                    window::frameless(hwnd);
-                    panel = Some(GlassPanel::attach(hwnd, Style::from_theme(app::RADIUS)));
+                    let h = win32.hwnd.get();
+                    window::frameless(h);
+                    panel = Some(GlassPanel::attach(h, Style::from_theme(app::RADIUS)));
+                    hwnd = Some(h);
                 }
             }
             let panel = panel.ok_or("the window has no handle")?;
-            Ok(Box::new(app::TerminalApp::new(&cc.egui_ctx, look, panel, launch, handoff)?))
+            Ok(Box::new(app::TerminalApp::new(&cc.egui_ctx, look, panel, hwnd, launch, handoff)?))
         }),
     )
 }

@@ -12,6 +12,10 @@
 //! starts it with `-d <folder>`. Without the alias the activation manager starts the package
 //! directly (`apps_index::activate`).
 
+pub mod file;
+pub mod handoff;
+pub mod profiles;
+
 use serde::{Deserialize, Serialize};
 use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};

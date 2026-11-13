@@ -10,3 +10,5 @@
 # Redistributables the terminal brings, once they are added to the repo, go here, e.g.:
 # ? redist/conpty.dll
 # ? redist/OpenConsole.exe
+? third_party/conpty/x64/conpty.dll
+? third_party/conpty/x64/OpenConsole.exe

@@ -12,7 +12,7 @@
 //! as Windows Terminal's default "new window", and the process ends with its window.
 
 use super::CLSID;
-use crate::handoff_pty::Handles;
+use crate::pty::Handles;
 use std::ffi::c_void;
 use std::os::windows::io::{FromRawHandle, OwnedHandle};
 use std::sync::mpsc;

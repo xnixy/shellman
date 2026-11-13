@@ -6,6 +6,7 @@
 //! Positions are whole pixels from the grid's top-left; the viewport is the grid's rectangle.
 
 use super::atlas::ATLAS;
+use super::color::COLOR_ATLAS;
 use super::{GlyphInst, RectInst, Update};
 use glow::HasContext;
 
@@ -70,6 +71,18 @@ void main() {
 }
 "#;
 
+/// Colour glyphs: the page holds premultiplied colour (BGRA, uploaded as such), drawn as it is,
+/// faded by the instance's alpha.
+const COLOR_FS: &str = r#"
+in vec2 v_uv;
+in vec4 v_color;
+uniform sampler2D u_tex;
+out vec4 o_color;
+void main() {
+    o_color = texture(u_tex, v_uv) * v_color.a;
+}
+"#;
+
 struct Buffers {
     vao: glow::VertexArray,
     buffer: glow::Buffer,
@@ -82,6 +95,10 @@ pub struct Gpu {
     bg: Buffers,
     glyphs: Buffers,
     over: Buffers,
+    /// Colour glyphs (emoji): their program, page and buffer, made when the first one shows.
+    color: Option<(glow::Program, glow::Texture)>,
+    emoji: Buffers,
+    any_emoji: bool,
     cols: usize,
     rows: usize,
 }
@@ -121,6 +138,9 @@ impl Gpu {
                 bg: rect_buffers(gl)?,
                 glyphs: glyph_buffers(gl)?,
                 over: rect_buffers(gl)?,
+                color: None,
+                emoji: glyph_buffers(gl)?,
+                any_emoji: false,
                 cols: 0,
                 rows: 0,
             })
@@ -137,7 +157,26 @@ impl Gpu {
                 alloc(gl, &self.bg, cells * size_of::<RectInst>());
                 alloc(gl, &self.glyphs, cells * size_of::<GlyphInst>());
                 alloc(gl, &self.over, cells * OVER_PER_COL * size_of::<RectInst>());
+                alloc(gl, &self.emoji, cells * size_of::<GlyphInst>());
             }
+            if !update.color_glyphs.is_empty() {
+                if self.color.is_none() {
+                    match color_page(gl) {
+                        Ok(page) => self.color = Some(page),
+                        Err(e) => eprintln!("terminal: no colour glyphs: {e}"),
+                    }
+                }
+                if let Some((_, tex)) = self.color {
+                    gl.bind_texture(glow::TEXTURE_2D, Some(tex));
+                    gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 4);
+                    for u in update.color_glyphs.drain(..) {
+                        gl.tex_sub_image_2d(glow::TEXTURE_2D, 0, u.x, u.y, u.w, u.h, glow::BGRA, glow::UNSIGNED_BYTE, glow::PixelUnpackData::Slice(Some(&u.pixels)));
+                    }
+                    gl.bind_texture(glow::TEXTURE_2D, None);
+                }
+                update.color_glyphs.clear();
+            }
+            self.any_emoji = update.any_emoji;
             if !update.glyphs.is_empty() {
                 gl.bind_texture(glow::TEXTURE_2D, Some(self.atlas));
                 gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 1);
@@ -165,6 +204,9 @@ impl Gpu {
                 put(gl, &self.bg, row.index * cols * size_of::<RectInst>(), &row.bg);
                 put(gl, &self.glyphs, row.index * cols * size_of::<GlyphInst>(), &row.glyphs);
                 put(gl, &self.over, row.index * cols * OVER_PER_COL * size_of::<RectInst>(), &row.over);
+                if let Some(emoji) = &row.emoji {
+                    put(gl, &self.emoji, row.index * cols * size_of::<GlyphInst>(), emoji);
+                }
             }
             gl.bind_buffer(glow::ARRAY_BUFFER, None);
         }
@@ -198,6 +240,17 @@ impl Gpu {
             gl.bind_vertex_array(Some(self.glyphs.vao));
             gl.draw_arrays_instanced(glow::TRIANGLE_STRIP, 0, 4, cells);
 
+            // Colour glyphs, only while some row on screen has one.
+            if let (true, Some((program, tex))) = (self.any_emoji, self.color) {
+                gl.use_program(Some(program));
+                gl.uniform_2_f32(gl.get_uniform_location(program, "u_view").as_ref(), view[0], view[1]);
+                gl.uniform_1_f32(gl.get_uniform_location(program, "u_atlas").as_ref(), COLOR_ATLAS as f32);
+                gl.uniform_1_i32(gl.get_uniform_location(program, "u_tex").as_ref(), 0);
+                gl.bind_texture(glow::TEXTURE_2D, Some(tex));
+                gl.bind_vertex_array(Some(self.emoji.vao));
+                gl.draw_arrays_instanced(glow::TRIANGLE_STRIP, 0, 4, cells);
+            }
+
             gl.use_program(Some(self.rect));
             gl.bind_vertex_array(Some(self.over.vao));
             gl.draw_arrays_instanced(glow::TRIANGLE_STRIP, 0, 4, cells * OVER_PER_COL as i32);
@@ -213,12 +266,34 @@ impl Gpu {
             gl.delete_program(self.rect);
             gl.delete_program(self.glyph);
             gl.delete_texture(self.atlas);
-            for b in [&self.bg, &self.glyphs, &self.over] {
+            if let Some((program, tex)) = self.color {
+                gl.delete_program(program);
+                gl.delete_texture(tex);
+            }
+            for b in [&self.bg, &self.glyphs, &self.over, &self.emoji] {
                 gl.delete_vertex_array(b.vao);
                 gl.delete_buffer(b.buffer);
             }
         }
     }
+}
+
+/// The colour page and the program that draws from it.
+unsafe fn color_page(gl: &glow::Context) -> Result<(glow::Program, glow::Texture), String> {
+    let program = program(gl, GLYPH_VS, COLOR_FS)?;
+    let tex = gl.create_texture()?;
+    gl.bind_texture(glow::TEXTURE_2D, Some(tex));
+    gl.tex_image_2d(glow::TEXTURE_2D, 0, glow::RGBA8 as i32, COLOR_ATLAS, COLOR_ATLAS, 0, glow::BGRA, glow::UNSIGNED_BYTE, glow::PixelUnpackData::Slice(None));
+    for (p, v) in [
+        (glow::TEXTURE_MIN_FILTER, glow::NEAREST),
+        (glow::TEXTURE_MAG_FILTER, glow::NEAREST),
+        (glow::TEXTURE_WRAP_S, glow::CLAMP_TO_EDGE),
+        (glow::TEXTURE_WRAP_T, glow::CLAMP_TO_EDGE),
+    ] {
+        gl.tex_parameter_i32(glow::TEXTURE_2D, p, v as i32);
+    }
+    gl.bind_texture(glow::TEXTURE_2D, None);
+    Ok((program, tex))
 }
 
 unsafe fn program(gl: &glow::Context, vs: &str, fs: &str) -> Result<glow::Program, String> {

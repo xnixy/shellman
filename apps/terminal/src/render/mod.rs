@@ -8,11 +8,13 @@
 
 mod atlas;
 mod boxdraw;
+mod color;
 mod gpu;
 
 pub use atlas::Metrics;
 use egui_glow::glow;
 use gpu::{Gpu, OVER_PER_COL};
+use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 use std::sync::{Arc, Mutex};
 
@@ -24,6 +26,36 @@ pub const DOUBLE_UNDERLINE: u8 = 8;
 pub const STRIKE: u8 = 16;
 /// The glyph takes this cell and the next.
 pub const WIDE: u8 = 32;
+/// A colour glyph (emoji): `ch` is not a character but the cluster's number in the frame's
+/// [`Clusters`].
+pub const COLOR: u8 = 64;
+
+/// Emoji clusters (an emoji with its joiners, skin tone, selectors) by number, so a cell can
+/// name one in its `ch`. Numbers are never reused, so a row's hash stays true to what it shows.
+#[derive(Default)]
+pub struct Clusters {
+    map: HashMap<String, u32>,
+    list: Vec<String>,
+}
+
+impl Clusters {
+    /// The number for `text`, as the `char` a cell holds; None past the numbers a `char` can
+    /// carry (the cell is then drawn as text).
+    pub fn intern(&mut self, text: String) -> Option<char> {
+        if let Some(&n) = self.map.get(&text) {
+            return char::from_u32(n);
+        }
+        let n = self.list.len() as u32;
+        let c = char::from_u32(n).filter(|_| n < 0xD000)?;
+        self.list.push(text.clone());
+        self.map.insert(text, n);
+        Some(c)
+    }
+
+    pub fn get(&self, c: char) -> Option<&str> {
+        self.list.get(c as usize).map(String::as_str)
+    }
+}
 
 /// One cell as the renderer sees it: colours already resolved (inverse, dim, the palette).
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -64,6 +96,8 @@ pub struct Frame {
     pub cursor: Option<Cursor>,
     /// The cursor blinks (a program asked for it, and the window has the focus).
     pub blinking: bool,
+    /// The emoji the cells name.
+    pub clusters: Clusters,
 }
 
 impl Frame {
@@ -97,6 +131,8 @@ struct RowUpdate {
     bg: Vec<RectInst>,
     glyphs: Vec<GlyphInst>,
     over: Vec<RectInst>,
+    /// Colour glyphs, one slot a column; None for a row with none (and none before).
+    emoji: Option<Vec<GlyphInst>>,
 }
 
 /// What the GPU has not seen yet. Several updates can pile up before a paint.
@@ -104,7 +140,10 @@ struct RowUpdate {
 struct Update {
     resize: Option<(usize, usize)>,
     glyphs: Vec<atlas::Upload>,
+    color_glyphs: Vec<color::Upload>,
     rows: Vec<RowUpdate>,
+    /// Whether any row on screen has a colour glyph (else that draw is skipped).
+    any_emoji: bool,
 }
 
 /// The GPU side, shared with the paint callback (which egui needs to be `Send + Sync`).
@@ -117,6 +156,9 @@ struct Shared {
 
 pub struct Renderer {
     atlas: atlas::Atlas,
+    color: color::ColorAtlas,
+    /// Each row's count of colour glyphs as last sent.
+    emoji_rows: Vec<u16>,
     /// The font size in pixels and the family the atlas was made for.
     px: f32,
     family: String,
@@ -131,6 +173,8 @@ impl Renderer {
     pub fn new(px: f32, family: &str) -> Result<Self, String> {
         Ok(Self {
             atlas: atlas::Atlas::new(px, family)?,
+            color: color::ColorAtlas::new(px),
+            emoji_rows: Vec::new(),
             px,
             family: family.to_owned(),
             hashes: Vec::new(),
@@ -152,8 +196,21 @@ impl Renderer {
         }
         let atlas = atlas::Atlas::new(px, &self.family)?;
         self.atlas = atlas;
+        self.color = color::ColorAtlas::new(px);
         self.px = px;
         self.hashes.clear();
+        Ok(())
+    }
+
+    /// Change the font family (Settings): every glyph is made again.
+    pub fn set_family(&mut self, family: &str) -> Result<(), String> {
+        if family == self.family {
+            return Ok(());
+        }
+        self.atlas = atlas::Atlas::new(self.px, family)?;
+        self.color = color::ColorAtlas::new(self.px);
+        self.family = family.to_owned();
+        self.hashes.iter_mut().for_each(|h| *h = 0);
         Ok(())
     }
 
@@ -163,6 +220,7 @@ impl Renderer {
         if frame.cols != self.cols || frame.rows != self.hashes.len() {
             self.cols = frame.cols;
             self.hashes = vec![0; frame.rows];
+            self.emoji_rows = vec![0; frame.rows];
             let mut shared = self.shared.lock().unwrap();
             shared.update.resize = Some((frame.cols, frame.rows));
             shared.update.rows.clear();
@@ -180,14 +238,14 @@ impl Renderer {
         }
         let rows = match self.build(frame, &changed) {
             Ok(rows) => rows,
-            Err(atlas::Full) => {
+            Err(Full) => {
                 // The atlas was emptied: every row is placed again from a fresh one.
                 self.hashes.iter_mut().for_each(|h| *h = 0);
                 changed = (0..frame.rows).map(|r| (r, row_hash(frame, r))).collect();
                 match self.build(frame, &changed) {
                     Ok(rows) => rows,
                     // Not even one screen fits: draw what was there, try again next time.
-                    Err(atlas::Full) => return 0,
+                    Err(Full) => return 0,
                 }
             }
         };
@@ -195,22 +253,29 @@ impl Renderer {
             self.hashes[r] = hash;
         }
         let n = rows.len();
+        for row in &rows {
+            self.emoji_rows[row.index] = row.emoji.as_ref().map_or(0, |e| e.iter().filter(|g| g.size[0] > 0).count() as u16);
+        }
         let mut shared = self.shared.lock().unwrap();
         shared.update.glyphs.append(&mut self.atlas.uploads);
+        shared.update.color_glyphs.append(&mut self.color.uploads);
         shared.update.rows.extend(rows);
+        shared.update.any_emoji = self.emoji_rows.iter().any(|&n| n > 0);
         n
     }
 
-    fn build(&mut self, frame: &Frame, changed: &[(usize, u64)]) -> Result<Vec<RowUpdate>, atlas::Full> {
+    fn build(&mut self, frame: &Frame, changed: &[(usize, u64)]) -> Result<Vec<RowUpdate>, Full> {
         changed.iter().map(|&(r, _)| self.build_row(frame, r)).collect()
     }
 
-    fn build_row(&mut self, frame: &Frame, r: usize) -> Result<RowUpdate, atlas::Full> {
+    fn build_row(&mut self, frame: &Frame, r: usize) -> Result<RowUpdate, Full> {
         let m = self.atlas.metrics;
         let cols = frame.cols;
         let top = (r as i32 * m.cell_h) as i16;
         let mut bg: Vec<RectInst> = Vec::with_capacity(cols);
         let mut glyphs = vec![GlyphInst::default(); cols];
+        // A row that had colour glyphs gets its slots cleared even when it has none now.
+        let mut emoji: Option<Vec<GlyphInst>> = (self.emoji_rows.get(r).copied().unwrap_or(0) > 0).then(|| vec![GlyphInst::default(); cols]);
         let mut over: Vec<RectInst> = Vec::with_capacity(cols * OVER_PER_COL);
         // The run being extended: start column, end column, colour.
         let mut bg_run: Option<(usize, usize, [u8; 4])> = None;
@@ -257,11 +322,21 @@ impl Renderer {
                     }
                 }
             }
+            if cell.flags & COLOR != 0 {
+                let text = frame.clusters.get(cell.ch).unwrap_or(" ");
+                if let Some(g) = self.color.glyph(text, span as u8, m.cell_w, m.cell_h).map_err(|_| Full)? {
+                    let slots = emoji.get_or_insert_with(|| vec![GlyphInst::default(); cols]);
+                    slots[c] = GlyphInst { pos: [(c as i32 * m.cell_w) as i16, top], uv: [g.x, g.y], size: [g.w, g.h], color: [255, 255, 255, 255] };
+                    continue;
+                }
+            }
             if cell.ch == ' ' || cell.ch == '\0' || cell.fg[3] == 0 {
                 continue;
             }
             let style = (cell.flags & BOLD != 0) as u8 | ((cell.flags & ITALIC != 0) as u8) << 1;
-            let g = self.atlas.glyph(cell.ch, style)?;
+            // A colour cluster no font could draw in colour: its first character, as text.
+            let ch = if cell.flags & COLOR != 0 { frame.clusters.get(cell.ch).and_then(|t| t.chars().next()).unwrap_or(' ') } else { cell.ch };
+            let g = self.atlas.glyph(ch, style).map_err(|_| Full)?;
             if g.w == 0 {
                 continue;
             }
@@ -303,7 +378,7 @@ impl Renderer {
         bg.resize(cols, RectInst::default());
         over.truncate(cols * OVER_PER_COL);
         over.resize(cols * OVER_PER_COL, RectInst::default());
-        Ok(RowUpdate { index: r, bg, glyphs, over })
+        Ok(RowUpdate { index: r, bg, glyphs, over, emoji })
     }
 
     /// The paint callback that draws the grid into `rect` (which should be whole pixels).
@@ -339,6 +414,9 @@ impl Renderer {
         }
     }
 }
+
+/// An atlas page is full: it was emptied, and every row is placed again.
+struct Full;
 
 /// A row's cells and, on the cursor's row, the cursor, as one number. Never 0.
 fn row_hash(frame: &Frame, r: usize) -> u64 {
@@ -393,7 +471,7 @@ mod tests {
     }
 
     fn frame(cells: Vec<Cell>, cols: usize) -> Frame {
-        Frame { cols, rows: cells.len() / cols, cells, cursor: None, blinking: false }
+        Frame { cols, rows: cells.len() / cols, cells, cursor: None, blinking: false, clusters: Clusters::default() }
     }
 
     #[test]
@@ -405,6 +483,16 @@ mod tests {
         f.cells[4].ch = 'b';
         assert_eq!(row_hash(&f, 0), before[0]);
         assert_ne!(row_hash(&f, 1), before[1]);
+    }
+
+    #[test]
+    fn clusters_keep_their_numbers() {
+        let mut c = Clusters::default();
+        let a = c.intern("\u{1F600}".into()).unwrap();
+        let b = c.intern("\u{1F44D}\u{1F3FD}".into()).unwrap();
+        assert_ne!(a, b);
+        assert_eq!(c.intern("\u{1F600}".into()), Some(a));
+        assert_eq!(c.get(b), Some("\u{1F44D}\u{1F3FD}"));
     }
 
     #[test]

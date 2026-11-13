@@ -2,7 +2,7 @@
 //! Edits apply by saving the same files the other apps watch.
 
 use crate::saver::Saver;
-use crate::sections::{WidgetsView, AppsView, DisplayView, FontsView, IconsView, MouseView, PowerView, DateTimeView, StorageView, DefaultAppsView, Section, SoundView, StartupView, UpdatesView};
+use crate::sections::{WidgetsView, AppsView, DisplayView, FontsView, IconsView, MouseView, PowerView, DateTimeView, StorageView, DefaultAppsView, Section, SoundView, StartupView, TerminalView, UpdatesView};
 use shellman_core::settings::bar::BarSettings;
 use shellman_core::settings::desktop::DesktopSettings;
 use shellman_core::settings::dock::{self, DockSettings};
@@ -54,6 +54,8 @@ pub struct State {
     pub goto: Option<Section>,
     /// The icon pack group's live state (Appearance).
     pub icons: IconsView,
+    /// The Terminal page's state; read when the page is shown.
+    pub terminal: TerminalView,
     /// Whether the window has real acrylic; without it the glass slider has nothing to do.
     pub glass: bool,
 }
@@ -85,6 +87,7 @@ impl State {
             fonts: FontsView::default(),
             goto: None,
             icons: IconsView::default(),
+            terminal: TerminalView::default(),
             glass,
         };
         state.rebuild_names();

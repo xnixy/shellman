@@ -8,15 +8,17 @@
 //! cursor and the window has the focus). A tab not shown wakes the window only for its dot,
 //! title, bell or exit, so it costs no frames while it runs.
 
+mod find;
 mod input;
 mod pointer;
 mod strip;
 mod view;
+pub mod win32_input;
 
 use crate::cli::Launch;
 use crate::config::Config;
 use crate::defterm::server::Arrived;
-use crate::handoff_pty::HandoffPty;
+use crate::pty::Pty;
 use crate::instance;
 use crate::profiles::{self, Profile};
 use crate::render::{Frame, Renderer};
@@ -81,11 +83,15 @@ pub struct TerminalApp {
     /// Launches another start of the terminal handed to this window (`instance`).
     inbox: instance::Inbox,
     stats: Stats,
+    /// Keys read from the window procedure for a console in win32-input-mode.
+    win32_keys: Option<Arc<win32_input::Gate>>,
+    /// Find in the scrollback.
+    find: find::Find,
 }
 
 impl TerminalApp {
     /// `launch`: what the first tab runs, and where; or `handoff`, a console Windows handed over.
-    pub fn new(ctx: &egui::Context, look: Appearance, panel: GlassPanel, launch: Launch, handoff: Option<Arrived>) -> Result<Self, String> {
+    pub fn new(ctx: &egui::Context, look: Appearance, panel: GlassPanel, hwnd: Option<isize>, launch: Launch, handoff: Option<Arrived>) -> Result<Self, String> {
         let config = if handoff.is_some() { Config::read() } else { Config::load() };
         let profiles = profiles::build(&profiles::detect());
         let ppp = ctx.pixels_per_point();
@@ -115,7 +121,7 @@ impl TerminalApp {
             profiles,
             font_pt,
             renderer,
-            frame: Frame { cols: 0, rows: 0, cells: Vec::new(), cursor: None, blinking: false },
+            frame: Frame { cols: 0, rows: 0, cells: Vec::new(), cursor: None, blinking: false, clusters: Default::default() },
             panel,
             look,
             wake,
@@ -130,6 +136,8 @@ impl TerminalApp {
             inbox,
             stats: Stats::from_env(),
             config,
+            win32_keys: hwnd.map(|h| win32_input::install(h, ctx.clone())),
+            find: find::Find::default(),
         })
     }
 
@@ -229,10 +237,47 @@ impl TerminalApp {
                 self.look = look;
                 look.apply(ctx);
             }
+            self.reload_config();
         }
         theme::set_light(ctx.theme() == egui::Theme::Light);
         if self.look.accent == AccentChoice::System {
             theme::set_accent(ctx, AccentChoice::System.resolve());
+        }
+    }
+
+    /// Whether the next keys go to the shown tab's console whole (win32-input-mode): it asked
+    /// for them and nothing else (the profile menu) has the keyboard.
+    fn gate_keys(&self, ctx: &egui::Context) {
+        if let Some(gate) = &self.win32_keys {
+            let s = &self.tabs.current().session;
+            let active = s.win32_input() && !self.strip.menu_open() && !self.find.has_focus(ctx);
+            gate.set(active, active && s.with_term(crate::select::has));
+        }
+    }
+
+    /// `terminal.json` changed (Settings saved it): what can change in a running window does.
+    /// The font and its size (zoom starts over), the history kept, copy-on-select, the default
+    /// profile and what a second start does; `default_terminal` is read where it is used.
+    fn reload_config(&mut self) {
+        let new = Config::read();
+        if new == self.config {
+            return;
+        }
+        let old = std::mem::replace(&mut self.config, new);
+        if old.font_family != self.config.font_family {
+            if let Err(e) = self.renderer.set_family(&self.config.font_family) {
+                eprintln!("terminal: {e}");
+            }
+            self.tabs.current().session.mark_dirty();
+        }
+        if old.font_size != self.config.font_size {
+            self.font_pt = self.config.font_size;
+            self.tabs.current().session.mark_dirty();
+        }
+        if old.scrollback != self.config.scrollback {
+            for t in self.tabs.iter() {
+                t.session.set_scrollback(self.config.scrollback);
+            }
         }
     }
 
@@ -305,7 +350,15 @@ impl TerminalApp {
             let top = screen.top() + MARGIN;
             let right = screen.right() - MARGIN;
             let controls = Rect::from_min_max(pos2(right - CONTROLS_W, top), pos2(right, top + TABS_H));
-            let row = Rect::from_min_max(pos2(screen.left() + MARGIN, top), pos2(controls.left() - MARGIN, top + TABS_H));
+            let mut row = Rect::from_min_max(pos2(screen.left() + MARGIN, top), pos2(controls.left() - MARGIN, top + TABS_H));
+            // Find's pill, in the row between the tabs and the window buttons.
+            if self.find.open {
+                let w = find::WIDTH.min(row.width() * 0.6);
+                let pill = Rect::from_min_max(pos2(row.right() - w, top), row.max);
+                row.max.x = pill.left() - MARGIN;
+                list.push(Island::pill(pill));
+                self.find_pill(ui, pill);
+            }
             let pill = self.tab_strip(ui, row);
             list.push(Island::pill(pill));
             list.push(Island::pill(controls));
@@ -333,6 +386,29 @@ impl TerminalApp {
             }
         });
         self.panel.set_islands(&list, ctx.pixels_per_point());
+    }
+
+    /// Find's pill: its contents, what was asked of it, and counting on.
+    fn find_pill(&mut self, ui: &mut egui::Ui, rect: Rect) {
+        let out = find::pill(ui, rect, &mut self.find);
+        if out.close {
+            self.find.close();
+            self.tabs.current().session.mark_dirty();
+            return;
+        }
+        let tab = self.tabs.current();
+        let (id, seq) = (tab.id, tab.session.output_seq());
+        let find = &mut self.find;
+        let more = tab.session.with_term_quiet(|t| {
+            let more = find.step(t, id, seq, out.changed);
+            if let Some(up) = out.go {
+                find.go(t, up);
+            }
+            more
+        });
+        if more {
+            ui.ctx().request_repaint();
+        }
     }
 
     /// Fit the grid to `room`: as many whole cells as fit, the grid starting on a whole pixel.
@@ -379,7 +455,7 @@ fn attach(arrived: Arrived, renderer: &Renderer, config: &Config, wake: Arc<dyn 
     let size = Size { cols: 80, rows: 24, cell_w: m.cell_w as u16, cell_h: m.cell_h as u16 };
     // A console's title is often its exe's whole path: shortened as a program's title is.
     let name = arrived.title.map(|t| crate::session::short_title(&t)).unwrap_or(arrived.program);
-    let pty = HandoffPty::new(arrived.handles, size.into())?;
+    let pty = Pty::handoff(arrived.handles, size.into())?;
     Session::attach(pty, name, size, config.scrollback, wake)
 }
 
@@ -390,7 +466,7 @@ pub fn run_hidden(arrived: Arrived) {
     use alacritty_terminal::tty::{EventedPty, EventedReadWrite};
     use std::io::Read;
     let size = WindowSize { num_lines: 24, num_cols: 80, cell_width: 1, cell_height: 1 };
-    let Ok(mut pty) = HandoffPty::new(arrived.handles, size) else { return };
+    let Ok(mut pty) = Pty::handoff(arrived.handles, size) else { return };
     let mut sink = [0u8; 64 * 1024];
     loop {
         while pty.reader().read(&mut sink).unwrap_or(0) > 0 {}
@@ -432,6 +508,7 @@ impl eframe::App for TerminalApp {
         self.track_tabs(ctx);
         let cpu = self.stats.on().then(|| frame.info().cpu_usage).flatten();
         self.layout(ctx, cpu);
+        self.gate_keys(ctx);
     }
 
     fn on_exit(&mut self, gl: Option<&egui_glow::glow::Context>) {

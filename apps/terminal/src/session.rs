@@ -20,7 +20,7 @@ use alacritty_terminal::term::{Config, Term, TermMode};
 use alacritty_terminal::tty::{self, ChildEvent, EventedPty, EventedReadWrite};
 use std::borrow::Cow;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 /// The grid's size in cells, and one cell's size in pixels (ConPTY is told both).
@@ -61,6 +61,8 @@ pub struct Colours {
 struct Shared {
     /// New output (or anything else) to draw.
     dirty: AtomicBool,
+    /// Counts the emulator's wake-ups for new output (find recounts when it moves).
+    output_seq: AtomicU64,
     exited: AtomicBool,
     /// The program's exit code, once it exited (when known).
     exit_code: Mutex<Option<i32>>,
@@ -71,6 +73,8 @@ struct Shared {
     bell: AtomicBool,
     /// DECSET 9, which the emulator does not track.
     x10: AtomicBool,
+    /// DECSET 9001: the console wants whole key events (`keys::Win32Key`).
+    win32_input: AtomicBool,
     /// The title a program set; None for the default.
     title: Mutex<Option<String>>,
     /// The working directory the shell last reported.
@@ -110,6 +114,7 @@ impl EventListener for Listener {
         match event {
             Event::Wakeup => {
                 s.dirty.store(true, Ordering::Release);
+                s.output_seq.fetch_add(1, Ordering::AcqRel);
                 // A tab not shown wakes the window once, for its dot.
                 if s.shown.load(Ordering::Acquire) || !s.activity.swap(true, Ordering::AcqRel) {
                     (self.wake)();
@@ -211,6 +216,7 @@ impl<P: EventedPty> std::io::Read for ScanReader<P> {
         self.scanner.feed(&buf[..n], |found| match found {
             Found::Cwd(dir) => *shared.cwd.lock().unwrap() = Some(dir),
             Found::X10(on) => shared.x10.store(on, Ordering::Release),
+            Found::Win32Input(on) => shared.win32_input.store(on, Ordering::Release),
         });
         Ok(n)
     }
@@ -274,33 +280,28 @@ impl Session {
     /// draw.
     pub fn start(start: Start, wake: Arc<dyn Fn() + Send + Sync>) -> std::io::Result<Self> {
         let Start { command, dir, size, scrollback } = start;
-        let options = tty::Options {
-            // The command line goes to CreateProcess as it was typed.
-            shell: Some(tty::Shell::new(command.to_owned(), Vec::new())),
-            working_directory: dir,
-            drain_on_exit: true,
-            env: Default::default(),
-            escape_args: false,
-        };
-        let pty = tty::new(&options, size.into(), 0)?;
+        // The command line goes to CreateProcess as it was typed.
+        let pty = crate::conpty::spawn(command, dir.as_deref(), size.into())?;
         Self::run(pty, program_name(command), size, scrollback, wake)
     }
 
     /// Show a console Windows handed over (default terminal): `program` names it until it sets
     /// a title.
-    pub fn attach(pty: crate::handoff_pty::HandoffPty, program: String, size: Size, scrollback: usize, wake: Arc<dyn Fn() + Send + Sync>) -> std::io::Result<Self> {
+    pub fn attach(pty: crate::pty::Pty, program: String, size: Size, scrollback: usize, wake: Arc<dyn Fn() + Send + Sync>) -> std::io::Result<Self> {
         Self::run(pty, program, size, scrollback, wake)
     }
 
     fn run<P: EventedPty + OnResize + Send + 'static>(pty: P, program: String, size: Size, scrollback: usize, wake: Arc<dyn Fn() + Send + Sync>) -> std::io::Result<Self> {
         let shared = Arc::new(Shared {
             dirty: AtomicBool::new(true),
+            output_seq: AtomicU64::new(0),
             exited: AtomicBool::new(false),
             exit_code: Mutex::new(None),
             shown: AtomicBool::new(true),
             activity: AtomicBool::new(false),
             bell: AtomicBool::new(false),
             x10: AtomicBool::new(false),
+            win32_input: AtomicBool::new(false),
             title: Mutex::new(None),
             cwd: Mutex::new(None),
             copy: Mutex::new(None),
@@ -358,6 +359,13 @@ impl Session {
             let _ = self.pty.send(Msg::Resize(size.into()));
             self.shared.dirty.store(true, Ordering::Release);
         }
+    }
+
+    /// Keep `lines` of history from now on (Settings changed it).
+    pub fn set_scrollback(&self, lines: usize) {
+        let config = Config { scrolling_history: lines, semantic_escape_chars: crate::select::WORD_STOPS.to_owned(), ..Config::default() };
+        self.term.lock().set_options(config);
+        self.shared.dirty.store(true, Ordering::Release);
     }
 
     pub fn size(&self) -> Size {
@@ -422,6 +430,11 @@ impl Session {
         self.shared.x10.load(Ordering::Acquire)
     }
 
+    /// Whether the console asked for win32-input-mode.
+    pub fn win32_input(&self) -> bool {
+        self.shared.win32_input.load(Ordering::Acquire)
+    }
+
     /// What a program asked to copy, once.
     pub fn take_copy(&self) -> Option<String> {
         self.shared.copy.lock().unwrap().take()
@@ -452,6 +465,17 @@ impl Session {
     /// Read the emulator's state under its lock.
     pub fn with_term<R>(&self, f: impl FnOnce(&Term<Listener>) -> R) -> R {
         f(&self.term.lock())
+    }
+
+    /// How many times output came so far.
+    pub fn output_seq(&self) -> u64 {
+        self.shared.output_seq.load(Ordering::Acquire)
+    }
+
+    /// Change the emulator's state under its lock without asking for a redraw (find's counting,
+    /// which only reads; a scroll it makes is seen by the view anyway).
+    pub fn with_term_quiet<R>(&self, f: impl FnOnce(&mut Term<Listener>) -> R) -> R {
+        f(&mut self.term.lock())
     }
 
     /// Change the emulator's state (the selection, the view) under its lock.

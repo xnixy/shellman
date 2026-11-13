@@ -23,7 +23,20 @@ pub struct Look {
     pub cursor_on: bool,
     /// The link under the pointer, underlined.
     pub hover: Hover,
+    /// Find's matches on screen, and its current one.
+    pub find: Option<Highlight>,
 }
+
+/// What find marks: the matches on screen, and the current one (drawn apart).
+#[derive(Clone, Default, Debug)]
+pub struct Highlight {
+    pub matches: Vec<std::ops::RangeInclusive<Point>>,
+    pub current: Option<std::ops::RangeInclusive<Point>>,
+}
+
+/// Find's match colours: a warm marker for every match, the accent for the current one.
+const MATCH_BG: [u8; 4] = [244, 196, 64, 255];
+const MATCH_FG: [u8; 4] = [24, 22, 16, 255];
 
 /// A link the pointer is on.
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
@@ -72,11 +85,13 @@ pub fn take<T>(term: &Term<T>, look: &Look, frame: &mut Frame) {
     frame.cells.reserve(cols * rows);
     let colors = term.colors();
     // Bold is drawn with the bold face, not brightened (as Windows Terminal does by default).
-    let resolve = |c: Color| -> Rgb {
+    // `ground`: the colour is a background, or text on one (the palette's Campbell set), not text
+    // on the glass (the theme's set).
+    let resolve = |c: Color, ground: bool| -> Rgb {
         let rgb = |v: ansi::Rgb| [v.r, v.g, v.b];
         match c {
             Color::Spec(v) => rgb(v),
-            Color::Indexed(i) => colors[i as usize].map(rgb).unwrap_or_else(|| look.palette.indexed(i)),
+            Color::Indexed(i) => colors[i as usize].map(rgb).unwrap_or_else(|| if ground { look.palette.indexed_ground(i) } else { look.palette.indexed(i) }),
             Color::Named(n) => {
                 let set = colors[n].map(rgb);
                 set.unwrap_or_else(|| match n {
@@ -84,6 +99,7 @@ pub fn take<T>(term: &Term<T>, look: &Look, frame: &mut Frame) {
                     NamedColor::Background => look.palette.bg,
                     NamedColor::Cursor => look.cursor,
                     NamedColor::DimForeground => dim(look.palette.fg),
+                    n if (n as usize) < 16 && ground => look.palette.ground[n as usize],
                     n if (n as usize) < 16 => look.palette.ansi[n as usize],
                     // The dim colours (259..=266) are the eight base ones, faint.
                     n => dim(look.palette.ansi[(n as usize - NamedColor::DimBlack as usize) & 7]),
@@ -98,20 +114,45 @@ pub fn take<T>(term: &Term<T>, look: &Look, frame: &mut Frame) {
         let row = &grid[grid_line];
         // Only rows the selection reaches look at it cell by cell.
         let sel = selection.filter(|r| r.start.line <= grid_line && grid_line <= r.end.line);
+        // Find's matches on this row, as column spans (a match can wrap onto the next row).
+        let span = |m: &std::ops::RangeInclusive<Point>| -> Option<(usize, usize)> {
+            if m.start().line > grid_line || m.end().line < grid_line {
+                return None;
+            }
+            let from = if m.start().line == grid_line { m.start().column.0 } else { 0 };
+            let to = if m.end().line == grid_line { m.end().column.0 } else { cols.saturating_sub(1) };
+            Some((from, to))
+        };
+        // Columns a joined emoji before them took over: drawn blank.
+        let mut taken_until = 0usize;
+        let (found, current): (Vec<(usize, usize)>, Option<(usize, usize)>) = match &look.find {
+            Some(h) => (h.matches.iter().filter_map(span).collect(), h.current.as_ref().and_then(span)),
+            None => (Vec::new(), None),
+        };
         for col in 0..cols {
             let cell = &row[Column(col)];
             let f = cell.flags;
             let default_bg = cell.bg == Color::Named(NamedColor::Background) && colors[NamedColor::Background].is_none();
-            let mut fg = resolve(cell.fg);
+            // Text on a coloured background (or inverse, which makes its colour the background)
+            // takes the ground set: white on red stays white in the light theme.
+            let mut fg = resolve(cell.fg, !default_bg || f.contains(Flags::INVERSE));
             if f.contains(Flags::DIM) {
                 fg = dim(fg);
             }
-            let bg = resolve(cell.bg);
+            let bg = resolve(cell.bg, true);
             let (mut fg, mut bg) = ([fg[0], fg[1], fg[2], 255], [bg[0], bg[1], bg[2], if default_bg { 0 } else { 255 }]);
             if f.contains(Flags::INVERSE) {
                 std::mem::swap(&mut fg, &mut bg);
                 fg[3] = 255;
                 bg[3] = 255;
+            }
+            if current.is_some_and(|(a, b)| a <= col && col <= b) {
+                let a = look.selection;
+                bg = [a[0], a[1], a[2], 255];
+                fg = [look.on_cursor[0], look.on_cursor[1], look.on_cursor[2], 255];
+            } else if found.iter().any(|&(a, b)| a <= col && col <= b) {
+                bg = MATCH_BG;
+                fg = MATCH_FG;
             }
             if let Some(r) = &sel {
                 if r.contains(Point::new(grid_line, Column(col))) {
@@ -138,9 +179,21 @@ pub fn take<T>(term: &Term<T>, look: &Look, frame: &mut Frame) {
             }
             let hidden = f.intersects(Flags::HIDDEN | Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER);
             let mut ch = if hidden { ' ' } else { cell.c };
+            if col < taken_until {
+                ch = ' ';
+            } else if !hidden && crate::emoji::candidate(cell) {
+                // A colour emoji (with what joins it): one glyph from the colour page.
+                if let Some((text, taken)) = crate::emoji::in_row(row, col, cols) {
+                    if let Some(id) = frame.clusters.intern(text) {
+                        ch = id;
+                        flags |= render::COLOR;
+                        taken_until = col + if f.contains(Flags::WIDE_CHAR) { 2 } else { 1 } + taken;
+                    }
+                }
+            }
             // Combining marks after a character: drawn as the one precomposed character they
             // make, where there is one (e and U+0301 as é).
-            if let Some(marks) = cell.zerowidth().filter(|_| !hidden) {
+            if let Some(marks) = cell.zerowidth().filter(|_| !hidden && flags & render::COLOR == 0) {
                 ch = compose(ch, marks);
             }
             // A wide character's spacer keeps its background run going but draws nothing.
@@ -204,7 +257,54 @@ pub fn take<T>(term: &Term<T>, look: &Look, frame: &mut Frame) {
 
 #[cfg(test)]
 mod tests {
-    use super::compose;
+    use super::*;
+    use alacritty_terminal::event::VoidListener;
+    use alacritty_terminal::term::{test::TermSize, Config};
+
+    fn snap(text: &str, light: bool) -> Frame {
+        let mut t = Term::new(Config::default(), &TermSize::new(20, 2), VoidListener);
+        let mut p: ansi::Processor = ansi::Processor::new();
+        p.advance(&mut t, text.as_bytes());
+        let palette = Palette::new(light, [20, 20, 20], [240, 240, 240]);
+        let look = Look {
+            palette,
+            cursor: [0; 3],
+            on_cursor: [0; 3],
+            focused: false,
+            selection: [0; 3],
+            cursor_on: false,
+            hover: Hover::None,
+            find: None,
+        };
+        let mut frame = Frame { cols: 0, rows: 0, cells: Vec::new(), cursor: None, blinking: false, clusters: Default::default() };
+        take(&t, &look, &mut frame);
+        frame
+    }
+
+    #[test]
+    fn white_on_a_colour_stays_white_in_the_light_theme() {
+        // Bright white on red, white on blue: Campbell's white, not the light theme's grey.
+        let f = snap("\x1b[97;41mA\x1b[37;44mB\x1b[0m\x1b[97mC", true);
+        assert_eq!(&f.cells[0].fg[..3], &[242, 242, 242]);
+        assert_eq!(&f.cells[0].bg[..3], &[197, 15, 31]);
+        assert_eq!(&f.cells[1].fg[..3], &[204, 204, 204]);
+        // On the glass, "white" is the light theme's dark grey, so it still shows.
+        assert_eq!(&f.cells[2].fg[..3], &[60, 60, 60]);
+        assert_eq!(f.cells[2].bg[3], 0);
+    }
+
+    #[test]
+    fn dark_text_on_the_glass_is_lifted_but_backgrounds_are_campbell() {
+        let f = snap("\x1b[34mA\x1b[44mB", false);
+        assert_eq!(&f.cells[0].fg[..3], &[52, 100, 230]);
+        assert_eq!(&f.cells[1].bg[..3], &[0, 55, 218]);
+    }
+
+    #[test]
+    fn inverse_takes_the_ground_colours() {
+        let f = snap("\x1b[7;31mA", true);
+        assert_eq!(&f.cells[0].bg[..3], &[197, 15, 31]);
+    }
 
     #[test]
     fn combining_marks_compose_where_they_can() {

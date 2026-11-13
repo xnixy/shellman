@@ -1,2 +1,4 @@
 *.ico binary
 *.rgba binary
+*.dll binary
+*.exe binary
