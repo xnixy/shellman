@@ -73,10 +73,7 @@ mod tests {
     use super::*;
 
     fn app(id: &str) -> App {
-        App {
-            name: id.into(),
-            id: id.into(),
-        }
+        App::new(id, id)
     }
 
     #[test]

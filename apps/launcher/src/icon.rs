@@ -21,6 +21,20 @@ pub fn plate(p: &Painter, rect: Rect) {
 /// Draw the app's icon in `rect`.
 pub fn paint(p: &Painter, rect: Rect, app: &App, thumbs: &mut Thumbs) {
     let path = app.shell_path();
+    if app.own {
+        // shellman's own apps: the icon pack's tile, else the app's icon in the accent.
+        let Some((id, _)) = shellman_ui::app_icon::get(p.ctx(), Path::new(&app.id), true, thumbs) else {
+            placeholder(p, rect, app);
+            return;
+        };
+        p.image(
+            id,
+            rect,
+            Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+            Color32::WHITE,
+        );
+        return;
+    }
     let Some(texture) = thumbs.get_app(Some(Path::new(&path)), &app.id, &app.name, true) else {
         placeholder(p, rect, app);
         return;

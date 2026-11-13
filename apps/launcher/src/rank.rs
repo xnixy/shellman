@@ -46,6 +46,30 @@ pub fn rank(names: &[&str], uses: &dyn Fn(usize) -> u32, query: &str, limit: usi
     hits
 }
 
+/// `rank` for apps that can also be found by another text (`aliases`, one per name, empty for
+/// none): shellman's own apps answer to "shellman". A name match always comes before an alias
+/// match. `priority` breaks ties before usage does (shellman's own apps before a Windows app of
+/// the same name).
+pub fn rank_apps(
+    names: &[&str],
+    aliases: &[String],
+    priority: &dyn Fn(usize) -> bool,
+    uses: &dyn Fn(usize) -> u32,
+    query: &str,
+    limit: usize,
+) -> Vec<Hit> {
+    let boosted = |i: usize| if priority(i) { u32::MAX } else { uses(i) };
+    let mut hits = rank(names, &boosted, query, usize::MAX);
+    let alias_names: Vec<&str> = aliases.iter().map(String::as_str).collect();
+    for h in rank(&alias_names, &boosted, query, usize::MAX) {
+        if !hits.iter().any(|n| n.index == h.index) {
+            hits.push(h);
+        }
+    }
+    hits.truncate(limit);
+    hits
+}
+
 /// The name's score for all the words, or None when one of them does not match.
 fn score(name: &str, words: &[Vec<char>]) -> Option<i32> {
     let chars: Vec<char> = name.chars().collect();
@@ -161,6 +185,26 @@ pub fn matched(name: &str, query: &str) -> Vec<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn own_apps_come_first_among_namesakes_and_answer_to_shellman() {
+        let names = ["Task Manager", "Task Manager", "Terminal", "Notepad"];
+        let aliases: Vec<String> = ["", "shellman Task Manager", "shellman Terminal", ""]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let own = |i: usize| i == 1 || i == 2;
+        let order = |q: &str, uses: &dyn Fn(usize) -> u32| -> Vec<usize> {
+            rank_apps(&names, &aliases, &own, uses, q, 10).iter().map(|h| h.index).collect()
+        };
+        // The Windows one is used far more, and still comes second.
+        assert_eq!(order("task", &|i| if i == 0 { 99 } else { 0 }), [1, 0]);
+        assert_eq!(order("task manager", &|_| 0), [1, 0]);
+        assert_eq!(order("term", &|_| 0), [2]);
+        assert_eq!(order("shellman", &|_| 0), [2, 1]);
+        assert_eq!(order("shellman task", &|_| 0), [1]);
+        assert!(order("note", &|_| 0) == [3]);
+    }
 
     #[test]
     fn matched_marks_the_letters_that_matched() {

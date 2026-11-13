@@ -12,11 +12,15 @@ use windows::Win32::UI::Shell::{
 /// shell reads Start menu shortcuts and the Store registry), so call it from a worker thread.
 /// Empty when the shell cannot be asked.
 pub fn enumerate() -> Vec<App> {
-    let mut apps = unsafe { walk() }.unwrap_or_default();
-    apps.retain(|a| !is_noise(&a.name));
-    apps.sort_by_cached_key(|a| (a.name.to_lowercase(), a.id.clone()));
-    apps.dedup_by(|a, b| a.id == b.id);
-    apps
+    let mut folder = unsafe { walk() }.unwrap_or_default();
+    folder.retain(|a| !is_noise(&a.name));
+    // The Apps folder is not refreshed without Explorer, so read the Start menu too.
+    let shortcuts = super::startmenu::shortcuts();
+    let own = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(super::merge::own_apps))
+        .unwrap_or_default();
+    super::merge::merge(folder, own, shortcuts)
 }
 
 /// Nameless entries are of no use anywhere. (Help links and uninstallers are kept: they only
@@ -46,7 +50,7 @@ unsafe fn walk() -> Option<Vec<App>> {
         ) else {
             continue;
         };
-        apps.push(App { name, id });
+        apps.push(App::new(name, id));
     }
     Some(apps)
 }
@@ -71,6 +75,38 @@ mod tests {
         assert!(apps
             .windows(2)
             .all(|w| w[0].name.to_lowercase() <= w[1].name.to_lowercase()));
+    }
+
+    #[test]
+    #[ignore = "reads this machine's Apps folder and Start menu; set SHELLMAN_OWN_DIR to the folder holding the shellman exes"]
+    fn the_four_own_apps_are_listed() {
+        let t = std::time::Instant::now();
+        let folder = unsafe { walk() }.unwrap_or_default();
+        eprintln!("apps folder alone: {} items in {:?}", folder.len(), t.elapsed());
+        let mut before: Vec<&str> = folder.iter().filter(|a| !is_noise(&a.name)).map(|a| a.id.as_str()).collect();
+        before.sort();
+        before.dedup();
+        eprintln!("before this change the index held {}", before.len());
+        let t = std::time::Instant::now();
+        let shortcuts = super::super::startmenu::shortcuts();
+        eprintln!("start menu scan: {} shortcuts in {:?}", shortcuts.len(), t.elapsed());
+        let t = std::time::Instant::now();
+        let mut apps = enumerate();
+        eprintln!("{} apps in {:?}", apps.len(), t.elapsed());
+        if let Ok(dir) = std::env::var("SHELLMAN_OWN_DIR") {
+            let own = super::super::merge::own_apps(std::path::Path::new(&dir));
+            apps = super::super::merge::merge(apps, own, vec![]);
+        }
+        for a in apps.iter().filter(|a| a.direct) {
+            eprintln!("direct: {} [{}] own={} twin={}", a.name, a.id, a.own, a.windows_twin);
+        }
+        for a in apps.iter().filter(|a| a.windows_twin) {
+            eprintln!("twin: {}", a.name);
+        }
+        for name in ["Files", "Settings", "Task Manager", "Terminal"] {
+            let a = apps.iter().find(|a| a.own && a.name == name);
+            assert!(a.is_some_and(|a| a.is_listed()), "{name} missing");
+        }
     }
 
     #[test]

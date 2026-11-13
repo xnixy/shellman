@@ -118,7 +118,13 @@ Rule: **the top bar is the system, the dock is apps.** Both are windows of one p
 - Empty query: app grid, with a "most used" row from its own launch counts.
 - Typing: ranked list (exact, prefix, word start, substring, fuzzy; ties by launch count), with
   "Run <query>" last.
-- Apps come from the shell's Apps folder and launch via `shell:AppsFolder\<id>`.
+- Apps come from the shell's Apps folder and launch via `shell:AppsFolder\<id>`. Without Explorer
+  that folder never learns of newly installed apps, so the index also reads the per-user and
+  common Start menu `.lnk` files (target resolved with `IShellLink`, skipped when the Apps folder
+  has the name or target, same noise rules), launching those by path. shellman's own apps (Files,
+  Settings, Task Manager, Terminal: the `shellman-*.exe` beside the running binary, when present)
+  are built in, rank before a same-named Windows app, are also found by "shellman", and the
+  Windows namesake is labelled "Windows".
 
 ## Switcher
 
