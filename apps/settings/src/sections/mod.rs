@@ -5,6 +5,7 @@ mod apps;
 mod appearance;
 mod bar;
 mod desktop;
+mod desktop_widgets;
 mod display;
 mod display_map;
 mod icon_pack;
@@ -33,6 +34,7 @@ mod updates;
 mod updates_rows;
 
 pub use apps::AppsView;
+pub use desktop_widgets::WidgetsView;
 pub use display::DisplayView;
 pub use fonts_view::FontsView;
 pub use icon_pack::IconsView;

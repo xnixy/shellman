@@ -3,7 +3,9 @@
 
 pub mod app_host;
 pub mod apps_index;
+pub mod calendar;
 pub mod config;
+pub mod credentials;
 pub mod desktop_menu;
 pub mod elevate;
 pub mod foreground;
@@ -13,6 +15,7 @@ pub mod fsops;
 pub mod installed;
 pub mod live_thumb;
 pub mod monitors;
+pub mod net;
 pub mod notify;
 pub mod outside;
 pub mod places;
@@ -30,4 +33,5 @@ pub mod terminal;
 pub mod thumbs;
 pub mod transfer;
 pub mod watch;
+pub mod weather;
 pub mod winlist;

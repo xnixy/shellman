@@ -2,6 +2,8 @@
 //! has (the shelf, and later the widgets, or the wallpaper alone), and how the shelf is set up.
 //! The shelf (`apps/shelf`) follows the file live; Settings › Desktop edits it.
 
+use crate::calendar::CalendarRef;
+use crate::weather::Units;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -150,9 +152,53 @@ impl Default for ShelfSettings {
     }
 }
 
-/// The widgets of the Shelf + widgets style. Nothing reads these yet: the widgets come in a
-/// later stage, and these keep their place in the file.
+/// The calendar account the Today widget reads. The password is not here: it lives in Windows
+/// Credential Manager (`crate::calendar::CREDENTIAL`).
 #[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CalendarSettings {
+    /// The CalDAV server; Fastmail's unless changed.
+    pub server: String,
+    pub username: String,
+    /// The account's calendars as last found (by Settings' "Test connection" or the shelf).
+    pub calendars: Vec<CalendarRef>,
+    /// The URLs of calendars the user turned off; new calendars show.
+    pub hidden: Vec<String>,
+    /// When the password was last saved (UTC seconds), so the shelf tries a new one at once.
+    pub saved: i64,
+}
+
+impl Default for CalendarSettings {
+    fn default() -> Self {
+        Self { server: crate::calendar::client::FASTMAIL.into(), username: String::new(), calendars: Vec::new(), hidden: Vec::new(), saved: 0 }
+    }
+}
+
+impl CalendarSettings {
+    pub fn shows(&self, href: &str) -> bool {
+        !self.hidden.iter().any(|h| h == href)
+    }
+}
+
+/// The weather in the Today widget: a place typed in Settings, found once by name and kept as
+/// name and coordinates. No place, no weather.
+#[derive(Clone, PartialEq, Debug, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct WeatherSettings {
+    pub place: String,
+    pub lat: f64,
+    pub lon: f64,
+    pub units: Units,
+}
+
+impl WeatherSettings {
+    pub fn is_set(&self) -> bool {
+        !self.place.trim().is_empty() && self.lat.is_finite() && self.lon.is_finite() && (self.lat != 0.0 || self.lon != 0.0)
+    }
+}
+
+/// The widgets of the Shelf + widgets style, top right of the desktop.
+#[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct WidgetSettings {
     pub show: bool,
@@ -160,15 +206,26 @@ pub struct WidgetSettings {
     pub today: bool,
     /// Media from any app.
     pub now_playing: bool,
+    /// The primary monitor only (the default), or every monitor.
+    pub on: ShelfOn,
+    pub calendar: CalendarSettings,
+    pub weather: WeatherSettings,
 }
 
 impl Default for WidgetSettings {
     fn default() -> Self {
-        Self { show: true, today: true, now_playing: true }
+        Self {
+            show: true,
+            today: true,
+            now_playing: true,
+            on: ShelfOn::Primary,
+            calendar: CalendarSettings::default(),
+            weather: WeatherSettings::default(),
+        }
     }
 }
 
-#[derive(Clone, Default, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[derive(Clone, Default, PartialEq, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct DesktopSettings {
     pub style: Style,
@@ -188,6 +245,12 @@ impl DesktopSettings {
     /// Whether the shelf is on screen at all: the style has one and it is not turned off.
     pub fn shelf_shown(&self) -> bool {
         self.style == Style::ShelfWidgets && self.shelf.show
+    }
+
+    /// Whether the widgets are on screen at all: the style has them, they are on, and at least
+    /// one of them is.
+    pub fn widgets_shown(&self) -> bool {
+        self.style == Style::ShelfWidgets && self.widgets.show && (self.widgets.today || self.widgets.now_playing)
     }
 
     /// The stacks to show, in the shelf's order, each once.
@@ -261,6 +324,46 @@ mod tests {
         assert_eq!(s.shelf.stacks, Stack::ALL);
         s.toggle_stack(Stack::Desktop);
         assert_eq!(s.stacks(), [Stack::Downloads, Stack::Recent]);
+    }
+
+    #[test]
+    fn widgets_default_to_the_primary_with_fastmail_and_old_files_keep_working() {
+        let s = DesktopSettings::default();
+        assert!(s.widgets_shown());
+        assert_eq!(s.widgets.on, ShelfOn::Primary);
+        assert_eq!(s.widgets.calendar.server, "https://caldav.fastmail.com/");
+        assert!(!s.widgets.weather.is_set());
+        // A file from stage 1 (only the three switches).
+        let old: DesktopSettings = serde_json::from_str(r#"{ "widgets": { "show": true, "today": false, "now_playing": true } }"#).unwrap();
+        assert!(!old.widgets.today && old.widgets.now_playing);
+        assert_eq!(old.widgets.on, ShelfOn::Primary);
+        assert_eq!(old.widgets.calendar, CalendarSettings::default());
+        let mut off = DesktopSettings { style: Style::Clean, ..Default::default() };
+        assert!(!off.widgets_shown());
+        off.style = Style::ShelfWidgets;
+        off.widgets.today = false;
+        off.widgets.now_playing = false;
+        assert!(!off.widgets_shown());
+    }
+
+    #[test]
+    fn widget_settings_round_trip_without_the_password() {
+        let dir = std::env::temp_dir().join(format!("shellman-widgets-{}", std::process::id()));
+        let path = dir.join("desktop.json");
+        let mut s = DesktopSettings::default();
+        s.widgets.on = ShelfOn::All;
+        s.widgets.calendar.username = "someone@fastmail.com".into();
+        s.widgets.calendar.calendars = vec![CalendarRef { href: "https://x/cal/".into(), name: "Personal".into(), color: Some("#3A87AD".into()) }];
+        s.widgets.calendar.hidden = vec!["https://x/other/".into()];
+        s.widgets.weather = WeatherSettings { place: "London".into(), lat: 51.50853, lon: -0.12574, units: Units::Imperial };
+        crate::config::save_to(&path, &s);
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(!text.to_ascii_lowercase().contains("password"));
+        let back = crate::config::load_from::<DesktopSettings>(&path);
+        assert_eq!(back, s);
+        assert!(back.widgets.weather.is_set());
+        assert!(back.widgets.calendar.shows("https://x/cal/") && !back.widgets.calendar.shows("https://x/other/"));
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

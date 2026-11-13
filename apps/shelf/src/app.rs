@@ -14,6 +14,7 @@ use crate::geometry;
 use crate::menu::{self, Action};
 use crate::stacks::{self, Stacks};
 use crate::views::{self, View};
+use crate::widgets::Widgets;
 use crate::{actions, displays, log, wallpaper, window};
 use shellman_core::outside;
 use shellman_core::settings::desktop::{DesktopSettings, ShelfOn, Stack};
@@ -63,6 +64,8 @@ pub struct Shelf {
     drag_on: Option<egui::ViewportId>,
     /// The desktop's right-click menu.
     menu: PopupMenu<Action>,
+    /// Today and Now playing, top right.
+    widgets: Widgets,
     _windows: WindowWatcher,
 }
 
@@ -74,6 +77,9 @@ impl Shelf {
         windows.on_front_moved(window::request_check);
         let folders = Folders::resolve();
         log::line(format!("started; folders {folders:?}"));
+        let settings = DesktopSettings::load();
+        let mut widgets = Widgets::new();
+        widgets.apply(&settings, ctx);
         Self {
             hwnd,
             current: egui::ViewportId::ROOT,
@@ -81,7 +87,7 @@ impl Shelf {
             laid_out: false,
             look,
             config_watch,
-            settings: DesktopSettings::load(),
+            settings,
             folders,
             stacks: Stacks::new(ctx),
             thumbs: Thumbs::new(ctx.clone()),
@@ -93,6 +99,7 @@ impl Shelf {
             dragging: false,
             drag_on: None,
             menu: PopupMenu::new(),
+            widgets,
             _windows: windows,
         }
     }
@@ -100,7 +107,7 @@ impl Shelf {
     /// Look at the monitors and bring the windows in line: which monitors have a shelf (the
     /// setting; the primary alone while the shelf is off), each window on its monitor's edge.
     fn lay_out(&mut self, ctx: &egui::Context) {
-        let monitors = shellman_core::monitors::all();
+        let monitors = crate::test_monitor::restrict(shellman_core::monitors::all());
         let on = if self.settings.shelf_shown() { self.settings.shelf.on } else { ShelfOn::Primary };
         let (primary, others) = displays::split(displays::targets(on, &monitors));
         let names: Vec<String> = monitors
@@ -112,6 +119,7 @@ impl Shelf {
             .collect();
         log::line(format!("monitors: {}; shelves on {on:?}", names.join("; ")));
         views::sync(&mut self.views, primary, others, ctx);
+        self.widgets.lay_out(&monitors);
         self.laid_out = true;
         // Whether a fullscreen app covers each window's monitor.
         window::request_check();
@@ -127,6 +135,9 @@ impl Shelf {
         if settings != self.settings {
             let moved = settings.shelf.edge != self.settings.shelf.edge;
             // Which monitors have a shelf, and how tall each window is.
+            if self.widgets.apply(&settings, ctx) {
+                window::ask_layout();
+            }
             let relaid = settings.shelf.on != self.settings.shelf.on
                 || settings.shelf_shown() != self.settings.shelf_shown()
                 || settings.stacks().len() != self.settings.stacks().len();
@@ -246,7 +257,7 @@ impl Shelf {
             Action::Wallpaper => {
                 std::thread::spawn(wallpaper::change);
             }
-            Action::DesktopSettings => actions::settings("desktop"),
+            Action::EditDesktop | Action::DesktopSettings => actions::settings("desktop"),
             Action::DisplaySettings => actions::settings("display"),
         }
     }
@@ -438,6 +449,7 @@ impl eframe::App for Shelf {
                 shellman_ui::font_atlas::end_frame(ctx);
             });
         }
+        self.widgets.frame(ctx);
         self.hwnd = self.views[0].hwnd.unwrap_or(self.hwnd);
         self.current = egui::ViewportId::ROOT;
         let dropped: Vec<_> = self

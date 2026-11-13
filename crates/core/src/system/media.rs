@@ -13,7 +13,7 @@ use windows::Media::Control::{
     CurrentSessionChangedEventArgs, GlobalSystemMediaTransportControlsSession as Session,
     GlobalSystemMediaTransportControlsSessionManager as Manager,
     GlobalSystemMediaTransportControlsSessionPlaybackStatus as Status, MediaPropertiesChangedEventArgs,
-    PlaybackInfoChangedEventArgs,
+    PlaybackInfoChangedEventArgs, TimelinePropertiesChangedEventArgs,
 };
 
 /// The art's size in pixels: twice the largest it is drawn, for sharp high-DPI screens.
@@ -23,7 +23,13 @@ const ART_SIDE: u32 = 144;
 pub struct NowPlaying {
     pub title: String,
     pub artist: String,
+    pub album: String,
     pub playing: bool,
+    /// Where playback was, in seconds, at `at` (UTC seconds since 1970); 0 when unknown.
+    pub position: f64,
+    pub at: f64,
+    /// The track's length in seconds; 0 when the player does not say.
+    pub duration: f64,
     pub can_previous: bool,
     pub can_next: bool,
     pub can_toggle: bool,
@@ -80,13 +86,13 @@ impl Drop for MediaWatch {
 /// The session being followed, with its event registrations.
 struct Followed {
     session: Session,
-    tokens: (i64, i64),
+    tokens: (i64, i64, i64),
 }
 
 impl Followed {
     fn new(manager: &Manager, tx: &Sender<Cmd>) -> Option<Self> {
         let session = manager.GetCurrentSession().ok()?;
-        let (a, b) = (tx.clone(), tx.clone());
+        let (a, b, c) = (tx.clone(), tx.clone(), tx.clone());
         let props = TypedEventHandler::<Session, MediaPropertiesChangedEventArgs>::new(move |_, _| {
             let _ = a.send(Cmd::Refresh);
             Ok(())
@@ -95,9 +101,14 @@ impl Followed {
             let _ = b.send(Cmd::Refresh);
             Ok(())
         });
+        let timeline = TypedEventHandler::<Session, TimelinePropertiesChangedEventArgs>::new(move |_, _| {
+            let _ = c.send(Cmd::Refresh);
+            Ok(())
+        });
         let tokens = (
             session.MediaPropertiesChanged(&props).unwrap_or_default(),
             session.PlaybackInfoChanged(&playback).unwrap_or_default(),
+            session.TimelinePropertiesChanged(&timeline).unwrap_or_default(),
         );
         Some(Self { session, tokens })
     }
@@ -105,6 +116,7 @@ impl Followed {
     fn close(self) {
         let _ = self.session.RemoveMediaPropertiesChanged(self.tokens.0);
         let _ = self.session.RemovePlaybackInfoChanged(self.tokens.1);
+        let _ = self.session.RemoveTimelinePropertiesChanged(self.tokens.2);
     }
 
     fn act(&self, action: Action) {
@@ -169,6 +181,7 @@ fn read(session: &Session, before: Option<&NowPlaying>) -> Option<NowPlaying> {
     let props = session.TryGetMediaPropertiesAsync().ok()?.get().ok()?;
     let mut title = props.Title().map(|s| s.to_string()).unwrap_or_default();
     let artist = props.Artist().map(|s| s.to_string()).unwrap_or_default();
+    let album = props.AlbumTitle().map(|s| s.to_string()).unwrap_or_default();
     let info = session.GetPlaybackInfo().ok()?;
     let playing = info.PlaybackStatus().ok() == Some(Status::Playing);
     // A session with nothing to say and nothing playing is left out; one that plays but names
@@ -187,7 +200,12 @@ fn read(session: &Session, before: Option<&NowPlaying>) -> Option<NowPlaying> {
     } else {
         props.Thumbnail().ok().and_then(|t| media_art::load(&t, ART_SIDE)).map(Arc::new)
     };
+    let (position, at, duration) = timeline(session);
     Some(NowPlaying {
+        album,
+        position,
+        at,
+        duration,
         playing,
         can_previous: controls.IsPreviousEnabled().unwrap_or(false),
         can_next: controls.IsNextEnabled().unwrap_or(false),
@@ -196,6 +214,32 @@ fn read(session: &Session, before: Option<&NowPlaying>) -> Option<NowPlaying> {
         artist,
         art,
     })
+}
+
+/// 100 ns ticks between 1601 (Windows' epoch) and 1970.
+const EPOCH_TICKS: i64 = 116_444_736_000_000_000;
+
+/// Where playback is: (position, when that was, length), in seconds; (0, now, 0) when unknown.
+fn timeline(session: &Session) -> (f64, f64, f64) {
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0.0, |d| d.as_secs_f64());
+    let Ok(t) = session.GetTimelineProperties() else { return (0.0, now, 0.0) };
+    let secs = |ticks: i64| ticks as f64 / 1e7;
+    let start = t.StartTime().map_or(0, |d| d.Duration);
+    let end = t.EndTime().map_or(0, |d| d.Duration);
+    let pos = t.Position().map_or(0, |d| d.Duration);
+    let updated = t.LastUpdatedTime().map_or(0, |d| d.UniversalTime);
+    let at = if updated > EPOCH_TICKS { secs(updated - EPOCH_TICKS).min(now) } else { now };
+    let duration = secs(end - start).max(0.0);
+    (secs(pos - start).max(0.0), at, duration)
+}
+
+impl NowPlaying {
+    /// Where playback is at `now` (UTC seconds): moving on from the last reading while playing,
+    /// never past the end.
+    pub fn position_at(&self, now: f64) -> f64 {
+        let p = if self.playing { self.position + (now - self.at).max(0.0) } else { self.position };
+        if self.duration > 0.0 { p.min(self.duration) } else { p }
+    }
 }
 
 #[cfg(test)]

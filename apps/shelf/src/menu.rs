@@ -5,6 +5,8 @@
 //! menu uses: one small window per process, made once and then only placed, shown and put away
 //! (a first version on a monitor-sized window, its glass made per click, crashed the compositor
 //! on 12 Nov). The entries are plain data (`entries`); the pick comes back as an [`Action`].
+//! "Edit desktop…" opens Settings on the Desktop page (where the widgets are set up); arranging
+//! the shelf and widgets by dragging is not built yet.
 
 use shellman_ui::menu::popup;
 use shellman_ui::theme::glyph;
@@ -18,6 +20,7 @@ pub enum Action {
     Paste,
     OpenInFiles,
     Terminal,
+    EditDesktop,
     Wallpaper,
     DesktopSettings,
     DisplaySettings,
@@ -51,6 +54,7 @@ pub fn entries(can_paste: bool) -> Vec<Entry> {
         item("Open in &Files", Action::OpenInFiles),
         item("Open &Terminal here", Action::Terminal),
         Entry::Separator,
+        item("&Edit desktop…", Action::EditDesktop),
         item("Change &wallpaper…", Action::Wallpaper),
         item("&Desktop settings", Action::DesktopSettings),
         item("Displa&y settings", Action::DisplaySettings),
@@ -67,6 +71,7 @@ fn icon(action: Action) -> char {
         Action::OpenInFiles => glyph::FOLDER,
         // Segoe's "CommandPrompt".
         Action::Terminal => glyph::APP,
+        Action::EditDesktop => glyph::VIEW_GRID,
         Action::Wallpaper => glyph::IMAGE,
         Action::DesktopSettings => glyph::SETTINGS,
         Action::DisplaySettings => glyph::DESKTOP,
@@ -107,7 +112,7 @@ mod tests {
         let e = entries(true);
         assert_eq!(
             labels(&e),
-            ["New", "Paste", "Open in Files", "Open Terminal here", "Change wallpaper…", "Desktop settings", "Display settings"]
+            ["New", "Paste", "Open in Files", "Open Terminal here", "Edit desktop…", "Change wallpaper…", "Desktop settings", "Display settings"]
         );
         let Entry::Sub { entries: sub, .. } = &e[0] else { panic!("New opens a submenu") };
         assert_eq!(labels(sub), ["Folder", "Text document", "Markdown note"]);
@@ -128,13 +133,15 @@ mod tests {
     #[test]
     fn the_popup_keeps_the_entries_order_and_state() {
         let p = popup_entries(&entries(false));
-        assert_eq!(p.len(), 9);
+        assert_eq!(p.len(), 10);
         let popup::Entry::Submenu { entries: sub, .. } = &p[0] else { panic!("New opens a submenu") };
         assert_eq!(sub.len(), 3);
         let popup::Entry::Item(paste) = &p[1] else { panic!("Paste is an item") };
         assert_eq!((paste.id, paste.enabled, paste.hint.as_str()), (Action::Paste, false, ""));
         assert!(matches!(p[2], popup::Entry::Separator));
-        let popup::Entry::Item(last) = &p[8] else { panic!("an item") };
+        let popup::Entry::Item(edit) = &p[6] else { panic!("an item") };
+        assert_eq!(edit.id, Action::EditDesktop);
+        let popup::Entry::Item(last) = &p[9] else { panic!("an item") };
         assert_eq!(last.id, Action::DisplaySettings);
     }
 }

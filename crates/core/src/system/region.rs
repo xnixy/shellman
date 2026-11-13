@@ -183,6 +183,11 @@ fn text(name: &str) -> String {
     }
 }
 
+/// Whether the user's region measures in US units (Control Panel's `iMeasure` is 1).
+pub fn imperial() -> bool {
+    text("iMeasure").trim() == "1"
+}
+
 pub fn read_intl() -> Intl {
     Intl {
         short_time: text("sShortTime"),

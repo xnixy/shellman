@@ -32,6 +32,8 @@ pub struct Plan {
     regular: Option<Source>,
     /// None: the regular face stands in for it.
     semibold: Option<Source>,
+    /// A light face for large numerals (the widgets' date); None: the regular face.
+    light: Option<Source>,
     /// SF Mono, when the SF default is in use and it is installed.
     mono: Option<Source>,
     /// Segoe UI, behind the chosen font for glyphs it lacks.
@@ -51,6 +53,7 @@ fn segoe_plan(dir: &Path, exists: &impl Fn(&Path) -> bool) -> Plan {
     Plan {
         family: if variable { "Segoe UI Variable" } else { "Segoe UI" }.into(),
         semibold: pick(&["seguisb.ttf"]),
+        light: pick(&["segoeuil.ttf", "segoeuisl.ttf"]),
         mono: None,
         // The chosen font is Segoe already.
         fallback: None,
@@ -64,6 +67,9 @@ fn family_plan(f: &Family, dir: &Path, exists: &impl Fn(&Path) -> bool) -> Optio
     plan.fallback = plan.regular.take();
     plan.regular = Some(regular);
     plan.semibold = f.semibold().map(Source::from);
+    if let Some(l) = f.light() {
+        plan.light = Some(Source::from(l));
+    }
     plan.family = f.name.clone();
     Some(plan)
 }
@@ -135,6 +141,13 @@ fn build(plan: &Plan, icons: &[&str]) -> Option<FontDefinitions> {
     }
     semibold.extend(fonts.families[&FontFamily::Proportional].iter().cloned());
     fonts.families.insert(FontFamily::Name("semibold".into()), semibold);
+    let mut light = Vec::new();
+    if let Some(d) = plan.light.as_ref().and_then(|s| read(s, t)) {
+        fonts.font_data.insert("light".into(), d);
+        light.push("light".to_owned());
+    }
+    light.extend(fonts.families[&FontFamily::Proportional].iter().cloned());
+    fonts.families.insert(FontFamily::Name("light".into()), light);
     if let Some(d) = plan.mono.as_ref().and_then(|s| read(s, FontTweak::default())) {
         fonts.font_data.insert("mono".into(), d);
         fonts.families.entry(FontFamily::Monospace).or_default().insert(0, "mono".into());
