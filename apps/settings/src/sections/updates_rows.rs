@@ -26,6 +26,12 @@ pub fn button(ui: &mut Ui, text: &str, accent: bool, enabled: bool) -> Response 
     ui.add_enabled(enabled, b)
 }
 
+/// A secondary button on a row or in a group: the soft fill in the dark theme, where it reads;
+/// in the light theme that fill is faint on a white row, so it wears the primary actions' accent.
+pub fn row_button(ui: &mut Ui, text: &str, enabled: bool) -> Response {
+    button(ui, text, colors().light, enabled)
+}
+
 /// A thin bar, `fraction` (0 to 1) of it in the accent.
 pub fn bar(ui: &Ui, rect: Rect, fraction: f32) {
     let c = colors();
@@ -76,7 +82,7 @@ pub fn update_row(ui: &mut Ui, u: &Update, action: Option<(&str, bool)>) -> bool
         let b = Rect::from_center_size(egui::pos2(right - w / 2.0, rect.center().y), Vec2::new(w, 30.0));
         // A child that takes no room in the list, so the rows keep their spacing.
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(b).layout(egui::Layout::centered_and_justified(egui::Direction::LeftToRight)));
-        pressed = button(&mut child, label, false, enabled).clicked();
+        pressed = row_button(&mut child, label, enabled).clicked();
         right = b.left() - 10.0;
     }
     right = tag(ui, right, rect.center().y, u.kind.label()) - 12.0;
