@@ -2,6 +2,7 @@
 //! Windows get the font, and the backups. Each edits the choices in memory and saves them on the
 //! change worker; nothing here touches Windows.
 
+use shellman_ui::menu::dropdown::dropdown;
 use super::fonts_logic::{self, PARTS, WEIGHT_ROWS};
 use super::fonts_preview;
 use super::fonts_view::{Confirm, FontsView};
@@ -88,21 +89,25 @@ pub fn weights(ui: &mut egui::Ui, v: &mut FontsView) {
             let now = mapped.as_ref().map(|m| m.describe()).unwrap_or_else(|| "None".into());
             let by_hand = v.settings.overrides.contains_key(&key);
             let shown = if by_hand { now.clone() } else { format!("Automatic: {now}") };
-            egui::ComboBox::from_id_salt(("weight-face", &key)).width(260.0).selected_text(shown).show_ui(ui, |ui| {
-                if ui.selectable_label(!by_hand, "Automatic").clicked() && by_hand {
+            let mut rows: Vec<(String, bool)> = vec![("Automatic".to_string(), !by_hand)];
+            rows.extend(family.faces.iter().map(|face| {
+                let picked = v.settings.overrides.get(&key).is_some_and(|c| c.path == face.path && c.index == face.index);
+                let text = if face.is_variable() { format!("{} (variable)", face.style) } else { face.style.clone() };
+                (text, picked)
+            }));
+            match dropdown(ui, ("weight-face", &key), 260.0, &shown, &rows) {
+                Some(0) if by_hand => {
                     v.settings.overrides.remove(&key);
                     changed = true;
                 }
-                for face in &family.faces {
-                    let picked = v.settings.overrides.get(&key).is_some_and(|c| c.path == face.path && c.index == face.index);
-                    let text = if face.is_variable() { format!("{} (variable)", face.style) } else { face.style.clone() };
-                    if ui.selectable_label(picked, text).clicked() {
-                        let w = face.is_variable().then_some(weight as f32);
-                        v.settings.overrides.insert(key.clone(), FaceChoice { path: face.path.clone(), index: face.index, weight: w });
-                        changed = true;
-                    }
+                Some(k) if k > 0 => {
+                    let face = &family.faces[k - 1];
+                    let w = face.is_variable().then_some(weight as f32);
+                    v.settings.overrides.insert(key.clone(), FaceChoice { path: face.path.clone(), index: face.index, weight: w });
+                    changed = true;
                 }
-            });
+                _ => {}
+            }
         });
     }
     if changed {

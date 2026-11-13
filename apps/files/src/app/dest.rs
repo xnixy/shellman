@@ -4,25 +4,17 @@
 //! its answer on a worker. The move or copy itself is the shell's, as for paste, with its
 //! progress and undo.
 
+use super::actions::Action;
+use super::menu::item;
 use super::Msg;
-use egui::{Align2, CornerRadius, Id, Order, Rect, Sense, Stroke};
+use egui::Rect;
 use shellman_core::fsops::Op;
-use shellman_ui::glass::islands::shows_as;
-use shellman_ui::menu::{self, Icon};
-use shellman_ui::theme::{self, colors, glyph};
+use shellman_ui::menu::popup::{Anchor, Entry};
+use shellman_ui::theme::glyph;
 use std::path::{Path, PathBuf};
 
 /// How many recent places are remembered.
 pub(super) const RECENT_MAX: usize = 8;
-const WIDTH: f32 = 340.0;
-
-/// The open list: what it does and the button it opened from.
-pub(super) struct DestMenu {
-    pub(super) op: Op,
-    pub(super) anchor: Rect,
-    /// The frame it opened in, so the click that opened it does not close it.
-    pub(super) opened: u64,
-}
 
 /// Put `p` first in the recent places, without repeats (Windows paths ignore case), keeping at
 /// most `max`.
@@ -77,116 +69,41 @@ fn names(p: &Path) -> (String, String) {
     (name, parent)
 }
 
-impl super::FileMan {
-    /// Open the list for `op` over the button at `anchor`, or close it if it was open.
-    pub(super) fn open_dest(&mut self, op: Op, anchor: Rect) {
-        if self.dest.as_ref().is_some_and(|d| d.op == op) {
-            self.dest = None;
-            return;
+/// The Move to / Copy to menu: a heading saying what it does, the places (recent ones first,
+/// with their folder as a quiet hint), and "Choose folder…".
+pub(super) fn dest_entries(op: Op, count: usize, list: &[(PathBuf, bool)]) -> Vec<Entry<Action>> {
+    let verb = if op == Op::Move { "Move" } else { "Copy" };
+    let mut e = vec![Entry::heading(format!("{verb} {} to", super::text::count(count, "item")))];
+    let mut recent_done = false;
+    for (path, recent) in list {
+        if !recent && !recent_done {
+            recent_done = true;
+            if list.first().is_some_and(|(_, r)| *r) {
+                e.push(Entry::separator());
+            }
         }
-        self.dest = Some(DestMenu {
-            op,
-            anchor,
-            opened: self.ctx.cumulative_pass_nr(),
-        });
+        let (name, parent) = names(path);
+        let g = if *recent { glyph::UNDO } else { glyph::FOLDER };
+        e.push(item(Action::SendTo(op, path.clone()), g, name).hint(parent));
     }
+    e.push(Entry::separator());
+    e.push(item(Action::ChooseDest(op), glyph::SEARCH, "Choose folder…"));
+    e
+}
 
-    /// Draw the open list; its island goes into `islands`.
-    pub(super) fn dest_popup(&mut self, ctx: &egui::Context, islands: &mut Vec<Rect>) {
-        let Some(menu) = &self.dest else { return };
-        let (op, anchor, opened) = (menu.op, menu.anchor, menu.opened);
-        let c = colors();
+impl super::FileMan {
+    /// Open the list for `op` over the button at `anchor` (clicked again, it closes).
+    pub(super) fn open_dest(&mut self, op: Op, anchor: Rect) {
         let count = self.tabs[self.active].selected.len();
         if count == 0 {
-            self.dest = None;
             return;
         }
         let mut places: Vec<PathBuf> = super::rail::quick_places().into_iter().map(|(_, _, p)| p).collect();
         places.extend(self.settings.pins.iter().cloned());
         let list = offered(&self.settings.recent_dests, &places, Path::is_dir);
-        let verb = if op == Op::Move { "Move" } else { "Copy" };
-        let title = format!("{verb} {} to", super::text::count(count, "item"));
-        // Above the button, inside the window.
-        let rows = list.len() as f32 + 1.0;
-        let height = 44.0 + rows * menu::ROW_H + 18.0;
-        let screen = ctx.screen_rect();
-        let x = (anchor.center().x - WIDTH / 2.0).clamp(screen.left() + 12.0, screen.right() - 12.0 - WIDTH);
-        let bottom = anchor.top() - 14.0;
-        let top = (bottom - height).max(screen.top() + 12.0);
-        let rect = Rect::from_min_max(egui::pos2(x, top), egui::pos2(x + WIDTH, bottom));
-        islands.push(rect);
-        let mut picked: Option<Option<PathBuf>> = None;
-        egui::Area::new(Id::new("dest-menu"))
-            .order(Order::Foreground)
-            .fixed_pos(rect.min)
-            .show(ctx, |ui| {
-                ui.set_min_size(rect.size());
-                ui.set_max_size(rect.size());
-                // Its own empty parts take clicks, so they reach nothing under it. First, so the
-                // rows sit on top.
-                let _ = ui.interact(rect, Id::new("dest-bg"), Sense::click_and_drag());
-                let p = ui.painter();
-                let fill = if c.light {
-                    shows_as(theme::with_alpha(egui::Color32::from_rgb(246, 247, 250), 255))
-                } else {
-                    shows_as(theme::with_alpha(egui::Color32::from_rgb(30, 33, 42), 255))
-                };
-                p.rect(rect, CornerRadius::same(18), fill, Stroke::new(1.0_f32, c.hairline), egui::StrokeKind::Inside);
-                p.text(
-                    egui::pos2(rect.left() + 18.0, rect.top() + 22.0),
-                    Align2::LEFT_CENTER,
-                    &title,
-                    theme::semibold_font(13.0),
-                    c.text,
-                );
-                let inner = Rect::from_min_max(
-                    egui::pos2(rect.left() + 8.0, rect.top() + 40.0),
-                    egui::pos2(rect.right() - 8.0, rect.bottom() - 8.0),
-                );
-                let mut child = ui.new_child(egui::UiBuilder::new().max_rect(inner));
-                menu::flat_popup(&mut child);
-                let mut recent_done = false;
-                for (path, recent) in &list {
-                    if !recent && !recent_done {
-                        recent_done = true;
-                        if list.first().is_some_and(|(_, r)| *r) {
-                            menu::flat_separator(&mut child);
-                        }
-                    }
-                    let (name, parent) = names(path);
-                    let g = if *recent { glyph::UNDO } else { glyph::FOLDER };
-                    if menu::flat_item(&mut child, Icon::Glyph(g), &name, &parent, false, true) {
-                        picked = Some(Some(path.clone()));
-                    }
-                }
-                menu::flat_separator(&mut child);
-                if menu::flat_item(&mut child, Icon::Glyph(glyph::SEARCH), "Choose folder…", "", false, true) {
-                    picked = Some(None);
-                }
-            });
-        match picked {
-            Some(Some(dest)) => {
-                self.dest = None;
-                self.send_to(op, self.selected_paths(), dest);
-            }
-            Some(None) => {
-                self.dest = None;
-                self.choose_dest(op);
-            }
-            None => {
-                // A press outside, or Esc, closes it; not the click that opened it.
-                let outside = ctx.input(|i| {
-                    i.pointer.any_pressed()
-                        && i.pointer.interact_pos().is_some_and(|p| !rect.contains(p) && !anchor.contains(p))
-                });
-                let esc = ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
-                if (outside && ctx.cumulative_pass_nr() > opened) || esc {
-                    self.dest = None;
-                }
-            }
-        }
+        let key = if op == Op::Move { "move-to" } else { "copy-to" };
+        super::menu::request(Anchor::over(&self.ctx, anchor), key, dest_entries(op, count, &list));
     }
-
     pub(super) fn selected_paths(&self) -> Vec<PathBuf> {
         self.tabs[self.active].selection().into_iter().map(|e| e.path).collect()
     }
@@ -208,7 +125,7 @@ impl super::FileMan {
 
     /// "Choose folder…": Files' own picker, in folder mode, as its own window over this one. A
     /// worker waits for it and sends the answer back.
-    fn choose_dest(&mut self, op: Op) {
+    pub(super) fn choose_dest(&mut self, op: Op) {
         let items = self.selected_paths();
         let Ok(exe) = std::env::current_exe() else { return };
         let verb = if op == Op::Move { "Move" } else { "Copy" };
@@ -259,6 +176,26 @@ mod tests {
         PathBuf::from(s)
     }
 
+    #[test]
+    fn the_move_to_menu() {
+        let list = [(p(r"C:\Work"), true), (p(r"C:\Users\me\Documents"), false)];
+        let e = dest_entries(Op::Move, 3, &list);
+        let rows: Vec<String> = e
+            .iter()
+            .map(|e| match e {
+                Entry::Heading(t) => format!("({t})"),
+                Entry::Item(i) => format!("{} | {}", i.label, i.hint),
+                _ => "-".into(),
+            })
+            .collect();
+        assert_eq!(rows, ["(Move 3 items to)", r"Work | C:\", "-", r"Documents | C:\Users\me", "-", "Choose folder… | "]);
+        let Entry::Item(first) = &e[1] else { panic!() };
+        assert!(matches!(&first.id, Action::SendTo(Op::Move, d) if *d == p(r"C:\Work")));
+        // Nothing recent: no line above the places.
+        let e = dest_entries(Op::Copy, 1, &list[1..]);
+        assert!(matches!(&e[0], Entry::Heading(t) if t == "Copy 1 item to"));
+        assert!(matches!(e[1], Entry::Item(_)));
+    }
     #[test]
     fn recent_places_are_newest_first_without_repeats_and_few() {
         let mut list = Vec::new();

@@ -5,7 +5,7 @@
 use super::{Kind, Row};
 use crate::theme::{self, colors, glyph, icon_font};
 use egui::text::{LayoutJob, TextFormat, TextWrapping};
-use egui::{Align2, Color32, Context, CornerRadius, FontId, Frame, Margin, Rect, Stroke, Ui, Vec2};
+use egui::{Align2, Color32, Context, CornerRadius, FontId, Rect, Stroke, Ui, Vec2};
 
 /// Height of an ordinary row.
 pub const ROW_H: f32 = 32.0;
@@ -34,21 +34,6 @@ pub enum Icon {
     Image(egui::TextureId, Vec2),
 }
 
-pub(super) fn frame() -> Frame {
-    let c = colors();
-    Frame::new()
-        .fill(c.popup)
-        .stroke(Stroke::new(1.0_f32, c.hairline))
-        .corner_radius(CornerRadius::same(10))
-        .inner_margin(Margin::same(PAD as i8))
-        .shadow(egui::Shadow {
-            offset: [0, 6],
-            blur: 20,
-            spread: 0,
-            color: Color32::from_black_alpha(if c.light { 40 } else { 90 }),
-        })
-}
-
 pub(super) fn height<T>(r: &Row<T>) -> f32 {
     match &r.kind {
         Kind::Separator => SEPARATOR_H,
@@ -56,10 +41,6 @@ pub(super) fn height<T>(r: &Row<T>) -> f32 {
         Kind::Picture(_, size, _) => (size.y + 6.0).max(ROW_H),
         _ => ROW_H,
     }
-}
-
-pub(super) fn content_height<T>(rows: &[Row<T>]) -> f32 {
-    rows.iter().map(height).sum()
 }
 
 /// Wide enough for the widest row, within limits; longer labels are cut with an ellipsis.

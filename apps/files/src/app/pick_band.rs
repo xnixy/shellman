@@ -9,6 +9,7 @@ use crate::pick::button;
 use egui::{Align, Align2, CornerRadius, FontId, Id, Key, Rect, RichText, Stroke, Ui, Vec2};
 use shellman_pick::Mode;
 use shellman_ui::chips::{chip, chip_width, soft_colors, Chip, CHIP_H};
+use shellman_ui::menu::popup::{Anchor, Entry};
 use shellman_ui::theme::{self, colors, glyph, icon_font, semibold_font};
 use shellman_ui::widgets::draw_text;
 use std::path::Path;
@@ -259,32 +260,11 @@ impl super::FileMan {
             .map(|t| t.patterns.join("; "))
             .unwrap_or_default();
         let resp = resp.on_hover_text(tip);
-        let popup = Id::new("pick-type-menu");
         if resp.clicked() {
-            ui.memory_mut(|m| m.toggle_popup(popup));
-        }
-        let mut chosen = None;
-        egui::popup::popup_above_or_below_widget(
-            ui,
-            popup,
-            &resp,
-            egui::AboveOrBelow::Above,
-            egui::PopupCloseBehavior::CloseOnClick,
-            |ui| {
-                ui.set_min_width(rect.width().max(220.0));
-                super::controls::flat_items(ui);
-                for (i, t) in types.iter().enumerate() {
-                    if super::controls::mcheck(ui, i == current, &t.name, "") {
-                        chosen = Some(i);
-                    }
-                }
-            },
-        );
-        if let Some(i) = chosen {
-            self.pick_set_type(i);
+            let entries = types.iter().enumerate().map(|(i, t)| Entry::item(Action::PickType(i), t.name.clone()).checked(i == current)).collect();
+            super::menu::request(Anchor::over(ui.ctx(), rect), "pick-type", entries);
         }
     }
-
     /// "Replace <name>?" with Replace (red) and Back.
     fn pick_replace(&mut self, ui: &mut Ui, pill: Rect, path: &Path) {
         let c = colors();

@@ -254,38 +254,66 @@ size that has not been checked.
 
 ### The glass popup menu (`shellman_ui::menu::popup`)
 
-One component for menus that cannot live inside their app's window: the desktop's (shelf) and
-the dock's (bar). Files keeps its in-window menu (`shellman_ui::menu::Menu`, same rows), and the
-Windows shell's context menu stays Windows' own.
+The one menu of every shellman app: the desktop's (shelf), the dock's (bar), every menu in Files
+and the dropdowns in Settings are this component, so they look and behave the same. Files never shows
+the Windows context menu itself: it reads the shell's entries (`core::shell_menu`) into the popup and
+invokes the picked one.
 
-- API: `popup::declare(ctx)` in every root frame; `PopupMenu::<T>::open(ctx, Anchor::at(x, y) or
-  Anchor::above(x, y), entries)` with points in physical pixels; `take_pick()` in a later frame of
-  the viewport that opened it (woken when something is picked). Entries: items (icon, `&` letter,
-  hint, disabled, checked, danger), separators, headings, one level of submenus.
+- API: `popup::declare(ctx)` in every root frame; `PopupMenu::<T>::open(ctx, anchor, entries)`;
+  `take_pick()` in a later frame of the viewport that opened it (woken when something is
+  picked); `update(entries)` replaces the entries of the open menu in place (rows that arrive
+  late; nothing happens when they are equal); `take_opened()` hands back a submenu's `on_open`
+  value when it opens (for submenus filled on demand). Anchors, in physical pixels: `at(x, y)`,
+  `above(x, y)` (the dock), `in_window(ctx, pos)` for a point of the app's window, `under(ctx,
+  rect)` / `over(ctx, rect)` for a dropdown from a button (it flips to the other side of the
+  button, never over it).
+- Entries: items (glyph or picture icon, `&` letter, hint such as a shortcut, disabled, checked,
+  danger in red), separators, headings, quiet notes ("Loading…"), pictures someone else drew
+  (owner-drawn shell entries), and submenus three levels deep (deeper ones show disabled).
+- `menu::dropdown::dropdown(ui, id, width, shown, rows)`: a select box whose list is the popup,
+  the current row ticked, in place of egui's `ComboBox`.
 - One window per process: an egui viewport declared from the first open on, found by its title,
   made a topmost popup tool window, and given its glass panel once, while still hidden. An open
   only sizes and places it (hidden, cloaked), lays out the glass islands, shows it with the focus,
   and uncloaks it after two frames at the target monitor's scale. Closing cloaks it, hides its
   glass pieces (empty region, no clicks) and parks it shown-but-cloaked at its last size: a hidden
   egui window spins on a pending frame, and the window is never shrunk to nothing.
-- The window is the menu, or the menu and its submenu side by side as two islands; the shadow lies
-  in the glass's backdrop window. Every size passes `place::guard` (finite, at least 24 px, no
-  larger than the work area, never above 8192) before a window or glass sees it.
+- The window is the bounding box of the menu and its open submenus, each an island; the shadow
+  lies in the glass's backdrop window. Every size passes `place::guard` (finite, at least 24 px,
+  no larger than the work area, never above 8192) before a window or glass sees it.
 - Placed in physical pixels on the clicked monitor's work area, laid out at that monitor's scale;
-  flips left/up at the edges, the submenu to the left when there is no room on the right.
+  flips left/up at the edges; a submenu goes right, else left, and deeper ones keep the side the
+  first took. A level taller than the work area scrolls (wheel; the keyboard keeps the lit row
+  in view; a thin bar shows where it is). Long hints are cut with an ellipsis.
 - Closes on a pick, Esc, a click outside (`core::outside`), the focus leaving, or another menu of
   the process opening; the focus goes back to the window that had it on a pick or Esc. Keys:
-  arrows, Home/End, Left/Right for the submenu, Enter/Space, `&` letters and first letters. The
-  submenu also opens after the pointer rests 200 ms. No animation.
+  arrows, Home/End (and PageUp/PageDown), Left/Right through the submenus, Enter/Space, `&`
+  letters and first letters. A submenu also opens after the pointer rests 200 ms. No animation.
 - Measured (12 Nov, test instance, secondary monitors at 150 % and 300 %): 0 ms of CPU in 3 s
   after a menu closed; the top bar and dock stay up while it is open; no `dwm.exe` errors.
   `cargo run -p shellman-ui --example popup_menu -- <x> <y> [--sub] [--light] [--glass 0.2]`
   opens one to look at.
-- Later: Files' and the Windows shell's menus could move onto it. The shell menu would need its
-  items read into entries (as `core::shell_menu` already walks them for Files), owner-drawn items
-  as pictures, `InvokeCommand` with the picked id, and submenus filled on open; the popup would
-  need picture rows, a scroll for long menus, and deeper submenus.
 
+Where it is used (13 Nov):
+
+- Files: the item / multi-selection / background menu (Files' entries, then the shell's: icons,
+  owner-drawn rows, deferred submenus filled on open), the Recycle Bin's item and background
+  menus, a tab's menu, the sidebar's row and background menus, both Sort dropdowns, Move to /
+  Copy to, and the picker's file type list. The Menu key and Shift+F10 open the menu beside the
+  cursor's row. A dropdown's button clicked again closes its menu. Seen on the left monitor, dark
+  and light: item menu, Tags submenu, 7-Zip three levels deep, background menu at the bottom
+  right (flips up), Sort, a sidebar row, Move to.
+- Settings: the dropdowns of Date & time (first day, date patterns), Display (orientation,
+  scale, resolution, refresh rate), Sound (spatial, format), Power (plan, timeouts) and Fonts
+  (face per weight).
+- Still egui popups: Settings' time zone and font family lists (they have a search field),
+  Settings › Desktop's drop folder list, Files' tag editor in the details island (its names turn
+  into fields), and the terminal's profile menu (an in-window island of flat rows).
+- No menus of their own: Task Manager, the launcher, the switcher, the top bar (right-click on
+  the Start mark opens Settings), notifications. The Control Center's power choices are an
+  inline two-click confirm, not a menu. Tray icons' menus are their apps' own.
+- Later: the shell's verbs could also sit in a "More options" submenu (they are read the same
+  way); owner-drawn third-party rows stay pictures rendered on an opaque background.
 `dwm.exe` crashed 16 times that day (10:24, 12:06, 18:00), always the same fail-fast in
 `dwmcore` after `CreateTexture2D` returned E_INVALIDARG: a texture of size 0, negative or past
 16384. Glass now defends itself (`glass::guard`, the one choke point before Windows.UI.Composition

@@ -9,6 +9,8 @@ use shellman_ui::rail::{Icon, Row};
 use shellman_core::places::Place;
 use shellman_core::places_reg::{self, PlacesWatcher};
 use shellman_ui::theme::glyph;
+use super::menu::item;
+use shellman_ui::menu::popup::Entry;
 use std::collections::HashMap;
 use std::sync::mpsc::{channel, Receiver, Sender};
 
@@ -192,7 +194,6 @@ impl super::FileMan {
     pub(super) fn rail_background_menu(
         &mut self,
         resp: &egui::Response,
-        actions: &mut Vec<Action>,
     ) {
         let hidden: Vec<&Place> = self
             .apps
@@ -200,20 +201,7 @@ impl super::FileMan {
             .iter()
             .filter(|p| is_hidden(&self.settings.hidden_places, &p.id))
             .collect();
-        resp.context_menu(|ui| {
-                super::controls::flat_items(ui);
-            if hidden.is_empty() {
-                super::controls::mdisabled(ui, glyph::INFO, "No hidden places");
-                return;
-            }
-            // The hidden places, to show again.
-            for p in &hidden {
-                if super::controls::mi(ui, glyph::FOLDER, &format!("Show {}", p.name), "") {
-                    actions.push(Action::ShowPlace(p.id.clone()));
-                    ui.close_menu();
-                }
-            }
-        });
+        super::menu::on_right_click(resp, "rail-background", || hidden_entries(&hidden));
     }
 
     pub(super) fn set_place_hidden(&mut self, id: &str, hidden: bool) {
@@ -228,6 +216,13 @@ impl super::FileMan {
     }
 }
 
+/// The rail background's menu: the hidden places, to show again, or a note that there are none.
+fn hidden_entries(hidden: &[&Place]) -> Vec<Entry<Action>> {
+    if hidden.is_empty() {
+        return vec![Entry::item(Action::Refresh, "No hidden places").icon(glyph::INFO).enabled(false)];
+    }
+    hidden.iter().map(|p| item(Action::ShowPlace(p.id.clone()), glyph::FOLDER, format!("Show {}", p.name))).collect()
+}
 #[cfg(test)]
 mod tests {
     use super::*;

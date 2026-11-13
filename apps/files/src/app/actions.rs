@@ -69,6 +69,16 @@ pub(super) enum Action {
     ToggleCursor,
     /// Open a terminal in this folder (the one chosen in `terminal.json`).
     OpenTerminal(PathBuf),
+    /// Sort by this key; the key it is sorted by already turns the order around.
+    SortBy(super::tab::SortKey),
+    /// Sort ascending (true) or descending.
+    SortOrder(bool),
+    /// Move or copy the selection into this folder (Move to / Copy to).
+    SendTo(Op, PathBuf),
+    /// Move to / Copy to: choose the folder in Files' picker.
+    ChooseDest(Op),
+    /// Picker mode: show files of this type (an index into the request's types).
+    PickType(usize),
 }
 
 pub(super) struct Rename {
@@ -95,6 +105,19 @@ impl super::FileMan {
             return;
         }
         match action {
+            Action::SortBy(key) => {
+                let tab = &mut self.tabs[self.active];
+                (tab.sort, tab.ascending) = super::controls::sort_by((tab.sort, tab.ascending), key);
+                tab.dirty = true;
+            }
+            Action::SortOrder(ascending) => {
+                let tab = &mut self.tabs[self.active];
+                tab.ascending = ascending;
+                tab.dirty = true;
+            }
+            Action::SendTo(op, dest) => self.send_to(op, self.selected_paths(), dest),
+            Action::ChooseDest(op) => self.choose_dest(op),
+            Action::PickType(i) => self.pick_set_type(i),
             Action::TogglePin(p) => self.toggle_pin(p),
             Action::HidePlace(id) => self.set_place_hidden(&id, true),
             Action::ShowPlace(id) => self.set_place_hidden(&id, false),
@@ -259,7 +282,8 @@ impl super::FileMan {
             Action::MenuKey => {
                 let tab = &self.tabs[self.active];
                 let row = tab.cursor.filter(|&c| tab.selected.contains(&tab.entry(c).path));
-                let pos = self.ctx.input(|i| i.pointer.latest_pos()).unwrap_or_else(|| self.ctx.screen_rect().center());
+                let at = row.and_then(|r| super::interact::row_rect(&self.ctx, r)).filter(|r| r.intersects(tab.view_rect));
+                let pos = super::menu::key_point(at, self.ctx.input(|i| i.pointer.latest_pos()), self.ctx.screen_rect());
                 self.open_menu(row, pos);
             }
             Action::OpenTerminal(dir) => {

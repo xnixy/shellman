@@ -14,6 +14,7 @@ use crate::settings::ViewMode;
 use egui::{Align2, Color32, FontId, Id, Rect, Ui, Vec2};
 use shellman_core::fsops::{self, Op};
 use shellman_ui::chips::{chip, chip_width, Chip, CHIP_H};
+use shellman_ui::menu::popup::Anchor;
 use shellman_ui::theme::{colors, glyph, semibold_font};
 
 const TOAST_SECS: f64 = 3.0;
@@ -271,9 +272,10 @@ impl super::FileMan {
             match b.does {
                 Does::Sort => {
                     if clicked {
-                        ui.memory_mut(|m| m.toggle_popup(Id::new("band-sort")));
+                        let tab = &self.tabs[self.active];
+                        let entries = super::controls::sort_entries(tab.sort, tab.ascending, self.settings.show_hidden);
+                        super::menu::request(Anchor::over(ui.ctx(), resp.rect), "sort", entries);
                     }
-                    self.sort_popup(ui, &resp, actions);
                 }
                 Does::Act(a) if clicked => actions.push(a),
                 Does::Dest(op) if clicked => self.open_dest(op, r),
@@ -292,18 +294,6 @@ impl super::FileMan {
         ui.painter()
             .text(pill.center(), Align2::CENTER_CENTER, text, font, c.muted);
         pill
-    }
-
-    /// The sort menu, opening above the bar's Sort button.
-    fn sort_popup(&mut self, ui: &mut Ui, resp: &egui::Response, actions: &mut Vec<Action>) {
-        egui::popup::popup_above_or_below_widget(
-            ui,
-            Id::new("band-sort"),
-            resp,
-            egui::AboveOrBelow::Above,
-            egui::PopupCloseBehavior::CloseOnClickOutside,
-            |ui| self.sort_menu(ui, actions),
-        );
     }
 }
 

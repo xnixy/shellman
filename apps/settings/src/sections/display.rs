@@ -3,6 +3,7 @@
 //! a mode, orientation or arrangement change then asks "Keep these display settings?" and goes
 //! back by itself if nobody answers. All system work is done by a worker (`DisplayPage`).
 
+use shellman_ui::menu::dropdown::dropdown;
 use super::display_map::{self, Drag};
 use super::sound_rows::{level_slider, link_row};
 use crate::page;
@@ -210,32 +211,28 @@ fn monitor_section(ui: &mut egui::Ui, v: &mut DisplayView, m: &Monitor) {
     ui.add_space(10.0);
     page::label(ui, "Orientation");
     let mut o = v.staged[i].orientation;
-    if egui::ComboBox::from_id_salt(("orient", &m.id))
-        .width(220.0)
-        .selected_text(o.label())
-        .show_ui(ui, |ui| {
-            for opt in Orientation::ALL {
-                ui.selectable_value(&mut o, opt, opt.label());
-            }
-        })
-        .response
-        .changed()
-        || o != v.staged[i].orientation
-    {
+    let rows: Vec<(String, bool)> = Orientation::ALL.iter().map(|opt| (opt.label().to_string(), *opt == o)).collect();
+    if let Some(k) = dropdown(ui, ("orient", &m.id), 220.0, o.label(), &rows) {
+        o = Orientation::ALL[k];
+    }
+    if o != v.staged[i].orientation {
         v.staged[i].orientation = o;
     }
     ui.add_space(10.0);
     if let Some(s) = m.scale {
         page::label(ui, "Scale");
         let now = v.scale.get(&m.id).copied().or(s.current()).unwrap_or(100);
-        egui::ComboBox::from_id_salt(("scale", &m.id)).width(220.0).selected_text(format!("{now}%")).show_ui(ui, |ui| {
-            for p in s.options() {
+        let options: Vec<_> = s.options().into_iter().collect();
+        let rows: Vec<(String, bool)> = options
+            .iter()
+            .map(|&p| {
                 let tag = if Some(p) == s.recommended() { " (recommended)" } else { "" };
-                if ui.selectable_label(p == now, format!("{p}%{tag}")).clicked() {
-                    v.scale.insert(m.id.clone(), p);
-                }
-            }
-        });
+                (format!("{p}%{tag}"), p == now)
+            })
+            .collect();
+        if let Some(k) = dropdown(ui, ("scale", &m.id), 220.0, &format!("{now}%"), &rows) {
+            v.scale.insert(m.id.clone(), options[k]);
+        }
         ui.add_space(10.0);
     }
     if let Some(hdr) = m.hdr {
@@ -275,25 +272,20 @@ fn resolution_and_rate(ui: &mut egui::Ui, m: &Monitor, staged: &Change, out: &mu
     let group = |c: &Change| m.groups.iter().find(|g| g.w == c.w && g.h == c.h);
     let text = |g: &Group| format!("{}{}", g.label(), if g.recommended { " (recommended)" } else { "" });
     let shown = group(staged).map(text).unwrap_or_else(|| format!("{} \u{d7} {}", staged.w, staged.h));
-    egui::ComboBox::from_id_salt(("res", &m.id)).width(300.0).selected_text(shown).show_ui(ui, |ui| {
-        for g in &m.groups {
-            if ui.selectable_label(g.w == staged.w && g.h == staged.h, text(g)).clicked() {
-                out.w = g.w;
-                out.h = g.h;
-                out.hz = modes::rate_for(g, staged.hz);
-            }
-        }
-    });
+    let rows: Vec<(String, bool)> = m.groups.iter().map(|g| (text(g), g.w == staged.w && g.h == staged.h)).collect();
+    if let Some(k) = dropdown(ui, ("res", &m.id), 300.0, &shown, &rows) {
+        let g = &m.groups[k];
+        out.w = g.w;
+        out.h = g.h;
+        out.hz = modes::rate_for(g, staged.hz);
+    }
     ui.add_space(10.0);
     page::label(ui, "Refresh rate");
     let rates: Vec<u32> = group(out).map(|g| g.rates.clone()).unwrap_or_default();
-    egui::ComboBox::from_id_salt(("hz", &m.id)).width(220.0).selected_text(format!("{} Hz", out.hz)).show_ui(ui, |ui| {
-        for r in rates {
-            if ui.selectable_label(r == out.hz, format!("{r} Hz")).clicked() {
-                out.hz = r;
-            }
-        }
-    });
+    let rows: Vec<(String, bool)> = rates.iter().map(|&r| (format!("{r} Hz"), r == out.hz)).collect();
+    if let Some(k) = dropdown(ui, ("hz", &m.id), 220.0, &format!("{} Hz", out.hz), &rows) {
+        out.hz = rates[k];
+    }
 }
 
 fn apply_row(ui: &mut egui::Ui, v: &mut DisplayView) {

@@ -341,6 +341,8 @@ impl eframe::App for SettingsApp {
         self.st.thumbs.poll(ctx);
         self.track_system(ctx);
         shellman_ui::app_icon::sync_window_icon(ctx, shellman_ui::app_icon::Kind::Settings);
+        // The glass menu's window (dropdowns), once there has been one.
+        shellman_ui::menu::popup::declare(ctx);
         self.follow_files(ctx);
         self.follow_requests();
         self.layout(ctx);

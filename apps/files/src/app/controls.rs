@@ -3,9 +3,9 @@
 
 use super::actions::Action;
 use super::tab::SortKey;
-use egui::{Id, PopupCloseBehavior, Rect, Ui, Vec2};
+use egui::{Id, Rect, Ui, Vec2};
 use shellman_ui::chips::{chip, window_buttons, Chip, CHIP_H};
-use shellman_ui::menu::{self, Icon};
+use shellman_ui::menu::popup::{Anchor, Entry};
 use shellman_ui::theme::glyph;
 
 const PAD: f32 = 6.0;
@@ -18,34 +18,8 @@ const KEYS: [(SortKey, &str); 4] = [
     (SortKey::Size, "Size"),
 ];
 
-/// Every Files popup and context menu is drawn with shellman's flat menu rows (see
-/// `shellman_ui::menu::flat_item`): call this first in the popup.
-pub(super) fn flat_items(ui: &mut Ui) {
-    menu::flat_popup(ui);
-}
-
-/// A menu entry with a glyph. True when clicked.
-pub(super) fn mi(ui: &mut Ui, g: char, label: &str, shortcut: &str) -> bool {
-    menu::flat_item(ui, Icon::Glyph(g), label, shortcut, false, true)
-}
-
-/// A menu entry with a tick when `on`.
-pub(super) fn mcheck(ui: &mut Ui, on: bool, label: &str, shortcut: &str) -> bool {
-    menu::flat_item(ui, Icon::None, label, shortcut, on, true)
-}
-
-/// A menu entry that cannot be picked now.
-pub(super) fn mdisabled(ui: &mut Ui, g: char, label: &str) {
-    menu::flat_item(ui, Icon::Glyph(g), label, "", false, false);
-}
-
-/// A line between groups of entries.
-pub(super) fn msep(ui: &mut Ui) {
-    menu::flat_separator(ui);
-}
-
 impl super::FileMan {
-    pub(super) fn window_controls(&mut self, ui: &mut Ui, pill: Rect, actions: &mut Vec<Action>) {
+    pub(super) fn window_controls(&mut self, ui: &mut Ui, pill: Rect) {
         let inner = pill.shrink(PAD);
         let sort = Rect::from_min_size(
             egui::pos2(inner.left() + 2.0, inner.center().y - CHIP_H / 2.0),
@@ -60,51 +34,74 @@ impl super::FileMan {
             Chip::Plain,
         )
         .on_hover_text("Sort, and hidden items");
-        let popup = Id::new("sort-menu");
         if resp.clicked() {
-            ui.memory_mut(|m| m.toggle_popup(popup));
+            let tab = &self.tabs[self.active];
+            let entries = sort_entries(tab.sort, tab.ascending, self.settings.show_hidden);
+            super::menu::request(Anchor::under(ui.ctx(), resp.rect), "sort", entries);
         }
-        egui::popup::popup_below_widget(
-            ui,
-            popup,
-            &resp,
-            PopupCloseBehavior::CloseOnClickOutside,
-            |ui| {
-                self.sort_menu(ui, actions);
-            },
-        );
         let buttons = Rect::from_min_max(egui::pos2(sort.right() + 6.0, inner.top()), inner.max);
         window_buttons(ui, buttons);
     }
+}
 
-    pub(super) fn sort_menu(&mut self, ui: &mut Ui, actions: &mut Vec<Action>) {
-        ui.set_min_width(220.0);
-        flat_items(ui);
-        let tab = &mut self.tabs[self.active];
-        for (key, name) in KEYS {
-            if mcheck(ui, tab.sort == key, name, "") {
-                if tab.sort == key {
-                    tab.ascending = !tab.ascending;
-                } else {
-                    tab.sort = key;
-                    tab.ascending = key == SortKey::Name || key == SortKey::Kind;
-                }
-                tab.dirty = true;
-                ui.memory_mut(|m| m.close_popup());
-            }
-        }
-        msep(ui);
-        for (ascending, name) in [(true, "Ascending"), (false, "Descending")] {
-            if mcheck(ui, tab.ascending == ascending, name, "") {
-                tab.ascending = ascending;
-                tab.dirty = true;
-                ui.memory_mut(|m| m.close_popup());
-            }
-        }
-        msep(ui);
-        if mcheck(ui, self.settings.show_hidden, "Hidden items", "Ctrl+H") {
-            actions.push(Action::ToggleHidden);
-            ui.memory_mut(|m| m.close_popup());
-        }
+/// The sort menu: the keys (picking the current one turns the order around), the order, and
+/// whether hidden items show.
+pub(super) fn sort_entries(sort: SortKey, ascending: bool, show_hidden: bool) -> Vec<Entry<Action>> {
+    let mut e: Vec<Entry<Action>> =
+        KEYS.iter().map(|&(key, name)| Entry::item(Action::SortBy(key), name).checked(sort == key)).collect();
+    e.push(Entry::separator());
+    for (asc, name) in [(true, "Ascending"), (false, "Descending")] {
+        e.push(Entry::item(Action::SortOrder(asc), name).checked(ascending == asc));
+    }
+    e.push(Entry::separator());
+    e.push(Entry::item(Action::ToggleHidden, "Hidden items").checked(show_hidden).hint("Ctrl+H"));
+    e
+}
+
+/// What a pick in the sort menu does to the sort: (key, ascending).
+pub(super) fn sort_by(now: (SortKey, bool), key: SortKey) -> (SortKey, bool) {
+    if now.0 == key {
+        (key, !now.1)
+    } else {
+        (key, key == SortKey::Name || key == SortKey::Kind)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_sort_menu() {
+        let e = sort_entries(SortKey::Size, false, true);
+        let rows: Vec<(String, bool)> = e
+            .iter()
+            .map(|e| match e {
+                Entry::Item(i) => (i.label.clone(), i.checked),
+                _ => ("-".into(), false),
+            })
+            .collect();
+        let want = [
+            ("Name", false),
+            ("Date modified", false),
+            ("Type", false),
+            ("Size", true),
+            ("-", false),
+            ("Ascending", false),
+            ("Descending", true),
+            ("-", false),
+            ("Hidden items", true),
+        ];
+        assert_eq!(rows, want.map(|(l, c)| (l.to_string(), c)));
+        let Entry::Item(hidden) = &e[8] else { panic!() };
+        assert_eq!(hidden.hint, "Ctrl+H");
+    }
+
+    #[test]
+    fn picking_the_current_key_turns_the_order_around() {
+        assert_eq!(sort_by((SortKey::Name, true), SortKey::Name), (SortKey::Name, false));
+        assert_eq!(sort_by((SortKey::Name, true), SortKey::Size), (SortKey::Size, false));
+        assert_eq!(sort_by((SortKey::Size, false), SortKey::Kind), (SortKey::Kind, true));
+        assert_eq!(sort_by((SortKey::Kind, true), SortKey::Modified), (SortKey::Modified, false));
     }
 }

@@ -367,7 +367,7 @@ impl super::FileMan {
     pub(super) fn tag_menu(&mut self, ui: &mut Ui, paths: &[PathBuf]) {
         let c = colors();
         ui.set_min_width(220.0);
-        super::controls::flat_items(ui);
+        shellman_ui::menu::flat_popup(ui);
         let mut changed = false;
         for i in 0..COUNT {
             let on = paths.iter().all(|p| self.tags.mask(p) & (1 << i) != 0);
@@ -395,9 +395,9 @@ impl super::FileMan {
                 ui.painter().text(egui::pos2(rect.right() - 16.0, rect.center().y), Align2::CENTER_CENTER, glyph::CHECK, icon_font(12.0), c.text);
             }
         }
-        super::controls::msep(ui);
+        shellman_ui::menu::flat_separator(ui);
         let label = if self.tag_edit { "Done renaming" } else { "Rename tags…" };
-        if super::controls::mi(ui, glyph::RENAME, label, "") {
+        if shellman_ui::menu::flat_item(ui, shellman_ui::menu::Icon::Glyph(glyph::RENAME), label, "", false, true) {
             self.tag_edit = !self.tag_edit;
         }
         if changed {
