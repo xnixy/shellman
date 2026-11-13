@@ -5,7 +5,7 @@
 use crate::palette::{dim, Palette, Rgb};
 use crate::render::{self, Cell, Cursor, CursorShape, Frame};
 use alacritty_terminal::grid::Dimensions;
-use alacritty_terminal::index::{Column, Line};
+use alacritty_terminal::index::{Column, Line, Point};
 use alacritty_terminal::term::cell::Flags;
 use alacritty_terminal::term::{Term, TermMode};
 use alacritty_terminal::vte::ansi::{self, Color, NamedColor};
@@ -17,6 +17,48 @@ pub struct Look {
     /// Text on the block cursor.
     pub on_cursor: Rgb,
     pub focused: bool,
+    /// The selection's colour (the accent), laid over the cells it covers.
+    pub selection: Rgb,
+    /// The blinking cursor's phase: false while it is off.
+    pub cursor_on: bool,
+    /// The link under the pointer, underlined.
+    pub hover: Hover,
+}
+
+/// A link the pointer is on.
+#[derive(Clone, PartialEq, Eq, Debug, Default)]
+pub enum Hover {
+    #[default]
+    None,
+    /// An OSC 8 hyperlink: every cell with this id.
+    Link(String),
+    /// A URL in the text, from its first cell to its last.
+    Span(Point, Point),
+}
+
+/// How strongly the selection's colour shows over glass, and over a cell's own background.
+const SELECTION_ALPHA: u8 = 100;
+const SELECTION_MIX: u16 = 110;
+
+/// `base` and the combining `marks` after it as one character, through Unicode's composition
+/// (NFC, by Windows); `base` when they do not make one.
+pub fn compose(base: char, marks: &[char]) -> char {
+    use windows::Win32::Globalization::{NormalizeString, NormalizationC};
+    let mut s: Vec<u16> = Vec::with_capacity(8);
+    let mut buf = [0u16; 2];
+    for c in std::iter::once(base).chain(marks.iter().copied()) {
+        s.extend_from_slice(c.encode_utf16(&mut buf));
+    }
+    let mut out = [0u16; 16];
+    let n = unsafe { NormalizeString(NormalizationC, &s, Some(&mut out)) };
+    if n <= 0 {
+        return base;
+    }
+    let mut chars = char::decode_utf16(out[..n as usize].iter().copied());
+    match (chars.next(), chars.next()) {
+        (Some(Ok(c)), None) => c,
+        _ => base,
+    }
 }
 
 pub fn take<T>(term: &Term<T>, look: &Look, frame: &mut Frame) {
@@ -49,8 +91,13 @@ pub fn take<T>(term: &Term<T>, look: &Look, frame: &mut Frame) {
             }
         }
     };
+    let selection = term.selection.as_ref().and_then(|s| s.to_range(term));
+    let s = look.selection;
     for line in 0..rows {
-        let row = &grid[Line(line as i32 - offset)];
+        let grid_line = Line(line as i32 - offset);
+        let row = &grid[grid_line];
+        // Only rows the selection reaches look at it cell by cell.
+        let sel = selection.filter(|r| r.start.line <= grid_line && grid_line <= r.end.line);
         for col in 0..cols {
             let cell = &row[Column(col)];
             let f = cell.flags;
@@ -66,6 +113,16 @@ pub fn take<T>(term: &Term<T>, look: &Look, frame: &mut Frame) {
                 fg[3] = 255;
                 bg[3] = 255;
             }
+            if let Some(r) = &sel {
+                if r.contains(Point::new(grid_line, Column(col))) {
+                    bg = if bg[3] == 0 {
+                        [s[0], s[1], s[2], SELECTION_ALPHA]
+                    } else {
+                        let m = |a: u8, b: u8| ((a as u16 * (256 - SELECTION_MIX) + b as u16 * SELECTION_MIX) >> 8) as u8;
+                        [m(bg[0], s[0]), m(bg[1], s[1]), m(bg[2], s[2]), 255]
+                    };
+                }
+            }
             let mut flags = 0;
             for (from, to) in [
                 (Flags::BOLD, render::BOLD),
@@ -80,10 +137,26 @@ pub fn take<T>(term: &Term<T>, look: &Look, frame: &mut Frame) {
                 }
             }
             let hidden = f.intersects(Flags::HIDDEN | Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER);
-            let ch = if hidden { ' ' } else { cell.c };
+            let mut ch = if hidden { ' ' } else { cell.c };
+            // Combining marks after a character: drawn as the one precomposed character they
+            // make, where there is one (e and U+0301 as é).
+            if let Some(marks) = cell.zerowidth().filter(|_| !hidden) {
+                ch = compose(ch, marks);
+            }
             // A wide character's spacer keeps its background run going but draws nothing.
             if f.contains(Flags::WIDE_CHAR_SPACER) {
                 flags = 0;
+            }
+            let hovered = match &look.hover {
+                Hover::None => false,
+                Hover::Link(id) => cell.hyperlink().is_some_and(|h| h.id() == id),
+                Hover::Span(a, b) => {
+                    let p = Point::new(grid_line, Column(col));
+                    *a <= p && p <= *b
+                }
+            };
+            if hovered {
+                flags |= render::UNDERLINE;
             }
             frame.cells.push(Cell { ch, fg, bg, flags });
         }
@@ -92,7 +165,11 @@ pub fn take<T>(term: &Term<T>, look: &Look, frame: &mut Frame) {
     // The cursor, only where it is on screen (not scrolled away) and shown.
     frame.cursor = None;
     let point = grid.cursor.point;
+    let style = term.cursor_style();
     let visible = term.mode().contains(TermMode::SHOW_CURSOR);
+    // Blinking only matters while focused: unfocused, the cursor is a steady outline.
+    frame.blinking = visible && style.blinking && look.focused;
+    let visible = visible && (look.cursor_on || !frame.blinking);
     let line = point.line.0 + offset;
     if visible && line >= 0 && (line as usize) < rows {
         let (row, mut col) = (line as usize, point.column.0.min(cols.saturating_sub(1)));
@@ -101,7 +178,7 @@ pub fn take<T>(term: &Term<T>, look: &Look, frame: &mut Frame) {
         }
         let i = row * cols + col;
         let wide = frame.cells[i].flags & render::WIDE != 0;
-        let shape = match term.cursor_style().shape {
+        let shape = match style.shape {
             ansi::CursorShape::Hidden => return,
             _ if !look.focused => Some(CursorShape::Hollow),
             ansi::CursorShape::Beam => Some(CursorShape::Beam),
@@ -122,5 +199,18 @@ pub fn take<T>(term: &Term<T>, look: &Look, frame: &mut Frame) {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::compose;
+
+    #[test]
+    fn combining_marks_compose_where_they_can() {
+        assert_eq!(compose('e', &['\u{301}']), '\u{e9}');
+        assert_eq!(compose('a', &['\u{30A}']), '\u{e5}');
+        // No precomposed form: the base is kept.
+        assert_eq!(compose('x', &['\u{301}']), 'x');
     }
 }

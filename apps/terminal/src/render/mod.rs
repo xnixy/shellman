@@ -7,6 +7,7 @@
 //! draws. Nothing here knows about the emulator or the shell.
 
 mod atlas;
+mod boxdraw;
 mod gpu;
 
 pub use atlas::Metrics;
@@ -61,6 +62,8 @@ pub struct Frame {
     pub rows: usize,
     pub cells: Vec<Cell>,
     pub cursor: Option<Cursor>,
+    /// The cursor blinks (a program asked for it, and the window has the focus).
+    pub blinking: bool,
 }
 
 impl Frame {
@@ -114,8 +117,9 @@ struct Shared {
 
 pub struct Renderer {
     atlas: atlas::Atlas,
-    /// The font size in pixels the atlas was made for.
+    /// The font size in pixels and the family the atlas was made for.
     px: f32,
+    family: String,
     /// Each row's hash as last sent, and the grid size they are for.
     hashes: Vec<u64>,
     cols: usize,
@@ -124,10 +128,11 @@ pub struct Renderer {
 
 impl Renderer {
     /// A renderer for the grid font at `px` pixels per em.
-    pub fn new(px: f32) -> Result<Self, String> {
+    pub fn new(px: f32, family: &str) -> Result<Self, String> {
         Ok(Self {
-            atlas: atlas::Atlas::new(px)?,
+            atlas: atlas::Atlas::new(px, family)?,
             px,
+            family: family.to_owned(),
             hashes: Vec::new(),
             cols: 0,
             shared: Arc::default(),
@@ -139,12 +144,13 @@ impl Renderer {
     }
 
 
-    /// Change the font size (a move to a monitor of another scale). Every glyph is made again.
+    /// Change the font size (zoom, or a move to a monitor of another scale). Every glyph is
+    /// made again.
     pub fn set_px(&mut self, px: f32) -> Result<(), String> {
         if px == self.px {
             return Ok(());
         }
-        let atlas = atlas::Atlas::new(px)?;
+        let atlas = atlas::Atlas::new(px, &self.family)?;
         self.atlas = atlas;
         self.px = px;
         self.hashes.clear();
@@ -387,7 +393,7 @@ mod tests {
     }
 
     fn frame(cells: Vec<Cell>, cols: usize) -> Frame {
-        Frame { cols, rows: cells.len() / cols, cells, cursor: None }
+        Frame { cols, rows: cells.len() / cols, cells, cursor: None, blinking: false }
     }
 
     #[test]

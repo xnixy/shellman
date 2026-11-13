@@ -443,47 +443,86 @@ Decision: no host of our own is possible, and Windows' host is off unless the us
 
 ## Terminal
 
-`apps/terminal` (`shellman-terminal.exe [command line]`) is to replace Windows Terminal. Stage 1:
-one shell (default `powershell.exe`; the rest of the command line, as typed, runs instead) in a
-title pill and one glass island. Not yet: tabs, splits, selection and copy, mouse reporting to
-programs, links, profiles, settings, IME, ligatures, colour emoji, default-terminal registration.
+`apps/terminal` (`shellman-terminal.exe [command line]`) is to replace Windows Terminal. Order of
+work: stage 1 (one shell, GPU grid) and stage 2 (tabs, selection, mouse, profiles) are done; next
+shellman's entry points open it, then it is registered as Windows' default terminal.
 
-- **Emulation**: `alacritty_terminal` 0.26: grid, scrollback (10 000 lines), VT parser and the
-  pseudo-console (ConPTY, or a `conpty.dll` found on PATH or beside the exe), on a thread of its
-  own. Its listener answers the pty directly (cursor reports) and wakes the window.
-- **Structure**: `session.rs` is one shell (pty + emulator) and knows nothing of drawing;
-  `snapshot.rs` turns its visible grid into plain cells (colours resolved through `palette.rs`,
-  inverse, faint, wide characters, the cursor); `render/` draws cells and knows nothing of the
-  emulator. Tabs later are several sessions and one view. Keys to bytes are pure and tested
-  (`keys.rs`): xterm sequences, application cursor mode, Ctrl and Alt, bracketed paste.
-- **Drawing**: a GPU renderer inside egui's frame (an `egui_glow` paint callback; egui still
-  draws the chrome and `shellman_ui::glass` the glass). Glyphs are rasterized once by DirectWrite
-  (`crossfont`, with Windows' font fallback) at the monitor's pixel size into a 2048 px greyscale
-  atlas; cells snap to whole pixels. Three instanced draws: background runs, glyphs, then
-  underline / strike / thin cursor. Each grid row has fixed slots in the instance buffers and a
-  hash; only rows whose hash changed are rebuilt and sent. Font: Cascadia Mono, else Cascadia
-  Code, else Consolas, 12 pt.
-- **Glass and colour**: cells with the default background draw nothing, so the island is the
-  same glass as every other app and follows the glass setting live (the app watches
-  `appearance.json`). Explicit backgrounds are opaque, so full-screen programs look as they
-  were made. Text is greyscale antialiased: DirectWrite's ClearType coverage is averaged, since
-  subpixel coverage cannot be blended right over glass whose colour only DWM knows. Default text
-  and the cursor follow the theme (a black accent falls back to the text colour); the 16 colours
-  are Campbell on dark and a darkened set on light.
-- **Repaint**: only on new output, input, resize or a theme change. The cursor does not blink.
+- **Emulation**: `alacritty_terminal` 0.26: grid, scrollback, VT parser and the pseudo-console
+  (ConPTY, or a `conpty.dll` found on PATH or beside the exe), on a thread of its own per tab.
+  Its listener answers the pty directly (cursor reports, OSC 4/10/11 colour queries from the
+  theme's palette) and wakes the window. The pty's output passes through `osc.rs` on its way:
+  OSC 7 / OSC 9;9 (the shell's directory) and DECSET 9 (X10 mouse), which the emulator does not
+  keep. That wrapper also fixes a stall in `alacritty_terminal` on Windows: a read pass stops at
+  64 KiB and nothing wakes the loop while its pipe still holds data, so a fast writer (`cat` of
+  100 MB in WSL) froze it for good (stage 1 too); passes now end at 48 KiB with a "readable"
+  posted to the poller.
+- **Structure**: `session.rs` is one shell; `tabs.rs` the tab list's rules (pure); `app/` the
+  window (`mod` tabs and layout, `input` keys and shortcuts, `pointer` mouse, `strip` tab strip and
+  profile menu, `view` snapshot, blink and zoom); `snapshot.rs` turns the visible grid into plain
+  cells (palette, inverse, faint, wide characters, combining marks composed by NFC, the
+  selection's colour, the hovered link's underline, the cursor); `render/` draws cells and knows
+  nothing of the emulator. Pure and tested: `keys.rs`, `mouse.rs` (every tracking mode and
+  encoding), `select.rs` (selection to clipboard text, word stops, URLs, against a real `Term`),
+  `osc.rs`, `profiles.rs`, `tabs.rs`, `render/boxdraw.rs`, `app/input.rs` shortcuts.
+- **Tabs**: Ctrl+Shift+T / + (default profile), Ctrl+Shift+1..9 (n-th profile), the ∨ menu
+  (profiles, a glass island); a new tab opens right after the shown one, in its directory when
+  the shell reports one (OSC 7 / 9;9; WSL gets it as `--cd`), else home. Ctrl+Shift+W, middle
+  click or × closes (the last closes the window; a shell that exits closes its tab); Ctrl+Tab,
+  Ctrl+Shift+Tab, Ctrl+Alt+1..9 (9 the last), click; drag to reorder. Title: the program's OSC
+  0/2 title (a console exe's path shortened to its name), else the shell's name and folder. A
+  tab not shown keeps parsing but wakes the window only for its activity dot, bell, title or
+  exit. The strip is `shellman_ui::tab_strip`, lifted from Files' tab bar (same geometry and
+  painting; Files still has its own copy and can switch to it).
+- **Selection**: drag (cells), double-click (words: stops are blanks, quotes, brackets, `|`,
+  `,`, `;`, so paths and URLs are one word), triple-click (logical lines), Shift+click extends,
+  Alt+drag a block; auto-scroll past the edges; drawn into the cells (accent over glass, mixed
+  into explicit backgrounds), so it is part of the row hashes and costs no extra pass; it rides
+  with its text as output scrolls (alacritty's model). Copy: Ctrl+C with a selection (without,
+  ^C), Ctrl+Shift+C, Ctrl+Insert, Enter; right-click copies a selection, else pastes (Windows
+  Terminal's way); Esc drops it; copy-on-select is `copy_on_select` in `terminal.json`. Copied
+  text joins soft-wrapped lines, trims trailing blanks, uses CR LF, and a whole-line copy has no
+  final line break. Paste: Ctrl+V, Ctrl+Shift+V, Shift+Insert, bracketed when asked.
+- **Mouse to programs**: X10 (9), 1000, 1002, 1003 tracking; normal, UTF-8 (1005) and SGR
+  (1006) encodings; focus (1004, also on tab switches); wheel as buttons 64/65 when tracking,
+  arrows on the alternate screen with 1007, else scrollback. Shift takes the mouse back.
+- **Links**: OSC 8 hyperlinks underline on hover; a URL in the text underlines while Ctrl is
+  held; Ctrl+click opens either (http, https, file, ftp, mailto only). OSC 52 copies (reads are
+  refused).
+- **Cursor**: DECSCUSR shapes; blinking at Windows' caret rate, only while focused, stopping
+  (shown) after 15 s without input or output, so an idle window draws nothing.
+- **Drawing**: a GPU renderer inside egui's frame (an `egui_glow` paint callback). Glyphs by
+  DirectWrite (`crossfont`, with font fallback) into a 2048 px greyscale atlas; box drawing
+  (light, heavy, double, rounded), blocks, shades, quadrants and Powerline triangles / half
+  discs are drawn cell-sized by `render/boxdraw.rs` so they join without gaps (dashes and
+  diagonals stay the font's). Three instanced draws: background runs, glyphs, then lines and the
+  thin cursor; per-row slots and hashes, only changed rows are sent.
+- **Glass and colour**: as stage 1: cells with the default background draw nothing, so the
+  island is the shared glass and follows the slider live; the tab strip, window buttons, the
+  profile menu and hover labels are islands too.
+- **Profiles and settings**: PowerShell 7 (if installed), Windows PowerShell, Command Prompt,
+  each WSL distribution (registry `Lxss`, default first, Docker's skipped), Git Bash. The
+  terminal's own `terminal.json` in the shellman config folder (`SHELLMAN_CONFIG_DIR` aware,
+  written with defaults the first time): `default_profile`, `font_family`, `font_size` (12),
+  `scrollback` (10 000), `copy_on_select` (false). Zoom: Ctrl+wheel, Ctrl+plus/minus, Ctrl+0.
+- **Keyboard**: text comes as Windows composed it (dead keys, AltGr, IME commits), so layouts
+  are not assumed; AltGr reaches egui without Ctrl and Alt and its characters go as text.
 
-Measured (release, 4K at 150%, maximized, 240 Hz monitor, `SHELLMAN_TERMINAL_STATS=<file>` logs
-frame times):
+Measured (release, a 1800x1100 px window on a 4K monitor at 150 %, 240 Hz, same placement for
+each; `SHELLMAN_TERMINAL_STATS=<file>` logs frame times):
 
-- `cmd /c dir /s C:\Windows\System32`: 3.4 to 4.8 s (median 3.8), Windows Terminal 3.0 to 4.2 s
-  (median 3.5), five runs each. `Get-ChildItem C:\Windows\System32 -Recurse`: 21.5 and 18.4 s,
-  Windows Terminal 19.5 and 17.9 s. So within about 5 to 10 %; Windows Terminal ships a newer
-  ConPTY (OpenConsole) than the system's, which may be the rest.
-- While that output scrolls: a frame every vsync (241 fps), CPU per frame 0.5 to 0.8 ms on
-  average, 2.3 ms at most; rebuilding and hashing the rows 0.3 to 0.45 ms of it; about 60 rows sent
-  a frame.
-- Idle, with the window focused or not: 0 ms of CPU in 20 s.
-- First text on screen 0.7 s after start.
+- `cmd /c dir /s C:\Windows\System32`, median: stage 2 1.63 s (7 runs), stage 1 1.62 s (7),
+  Windows Terminal 1.53 s (5). (Stage 1's 3.8 s was a maximized window.)
+- `cat` of a 100 MB, 3 M-line file in WSL: stage 2 8.9 s (3 runs), Windows Terminal 2.4 s; stage 1
+  never finished (the stall above). During it the system ConPTY's conhost uses a whole core and
+  the terminal 1.2 (parser thread and UI); frames take 0.25 ms of CPU at 241 fps. So the gap is
+  ConPTY: Windows Terminal brings its own (OpenConsole), which passes output through.
+- Idle 20 s: 0.000 CPU-s focused, 0.016 unfocused. A blinking cursor: 2 frames a second for
+  15 s, then none. A tab flooding output in the background: no frames.
+- Not yet: colour emoji (drawn in one colour), find in scrollback, splits, a Settings page,
+  win32-input-mode (ConPTY's `?9001`: exact key events; without it PSReadLine's own Ctrl+C copy
+  of its selection did not reach the clipboard in a test), bundling OpenConsole/`conpty.dll`,
+  OSC 10/11 answers through the system ConPTY (it does not forward the queries; the answering is
+  in place), a light palette that keeps bright white readable on coloured backgrounds.
 
 ## Session
 
