@@ -28,6 +28,14 @@
 //! `SHELLMAN_NO_COMPOSITION` is set, to see this path), the window paints its own rounded surface
 //! with [`content_frame`], without blur or shadow.
 //!
+//! DWM serves the host backdrop as a flat colour while it does not allow transparency, and a
+//! backdrop set up then stays flat after DWM starts allowing it (measured without Explorer: the
+//! bar's glass stayed flat once Windows' app host brought the immersive shell up, while new
+//! windows blurred). So the backdrop window and its visuals are made again when DWM may have
+//! changed its mind: DWM restarted or changed colours, the immersive colours changed, or another
+//! shellman process asks with [`REFRESH_MESSAGE`] (the desktop does, once the host is up).
+//! `SHELLMAN_GLASS_LOG=1` prints what made a panel do so.
+//!
 //! Using it: attach a panel once the window exists, paint the content inside
 //! [`content_frame`]`(panel.composed(), ..)`, and pass the theme's style to
 //! [`GlassPanel::set_style`] when it may have changed. Everything else follows on its own,
@@ -77,7 +85,8 @@ use windows::Win32::UI::Shell::{DefSubclassProc, RemoveWindowSubclass, SetWindow
 use windows::Win32::UI::WindowsAndMessaging::{
     DestroyWindow, GetWindowRect, IsIconic, IsWindowVisible, PostMessageW, RegisterWindowMessageW,
     SetWindowPos, SWP_HIDEWINDOW, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
-    SWP_SHOWWINDOW, WM_DPICHANGED, WM_DWMCOMPOSITIONCHANGED, WM_NCDESTROY, WM_WINDOWPOSCHANGED,
+    SWP_SHOWWINDOW, WM_DPICHANGED, WM_DWMCOLORIZATIONCOLORCHANGED, WM_DWMCOMPOSITIONCHANGED,
+    WM_NCDESTROY, WM_SETTINGCHANGE, WM_WINDOWPOSCHANGED,
 };
 use windows::UI::ViewManagement::UISettings;
 
@@ -93,7 +102,9 @@ struct Inner {
     /// The window the panel serves, whose content sits on top.
     target: HWND,
     /// The backdrop window and its visuals; None when Windows cannot compose them.
-    composed: Option<Composed>,
+    composed: RefCell<Option<Composed>>,
+    /// A rebuild of `composed` has been asked for and not yet done.
+    rebuild_pending: Cell<bool>,
     style: Cell<Style>,
     /// Where the surface is, in the window's pixels from its top-left; None for all of it.
     shape: Cell<Option<RECT>>,
@@ -155,7 +166,8 @@ impl GlassPanel {
         bare(target);
         let inner = Rc::new(Inner {
             target,
-            composed: compose(hwnd),
+            composed: RefCell::new(compose(hwnd)),
+            rebuild_pending: Cell::new(false),
             style: Cell::new(style),
             shape: Cell::new(None),
             also: Cell::new(None),
@@ -166,7 +178,7 @@ impl GlassPanel {
             effects: Cell::new(effects_enabled()),
             alive: Cell::new(true),
         });
-        if let Some(composed) = &inner.composed {
+        if let Some(composed) = &*inner.composed.borrow() {
             cloak::remember(target, composed.window);
         }
         unsafe {
@@ -184,7 +196,7 @@ impl GlassPanel {
     /// Whether the surface is drawn under the window (blur, tint, rim and shadow). If not, the
     /// window paints it itself: see [`content_frame`].
     pub fn composed(&self) -> bool {
-        self.inner.composed.is_some()
+        self.inner.composed.borrow().is_some()
     }
 
     /// Change the look (the theme, accent or glass amount changed). Free when nothing changed.
@@ -248,10 +260,9 @@ impl GlassPanel {
 impl Drop for GlassPanel {
     fn drop(&mut self) {
         let inner = &self.inner;
-        if let Some(composed) = &inner.composed {
-            if let Some((settings, token)) = &composed.settings {
-                let _ = settings.RemoveAdvancedEffectsEnabledChanged(*token);
-            }
+        let composed = inner.composed.borrow_mut().take();
+        if let Some(composed) = &composed {
+            unwatch(composed);
         }
         if !inner.alive.get() {
             return;
@@ -259,7 +270,7 @@ impl Drop for GlassPanel {
         cloak::forget(inner.target);
         unsafe {
             let _ = RemoveWindowSubclass(inner.target, Some(follow_proc), SUBCLASS);
-            if let Some(composed) = &inner.composed {
+            if let Some(composed) = &composed {
                 let _ = DestroyWindow(composed.window);
             }
             let _ = SetWindowRgn(inner.target, None, true);
@@ -289,7 +300,48 @@ fn compose(hwnd: isize) -> Option<Composed> {
     }
 }
 
+/// Stop hearing about transparency effects for `composed`.
+fn unwatch(composed: &Composed) {
+    if let Some((settings, token)) = &composed.settings {
+        let _ = settings.RemoveAdvancedEffectsEnabledChanged(*token);
+    }
+}
+
 impl Inner {
+    /// Make the backdrop window and its visuals again, in place of the old ones, and lay them
+    /// out. Keeps the old ones when new ones cannot be made.
+    fn rebuild(&self) {
+        self.rebuild_pending.set(false);
+        if !self.alive.get() || self.composed.borrow().is_none() {
+            return;
+        }
+        let Some(fresh) = compose(self.target.0 as isize) else {
+            return;
+        };
+        cloak::remember(self.target, fresh.window);
+        let old = self.composed.replace(Some(fresh));
+        self.effects.set(effects_enabled());
+        self.laid_out.set(None);
+        // The new backdrop goes under the window first, then the old one goes.
+        self.follow();
+        if let Some(old) = old {
+            unwatch(&old);
+            unsafe {
+                let _ = DestroyWindow(old.window);
+            }
+        }
+        trace(|| format!("glass {:?}: backdrop made again", self.target.0));
+    }
+
+    /// Ask for a rebuild once the current message is done; several asks make one rebuild.
+    fn ask_rebuild(&self) {
+        if !self.rebuild_pending.replace(true) {
+            unsafe {
+                let _ = PostMessageW(Some(self.target), rebuild_message(), WPARAM(0), LPARAM(0));
+            }
+        }
+    }
+
     /// Match the window: its rounded region, and the backdrop in the same place, at the same
     /// visibility, right under it.
     fn follow(&self) {
@@ -297,7 +349,7 @@ impl Inner {
             let visible =
                 IsWindowVisible(self.target).as_bool() && !IsIconic(self.target).as_bool();
             if !visible {
-                if let Some(composed) = &self.composed {
+                if let Some(composed) = &*self.composed.borrow() {
                     let flags = SWP_HIDEWINDOW | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER;
                     let _ = SetWindowPos(composed.window, None, 0, 0, 0, 0, flags | SWP_NOACTIVATE);
                 }
@@ -391,7 +443,7 @@ impl Inner {
                 let moved = before.is_none_or(|b| {
                     (b.window, b.shape, b.dpi, b.islands) != (window, area, dpi, key)
                 });
-                if let Some(composed) = self.composed.as_ref().filter(|_| moved) {
+                if let Some(composed) = self.composed.borrow().as_ref().filter(|_| moved) {
                     let paint = Paint {
                         style,
                         effects: self.effects.get(),
@@ -444,7 +496,7 @@ impl Inner {
                     SetWindowRgn(self.target, Some(region), true);
                 }
             }
-            if let Some(composed) = &self.composed {
+            if let Some(composed) = &*self.composed.borrow() {
                 let (w, h) = geo.window();
                 let _ = SetWindowPos(
                     composed.window,
@@ -512,6 +564,39 @@ fn watch_effects(hwnd: isize) -> Option<(UISettings, i64)> {
     Some((settings, token))
 }
 
+/// The name of the message that makes every glass panel make its backdrop again, broadcast by
+/// another shellman process when DWM may have started serving backdrops (Windows' app host
+/// brought the immersive shell up). Register it with `RegisterWindowMessageW`.
+pub const REFRESH_MESSAGE: &str = "shellman-glass-refresh";
+
+fn refresh_message() -> u32 {
+    static MESSAGE: OnceLock<u32> = OnceLock::new();
+    *MESSAGE.get_or_init(|| unsafe { RegisterWindowMessageW(w!("shellman-glass-refresh")) })
+}
+
+/// The panel's own message for a rebuild asked for earlier.
+fn rebuild_message() -> u32 {
+    static MESSAGE: OnceLock<u32> = OnceLock::new();
+    *MESSAGE.get_or_init(|| unsafe { RegisterWindowMessageW(w!("shellman-glass-rebuild")) })
+}
+
+/// Whether a WM_SETTINGCHANGE is about the immersive colours ("ImmersiveColorSet").
+fn is_immersive_colors(lparam: LPARAM) -> bool {
+    if lparam.0 == 0 {
+        return false;
+    }
+    let text = unsafe { windows::core::PCWSTR(lparam.0 as *const u16).to_string() };
+    text.is_ok_and(|t| t == "ImmersiveColorSet")
+}
+
+/// With `SHELLMAN_GLASS_LOG` set, a line on stderr about the glass; nothing otherwise.
+fn trace(line: impl FnOnce() -> String) {
+    static ON: OnceLock<bool> = OnceLock::new();
+    if *ON.get_or_init(|| std::env::var_os("SHELLMAN_GLASS_LOG").is_some()) {
+        eprintln!("{}", line());
+    }
+}
+
 unsafe extern "system" fn follow_proc(
     hwnd: HWND,
     msg: u32,
@@ -535,17 +620,32 @@ unsafe extern "system" fn follow_proc(
             inner.alive.set(false);
             cloak::forget(hwnd);
             let _ = RemoveWindowSubclass(hwnd, Some(follow_proc), SUBCLASS);
-            if let Some(composed) = &inner.composed {
+            if let Some(composed) = &*inner.composed.borrow() {
                 let _ = DestroyWindow(composed.window);
             }
             DefSubclassProc(hwnd, msg, wparam, lparam)
         }
-        // DWM restarted (Windows tells every top-level window): lay the surface out and colour
-        // it again, in case the new DWM missed what was set before.
-        WM_DWMCOMPOSITIONCHANGED => {
-            inner.laid_out.set(None);
-            inner.follow();
+        // DWM restarted or changed its colours (Windows tells every top-level window), or the
+        // immersive colours changed: DWM may serve the host backdrop differently now, and a
+        // backdrop it served flat stays flat, so make it again.
+        WM_DWMCOMPOSITIONCHANGED | WM_DWMCOLORIZATIONCOLORCHANGED => {
+            trace(|| format!("glass {:?}: message {msg:#x}", hwnd.0));
+            inner.ask_rebuild();
             DefSubclassProc(hwnd, msg, wparam, lparam)
+        }
+        WM_SETTINGCHANGE if is_immersive_colors(lparam) => {
+            trace(|| format!("glass {:?}: ImmersiveColorSet", hwnd.0));
+            inner.ask_rebuild();
+            DefSubclassProc(hwnd, msg, wparam, lparam)
+        }
+        _ if msg == refresh_message() => {
+            trace(|| format!("glass {:?}: refresh asked", hwnd.0));
+            inner.ask_rebuild();
+            LRESULT(0)
+        }
+        _ if msg == rebuild_message() => {
+            inner.rebuild();
+            LRESULT(0)
         }
         _ if msg == effects_message() => {
             inner.effects.set(effects_enabled());
