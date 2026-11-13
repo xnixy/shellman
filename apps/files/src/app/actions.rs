@@ -368,6 +368,7 @@ impl super::FileMan {
         tab.expect_new = None;
         tab.list_offset = 0.0;
         self.thumbs.cancel_pending();
+        self.counts.cancel();
         self.bin_sort(self.active);
         self.rename = None;
         self.editing_path = None;
