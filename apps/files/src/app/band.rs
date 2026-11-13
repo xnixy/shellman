@@ -206,7 +206,7 @@ impl super::FileMan {
             Loc::Dir(_) => Place::Folder,
         };
         let (count, bytes) = tab.selection_stats();
-        let list = buttons(place, count, self.clipboard.is_some(), self.settings.view);
+        let list = buttons(place, count, self.clip.can_paste(), self.settings.view);
         // What the bar says first: the selection and its size, or the count of items.
         let (lead_text, lead_font, lead_color) = if count > 0 {
             (format!("{count} selected"), semibold_font(13.5), c.text)
@@ -216,9 +216,9 @@ impl super::FileMan {
             if tab.loading {
                 t += " · Loading…";
             }
-            if let Some((op, paths)) = &self.clipboard {
-                let verb = if *op == Op::Move { "cut" } else { "copied" };
-                t += &format!(" · {} {verb}", paths.len());
+            if let Some((n, cut)) = self.clip.summary() {
+                let verb = if cut { "cut" } else { "copied" };
+                t += &format!(" · {n} {verb}");
             }
             (t, FontId::proportional(12.5), c.muted)
         };

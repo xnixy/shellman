@@ -9,7 +9,7 @@ use super::tab::{Loc, SortKey, Tab};
 use super::text;
 use super::ROW_H;
 use egui::{Align2, Color32, CornerRadius, FontId, Id, Rect, Sense, Stroke, Ui, Vec2};
-use shellman_core::fsops::{self, Op};
+use shellman_core::fsops;
 use shellman_core::thumbs;
 use shellman_ui::glass::islands::shows_as;
 use shellman_ui::theme::{self, colors, glyph, icon_font, Colors};
@@ -121,10 +121,7 @@ pub(super) fn click_sort(sort: SortKey, ascending: bool, clicked: SortKey) -> (S
 impl super::FileMan {
     pub(super) fn file_list(&mut self, ui: &mut Ui, actions: &mut Vec<Action>) {
         let c = colors();
-        let cut: &[std::path::PathBuf] = match &self.clipboard {
-            Some((Op::Move, paths)) => paths,
-            _ => &[],
-        };
+        let clip = &self.clip;
         let days = text::today();
         let tab = &mut self.tabs[self.active];
         let rename = &mut self.rename;
@@ -154,7 +151,10 @@ impl super::FileMan {
                 // Drags too, so a drag that starts on a row is the row's, never a rubber band.
                 let (rect, resp) =
                     ui.allocate_exact_size(Vec2::new(width, ROW_H), Sense::click_and_drag());
-                let dim = interact::fade(e.hidden, cut.contains(&e.path));
+                if !bin {
+                    super::dnd::item_zone(ui, rect, e, 10.0);
+                }
+                let dim = interact::fade(e.hidden, clip.is_cut(&e.path));
 
                 // Selection and hover.
                 let selected = tab.selected.contains(&e.path);
@@ -289,6 +289,9 @@ impl super::FileMan {
         interact::rubber_band(ui, tab, layout);
         ev.apply(tab);
         self.finish_rename(&ev);
+        if let Some(r) = ev.drag_out {
+            self.drag_out(r);
+        }
     }
 }
 

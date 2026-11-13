@@ -5,12 +5,15 @@
 mod actions;
 mod band;
 mod bin;
+mod clip;
 mod controls;
 mod counts;
 mod dest;
 mod details;
 mod details_ui;
 mod dialogs;
+mod dnd;
+mod drag_image;
 mod grid;
 mod interact;
 mod keys;
@@ -67,19 +70,33 @@ enum Msg {
     /// A restore, delete or empty finished: the message to show, or why it failed.
     BinDone(Result<String, String>),
     Drives(Vec<Drive>),
-    /// A tag place's items, and the tagged paths that are gone.
+    /// A tag place's items, and what checking the tagged items found.
     Tagged {
         tab: u64,
         gen: u64,
         found: Vec<Entry>,
-        gone: Vec<PathBuf>,
+        results: Vec<TagResult>,
     },
+    /// What a check of the tagged items found (see `tags::check`).
+    TagCheck(Vec<TagResult>),
     OpDone {
-        what: &'static str,
+        plan: OpPlan,
         result: Result<bool, String>,
-        /// Items a move took from one path to another, for their tags to follow.
-        moved: Vec<(PathBuf, PathBuf)>,
+        /// Where each item arrived (from, to), for tags to follow a move or a copy.
+        arrived: Vec<(PathBuf, PathBuf)>,
     },
+    /// A drag out of the window ended.
+    DragEnded(shellman_core::transfer::drag::Ended),
+    /// Files read from the clipboard for a paste into `dir`.
+    PasteFiles {
+        paths: Vec<PathBuf>,
+        effect: u32,
+        seq: u32,
+        dir: PathBuf,
+    },
+    /// A file made from a pasted or dropped picture or text.
+    Created(Result<PathBuf, String>),
+    Toast(String),
     /// The folder picker for Move to… or Copy to… answered.
     Chosen {
         op: Op,
@@ -88,6 +105,45 @@ enum Msg {
     },
     /// The details island's reading of the selection.
     Details(details::Reading),
+}
+
+/// Where each of a plan's items arrived, as the disk shows it afterwards: (from, to) for those
+/// that did. A moved item is gone from where it was and at its destination; a copy is at its
+/// destination. `renamed` are the items the shell put under another name.
+fn arrivals(plan: &OpPlan, renamed: &[(PathBuf, PathBuf)]) -> Vec<(PathBuf, PathBuf)> {
+    use shellman_core::transfer::path_key as key;
+    let Some(dir) = &plan.to else { return Vec::new() };
+    plan.from
+        .iter()
+        .filter_map(|src| {
+            let plain = dir.join(src.file_name()?);
+            // The shell names either the item or the place it would have had.
+            let to = renamed
+                .iter()
+                .find(|(a, _)| key(a) == key(src) || key(a) == key(&plain))
+                .map_or(plain, |(_, b)| b.clone());
+            let arrived = match plan.op {
+                Op::Move => !src.exists() && to.exists(),
+                Op::Copy | Op::Duplicate => key(&to) != key(src) && to.exists(),
+                Op::Recycle => false,
+            };
+            arrived.then(|| (src.clone(), to))
+        })
+        .collect()
+}
+
+/// One item's check: its key in the tag store, its path when the check began, what was found.
+type TagResult = (String, PathBuf, crate::tags::check::Verdict);
+
+/// A shell operation to run, and what to do after it.
+pub(super) struct OpPlan {
+    op: Op,
+    what: &'static str,
+    from: Vec<PathBuf>,
+    to: Option<PathBuf>,
+    /// After a cut's files were moved: the clipboard's sequence number, to clear it if it still
+    /// holds them.
+    clear_clip: Option<u32>,
 }
 
 pub(crate) struct FileMan {
@@ -102,7 +158,12 @@ pub(crate) struct FileMan {
     tx: Sender<Msg>,
     rx: Receiver<Msg>,
     drives: Vec<Drive>,
-    clipboard: Option<(Op, Vec<PathBuf>)>,
+    /// The Windows clipboard, as far as files go.
+    clip: clip::Clip,
+    /// Dragging out, and the window as a drop target.
+    dnd: dnd::Dnd,
+    /// The background check of tagged items.
+    tag_check: tag_ui::Checking,
     dialog: Option<Dialog>,
     rename: Option<Rename>,
     editing_path: Option<String>,
@@ -169,6 +230,7 @@ impl FileMan {
         panel: Option<shellman_ui::glass::GlassPanel>,
     ) -> Self {
         let (tx, rx) = channel();
+        let picking = pick.is_some();
         let mut settings = settings;
         let pick = pick.map(|session| {
             if session.req.show_hidden {
@@ -219,7 +281,9 @@ impl FileMan {
             tx,
             rx,
             drives: Vec::new(),
-            clipboard: None,
+            clip: clip::Clip::new(&ctx_for_apps),
+            dnd: dnd::Dnd::new(&ctx_for_apps, hwnd, picking),
+            tag_check: tag_ui::Checking::default(),
             dialog: None,
             rename: None,
             editing_path: None,
@@ -258,6 +322,8 @@ impl FileMan {
         app.active = 0;
         app.pick_apply_filter();
         app.load_drives();
+        // Learn the tagged items' identities, and find any renamed or moved while Files was closed.
+        app.want_tag_check();
         app
     }
 
@@ -288,19 +354,27 @@ impl FileMan {
             return self.load_bin(i);
         }
         if let Loc::Tag(t) = tab.loc {
-            // Every tagged item, wherever it is; the ones gone since are dropped from the tags.
-            let paths = self.tags.store.tagged(t as usize);
+            // Every item with the tag, where it is now: they are checked first (renamed or moved
+            // by anyone, saved anew, gone), on the worker, and listed at their current paths.
+            let bit = 1u8 << t;
+            let items: Vec<(String, crate::tags::Item)> = self
+                .tags
+                .store
+                .items
+                .iter()
+                .filter(|(_, it)| it.tags & bit != 0)
+                .map(|(k, it)| (k.clone(), it.clone()))
+                .collect();
             let (tx, ctx, id, gen) = (self.tx.clone(), self.ctx.clone(), tab.id, tab.gen);
             std::thread::spawn(move || {
-                let mut found = Vec::new();
-                let mut gone = Vec::new();
-                for p in paths {
-                    match fsops::entry_for(&p) {
-                        Some(e) => found.push(e),
-                        None => gone.push(p),
-                    }
-                }
-                let _ = tx.send(Msg::Tagged { tab: id, gen, found, gone });
+                use crate::tags::check;
+                let results = check::run(items, &check::RealDisk);
+                let found = results
+                    .iter()
+                    .filter_map(|(_, path, v)| check::now_at(path, v))
+                    .filter_map(|p| fsops::entry_for(&p))
+                    .collect();
+                let _ = tx.send(Msg::Tagged { tab: id, gen, found, results });
                 ctx.request_repaint();
             });
             return;
@@ -337,15 +411,28 @@ impl FileMan {
     }
 
     fn run_op(&self, op: Op, what: &'static str, from: Vec<PathBuf>, to: Option<PathBuf>) {
-        self.run_op_moving(op, what, from, to, Vec::new());
+        self.run_plan(OpPlan {
+            op,
+            what,
+            from,
+            to,
+            clear_clip: None,
+        });
     }
 
-    /// `run_op`, telling the tags afterwards where moved items went (`moved`, from and to).
-    fn run_op_moving(&self, op: Op, what: &'static str, from: Vec<PathBuf>, to: Option<PathBuf>, moved: Vec<(PathBuf, PathBuf)>) {
+    /// Run a shell operation on a worker. Afterwards the worker works out where each item
+    /// arrived (under its own name, or the one a conflict gave it), for the tags to follow.
+    fn run_plan(&self, plan: OpPlan) {
         let (tx, ctx, hwnd) = (self.tx.clone(), self.ctx.clone(), self.hwnd);
         std::thread::spawn(move || {
-            let result = fsops::shell_op(hwnd, op, &from, to.as_deref());
-            let _ = tx.send(Msg::OpDone { what, result, moved });
+            let result = fsops::shell_op_mapped(hwnd, plan.op, &plan.from, plan.to.as_deref());
+            let renamed = result.as_ref().map(|(_, r)| r.clone()).unwrap_or_default();
+            let arrived = arrivals(&plan, &renamed);
+            if let (Ok((true, _)), Some(seq)) = (&result, plan.clear_clip) {
+                shellman_core::transfer::clip::clear_if(seq);
+            }
+            let result = result.map(|(done, _)| done);
+            let _ = tx.send(Msg::OpDone { plan, result, arrived });
             ctx.request_repaint();
         });
     }
@@ -358,6 +445,8 @@ impl FileMan {
         while let Ok(msg) = self.rx.try_recv() {
             match msg {
                 Msg::Loaded { tab, gen, result } => {
+                    // A folder changed: a tagged item in it may have been renamed by another app.
+                    self.want_tag_check();
                     let show_hidden = self.settings.show_hidden;
                     let Some(t) = self.tabs.iter_mut().find(|t| t.id == tab && t.gen == gen) else {
                         continue;
@@ -411,7 +500,7 @@ impl FileMan {
                     tab,
                     gen,
                     found,
-                    gone,
+                    results,
                 } => {
                     let show_hidden = self.settings.show_hidden;
                     if let Some(t) = self.tabs.iter_mut().find(|t| t.id == tab && t.gen == gen) {
@@ -419,29 +508,42 @@ impl FileMan {
                         t.set_entries(found);
                         t.rebuild_view(show_hidden);
                     }
-                    if !gone.is_empty() {
-                        let gone: std::collections::HashSet<String> =
-                            gone.iter().map(|p| crate::tags::key(p)).collect();
-                        let n = self.tags.store.prune(|p| !gone.contains(&crate::tags::key(p)));
-                        if n > 0 {
-                            let _ = self.tags.save();
-                        }
-                    }
+                    // The listing came from this check: no need to list again.
+                    self.tag_results(&results, false);
+                }
+                Msg::TagCheck(results) => {
+                    self.tag_check.running = false;
+                    self.tag_results(&results, true);
                 }
                 Msg::Chosen { op, items, dest } => self.send_to(op, items, dest),
                 Msg::Details(reading) => self.details.arrived(reading),
-                Msg::OpDone { what, result, moved } => {
-                    // Tags follow what the move took, where it arrived (a move stopped partway
-                    // took only some).
+                Msg::DragEnded(ended) => {
+                    self.dnd.dragging_out = false;
+                    // A target that moved the items (or will): the folders change.
+                    if !ended.cancelled && (ended.effect | ended.performed) & shellman_core::transfer::MOVE != 0 {
+                        self.refresh_all();
+                        self.want_tag_check();
+                    }
+                }
+                Msg::PasteFiles { paths, effect, seq, dir } => self.paste_files(paths, effect, seq, dir),
+                Msg::Created(Ok(path)) => self.select_new(path, true),
+                Msg::Created(Err(e)) => self.toast(format!("Couldn't make the file: {e}")),
+                Msg::Toast(t) => self.toast(t),
+                Msg::OpDone { plan, result, arrived } => {
+                    // Tags follow what a move took and go with what a copy made, where each
+                    // arrived (an operation stopped partway did only some).
                     let mut retagged = false;
-                    for (from, to) in &moved {
-                        if !from.exists() && to.exists() {
-                            retagged |= self.tags.store.rekey(from, to);
-                        }
+                    for (from, to) in &arrived {
+                        retagged |= match plan.op {
+                            Op::Move => self.tags.store.rekey(from, to),
+                            Op::Copy | Op::Duplicate => self.tags.store.copy_tree(from, to),
+                            Op::Recycle => false,
+                        };
                     }
                     if retagged {
                         self.tags_changed();
                     }
+                    let what = plan.what;
                     match result {
                         Ok(true) => self.toast(format!("{what} done")),
                         Ok(false) => self.toast(format!("{what} stopped partway")),
@@ -556,22 +658,6 @@ impl FileMan {
             ctx.request_repaint_after(std::time::Duration::from_secs_f64(wait));
         }
     }
-
-    fn take_dropped_files(&mut self, ctx: &egui::Context) {
-        let dropped: Vec<PathBuf> = ctx.input(|i| {
-            i.raw
-                .dropped_files
-                .iter()
-                .filter_map(|f| f.path.clone())
-                .collect()
-        });
-        if dropped.is_empty() {
-            return;
-        }
-        if let Some(dir) = self.tabs[self.active].loc.dir().map(Path::to_path_buf) {
-            self.run_op(Op::Copy, "Copy", dropped, Some(dir));
-        }
-    }
 }
 
 impl eframe::App for FileMan {
@@ -600,8 +686,12 @@ impl eframe::App for FileMan {
         let focused = ctx.input(|i| i.focused);
         if focused && !self.had_focus {
             self.reload_bins();
+            // Tagged items may have been renamed or moved meanwhile.
+            self.want_tag_check();
         }
         self.had_focus = focused;
+        self.clip.poll();
+        self.run_tag_check(ctx);
         self.track_system(ctx);
         shellman_ui::app_icon::sync_window_icon(ctx, shellman_ui::app_icon::Kind::Files);
         let show_hidden = self.settings.show_hidden;
@@ -620,7 +710,7 @@ impl eframe::App for FileMan {
         let mut actions = Vec::new();
         self.pick_keys(ctx, &mut actions);
         self.keyboard(ctx, &mut actions);
-        self.take_dropped_files(ctx);
+        self.dnd_begin(ctx, &mut actions);
 
         self.layout(ctx, &mut actions);
         self.dialogs(ctx);
@@ -630,6 +720,7 @@ impl eframe::App for FileMan {
         }
         // After the actions, so a menu opened by this frame's right click is drawn in this frame.
         self.context_menu(ctx);
+        self.dnd_end(ctx);
 
         let title = match self.picker() {
             Some(p) => crate::pick::button::title(&p.session.req),
@@ -648,5 +739,56 @@ impl eframe::App for FileMan {
                 .collect();
             crate::settings::save_settings(&self.settings);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn plan(op: Op, from: Vec<PathBuf>, to: &Path) -> OpPlan {
+        OpPlan {
+            op,
+            what: "",
+            from,
+            to: Some(to.to_path_buf()),
+            clear_clip: None,
+        }
+    }
+
+    #[test]
+    fn arrivals_are_read_off_the_disk() {
+        let root = std::env::temp_dir().join(format!("files-arrivals-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let (src, dst) = (root.join("src"), root.join("dst"));
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::create_dir_all(&dst).unwrap();
+        let (a, b) = (src.join("a.txt"), src.join("b.txt"));
+        std::fs::write(&a, "a").unwrap();
+        std::fs::write(&b, "b").unwrap();
+        // A copy: a arrived under its own name, b under the name a conflict gave it.
+        std::fs::write(dst.join("a.txt"), "a").unwrap();
+        std::fs::write(dst.join("b (2).txt"), "b").unwrap();
+        let renamed = vec![(dst.join("b.txt"), dst.join("b (2).txt"))];
+        let both = vec![a.clone(), b.clone()];
+        assert_eq!(
+            arrivals(&plan(Op::Copy, both.clone(), &dst), &renamed),
+            vec![(a.clone(), dst.join("a.txt")), (b.clone(), dst.join("b (2).txt"))]
+        );
+        // A move counts only what left its folder.
+        std::fs::remove_file(&a).unwrap();
+        assert_eq!(
+            arrivals(&plan(Op::Move, both, &dst), &renamed),
+            vec![(a.clone(), dst.join("a.txt"))]
+        );
+        // A copy beside the original, named by the shell.
+        std::fs::write(src.join("b - Copy.txt"), "b").unwrap();
+        let dup = plan(Op::Duplicate, vec![b.clone()], &src);
+        assert_eq!(
+            arrivals(&dup, &[(b.clone(), src.join("b - Copy.txt"))]),
+            vec![(b.clone(), src.join("b - Copy.txt"))]
+        );
+        assert!(arrivals(&dup, &[]).is_empty(), "no name from the shell: nothing to tag");
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

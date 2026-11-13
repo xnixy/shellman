@@ -39,6 +39,13 @@ fn main() {
 }
 
 fn run(start: args::Start, session: Option<pick::Session>) -> eframe::Result {
+    // OLE on the window's thread, for dragging files out, being a drop target, and the
+    // clipboard's data objects. The window library's own drop target is off (below): it gives
+    // dropped files only once dropped, with no say in the effect and no point to drop on, so
+    // Files registers its own (see `app::dnd`).
+    unsafe {
+        let _ = windows::Win32::System::Ole::OleInitialize(None);
+    }
     let settings = settings::load_settings();
     let picking = session.is_some();
     let owner = session.as_ref().map_or(0, |s| s.req.owner);
@@ -48,7 +55,8 @@ fn run(start: args::Start, session: Option<pick::Session>) -> eframe::Result {
         .with_inner_size([size.0, size.1])
         .with_min_inner_size([placement::MIN_SIZE.0, placement::MIN_SIZE.1])
         .with_transparent(true)
-        .with_decorations(false);
+        .with_decorations(false)
+        .with_drag_and_drop(false);
     let at = if picking { pick_rect(owner) } else { browse_rect(&settings) };
     if let Some(at) = at {
         // The builder takes points, so the pixel rectangle is divided by the scale of the

@@ -21,5 +21,6 @@ pub mod sibling;
 pub mod startup;
 pub mod system;
 pub mod thumbs;
+pub mod transfer;
 pub mod watch;
 pub mod winlist;

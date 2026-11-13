@@ -55,6 +55,23 @@ pub fn unique_child(dir: &Path, base: &str) -> PathBuf {
         .unwrap()
 }
 
+/// "Pasted image.png", or "Pasted image (2).png" and up when that is taken: the number goes
+/// before the extension.
+pub fn unique_file(dir: &Path, name: &str) -> PathBuf {
+    let first = dir.join(name);
+    if !first.exists() {
+        return first;
+    }
+    let (stem, ext) = match name.rfind('.') {
+        Some(i) if i > 0 => name.split_at(i),
+        _ => (name, ""),
+    };
+    (2..)
+        .map(|n| dir.join(format!("{stem} ({n}){ext}")))
+        .find(|p| !p.exists())
+        .unwrap()
+}
+
 /// Checks a new name before renaming, with the reason Windows would refuse it.
 pub fn check_name(name: &str) -> Result<(), &'static str> {
     let name = name.trim();

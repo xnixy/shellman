@@ -314,6 +314,9 @@ impl super::FileMan {
             let w = widths[i].min(rect.right() - x).max(0.0);
             let r = Rect::from_min_size(egui::pos2(x, y), Vec2::new(w, CHIP_H));
             let resp = chip(ui, r, Id::new(("crumb", i)), &name, None, kind);
+            if let Loc::Dir(p) = &target {
+                super::dnd::zone(ui, r, super::dnd::Dest::Dir(p.clone()), CHIP_H / 2.0);
+            }
             if resp.clicked() {
                 actions.push(Action::Navigate(target.clone()));
             }

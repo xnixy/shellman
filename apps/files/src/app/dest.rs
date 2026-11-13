@@ -203,15 +203,7 @@ impl super::FileMan {
         remember(&mut self.settings.recent_dests, &dest, RECENT_MAX);
         self.save_pending = true;
         let what = if op == Op::Move { "Move" } else { "Copy" };
-        let moved = if op == Op::Move {
-            items
-                .iter()
-                .filter_map(|p| p.file_name().map(|n| (p.clone(), dest.join(n))))
-                .collect()
-        } else {
-            Vec::new()
-        };
-        self.run_op_moving(op, what, items, Some(dest), moved);
+        self.run_op(op, what, items, Some(dest));
     }
 
     /// "Choose folder…": Files' own picker, in folder mode, as its own window over this one. A

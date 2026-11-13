@@ -192,61 +192,9 @@ impl super::FileMan {
                     self.dialog = Some(Dialog::Recycle(paths));
                 }
             }
-            Action::Clip(op) => {
-                let paths: Vec<PathBuf> = self.tabs[self.active]
-                    .selection()
-                    .into_iter()
-                    .map(|e| e.path)
-                    .collect();
-                if !paths.is_empty() {
-                    let n = paths.len();
-                    self.clipboard = Some((op, paths));
-                    let verb = if op == Op::Move { "Cut" } else { "Copied" };
-                    self.toast(format!("{verb} {n} item{}", if n == 1 { "" } else { "s" }));
-                }
-            }
-            Action::Paste => {
-                let Some(dir) = self.tabs[self.active].loc.dir().map(Path::to_path_buf) else {
-                    return;
-                };
-                if let Some((op, paths)) = self.clipboard.clone() {
-                    let same_dir = paths.iter().all(|p| p.parent() == Some(dir.as_path()));
-                    let (op, what) = match op {
-                        Op::Move if same_dir => return,
-                        Op::Move => (Op::Move, "Move"),
-                        _ if same_dir => (Op::Duplicate, "Copy"),
-                        _ => (Op::Copy, "Copy"),
-                    };
-                    let mut moved = Vec::new();
-                    if op == Op::Move {
-                        self.clipboard = None;
-                        moved = paths
-                            .iter()
-                            .filter_map(|p| p.file_name().map(|n| (p.clone(), dir.join(n))))
-                            .collect();
-                    }
-                    self.run_op_moving(op, what, paths, Some(dir), moved);
-                }
-            }
-            Action::PasteShortcut => {
-                let Some(dir) = self.tabs[self.active].loc.dir().map(Path::to_path_buf) else {
-                    return;
-                };
-                let Some((_, paths)) = self.clipboard.clone() else { return };
-                let mut last = None;
-                for p in paths {
-                    let name = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-                    let link = fsops::unique_child(&dir, &format!("{name} - Shortcut.lnk"));
-                    match fsops::make_link(&p, &link) {
-                        Ok(()) => last = Some(link),
-                        Err(e) => self.toast(format!("Couldn't make a shortcut: {e}")),
-                    }
-                }
-                if let Some(l) = last {
-                    self.tabs[self.active].select_after_load = Some((l, false));
-                    self.load(self.active);
-                }
-            }
+            Action::Clip(op) => self.clip_put(op == Op::Move),
+            Action::Paste => self.paste(),
+            Action::PasteShortcut => self.paste_shortcut(),
             Action::SelectRename(path) => {
                 if path.parent() == self.tabs[self.active].loc.dir() {
                     self.tabs[self.active].select_after_load = Some((path, true));
@@ -434,7 +382,7 @@ impl super::FileMan {
         if background {
             self.tabs[self.active].selected.clear();
         }
-        let has_clip = self.clipboard.is_some();
+        let has_clip = (self.clip.can_paste(), self.clip.has_files());
         self.menu.open(&self.ctx, pos, target, background, has_clip);
     }
 

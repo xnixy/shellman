@@ -32,6 +32,7 @@ impl super::FileMan {
                         Vec2::new(card_w, CARD_H),
                     );
                     let resp = ui.interact(rect, Id::new(("drive", line, col)), Sense::click());
+                    super::dnd::zone(ui, rect, super::dnd::Dest::Dir(d.root.clone()), 12.0);
                     let fill = if resp.hovered() {
                         c.control_hover
                     } else {
