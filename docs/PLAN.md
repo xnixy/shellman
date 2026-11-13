@@ -14,7 +14,7 @@ accent color, fast.
 | `apps/desktop` | wallpaper window | working: wallpaper per monitor; keeps Windows' modern-app host running; hands a right-click to the shelf |
 | `apps/shelf` | desktop icons, the desktop's right-click menu | stage 1 working: the shelf (drop zone, Desktop / Downloads / Recent stacks that fan open, drag out, drop in), the right-click menu, Settings › Desktop. Next: widgets top right (stage 2) |
 | `apps/tasks` | Task Manager (Ctrl+Shift+Esc, through the switcher's hook) | working: Processes (apps and background, grouped, sort, search, End task / End process tree / details), Performance (CPU, memory, GPUs, disks, network), Services (read-only: status, startup type, PID, description, sort, search, go to process; read through the SCM in `crates/core/src/services`, off the UI thread, only while the page shows). End task / tree try unelevated first and, only when Windows refuses, go through `shellman-elevate`'s `end-processes <pid>:<start time>...` behind the UAC prompt (the helper rechecks start time and refuses critical processes); critical processes stay un-endable. Reads through `crates/core/src/procs` |
-| `apps/terminal` | Windows Terminal | stage 1: one shell in glass, GPU-drawn grid, scrollback. Next: tabs, selection, mouse, profiles |
+| `apps/terminal` | Windows Terminal | stage 2: tabs, selection, mouse, profiles; `-d`/`-p`/`-e`/`--hold`; shellman's "Open Terminal here" opens it; can be Windows' default terminal (`--register-default-terminal`). Next: Settings controls, find, splits |
 | `apps/settings` | Settings pages for the shell | working: Appearance, Desktop, Dock, Top bar, Launcher, About; rebuilt Windows pages: Sound, Display, Apps, Startup, Fonts, Mouse & keyboard, Power, Date, time & region, Storage, Default apps (changes through Windows Settings), Windows Update |
 | `apps/session` | the shell process itself | the shell: the per-user Winlogon `Shell` value points at it (in daily use since 2026-11-12). Starts and supervises the apps, runs startup items, safety net, `--install`/`--uninstall` |
 
@@ -452,9 +452,75 @@ Decision: no host of our own is possible, and Windows' host is off unless the us
 
 ## Terminal
 
-`apps/terminal` (`shellman-terminal.exe [command line]`) is to replace Windows Terminal. Order of
-work: stage 1 (one shell, GPU grid) and stage 2 (tabs, selection, mouse, profiles) are done; next
-shellman's entry points open it, then it is registered as Windows' default terminal.
+`apps/terminal` (`shellman-terminal.exe`) is to replace Windows Terminal. Order of work: stage 1
+(one shell, GPU grid) and stage 2 (tabs, selection, mouse, profiles) are done, shellman's own
+entry points open it, and it can be Windows' default terminal (below).
+
+- **Command line** (`cli.rs`, tested): `-d/--dir <folder>` (the first tab starts there; a WSL
+  profile gets it as `--cd`), `-p/--profile <name>`, `-e <command line>` or `-- <command line>`
+  (run that instead of the shell; the rest of the line reaches CreateProcess exactly as typed,
+  taken by offset from the raw line), `--hold` (the tab stays after the program exits, saying
+  its exit code). A bare command line (`shellman-terminal cmd /k ver`) still works. Bad
+  arguments print usage to the parent console and exit 2.
+- **A second start**: `new_instance` in `terminal.json`, `"window"` (default, as Windows
+  Terminal) or `"tab"`: the launch (folder, profile, command, hold; nothing else) goes as JSON
+  over `\\.\pipe\shellman-terminal-<session>` to the first window, which re-checks it, opens the
+  tab and comes forward (`instance.rs`). The pipe refuses remote clients; its default DACL lets
+  only the user, SYSTEM and administrators write.
+- **Entry points**: `shellman_core::terminal::open_at(dir)` is the one way shellman opens a
+  terminal: the desktop menu's "Open Terminal here" (`apps/shelf`, which had its own
+  `wt.exe -d` code) and Files' new "Open Terminal here" (folder background and a folder's menu).
+  Launcher, dock and Task Manager start apps by path and have no terminal entry of their own.
+  The choice is `default_terminal` in `terminal.json`: `"shellman"` (default), `"windows-terminal"`
+  or `"custom"` with `custom_terminal` (a command line, `{dir}` for the folder). A missing choice
+  falls back: shellman's terminal (sibling exe), Windows Terminal (app alias `wt.exe -d`, then the
+  activation manager), Command Prompt in a new console. **Owed**: a control for it in Settings
+  (not added while Settings is being edited elsewhere); `terminal.json` is the place for now.
+- **Windows' default terminal** (`defterm/`, `handoff_pty.rs`): where a console program shows
+  when it starts with no terminal (a `.bat`, Win+R `cmd`, a program spawning `powershell`). Off
+  until `shellman-terminal --register-default-terminal`; `--unregister-default-terminal` undoes
+  it. Both are per user, no admin, and print the pair before and after.
+  - *Mechanism* (microsoft/terminal `DelegationConfig.cpp`, `srvinit.cpp`, `ITerminalHandoff.idl`,
+    `winconpty.h`; Windows Terminal 1.24's `AppxManifest.xml`): the inbox conhost reads
+    `HKCU\Console\%%Startup` `DelegationConsole` / `DelegationTerminal`, hands the console to the
+    delegation console (`IConsoleHandoff`, OpenConsole), which runs it as a pseudo-console and
+    calls `ITerminalHandoff3::EstablishPtyHandoff` (`{6F23DA90-…}`, the only version WT 1.24
+    registers a proxy for) on the terminal CLSID with `CLSCTX_LOCAL_SERVER`. Settings' picker
+    only lists packaged pairs (app extensions `com.microsoft.windows.console.host` /
+    `.terminal.host`, both from one package), but the values take any CLSID and OpenConsole
+    creates whatever the terminal value names.
+  - *Registration*: `HKCU\Software\Classes\CLSID\{39C0509F-90BF-4A6C-A66D-5CF96BDDC7E2}\LocalServer32`
+    = this exe; `DelegationConsole` = Windows Terminal's OpenConsole `{2EACA947-…}`,
+    `DelegationTerminal` = ours; the previous pair is kept in `HKCU\Software\shellman\Terminal`
+    and put back on unregister (only if shellman is still the choice). The plans are pure and
+    tested. Needs Windows Terminal installed (its OpenConsole, and its packaged proxy-stub
+    `OpenConsoleProxy.dll` for the handoff interfaces, which an unpackaged process uses too);
+    register refuses otherwise.
+  - *Handoff*: COM starts `shellman-terminal.exe -Embedding`; an MTA thread registers the class
+    (`REGCLS_SINGLEUSE`: one console, one window, as WT's default "new window"). The call's
+    `[in]` handles are checked (signal is a pipe, server and client are processes) and
+    duplicated; we make the input and output pipes and return OpenConsole's ends.
+    `HandoffPty` drives them as `alacritty_terminal`'s `Pty` would: output read on a thread and
+    posted to the poller, input queued to a writer thread, resize as the 6-byte signal packet
+    (`PTY_SIGNAL_RESIZE_WINDOW` = 8, cols, rows), the end when the client (or the console) exits;
+    dropping it closes signal, reference, then the console's process, as `ClosePseudoConsole`
+    does, so closing the window ends the program. STARTUPINFO's position and minimized state are
+    honoured; a hidden console gets no window (in practice conhost does not hand those over). The
+    window writes no settings file.
+  - *Tested live on 26300* (values switched for ~3 s, restored, CLSID removed): `cmd /c` started
+    with a new console showed in a shellman window with its output, `mode con` reported the
+    window's grid (120x33, so the resize went through), the window closed when the program ended,
+    and closing the window ended the program and its OpenConsole.
+  - *Not done*: a Settings control (the two commands for now); consoles without Windows
+    Terminal installed. For that, shellman would bundle an OpenConsole of its own: Microsoft's is
+    MIT but its CLSID is compiled in (`CConsoleHandoff.h`), so it has to be rebuilt from
+    microsoft/terminal with a new CLSID (VS toolset; ~1 MB `OpenConsole.exe`), and its
+    `OpenConsoleProxy.dll` (~40 KB) registered as the proxy-stub for the handoff IIDs under HKCU
+    `Interface\{…}\ProxyStubClsid32`, which one third-party report (SonicTerm #1655) found broke
+    every terminal's handoff while installed, so it must be tested against WT side by side. The
+    same bundle would also give the newer `conpty.dll` (`Microsoft.Windows.Console.ConPTY`) for
+    throughput. Packaging (an MSIX/sparse package, which needs a signed package) is only needed
+    to be listed in Windows Settings' picker, which is unreachable here anyway.
 
 - **Emulation**: `alacritty_terminal` 0.26: grid, scrollback, VT parser and the pseudo-console
   (ConPTY, or a `conpty.dll` found on PATH or beside the exe), on a thread of its own per tab.
@@ -512,7 +578,8 @@ shellman's entry points open it, then it is registered as Windows' default termi
   each WSL distribution (registry `Lxss`, default first, Docker's skipped), Git Bash. The
   terminal's own `terminal.json` in the shellman config folder (`SHELLMAN_CONFIG_DIR` aware,
   written with defaults the first time): `default_profile`, `font_family`, `font_size` (12),
-  `scrollback` (10 000), `copy_on_select` (false). Zoom: Ctrl+wheel, Ctrl+plus/minus, Ctrl+0.
+  `scrollback` (10 000), `copy_on_select` (false), `new_instance` and `default_terminal` (above).
+  Zoom: Ctrl+wheel, Ctrl+plus/minus, Ctrl+0.
 - **Keyboard**: text comes as Windows composed it (dead keys, AltGr, IME commits), so layouts
   are not assumed; AltGr reaches egui without Ctrl and Alt and its characters go as text.
 

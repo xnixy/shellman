@@ -24,7 +24,10 @@ serde_json.workspace = true
 # Watches the settings folder, so the glass and accent follow Settings live.
 shellman-core.workspace = true
 shellman-ui.workspace = true
-windows.workspace = true
+# The `implement` / `interface` macros (the default-terminal handoff, `defterm`) name this crate.
+windows-core.workspace = true
+# Win32_System_Pipes: a second start hands its tab to the open window (`instance.rs`).
+windows = { workspace = true, features = ["Win32_System_Pipes"] }
 
 [build-dependencies]
 winresource.workspace = true

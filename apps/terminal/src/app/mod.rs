@@ -13,7 +13,11 @@ mod pointer;
 mod strip;
 mod view;
 
+use crate::cli::Launch;
 use crate::config::Config;
+use crate::defterm::server::Arrived;
+use crate::handoff_pty::HandoffPty;
+use crate::instance;
 use crate::profiles::{self, Profile};
 use crate::render::{Frame, Renderer};
 use crate::session::{Session, Size, Start};
@@ -44,6 +48,9 @@ const PADDING: f32 = 14.0;
 pub struct Tab {
     id: u64,
     session: Session,
+    /// Stays open after its program exits (`--hold`); `held` once that was said in it.
+    hold: bool,
+    held: bool,
 }
 
 pub struct TerminalApp {
@@ -71,13 +78,15 @@ pub struct TerminalApp {
     window_title: String,
     /// Wakes the window when Settings saves the look (glass, accent), to follow it live.
     look_watch: shellman_core::watch::Watcher,
+    /// Launches another start of the terminal handed to this window (`instance`).
+    inbox: instance::Inbox,
     stats: Stats,
 }
 
 impl TerminalApp {
-    /// `command`: a command line to run in the first tab instead of the default profile.
-    pub fn new(ctx: &egui::Context, look: Appearance, panel: GlassPanel, command: Option<String>) -> Result<Self, String> {
-        let config = Config::load();
+    /// `launch`: what the first tab runs, and where; or `handoff`, a console Windows handed over.
+    pub fn new(ctx: &egui::Context, look: Appearance, panel: GlassPanel, launch: Launch, handoff: Option<Arrived>) -> Result<Self, String> {
+        let config = if handoff.is_some() { Config::read() } else { Config::load() };
         let profiles = profiles::build(&profiles::detect());
         let ppp = ctx.pixels_per_point();
         let font_pt = config.font_size;
@@ -88,20 +97,20 @@ impl TerminalApp {
         if let Some(dir) = shellman_ui::appearance::file().and_then(|f| f.parent().map(|p| p.to_path_buf())) {
             look_watch.set_dirs(vec![dir]);
         }
-        let first = {
-            let (command, dir) = match command {
-                Some(c) => (c, None),
-                None => {
-                    let p = profiles::pick(&profiles, &config.default_profile);
-                    let here = start_dir().map(|d| d.display().to_string());
-                    let (c, d) = p.launch(here.as_deref(), &home());
-                    (c, Some(d))
-                }
-            };
-            spawn(&command, dir, &renderer, &config, wake.clone()).map_err(|e| format!("could not start {command}: {e}"))?
+        let minimized = handoff.as_ref().is_some_and(Arrived::minimized);
+        let first = match handoff {
+            Some(arrived) => attach(arrived, &renderer, &config, wake.clone()).map_err(|e| format!("could not show the console: {e}"))?,
+            None => {
+                let (command, dir) = plan(&profiles, &config, &launch, None);
+                spawn(&command, Some(dir), &renderer, &config, wake.clone()).map_err(|e| format!("could not start {command}: {e}"))?
+            }
         };
+        if minimized {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+        }
+        let inbox = instance::listen(wake.clone());
         Ok(Self {
-            tabs: Tabs::new(Tab { id: 0, session: first }),
+            tabs: Tabs::new(Tab { id: 0, session: first, hold: launch.hold && launch.command.is_some(), held: false }),
             next_id: 1,
             profiles,
             font_pt,
@@ -118,6 +127,7 @@ impl TerminalApp {
             focused: true,
             window_title: String::new(),
             look_watch,
+            inbox,
             stats: Stats::from_env(),
             config,
         })
@@ -132,16 +142,36 @@ impl TerminalApp {
         };
         let cwd = self.tabs.current().session.cwd();
         let (command, dir) = p.launch(cwd.as_deref(), &home());
-        match spawn(&command, Some(dir), &self.renderer, &self.config, self.wake.clone()) {
+        self.open_tab(&command, dir, false);
+    }
+
+    /// Open a tab running `command` in `dir`, right after the shown one, and show it.
+    fn open_tab(&mut self, command: &str, dir: PathBuf, hold: bool) {
+        match spawn(command, Some(dir), &self.renderer, &self.config, self.wake.clone()) {
             Ok(session) => {
                 let id = self.next_id;
                 self.next_id += 1;
                 self.leave_tab();
-                self.tabs.open(Tab { id, session });
+                self.tabs.open(Tab { id, session, hold, held: false });
                 self.enter_tab();
             }
             Err(e) => eprintln!("terminal: could not start {command}: {e}"),
         }
+    }
+
+    /// Tabs another start of the terminal handed over: each opens, and the window comes forward.
+    fn take_handed_over(&mut self, ctx: &egui::Context) {
+        let launches: Vec<Launch> = std::mem::take(&mut *self.inbox.lock().unwrap());
+        if launches.is_empty() {
+            return;
+        }
+        for launch in launches {
+            let cwd = self.tabs.current().session.cwd();
+            let (command, dir) = plan(&self.profiles, &self.config, &launch, cwd);
+            self.open_tab(&command, dir, launch.hold && launch.command.is_some());
+        }
+        ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+        ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
     }
 
     /// Close tab `i`; the last one closes the window.
@@ -208,11 +238,17 @@ impl TerminalApp {
 
     /// Tabs whose shell exited close; the window closes with the last.
     fn reap(&mut self, ctx: &egui::Context) -> bool {
-        if !self.tabs.iter().any(|t| t.session.exited()) {
+        if !self.tabs.iter().any(|t| t.session.exited() && !t.held) {
             return true;
         }
+        // A held tab says its program ended, and stays.
+        for t in self.tabs.iter_mut().filter(|t| t.hold && !t.held && t.session.exited()) {
+            t.held = true;
+            let code = t.session.exit_code().map_or_else(|| "?".to_owned(), |c| c.to_string());
+            t.session.print(&format!("\r\n\x1b[0m[process exited with code {code}; Ctrl+Shift+W closes this tab]"));
+        }
         let shown = self.tabs.current().id;
-        let left = self.tabs.retain(|t| !t.session.exited());
+        let left = self.tabs.retain(|t| t.hold || !t.session.exited());
         if !left {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             return false;
@@ -320,13 +356,58 @@ fn spawn(command: &str, dir: Option<PathBuf>, renderer: &Renderer, config: &Conf
     Session::start(Start { command, dir, size, scrollback: config.scrollback }, wake)
 }
 
+/// What a tab for `launch` runs and where: its command, else its profile's shell (the default
+/// when none is named or the name is unknown), in its folder, else `cwd` (the shown tab's), else
+/// the folder this was started in, else home.
+fn plan(profiles: &[Profile], config: &Config, launch: &Launch, cwd: Option<String>) -> (String, PathBuf) {
+    let here = launch.dir.as_ref().map(|d| d.display().to_string()).or(cwd).or_else(|| start_dir().map(|d| d.display().to_string()));
+    match &launch.command {
+        Some(command) => {
+            let dir = here.map(PathBuf::from).filter(|d| d.is_dir()).unwrap_or_else(home);
+            (command.clone(), dir)
+        }
+        None => {
+            let p = profiles::pick(profiles, launch.profile.as_deref().unwrap_or(&config.default_profile));
+            p.launch(here.as_deref(), &home())
+        }
+    }
+}
+
+/// Show a handed-over console in a tab sized like the shown grid (fixed on its first frame).
+fn attach(arrived: Arrived, renderer: &Renderer, config: &Config, wake: Arc<dyn Fn() + Send + Sync>) -> std::io::Result<Session> {
+    let m = renderer.metrics();
+    let size = Size { cols: 80, rows: 24, cell_w: m.cell_w as u16, cell_h: m.cell_h as u16 };
+    // A console's title is often its exe's whole path: shortened as a program's title is.
+    let name = arrived.title.map(|t| crate::session::short_title(&t)).unwrap_or(arrived.program);
+    let pty = HandoffPty::new(arrived.handles, size.into())?;
+    Session::attach(pty, name, size, config.scrollback, wake)
+}
+
+/// A console started hidden: no window. Its output is read (so it never blocks) and dropped,
+/// until its program ends.
+pub fn run_hidden(arrived: Arrived) {
+    use alacritty_terminal::event::WindowSize;
+    use alacritty_terminal::tty::{EventedPty, EventedReadWrite};
+    use std::io::Read;
+    let size = WindowSize { num_lines: 24, num_cols: 80, cell_width: 1, cell_height: 1 };
+    let Ok(mut pty) = HandoffPty::new(arrived.handles, size) else { return };
+    let mut sink = [0u8; 64 * 1024];
+    loop {
+        while pty.reader().read(&mut sink).unwrap_or(0) > 0 {}
+        if pty.next_child_event().is_some() {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+}
+
 fn home() -> PathBuf {
     std::env::var_os("USERPROFILE").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("C:\\"))
 }
 
 /// The directory the first tab starts in: the one this was started in, unless that is only
 /// where Windows starts programs (the system folder, or the exe's own).
-fn start_dir() -> Option<PathBuf> {
+pub fn start_dir() -> Option<PathBuf> {
     let here = std::env::current_dir().ok()?;
     let exe_dir = std::env::current_exe().ok().and_then(|e| e.parent().map(|p| p.to_path_buf()));
     let system = std::env::var_os("SystemRoot").map(|r| PathBuf::from(r).join("System32"));
@@ -343,6 +424,7 @@ impl eframe::App for TerminalApp {
         if !self.reap(ctx) {
             return;
         }
+        self.take_handed_over(ctx);
         self.track_system(ctx);
         self.track_focus(ctx);
         shellman_ui::app_icon::sync_window_icon(ctx, shellman_ui::app_icon::Kind::Shellman);

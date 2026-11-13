@@ -17,7 +17,7 @@ use alacritty_terminal::event_loop::{EventLoop, EventLoopSender, Msg};
 use alacritty_terminal::grid::{Dimensions, Scroll};
 use alacritty_terminal::sync::FairMutex;
 use alacritty_terminal::term::{Config, Term, TermMode};
-use alacritty_terminal::tty::{self, ChildEvent, EventedPty, EventedReadWrite, Pty};
+use alacritty_terminal::tty::{self, ChildEvent, EventedPty, EventedReadWrite};
 use std::borrow::Cow;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -62,6 +62,8 @@ struct Shared {
     /// New output (or anything else) to draw.
     dirty: AtomicBool,
     exited: AtomicBool,
+    /// The program's exit code, once it exited (when known).
+    exit_code: Mutex<Option<i32>>,
     /// This tab is the one shown: its output wakes the window.
     shown: AtomicBool,
     /// Output came while the tab was not shown.
@@ -139,7 +141,12 @@ impl EventListener for Listener {
                 let size = *s.size.lock().unwrap();
                 self.write(format(size));
             }
-            Event::ChildExit(_) | Event::Exit => {
+            Event::ChildExit(status) => {
+                *s.exit_code.lock().unwrap() = status.code();
+                s.exited.store(true, Ordering::Release);
+                self.wake();
+            }
+            Event::Exit => {
                 s.exited.store(true, Ordering::Release);
                 self.wake();
             }
@@ -158,15 +165,15 @@ impl EventListener for Listener {
 }
 
 /// The pseudo-console, with its output read through the scanner.
-struct ScanPty {
-    pty: Pty,
-    reader: ScanReader,
+struct ScanPty<P: EventedPty> {
+    pty: P,
+    reader: ScanReader<P>,
 }
 
-struct ScanReader {
+struct ScanReader<P: EventedPty> {
     /// The pty's own reader, pointed at again by every `reader()` call (it lives in `pty`,
     /// beside this, and is only used through the borrow that call hands out).
-    pipe: *mut <Pty as EventedReadWrite>::Reader,
+    pipe: *mut P::Reader,
     scanner: osc::Scanner,
     shared: Arc<Shared>,
     /// Bytes handed to the parser since the event loop last found the pipe empty.
@@ -182,9 +189,9 @@ struct ScanReader {
 const READ_PASS: usize = 48 * 1024;
 
 // The pointer is only followed inside the `&mut ScanPty` borrow that set it.
-unsafe impl Send for ScanReader {}
+unsafe impl<P: EventedPty> Send for ScanReader<P> {}
 
-impl std::io::Read for ScanReader {
+impl<P: EventedPty> std::io::Read for ScanReader<P> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         if self.given >= READ_PASS {
             // End this pass (nothing read), and be woken for the next one.
@@ -209,9 +216,9 @@ impl std::io::Read for ScanReader {
     }
 }
 
-impl EventedReadWrite for ScanPty {
-    type Reader = ScanReader;
-    type Writer = <Pty as EventedReadWrite>::Writer;
+impl<P: EventedPty> EventedReadWrite for ScanPty<P> {
+    type Reader = ScanReader<P>;
+    type Writer = P::Writer;
 
     unsafe fn register(&mut self, poll: &Arc<polling::Poller>, event: polling::Event, mode: polling::PollMode) -> std::io::Result<()> {
         self.reader.poller = Some(poll.clone());
@@ -223,7 +230,7 @@ impl EventedReadWrite for ScanPty {
     fn deregister(&mut self, poll: &Arc<polling::Poller>) -> std::io::Result<()> {
         self.pty.deregister(poll)
     }
-    fn reader(&mut self) -> &mut ScanReader {
+    fn reader(&mut self) -> &mut ScanReader<P> {
         self.reader.pipe = self.pty.reader();
         &mut self.reader
     }
@@ -232,13 +239,13 @@ impl EventedReadWrite for ScanPty {
     }
 }
 
-impl EventedPty for ScanPty {
+impl<P: EventedPty> EventedPty for ScanPty<P> {
     fn next_child_event(&mut self) -> Option<ChildEvent> {
         self.pty.next_child_event()
     }
 }
 
-impl OnResize for ScanPty {
+impl<P: EventedPty + OnResize> OnResize for ScanPty<P> {
     fn on_resize(&mut self, size: WindowSize) {
         self.pty.on_resize(size)
     }
@@ -267,9 +274,29 @@ impl Session {
     /// draw.
     pub fn start(start: Start, wake: Arc<dyn Fn() + Send + Sync>) -> std::io::Result<Self> {
         let Start { command, dir, size, scrollback } = start;
+        let options = tty::Options {
+            // The command line goes to CreateProcess as it was typed.
+            shell: Some(tty::Shell::new(command.to_owned(), Vec::new())),
+            working_directory: dir,
+            drain_on_exit: true,
+            env: Default::default(),
+            escape_args: false,
+        };
+        let pty = tty::new(&options, size.into(), 0)?;
+        Self::run(pty, program_name(command), size, scrollback, wake)
+    }
+
+    /// Show a console Windows handed over (default terminal): `program` names it until it sets
+    /// a title.
+    pub fn attach(pty: crate::handoff_pty::HandoffPty, program: String, size: Size, scrollback: usize, wake: Arc<dyn Fn() + Send + Sync>) -> std::io::Result<Self> {
+        Self::run(pty, program, size, scrollback, wake)
+    }
+
+    fn run<P: EventedPty + OnResize + Send + 'static>(pty: P, program: String, size: Size, scrollback: usize, wake: Arc<dyn Fn() + Send + Sync>) -> std::io::Result<Self> {
         let shared = Arc::new(Shared {
             dirty: AtomicBool::new(true),
             exited: AtomicBool::new(false),
+            exit_code: Mutex::new(None),
             shown: AtomicBool::new(true),
             activity: AtomicBool::new(false),
             bell: AtomicBool::new(false),
@@ -288,21 +315,12 @@ impl Session {
             ..Config::default()
         };
         let term = Arc::new(FairMutex::new(Term::new(config, &size, listener.clone())));
-        let options = tty::Options {
-            // The command line goes to CreateProcess as it was typed.
-            shell: Some(tty::Shell::new(command.to_owned(), Vec::new())),
-            working_directory: dir,
-            drain_on_exit: true,
-            env: Default::default(),
-            escape_args: false,
-        };
-        let pty = tty::new(&options, size.into(), 0)?;
         let reader = ScanReader { pipe: std::ptr::null_mut(), scanner: osc::Scanner::default(), shared: shared.clone(), given: 0, poller: None };
         let event_loop = EventLoop::new(term.clone(), listener, ScanPty { pty, reader }, true, false)?;
         let sender = event_loop.channel();
         let _ = pty_slot.set(sender.clone());
         event_loop.spawn();
-        Ok(Self { term, pty: sender, shared, size, program: program_name(command) })
+        Ok(Self { term, pty: sender, shared, size, program })
     }
 
     /// Send bytes to the shell, as if typed. The view follows to the bottom.
@@ -366,6 +384,18 @@ impl Session {
 
     pub fn exited(&self) -> bool {
         self.shared.exited.load(Ordering::Acquire)
+    }
+
+    pub fn exit_code(&self) -> Option<i32> {
+        *self.shared.exit_code.lock().unwrap()
+    }
+
+    /// Show `text` (with escape sequences) as if the program had written it: a note of the
+    /// terminal's own, such as that the program exited.
+    pub fn print(&self, text: &str) {
+        let mut parser: alacritty_terminal::vte::ansi::Processor = alacritty_terminal::vte::ansi::Processor::new();
+        parser.advance(&mut *self.term.lock(), text.as_bytes());
+        self.shared.dirty.store(true, Ordering::Release);
     }
 
     /// Whether this tab is the one shown. Showing it clears its activity and bell.

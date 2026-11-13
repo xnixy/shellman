@@ -32,6 +32,10 @@ impl<T> Tabs<T> {
         self.items.iter()
     }
 
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut T> {
+        self.items.iter_mut()
+    }
+
     pub fn get(&self, i: usize) -> Option<&T> {
         self.items.get(i)
     }
