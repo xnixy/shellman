@@ -81,34 +81,42 @@ fn clamp_span(start: i32, len: i32, lo: i32, hi: i32) -> i32 {
 /// dock at the screen's bottom). Where it would cross the work area's right edge it opens to
 /// the left of the point instead, and where it would cross the bottom (or, upwards, the top) it
 /// flips to the other side of the point; what still does not fit is pushed inside.
-pub fn place_menu(at: (i32, i32), size: (i32, i32), up: bool, work: Px) -> Px {
+///
+/// `flip`, for a menu dropped from a button, is where the other side is: the button's top (or,
+/// upwards, its bottom), so a flipped menu does not cover the button.
+pub fn place_menu(at: (i32, i32), size: (i32, i32), up: bool, flip: Option<i32>, work: Px) -> Px {
     let (w, h) = size;
     let mut x = at.0;
     if x + w > work.right {
         x = at.0 - w;
     }
+    let other = flip.unwrap_or(at.1);
     let mut y = if up { at.1 - h } else { at.1 };
-    if !up && y + h > work.bottom {
+    if !up && y + h > work.bottom && other - h >= work.top {
+        y = other - h;
+    } else if !up && y + h > work.bottom && flip.is_none() {
         y = at.1 - h;
     } else if up && y < work.top {
-        y = at.1;
+        y = other;
     }
     Px::new(clamp_span(x, w, work.left, work.right), clamp_span(y, h, work.top, work.bottom), w, h)
 }
 
-/// The submenu, `size` pixels, beside `menu`: right of it, `gap` pixels apart, with its first row
-/// level with the row that opened it (`row_top`, minus the submenu's own padding `pad`); left of
-/// it when there is no room on the right; pushed up when it would cross the bottom.
-pub fn place_submenu(menu: Px, row_top: i32, pad: i32, size: (i32, i32), gap: i32, work: Px) -> Px {
+/// The submenu, `size` pixels, beside `menu`: on the side of `leftward` (right of it unless the
+/// menu it comes from opened its own to the left), `gap` pixels apart, with its first row level
+/// with the row that opened it (`row_top`, minus the submenu's own padding `pad`); on the other
+/// side when there is no room; pushed up when it would cross the bottom. Returns where it went
+/// and whether that is to the left.
+pub fn place_submenu(menu: Px, row_top: i32, pad: i32, size: (i32, i32), gap: i32, work: Px, leftward: bool) -> (Px, bool) {
     let (w, h) = size;
     let right = menu.right + gap;
-    let x = if right + w <= work.right || menu.left - gap - w < work.left {
-        right
-    } else {
-        menu.left - gap - w
-    };
+    let left = menu.left - gap - w;
+    let fits_right = right + w <= work.right;
+    let fits_left = left >= work.left;
+    let go_left = if leftward { fits_left || !fits_right } else { !fits_right && fits_left };
+    let x = if go_left { left } else { right };
     let y = row_top - pad;
-    Px::new(clamp_span(x, w, work.left, work.right), clamp_span(y, h, work.top, work.bottom), w, h)
+    (Px::new(clamp_span(x, w, work.left, work.right), clamp_span(y, h, work.top, work.bottom), w, h), go_left)
 }
 
 #[cfg(test)]
@@ -123,18 +131,18 @@ mod tests {
 
     #[test]
     fn opens_down_and_right_of_the_point() {
-        let r = place_menu((500, 400), (450, 600), false, work(0));
+        let r = place_menu((500, 400), (450, 600), false, None, work(0));
         assert_eq!(r, Px::new(500, 400, 450, 600));
     }
 
     #[test]
     fn flips_left_and_up_at_the_right_and_bottom_edges() {
         let w = work(0);
-        let r = place_menu((3700, 1900), (450, 600), false, w);
+        let r = place_menu((3700, 1900), (450, 600), false, None, w);
         assert_eq!((r.left, r.top), (3700 - 450, 1900 - 600));
         // On the monitor left of the primary, all coordinates negative.
         let w = work(-3840);
-        let r = place_menu((-150, 1950), (900, 1200), false, w);
+        let r = place_menu((-150, 1950), (900, 1200), false, None, w);
         assert_eq!((r.right, r.bottom), (-150, 1950));
         assert!(r.left >= w.left);
     }
@@ -142,18 +150,18 @@ mod tests {
     #[test]
     fn upwards_from_a_dock_and_down_when_no_room_above() {
         let w = work(3840);
-        let r = place_menu((5000, 2030), (450, 300), true, w);
+        let r = place_menu((5000, 2030), (450, 300), true, None, w);
         // The point is below the work area (on the dock): the menu ends above the dock.
         assert_eq!(r.bottom, w.bottom);
         assert_eq!(r.left, 5000);
-        let r = place_menu((5000, 100), (450, 300), true, w);
+        let r = place_menu((5000, 100), (450, 300), true, None, w);
         assert_eq!(r.top, 100);
     }
 
     #[test]
     fn a_menu_taller_than_the_work_area_starts_at_its_top() {
         let w = work(0);
-        let r = place_menu((10, 1000), (400, 5000), false, w);
+        let r = place_menu((10, 1000), (400, 5000), false, None, w);
         assert_eq!(r.top, w.top);
         assert_eq!(r.left, 10);
     }
@@ -162,21 +170,51 @@ mod tests {
     fn submenu_goes_right_else_left_and_stays_on_the_monitor() {
         let w = work(0);
         let menu = Px::new(500, 400, 450, 600);
-        let s = place_submenu(menu, 420, 12, (360, 300), 9, w);
+        let (s, _) = place_submenu(menu, 420, 12, (360, 300), 9, w, false);
         assert_eq!((s.left, s.top), (950 + 9, 408));
         // Near the right edge: on the left.
         let menu = Px::new(3300, 400, 450, 600);
-        let s = place_submenu(menu, 420, 12, (360, 300), 9, w);
+        let (s, _) = place_submenu(menu, 420, 12, (360, 300), 9, w, false);
         assert_eq!(s.right, 3300 - 9);
         // Near the bottom: pushed up.
         let menu = Px::new(500, 1500, 450, 500);
-        let s = place_submenu(menu, 1950, 12, (360, 300), 9, w);
+        let (s, _) = place_submenu(menu, 1950, 12, (360, 300), 9, w, false);
         assert_eq!(s.bottom, w.bottom);
         // On the leftmost monitor at 300 %: no room on either side keeps it right, inside.
         let w = work(-3840);
         let menu = Px::new(-3840, 100, 3500, 600);
-        let s = place_submenu(menu, 200, 36, (1080, 900), 27, w);
+        let (s, _) = place_submenu(menu, 200, 36, (1080, 900), 27, w, false);
         assert!(s.left >= w.left && s.right <= w.right);
+    }
+
+    #[test]
+    fn a_dropdown_flips_above_its_button_not_over_it() {
+        // A button from y 1800 to 1850 near the bottom: the menu ends at the button's top.
+        let w = work(-3840);
+        let r = place_menu((-3000, 1850), (450, 600), false, Some(1800), w);
+        assert_eq!((r.left, r.bottom), (-3000, 1800));
+        // Room below: under the button.
+        let r = place_menu((-3000, 300), (450, 600), false, Some(250), w);
+        assert_eq!(r.top, 300);
+        // Room on neither side: pushed inside, never off the monitor.
+        let r = place_menu((-3000, 1000), (450, 1900), false, Some(950), w);
+        assert!(r.top >= w.top && r.bottom <= w.bottom);
+    }
+
+    #[test]
+    fn deeper_submenus_keep_going_the_way_the_first_went() {
+        let w = work(0);
+        // The menu near the right edge: the submenu went left, so the next goes left of it too,
+        // never back over the menu.
+        let menu = Px::new(3300, 400, 450, 600);
+        let (s1, left) = place_submenu(menu, 420, 12, (360, 300), 9, w, false);
+        assert!(left && s1.right <= menu.left);
+        let (s2, left) = place_submenu(s1, 430, 12, (360, 300), 9, w, left);
+        assert!(left && s2.right <= s1.left);
+        // No room on the left any more: it goes right again, inside the monitor.
+        let s = Px::new(100, 400, 360, 300);
+        let (s3, left) = place_submenu(s, 430, 12, (360, 300), 9, w, true);
+        assert!(!left && s3.left >= s.right);
     }
 
     #[test]

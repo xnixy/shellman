@@ -1,8 +1,8 @@
 //! Moving through a popup menu with the keyboard and the pointer, as plain state: which row is
-//! lit at each level, which submenu is open, and which level the keyboard is in. No egui here,
+//! lit at each level, which submenus are open, and which level the keyboard is in. No egui here,
 //! so it is tested on its own.
 
-use super::model::{Row, RowKind};
+use super::model::{Row, RowKind, MAX_LEVELS};
 use crate::menu::keys;
 
 /// How long the pointer rests on a row before its submenu opens (or another one closes): long
@@ -34,38 +34,71 @@ pub enum Outcome {
     Close,
 }
 
-#[derive(Clone, Debug, Default, PartialEq)]
+/// Level 0 is the menu, level 1 the submenu open from it, and so on.
+#[derive(Clone, Debug, PartialEq)]
 pub struct Nav {
-    /// The lit row of the menu (0) and of the submenu (1).
-    pub hot: [Option<usize>; 2],
-    /// The menu row whose submenu is open.
-    pub sub: Option<usize>,
-    /// Where the keyboard is: 0 the menu, 1 the submenu.
+    /// The lit row of each open level: always one more than `chain`.
+    pub hot: Vec<Option<usize>>,
+    /// The row of each level whose submenu is open, from the menu down.
+    pub chain: Vec<usize>,
+    /// Where the keyboard is.
     pub level: usize,
-    /// The menu row the pointer rests on, and since when (seconds).
-    dwell: Option<(usize, f64)>,
+    /// The row the pointer rests on (level, row), and since when (seconds).
+    dwell: Option<(usize, usize, f64)>,
+}
+
+impl Default for Nav {
+    fn default() -> Self {
+        Self { hot: vec![None], chain: Vec::new(), level: 0, dwell: None }
+    }
+}
+
+/// The rows of level `level` with the submenus of `chain` open.
+pub fn level_rows<'a>(rows: &'a [Row], chain: &[usize], level: usize) -> Option<&'a [Row]> {
+    let mut here = rows;
+    for &i in chain.get(..level)? {
+        here = here.get(i)?.submenu()?;
+    }
+    Some(here)
 }
 
 impl Nav {
-    /// The rows of the submenu that is open, if one is.
-    pub fn sub_rows<'a>(&self, rows: &'a [Row]) -> Option<&'a [Row]> {
-        rows.get(self.sub?)?.submenu()
+    /// How many levels are open.
+    pub fn levels(&self) -> usize {
+        self.chain.len() + 1
     }
 
-    fn level_rows<'a>(&self, rows: &'a [Row], level: usize) -> &'a [Row] {
-        if level == 0 {
-            rows
-        } else {
-            self.sub_rows(rows).unwrap_or(&[])
+    /// Drop what no longer exists in `rows` (the caller updated the menu): submenus that are
+    /// gone, lit rows past the end.
+    pub fn fit(&mut self, rows: &[Row]) {
+        let mut keep = 0;
+        while keep < self.chain.len() {
+            let ok = level_rows(rows, &self.chain, keep)
+                .and_then(|r| r.get(self.chain[keep]))
+                .is_some_and(|r| r.submenu().is_some());
+            if !ok {
+                break;
+            }
+            keep += 1;
+        }
+        self.chain.truncate(keep);
+        self.hot.resize(keep + 1, None);
+        for (l, hot) in self.hot.iter_mut().enumerate() {
+            let len = level_rows(rows, &self.chain, l).map_or(0, <[Row]>::len);
+            if hot.is_some_and(|h| h >= len) {
+                *hot = None;
+            }
+        }
+        self.level = self.level.min(keep);
+        if self.dwell.is_some_and(|(l, _, _)| l > keep) {
+            self.dwell = None;
         }
     }
 
     pub fn key(&mut self, rows: &[Row], key: Key) -> Outcome {
-        if self.level == 1 && self.sub_rows(rows).is_none() {
-            self.level = 0;
-        }
+        self.fit(rows);
         let level = self.level;
-        let here = self.level_rows(rows, level);
+        let Some(here) = level_rows(rows, &self.chain, level) else { return Outcome::Nothing };
         let selectable: Vec<bool> = here.iter().map(Row::selectable).collect();
         let hot = self.hot[level];
         let moved = match key {
@@ -77,17 +110,18 @@ impl Nav {
         };
         if moved.is_some() {
             self.hot[level] = moved;
+            // The keyboard is here: whatever deeper level was open stays, but is not lit.
             self.dwell = None;
             return Outcome::Nothing;
         }
         match key {
-            Key::Escape | Key::Left if level == 1 => {
-                self.close_sub();
+            Key::Escape | Key::Left if level > 0 => {
+                self.close_from(level);
                 Outcome::Nothing
             }
             Key::Escape => Outcome::Close,
-            Key::Right if level == 0 => match hot {
-                Some(i) if rows[i].submenu().is_some() => self.activate(rows, 0, i),
+            Key::Right => match hot {
+                Some(i) if here[i].submenu().is_some() => self.activate(rows, level, i),
                 _ => Outcome::Nothing,
             },
             Key::Enter => match hot {
@@ -103,7 +137,7 @@ impl Nav {
     /// through, and one alone is chosen.
     fn letter(&mut self, rows: &[Row], level: usize, ch: char) -> Outcome {
         let ch = ch.to_ascii_lowercase();
-        let here = self.level_rows(rows, level);
+        let Some(here) = level_rows(rows, &self.chain, level) else { return Outcome::Nothing };
         let marked = keys::mnemonic(here.iter().map(|r| (r.mnemonic, r.enabled && r.selectable())), ch);
         if let Some(i) = marked {
             return self.activate(rows, level, i);
@@ -128,58 +162,65 @@ impl Nav {
 
     /// Choose row `i` of `level`: open its submenu (the keyboard goes in) or pick it.
     fn activate(&mut self, rows: &[Row], level: usize, i: usize) -> Outcome {
-        let Some(row) = self.level_rows(rows, level).get(i) else { return Outcome::Nothing };
+        let Some(row) = level_rows(rows, &self.chain, level).and_then(|r| r.get(i)) else { return Outcome::Nothing };
         self.hot[level] = Some(i);
         if !row.enabled {
             return Outcome::Nothing;
         }
         match &row.kind {
-            RowKind::Item(id) => Outcome::Pick(*id),
-            RowKind::Submenu(sub) if level == 0 => {
-                self.sub = Some(i);
-                self.level = 1;
+            RowKind::Item(id) | RowKind::Picture(id, ..) => Outcome::Pick(*id),
+            RowKind::Submenu(sub) if level + 1 < MAX_LEVELS => {
+                self.open_sub(level, i);
                 let selectable: Vec<bool> = sub.iter().map(Row::selectable).collect();
-                self.hot[1] = keys::step(&selectable, None, true);
-                self.dwell = None;
+                self.hot[level + 1] = keys::step(&selectable, None, true);
+                self.level = level + 1;
                 Outcome::Nothing
             }
             _ => Outcome::Nothing,
         }
     }
 
-    fn close_sub(&mut self) {
-        self.sub = None;
-        self.hot[1] = None;
-        self.level = 0;
+    /// Open the submenu of row `i` of `level`, closing whatever was open from that level.
+    fn open_sub(&mut self, level: usize, i: usize) {
+        self.chain.truncate(level);
+        self.chain.push(i);
+        self.hot.truncate(level + 1);
+        self.hot[level] = Some(i);
+        self.hot.push(None);
+        self.dwell = None;
+    }
+
+    /// Close level `level` and everything under it; the keyboard goes to the level above.
+    fn close_from(&mut self, level: usize) {
+        let level = level.max(1);
+        self.chain.truncate(level - 1);
+        self.hot.truncate(level);
+        self.level = level - 1;
         self.dwell = None;
     }
 
     /// The pointer is over row `row` of `level` (None: over that level but on no row, such as a
     /// separator or the padding) at time `now`.
     pub fn hover(&mut self, rows: &[Row], level: usize, row: Option<usize>, now: f64) {
-        let row = row.filter(|&i| self.level_rows(rows, level).get(i).is_some_and(Row::selectable));
-        if level == 1 {
-            if self.sub_rows(rows).is_some() {
-                self.hot[1] = row;
-                self.level = 1;
-                // Back in the submenu: whatever was about to close it is forgotten.
-                self.dwell = None;
-            }
+        if level > self.chain.len() {
             return;
         }
-        if self.hot[0] != row || self.level != 0 {
-            self.hot[0] = row.or(self.sub);
-            self.level = 0;
-            if self.sub.is_some() {
-                self.hot[1] = None;
+        let row = row.filter(|&i| level_rows(rows, &self.chain, level).and_then(|r| r.get(i)).is_some_and(Row::selectable));
+        // Into a deeper level: whatever was about to change a shallower one is forgotten (a
+        // diagonal move toward a submenu does not close it).
+        if self.dwell.is_some_and(|(l, _, _)| l < level) {
+            self.dwell = None;
+        }
+        if self.hot[level] != row || self.level != level {
+            // The row whose submenu is open stays lit while the pointer is on no row.
+            self.hot[level] = row.or(self.chain.get(level).copied());
+            self.level = level;
+            for h in self.hot.iter_mut().skip(level + 1) {
+                *h = None;
             }
         }
         match row {
-            Some(i) if self.dwell.map(|d| d.0) != Some(i) => {
-                // The first submenu opens at once when none is open, as a native menu does after
-                // its delay; switching from an open one waits.
-                self.dwell = Some((i, now));
-            }
+            Some(i) if self.dwell.map(|(l, r, _)| (l, r)) != Some((level, i)) => self.dwell = Some((level, i, now)),
             Some(_) => {}
             None => self.dwell = None,
         }
@@ -188,22 +229,22 @@ impl Nav {
     /// Let a resting pointer open or close a submenu. Returns how long until it would, if it is
     /// waiting, so the caller can ask for a frame then.
     pub fn tick(&mut self, rows: &[Row], now: f64) -> Option<f64> {
-        let (i, since) = self.dwell?;
+        let (level, i, since) = self.dwell?;
         let left = DWELL - (now - since);
         if left > 0.0 {
             return Some(left);
         }
         self.dwell = None;
-        let row = rows.get(i)?;
+        let row = level_rows(rows, &self.chain, level)?.get(i)?;
         match row.submenu() {
-            Some(_) if row.enabled && self.sub != Some(i) => {
-                self.sub = Some(i);
-                self.hot[1] = None;
+            Some(_) if row.enabled && level + 1 < MAX_LEVELS && self.chain.get(level) != Some(&i) => {
+                self.open_sub(level, i);
+                self.level = level;
             }
             Some(_) => {}
-            None if self.sub.is_some() => {
-                self.sub = None;
-                self.hot[1] = None;
+            None if self.chain.len() > level => {
+                self.chain.truncate(level);
+                self.hot.truncate(level + 1);
             }
             None => {}
         }
@@ -212,13 +253,13 @@ impl Nav {
 
     /// A click (button released) on row `row` of `level`.
     pub fn click(&mut self, rows: &[Row], level: usize, row: usize) -> Outcome {
-        if level == 0 && self.sub == Some(row) {
+        if level > self.chain.len() || self.chain.get(level) == Some(&row) {
             return Outcome::Nothing;
         }
         let out = self.activate(rows, level, row);
-        if level == 0 && self.sub == Some(row) {
-            // Opened by the pointer: the keyboard stays where it was asked to be, on the menu.
-            self.level = 1;
+        if self.chain.get(level) == Some(&row) {
+            // Opened by the pointer: the keyboard goes in too, as in Windows.
+            self.level = level + 1;
         }
         out
     }
@@ -239,6 +280,21 @@ mod tests {
             Entry::item(4, "Open Terminal here"),
             Entry::heading("Look"),
             Entry::item(5, "Change wallpaper"),
+        ];
+        flatten(entries, &mut Vec::new(), 0)
+    }
+
+    /// A ▸ (B ▸ (C ▸ (leaf), b2), a2), z.
+    fn deep() -> Vec<Row> {
+        let entries = vec![
+            Entry::submenu(
+                "A",
+                vec![
+                    Entry::submenu("B", vec![Entry::submenu("C", vec![Entry::item(0, "leaf")]), Entry::item(1, "b2")]),
+                    Entry::item(2, "a2"),
+                ],
+            ),
+            Entry::item(3, "z"),
         ];
         flatten(entries, &mut Vec::new(), 0)
     }
@@ -270,27 +326,45 @@ mod tests {
         let mut n = Nav::default();
         n.key(&r, Key::Down);
         assert_eq!(n.key(&r, Key::Right), Outcome::Nothing);
-        assert_eq!((n.sub, n.level, n.hot[1]), (Some(0), 1, Some(0)));
+        assert_eq!((n.chain.as_slice(), n.level, n.hot[1]), (&[0][..], 1, Some(0)));
         n.key(&r, Key::Down);
         assert_eq!(n.hot[1], Some(2));
         assert_eq!(n.key(&r, Key::Enter), Outcome::Pick(1));
         n.key(&r, Key::Left);
-        assert_eq!((n.sub, n.level), (None, 0));
+        assert_eq!((n.chain.len(), n.level), (0, 0));
         assert_eq!(n.hot[0], Some(0));
         // Escape in a submenu closes only the submenu; on the menu, the menu.
         n.key(&r, Key::Right);
         assert_eq!(n.key(&r, Key::Escape), Outcome::Nothing);
-        assert_eq!(n.sub, None);
+        assert!(n.chain.is_empty());
         assert_eq!(n.key(&r, Key::Escape), Outcome::Close);
+    }
+
+    #[test]
+    fn the_keyboard_goes_down_three_levels_and_back() {
+        let r = deep();
+        let mut n = Nav::default();
+        n.key(&r, Key::Down);
+        n.key(&r, Key::Right);
+        n.key(&r, Key::Right);
+        n.key(&r, Key::Right);
+        assert_eq!((n.chain.as_slice(), n.level, n.levels()), (&[0, 0, 0][..], 3, 4));
+        assert_eq!(n.key(&r, Key::Enter), Outcome::Pick(0));
+        n.key(&r, Key::Left);
+        assert_eq!((n.chain.as_slice(), n.level), (&[0, 0][..], 2));
+        n.key(&r, Key::Escape);
+        n.key(&r, Key::Down);
+        assert_eq!(n.hot[1], Some(1));
+        assert_eq!(n.key(&r, Key::Enter), Outcome::Pick(2));
     }
 
     #[test]
     fn right_on_an_item_does_nothing_and_disabled_rows_never_pick() {
         let r = rows();
-        let mut n = Nav { hot: [Some(3), None], ..Default::default() };
+        let mut n = Nav { hot: vec![Some(3)], ..Default::default() };
         assert_eq!(n.key(&r, Key::Right), Outcome::Nothing);
         assert_eq!(n.key(&r, Key::Enter), Outcome::Pick(3));
-        let mut n = Nav { hot: [Some(1), None], ..Default::default() };
+        let mut n = Nav { hot: vec![Some(1)], ..Default::default() };
         assert_eq!(n.key(&r, Key::Enter), Outcome::Nothing);
         assert_eq!(n.key(&r, Key::Letter('p')), Outcome::Nothing);
     }
@@ -321,29 +395,45 @@ mod tests {
         let mut n = Nav::default();
         n.hover(&r, 0, Some(0), 10.0);
         assert!(n.tick(&r, 10.05).is_some());
-        assert_eq!(n.sub, None);
+        assert!(n.chain.is_empty());
         assert_eq!(n.tick(&r, 10.25), None);
-        assert_eq!(n.sub, Some(0));
+        assert_eq!(n.chain, [0]);
         // Into the submenu: it stays.
         n.hover(&r, 1, Some(2), 10.3);
         assert_eq!((n.level, n.hot[1]), (1, Some(2)));
         // Passing over another row on the way back does not close it at once...
         n.hover(&r, 0, Some(3), 11.0);
         n.tick(&r, 11.1);
-        assert_eq!(n.sub, Some(0));
+        assert_eq!(n.chain, [0]);
         // ...resting there does.
         n.tick(&r, 11.3);
-        assert_eq!(n.sub, None);
+        assert!(n.chain.is_empty());
+    }
+
+    #[test]
+    fn resting_opens_deeper_levels_one_by_one() {
+        let r = deep();
+        let mut n = Nav::default();
+        n.hover(&r, 0, Some(0), 0.0);
+        n.tick(&r, 0.3);
+        n.hover(&r, 1, Some(0), 0.4);
+        n.tick(&r, 0.7);
+        assert_eq!(n.chain, [0, 0]);
+        // Back on the first submenu's other row: the deepest closes after the rest.
+        n.hover(&r, 1, Some(1), 1.0);
+        n.tick(&r, 1.3);
+        assert_eq!(n.chain, [0]);
+        assert_eq!(n.hot.len(), 2);
     }
 
     #[test]
     fn a_diagonal_move_back_into_the_submenu_keeps_it() {
         let r = rows();
-        let mut n = Nav { sub: Some(0), hot: [Some(0), None], ..Default::default() };
+        let mut n = Nav { chain: vec![0], hot: vec![Some(0), None], ..Default::default() };
         n.hover(&r, 0, Some(3), 1.0);
         n.hover(&r, 1, Some(0), 1.1);
         n.tick(&r, 2.0);
-        assert_eq!(n.sub, Some(0));
+        assert_eq!(n.chain, [0]);
     }
 
     #[test]
@@ -351,12 +441,29 @@ mod tests {
         let r = rows();
         let mut n = Nav::default();
         assert_eq!(n.click(&r, 0, 0), Outcome::Nothing);
-        assert_eq!(n.sub, Some(0));
+        assert_eq!(n.chain, [0]);
         assert_eq!(n.click(&r, 1, 0), Outcome::Pick(0));
         assert_eq!(n.click(&r, 0, 1), Outcome::Nothing);
         assert_eq!(n.click(&r, 0, 6), Outcome::Pick(5));
         // Separators and headings are not rows the pointer can light.
         n.hover(&r, 0, Some(2), 0.0);
         assert_ne!(n.hot[0], Some(2));
+    }
+
+    #[test]
+    fn an_update_that_removes_the_open_submenu_closes_it() {
+        let r = deep();
+        let mut n = Nav::default();
+        n.key(&r, Key::Down);
+        n.key(&r, Key::Right);
+        n.key(&r, Key::Right);
+        assert_eq!(n.level, 2);
+        let flat = flatten(vec![Entry::item(0, "only")], &mut Vec::new(), 0);
+        n.fit(&flat);
+        assert_eq!((n.chain.len(), n.hot.len(), n.level), (0, 1, 0));
+        // A lit row past the new end is let go.
+        let mut n = Nav { hot: vec![Some(1)], ..Default::default() };
+        n.fit(&flat);
+        assert_eq!(n.hot[0], None);
     }
 }
