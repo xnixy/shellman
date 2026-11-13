@@ -157,18 +157,19 @@ pub unsafe fn accept(
     let server = dup(server)?;
     let client = dup(client)?;
     // Input: OpenConsole reads `in_read`, we write `in_write`. Output: the other way round.
+    // Both ends stay owned until OpenConsole's are given away below, so a failure on the way
+    // closes them all.
     let (in_read, in_write) = pipe()?;
     let (out_read, out_write) = pipe()?;
-    let out_read = unsafe { OwnedHandle::from_raw_handle(out_read.0) };
-    let out_write = HANDLE(std::os::windows::io::IntoRawHandle::into_raw_handle(out_write));
     let (title, show, position) = match unsafe { startup.as_ref() } {
         Some(s) => (unsafe { bstr(s.title) }, show_flag(s.flags, s.show_window), (s.flags & 4 != 0).then_some((s.x as i32, s.y as i32))),
         None => (None, None, None),
     };
     let program = image_name(&client).unwrap_or_else(|| "console".into());
+    let into_raw = |h: OwnedHandle| HANDLE(std::os::windows::io::IntoRawHandle::into_raw_handle(h));
     unsafe {
-        *input = in_read;
-        *output = out_write;
+        *input = into_raw(in_read);
+        *output = into_raw(out_write);
     }
     Ok(Arrived {
         handles: Handles {
@@ -195,11 +196,11 @@ fn dup(h: HANDLE) -> Result<OwnedHandle, HRESULT> {
     }
 }
 
-/// An anonymous pipe: the read end raw (often given away), the write end owned.
-fn pipe() -> Result<(HANDLE, OwnedHandle), HRESULT> {
+/// An anonymous pipe: its read end and write end, both owned (closed if dropped).
+fn pipe() -> Result<(OwnedHandle, OwnedHandle), HRESULT> {
     let (mut r, mut w) = (HANDLE::default(), HANDLE::default());
     unsafe { CreatePipe(&mut r, &mut w, None, 128 * 1024) }.map_err(|e| e.code())?;
-    Ok((r, unsafe { OwnedHandle::from_raw_handle(w.0) }))
+    Ok(unsafe { (OwnedHandle::from_raw_handle(r.0), OwnedHandle::from_raw_handle(w.0)) })
 }
 
 /// A BSTR's text (its length is the u32 before it, in bytes), at most 4096 characters.
@@ -309,7 +310,6 @@ mod tests {
 
     fn fake_handles() -> Handles {
         let (r, w) = pipe().unwrap();
-        let r = unsafe { OwnedHandle::from_raw_handle(r.0) };
         Handles {
             input: w.try_clone().unwrap(),
             output: r.try_clone().unwrap(),
@@ -325,7 +325,6 @@ mod tests {
     #[test]
     fn handed_handles_are_checked_and_kept() {
         let (sig_r, sig_w) = pipe().unwrap();
-        let sig_r = unsafe { OwnedHandle::from_raw_handle(sig_r.0) };
         let me_owned = dup(unsafe { GetCurrentProcess() }).unwrap();
         let me = HANDLE(me_owned.as_raw_handle());
         let (mut i, mut o) = (HANDLE::default(), HANDLE::default());

@@ -737,6 +737,10 @@ entry points open it, and it can be Windows' default terminal (below).
   final line break. Paste: Ctrl+V, Ctrl+Shift+V, Shift+Insert, bracketed when asked. A paste is
   text only: every control character but tab and CR (ESC and the rest of C0, DEL, C1) is taken
   out first, so the clipboard can neither end a bracketed paste early nor send escape sequences.
+  Input waits for the console: at most 1 MiB is queued for its pipe (`pty.rs` `MAX_QUEUED`);
+  past that the writer pushes back and the event loop keeps the rest until the console reads,
+  so a huge paste into a program that reads slowly costs one copy, not one per wait. Nothing is
+  dropped.
   (Not done: Windows Terminal's warning before a multi-line or very large paste.)
 - **Find** (stage 3, `app/find.rs`): Ctrl+Shift+F opens a glass pill in the top row between the
   tabs and the window buttons (as Files' search pill sits in its bar; the tabs' pill gives way).

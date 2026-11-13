@@ -9,6 +9,10 @@
 //! - output is read on a thread into a buffer, and the event loop is told it is readable (a posted
 //!   completion packet, as `alacritty_terminal` does on Windows);
 //! - input is queued to a writer thread, so a console that does not read never blocks the loop;
+//!   at most [`MAX_QUEUED`] bytes wait there: past that the writer says "would block" and the
+//!   event loop keeps the rest (a huge paste into a program that reads slowly is held once, in
+//!   the loop's own queue, not copied again here), and is told it may write again once the
+//!   console took some. Nothing is dropped;
 //! - a resize is `ResizePseudoConsole`, or for a handed-over console ConPTY's signal packet
 //!   (`PTY_SIGNAL_RESIZE_WINDOW`, see [`resize_packet`]);
 //! - the program's end is its process ending (or the console's). The end is told only once the
@@ -37,6 +41,10 @@ pub const PTY_SIGNAL_RESIZE_WINDOW: u16 = 8;
 
 /// Output held for the parser before the reader thread waits (the console then waits too).
 const BUFFER: usize = 1 << 20;
+/// Input queued for the console before the writer pushes back.
+pub const MAX_QUEUED: usize = 1 << 20;
+/// The most taken in one write.
+const CHUNK: usize = 64 * 1024;
 
 /// The 6-byte resize packet ConPTY's `ResizePseudoConsole` writes to the signal pipe: three
 /// little-endian u16s, the code, columns, rows.
@@ -153,16 +161,45 @@ impl Read for Reader {
     }
 }
 
+/// Input on its way to the console: bytes queued, and whether the console stopped taking any.
+#[derive(Default)]
+struct Outq {
+    queued: std::sync::atomic::AtomicUsize,
+    gone: std::sync::atomic::AtomicBool,
+}
+
+impl Outq {
+    fn has_room(&self) -> bool {
+        self.queued.load(std::sync::atomic::Ordering::SeqCst) < MAX_QUEUED
+    }
+}
+
 pub struct Writer {
     tx: Option<mpsc::Sender<Vec<u8>>>,
+    out: Arc<Outq>,
 }
 
 impl Write for Writer {
+    /// Takes up to [`CHUNK`] bytes while fewer than [`MAX_QUEUED`] wait; "would block" when that
+    /// many do (the event loop keeps the rest and writes it when told there is room).
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        if let Some(tx) = &self.tx {
-            let _ = tx.send(buf.to_vec());
+        use std::sync::atomic::Ordering::SeqCst;
+        let Some(tx) = &self.tx else { return Ok(buf.len()) };
+        if buf.is_empty() || self.out.gone.load(SeqCst) {
+            // The console is gone: what is typed has nowhere to go.
+            return Ok(buf.len());
         }
-        Ok(buf.len())
+        let queued = self.out.queued.load(SeqCst);
+        if queued >= MAX_QUEUED {
+            return Err(io::ErrorKind::WouldBlock.into());
+        }
+        let n = buf.len().min(MAX_QUEUED - queued).min(CHUNK);
+        self.out.queued.fetch_add(n, SeqCst);
+        if tx.send(buf[..n].to_vec()).is_err() {
+            self.out.gone.store(true, SeqCst);
+            return Ok(buf.len());
+        }
+        Ok(n)
     }
     fn flush(&mut self) -> io::Result<()> {
         Ok(())
@@ -249,12 +286,24 @@ impl Pty {
 
         // Input.
         let (tx, rx) = mpsc::channel::<Vec<u8>>();
+        let out = Arc::new(Outq::default());
         {
             let mut pipe = File::from(input);
+            let out = out.clone();
+            let slot = write_slot.clone();
             std::thread::Builder::new().name("pty-write".into()).spawn(move || {
+                use std::sync::atomic::Ordering::SeqCst;
                 while let Ok(bytes) = rx.recv() {
                     if pipe.write_all(&bytes).is_err() {
+                        out.gone.store(true, SeqCst);
+                        // The loop may be waiting for room: there is (it all goes nowhere now).
+                        slot.post(|e| e.writable);
                         return;
+                    }
+                    let before = out.queued.fetch_sub(bytes.len(), SeqCst);
+                    // The writer said "would block" at the cap: tell the loop there is room.
+                    if before >= MAX_QUEUED && before - bytes.len() < MAX_QUEUED {
+                        slot.post(|e| e.writable);
                     }
                 }
             })?;
@@ -280,7 +329,7 @@ impl Pty {
             console,
             stop,
             reader: Reader { buf },
-            writer: Writer { tx: Some(tx) },
+            writer: Writer { tx: Some(tx), out },
             read_slot,
             write_slot,
             child_slot,
@@ -301,9 +350,11 @@ impl Pty {
         *self.write_slot.0.lock().unwrap() = Some(Interest { poller: poll.clone(), event: rw, mode });
         let child = Event::readable(PTY_CHILD_EVENT_TOKEN);
         *self.child_slot.0.lock().unwrap() = Some(Interest { poller: poll.clone(), event: child, mode: PollMode::Level });
-        // Start the loop off: output waiting, room to write (always), or an exit already seen.
+        // Start the loop off: output waiting, or room to write (else the writer thread says when
+        // there is: it checks after this interest is in place, so no wake-up is lost).
         let first = std::mem::take(&mut self.first_register);
-        if (rw.readable && (first || self.has_output())) || rw.writable {
+        let room = self.writer.out.has_room() || self.writer.out.gone.load(std::sync::atomic::Ordering::SeqCst);
+        if (rw.readable && (first || self.has_output())) || (rw.writable && room) {
             let _ = poll.post(CompletionPacket::new(rw));
         }
     }
@@ -503,6 +554,57 @@ mod tests {
         }
         assert!(matches!(event, Some(ChildEvent::Exited(Some(_)))));
         drop(pty);
+    }
+
+    /// A huge paste into a console that does not read: at most `MAX_QUEUED` (and a chunk) is
+    /// taken, the rest is refused as "would block" for the event loop to keep; once the console
+    /// reads, every byte arrives, in order.
+    #[test]
+    fn input_waits_for_the_console_instead_of_piling_up() {
+        let (output, _console_out) = pipe();
+        let (mut console_in, input) = pipe();
+        let client = std::process::Command::new("ping.exe").args(["-n", "30", "127.0.0.1"]).stdout(std::process::Stdio::null()).spawn().unwrap();
+        let client_handle = std::os::windows::io::AsHandle::as_handle(&client).try_clone_to_owned().unwrap();
+        let mut pty = Pty::new(Console::Closed, OwnedHandle::from(output), input, client_handle, None, Ending::PipeBreaks).unwrap();
+        let paste: Vec<u8> = (0..16 * 1024 * 1024u32).map(|i| (i % 251) as u8).collect();
+        // Nobody reads: the writer takes what it may, then pushes back.
+        let mut sent = 0;
+        let mut refused = false;
+        for _ in 0..10_000 {
+            match pty.writer().write(&paste[sent..]) {
+                Ok(n) => sent += n,
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                    refused = true;
+                    break;
+                }
+                Err(e) => panic!("{e}"),
+            }
+        }
+        assert!(refused, "the queue never pushed back ({sent} bytes taken)");
+        // What was taken: the queue and what the pipe itself holds, nowhere near the paste.
+        assert!(sent <= MAX_QUEUED + 2 * CHUNK + 256 * 1024, "{sent} bytes taken");
+        // The console reads it all; the rest is written as room comes (as the loop does).
+        let reader = std::thread::spawn(move || {
+            let mut got = Vec::with_capacity(16 * 1024 * 1024);
+            let mut buf = vec![0u8; 256 * 1024];
+            while got.len() < 16 * 1024 * 1024 {
+                let n = console_in.read(&mut buf).unwrap();
+                got.extend_from_slice(&buf[..n]);
+            }
+            got
+        });
+        let start = Instant::now();
+        while sent < paste.len() && start.elapsed() < Duration::from_secs(30) {
+            match pty.writer().write(&paste[sent..]) {
+                Ok(n) => sent += n,
+                Err(_) => std::thread::sleep(Duration::from_millis(1)),
+            }
+        }
+        let got = reader.join().unwrap();
+        assert!(got == paste, "the paste arrived changed or incomplete");
+        drop(pty);
+        let mut client = client;
+        let _ = client.kill();
     }
 
     /// A program that writes a lot and exits at once: its end is told only after the last byte
