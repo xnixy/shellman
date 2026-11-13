@@ -269,7 +269,7 @@ pub(super) fn texture(ctx: &egui::Context, item: &Item, px: f32, thumbs: &mut Th
         return app_icon::own_texture_px(ctx, "shellman-launcher.exe", Kind::Shellman, px, thumbs);
     }
     if item.section == Section::Bin {
-        let name = if super::bin::looks_full(ctx) { "user-trash-full" } else { "user-trash" };
+        let name = if super::bin::looks_full() { "user-trash-full" } else { "user-trash" };
         if let Some(image) = shellman_core::icon_pack::resolve_named(name) {
             return thumbs.get(&image, true).map(|t| (t.id(), t.size_vec2()));
         }

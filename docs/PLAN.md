@@ -94,8 +94,12 @@ Rule: **the top bar is the system, the dock is apps.** Both are windows of one p
   undocumented `DwmpActivateLivePreview`). `SHELLMAN_PREVIEW_LOG=<file>` traces the panels.
 - Right-click on an icon: shellman's glass popup menu (see the desktop's right-click menu) with
   Pin / Unpin and Close. On the Launcher
-  icon: Settings. On the Recycle Bin: Open (in Files, never Explorer) and Empty Recycle Bin
-  (grey when empty; a native confirmation first). The dock window is only as tall as its icons, so the menu cannot live in it.
+  icon: Settings. On the Recycle Bin: Open (in Files, never Explorer), what is in it ("6 items,
+  7.3 MB") and Empty Recycle Bin… (red; grey when empty), whose second step, in the menu itself,
+  names what goes ("Delete 6 items, 7.3 MB for good?", red Empty Recycle Bin, Cancel nearest the
+  pointer). The bin's empty or full icon and that count are asked of the shell on a thread of its
+  own at start and again only when a bin folder changes (the folder watcher Files' bin page
+  uses), never polled; the docks are woken when it changes. The dock window is only as tall as its icons, so the menu cannot live in it.
 - Drag to rearrange: press an icon and move past 6 pt to pick it up; it rides the pointer along the
   dock, the others slide apart (the dock's own window, no extra window), release drops it, Esc or
   releasing off the dock cancels. Pinned apps reorder among the pinned (saved to `dock.json` at

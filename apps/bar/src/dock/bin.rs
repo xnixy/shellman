@@ -1,87 +1,120 @@
-//! The dock's Recycle Bin icon: open it in Files, and empty it after a native confirmation.
+//! The dock's Recycle Bin icon: empty or full, open it in Files, and empty it.
+//!
+//! Whether it is full is asked of the shell (`SHQueryRecycleBinW`, which can take a moment on a
+//! sleeping disk) on a thread of its own, once at the start and again only when one of the bin's
+//! folders changes: the folder watcher Files' bin page uses (`recycle_bin::watch_dirs`, one
+//! folder per drive and user, plus that drive's `$Recycle.Bin`). No polling. The docks are woken
+//! when the answer changes. (A fixed drive that has never had a bin is only watched from the next
+//! change anywhere else on.)
 //!
 //! Files shows the bin itself, so nothing here hands off to `shell:RecycleBinFolder` (which would
-//! start Explorer's folder window). Emptying asks with a plain Windows message box: the dock has
-//! no window of its own tall enough for an in-window dialog.
+//! start Explorer's folder window). Emptying is confirmed in the dock's own menu, in a second
+//! step that says how much goes; then it runs on a thread of its own.
 
+use crate::wake::Wake;
 use shellman_core::recycle_bin::{self, BinState};
+use shellman_core::watch::Watcher;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::channel;
-use std::sync::Once;
-use std::time::Duration;
-use windows::core::HSTRING;
-use windows::Win32::Foundation::HWND;
-use windows::Win32::UI::WindowsAndMessaging::{
-    MessageBoxW, IDYES, MB_DEFBUTTON2, MB_ICONWARNING, MB_SETFOREGROUND, MB_TOPMOST, MB_YESNO,
-};
+use std::sync::{Arc, Mutex};
 
-/// Start Files on the bin. False when Files is not next to the bar.
-pub fn open() -> bool {
-    shellman_core::sibling::start_with("files", &["--recycle-bin"])
-}
-
-/// Whether the bin has anything to empty. The shell is asked on another thread and given a
-/// moment: a slow answer counts as "yes", so the menu never stalls and the confirmation (which
-/// asks again) has the last word.
-pub fn can_empty() -> bool {
-    let (tx, rx) = channel();
-    std::thread::spawn(move || {
-        let _ = tx.send(recycle_bin::state());
-    });
-    match rx.recv_timeout(Duration::from_millis(300)) {
-        Ok(Some(state)) => !state.is_empty(),
-        Ok(None) | Err(_) => true,
-    }
-}
-
-/// How often the bin is looked at for its full or empty icon.
-const WATCH_EVERY: Duration = Duration::from_secs(3);
-
+/// Whether the bin had something in it when last asked, for the icon pack's empty and full bins.
 static FULL: AtomicBool = AtomicBool::new(false);
 
-/// Whether the bin had something in it when last looked (every few seconds, on a thread of its
-/// own, which starts with the first call and repaints `ctx` when the answer changes): for the icon
-/// pack's empty and full bins.
-pub fn looks_full(ctx: &egui::Context) -> bool {
-    static WATCH: Once = Once::new();
-    WATCH.call_once(|| {
-        let ctx = ctx.clone();
-        std::thread::spawn(move || loop {
-            if let Some(state) = recycle_bin::state() {
-                let full = !state.is_empty();
-                if FULL.swap(full, Ordering::Relaxed) != full {
-                    ctx.request_repaint();
-                }
-            }
-            std::thread::sleep(WATCH_EVERY);
-        });
-    });
+pub fn looks_full() -> bool {
     FULL.load(Ordering::Relaxed)
 }
 
-/// Ask, then empty the bin. Runs on its own thread: the message box and the shell call both
-/// block, and neither belongs on a dock window's thread.
-pub fn confirm_and_empty() {
-    std::thread::spawn(|| {
-        let Some(state) = recycle_bin::state() else { return };
-        if state.is_empty() {
-            return;
+#[derive(Default)]
+struct Shared {
+    state: Option<BinState>,
+    /// Folders to watch, found by the last query; taken by the next `poll`.
+    dirs: Option<Vec<PathBuf>>,
+    /// A query is running; `again` asks it to run once more when done.
+    busy: bool,
+    again: bool,
+}
+
+pub struct Bin {
+    watcher: Watcher,
+    shared: Arc<Mutex<Shared>>,
+    wake: Wake,
+}
+
+impl Bin {
+    pub fn new(ctx: egui::Context, wake: Wake) -> Self {
+        let bin = Self { watcher: Watcher::new(ctx), shared: Arc::default(), wake };
+        bin.refresh();
+        bin
+    }
+
+    /// The bin's item count and size as last asked; None until the first answer.
+    pub fn state(&self) -> Option<BinState> {
+        self.shared.lock().unwrap().state
+    }
+
+    /// In a frame: if a bin folder changed, ask again (off this thread). Free otherwise.
+    pub fn poll(&self) {
+        if let Some(dirs) = self.shared.lock().unwrap().dirs.take() {
+            self.watcher.set_dirs(dirs);
         }
-        if ask(state) {
+        if !self.watcher.poll().is_empty() {
+            self.refresh();
+        }
+    }
+
+    /// Ask the shell on a thread of its own; a change meanwhile asks once more after it.
+    fn refresh(&self) {
+        {
+            let mut s = self.shared.lock().unwrap();
+            if s.busy {
+                s.again = true;
+                return;
+            }
+            s.busy = true;
+        }
+        let (shared, wake) = (self.shared.clone(), self.wake.clone());
+        std::thread::spawn(move || loop {
+            let state = recycle_bin::state();
+            let mut dirs = recycle_bin::watch_dirs();
+            // Each drive's bin root, where a user's folder appears at the drive's first delete.
+            let roots: Vec<PathBuf> = dirs.iter().filter_map(|d| d.parent().map(PathBuf::from)).collect();
+            dirs.extend(roots);
+            dirs.sort();
+            dirs.dedup();
+            let mut s = shared.lock().unwrap();
+            let changed = s.state != state;
+            s.state = state;
+            s.dirs = Some(dirs);
+            if let Some(state) = state {
+                FULL.store(!state.is_empty(), Ordering::Relaxed);
+            }
+            if s.again {
+                s.again = false;
+                continue;
+            }
+            s.busy = false;
+            drop(s);
+            if changed {
+                wake.docks();
+            }
+            // The watcher's new folders are set in the next frame; make sure there is one.
+            crate::host::request_frame();
+            break;
+        });
+    }
+}
+
+/// Start Files on the bin. False when Files is not next to the bar.
+pub fn open() {
+    std::thread::spawn(|| shellman_core::sibling::start_with("files", &["--recycle-bin"]));
+}
+
+/// Empty the bin for good: only after the menu's confirmation. On a thread of its own.
+pub fn empty() {
+    std::thread::spawn(|| {
+        if recycle_bin::state().is_some_and(|s| !s.is_empty()) {
             let _ = recycle_bin::empty(0);
         }
     });
-}
-
-fn ask(state: BinState) -> bool {
-    let text = format!("Permanently delete everything in the Recycle Bin?\n\n{}. This can't be undone.", recycle_bin::summary(state));
-    let answer = unsafe {
-        MessageBoxW(
-            Some(HWND::default()),
-            &HSTRING::from(text),
-            &HSTRING::from("Empty Recycle Bin"),
-            MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2 | MB_TOPMOST | MB_SETFOREGROUND,
-        )
-    };
-    answer == IDYES
 }

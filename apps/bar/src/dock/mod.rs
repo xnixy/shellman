@@ -63,6 +63,8 @@ pub struct Dock {
     drag: drag::Machine,
     /// Files dragged over the dock windows from other apps (see `drop`).
     drops: drop_target::Drops,
+    /// The Recycle Bin's state, kept up to date off the UI thread.
+    bin: bin::Bin,
 }
 
 impl Dock {
@@ -76,6 +78,7 @@ impl Dock {
             fullscreen::request_check();
         });
         watcher.on_front_moved(fullscreen::request_check);
+        let bin = bin::Bin::new(ctx.clone(), wake.clone());
         let mut dock = Self {
             drops: drop_target::Drops::new(wake.clone()),
             wake,
@@ -93,6 +96,7 @@ impl Dock {
             menu: PopupMenu::new(),
             menu_for: None,
             drag: drag::Machine::default(),
+            bin,
         };
         dock.rebuild();
         dock
@@ -214,7 +218,7 @@ impl Dock {
         let kind = if item.section == Section::Launcher {
             menu::Kind::Launcher
         } else if item.section == Section::Bin {
-            menu::Kind::Bin { can_empty: bin::can_empty() }
+            menu::Kind::Bin { state: self.bin.state() }
         } else {
             let pinned = item.pinnable().then(|| item.section == Section::Pinned);
             menu::Kind::App { pinned, windows: item.windows.len() }
@@ -228,7 +232,7 @@ impl Dock {
     }
 
     /// Do what the icon's menu chose, if it chose something since the last frame.
-    fn menu_picked(&mut self) {
+    fn menu_picked(&mut self, ctx: &egui::Context) {
         let Some(choice) = self.menu.take_pick() else { return };
         let Some(item) = self.menu_for.take() else { return };
         match choice {
@@ -253,7 +257,15 @@ impl Dock {
             menu::Choice::OpenBin => {
                 bin::open();
             }
-            menu::Choice::EmptyBin => bin::confirm_and_empty(),
+            menu::Choice::EmptyBin => {
+                // The second step, in the menu itself, where the first was.
+                if let Some(state) = self.bin.state().filter(|s| !s.is_empty()) {
+                    self.menu.open(ctx, menu::anchor(), menu::entries(&menu::Kind::ConfirmEmpty { state }));
+                    self.menu_for = Some(item);
+                }
+            }
+            menu::Choice::EmptyBinConfirmed => bin::empty(),
+            menu::Choice::Cancel => {}
         }
     }
 
@@ -370,6 +382,7 @@ impl Dock {
     /// frame call this first, so whichever runs first brings the shared model up to date, and
     /// wakes the bars whose picture changed: only those.
     pub fn catch_up(&mut self, ctx: &egui::Context) {
+        self.bin.poll();
         let icons = self.thumbs.poll(ctx);
         let renamed = self.watcher.take_front_renamed();
         let dirty = self.watcher.take_dirty();
@@ -405,7 +418,7 @@ impl Dock {
     /// icons' hover state apart from the other docks'.
     pub fn frame(&mut self, ctx: &egui::Context, hwnd: isize, salt: &str) -> Hover {
         theme::set_light(crate::app::light(ctx));
-        self.menu_picked();
+        self.menu_picked(ctx);
         self.catch_up(ctx);
         let m = self.metrics();
         let style = self.style();
