@@ -70,6 +70,12 @@ impl Config {
         shellman_core::config::load::<Config>(NAME).sane()
     }
 
+    /// The settings as saved now, or None when the file cannot be read (caught half written):
+    /// the running window then keeps what it has.
+    pub fn try_read() -> Option<Self> {
+        shellman_core::config::try_load::<Config>(NAME).ok().map(Self::sane)
+    }
+
     /// Values kept within what works.
     fn sane(mut self) -> Self {
         if !self.font_size.is_finite() {

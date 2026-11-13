@@ -25,7 +25,13 @@ Shared code:
 - `crates/core`: shell plumbing that has no layout: file ops, shell images, the Windows context
   menu, folder watching, the app index (the shell's Apps folder), live DWM previews
   (`live_thumb`), shared settings types (`settings::{dock,bar,launcher}`), and settings files
-  under `%APPDATA%\shellman`. `SHELLMAN_CONFIG_DIR` overrides that folder, for tests.
+  under `%APPDATA%\shellman`. `SHELLMAN_CONFIG_DIR` overrides that folder, for tests. A save
+  (`config::save_to`) writes a temporary file of its own (process, thread, count), flushes it and
+  renames it over the file, so two apps saving the shared `appearance.json` at once never leave
+  half a file. A file that cannot be read is tried again after 5 ms; still unreadable, the
+  forgiving `load` gives defaults but this process then never saves over it while it stays
+  unreadable, and code that would save what it read (folding a sidebar, Settings and the terminal
+  following a file) uses `try_load` and keeps what it holds.
 - `crates/buildinfo`: the build stamp (`<crate version>+<git describe> <commit date>`, or
   `SHELLMAN_BUILD_STAMP`) every exe carries as its `ProductVersion`, put there by each app's
   `build.rs` (`shellman_buildinfo::apply`).

@@ -269,7 +269,7 @@ impl TerminalApp {
     /// The font and its size (zoom starts over), the history kept, copy-on-select, the default
     /// profile and what a second start does; `default_terminal` is read where it is used.
     fn reload_config(&mut self) {
-        let new = Config::read();
+        let Some(new) = Config::try_read() else { return };
         if new == self.config {
             return;
         }

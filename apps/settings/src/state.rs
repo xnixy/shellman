@@ -145,40 +145,47 @@ impl State {
     }
 
     /// Read every file again, after something else changed one (the dock pinning an app, say).
-    /// True when anything differs.
+    /// True when anything differs. A file that cannot be read (caught half written, or broken)
+    /// keeps what is held: it is never replaced by defaults, which the next edit would save.
     pub fn reload(&mut self, ctx: &egui::Context) -> bool {
         let mut changed = false;
-        let look: Appearance = shellman_core::config::load("appearance");
-        if look != self.look {
-            self.look = look;
-            self.apply_look(ctx);
-            changed = true;
+        if let Ok(look) = shellman_core::config::try_load::<Appearance>("appearance") {
+            if look != self.look {
+                self.look = look;
+                self.apply_look(ctx);
+                changed = true;
+            }
         }
-        let desktop = DesktopSettings::load();
-        if desktop != self.desktop {
-            self.desktop = desktop;
-            changed = true;
+        if let Ok(desktop) = DesktopSettings::try_load() {
+            if desktop != self.desktop {
+                self.desktop = desktop;
+                changed = true;
+            }
         }
-        let dock = DockSettings::load();
-        if dock != self.dock {
-            self.dock = dock;
-            self.rebuild_names();
-            changed = true;
+        if let Ok(dock) = DockSettings::try_load() {
+            if dock != self.dock {
+                self.dock = dock;
+                self.rebuild_names();
+                changed = true;
+            }
         }
-        let bar = BarSettings::load();
-        if bar != self.bar {
-            self.bar = bar;
-            changed = true;
+        if let Ok(bar) = BarSettings::try_load() {
+            if bar != self.bar {
+                self.bar = bar;
+                changed = true;
+            }
         }
-        let launcher = LauncherSettings::load();
-        if launcher != self.launcher {
-            self.launcher = launcher;
-            changed = true;
+        if let Ok(launcher) = LauncherSettings::try_load() {
+            if launcher != self.launcher {
+                self.launcher = launcher;
+                changed = true;
+            }
         }
-        let shell = ShellSettings::load();
-        if shell != self.shell {
-            self.shell = shell;
-            changed = true;
+        if let Ok(shell) = ShellSettings::try_load() {
+            if shell != self.shell {
+                self.shell = shell;
+                changed = true;
+            }
         }
         changed
     }

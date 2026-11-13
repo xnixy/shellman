@@ -65,6 +65,11 @@ impl DockSettings {
         crate::config::load(NAME)
     }
 
+    /// The saved settings, or why they could not be read (keep what you have then).
+    pub fn try_load() -> Result<Self, crate::config::LoadError> {
+        crate::config::try_load(NAME)
+    }
+
     pub fn save(&self) {
         crate::config::save(NAME, self);
     }

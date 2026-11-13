@@ -86,27 +86,25 @@ impl Appearance {
     }
 
     /// Flip `app`'s fold in the saved look (read fresh, so nothing another app saved is undone),
-    /// save it, and return the look as saved.
+    /// save it, and return the look as saved. When the file cannot be read, the fold changes in
+    /// `current` only and nothing is saved (the user's look is never replaced by defaults).
     pub fn toggle_rail_saved(app: RailApp, current: Appearance) -> Appearance {
-        let mut look = match file() {
-            Some(path) if path.exists() => shellman_core::config::load(NAME),
-            _ => current,
-        };
-        let folded = current.rail_folded(app);
-        look.fold_rail(app, !folded);
-        look.save();
-        look
+        match file() {
+            Some(path) => toggle_rail_at(&path, app, current),
+            None => {
+                let mut look = current;
+                look.fold_rail(app, !current.rail_folded(app));
+                look
+            }
+        }
     }
 
-    /// The saved look, or `fallback` when none is saved yet (then it is saved, so the other apps
-    /// see the same).
+    /// The saved look; `fallback` (the look in use) when it cannot be read; or `fallback` when
+    /// none is saved yet (then it is saved, so the other apps see the same).
     pub fn load_or(fallback: Appearance) -> Self {
-        match shellman_core::config::config_dir().map(|d| d.join(format!("{NAME}.json"))) {
-            Some(path) if path.exists() => shellman_core::config::load(NAME),
-            _ => {
-                fallback.save();
-                fallback
-            }
+        match file() {
+            Some(path) => load_or_at(&path, fallback),
+            None => fallback,
         }
     }
 
@@ -129,6 +127,34 @@ pub fn saved_font() -> FontChoice {
         Some(path) if path.exists() => shellman_core::config::load::<Appearance>(NAME).font,
         _ => FontChoice::Default,
     }
+}
+
+/// [`Appearance::toggle_rail_saved`] on the file at `path`.
+fn toggle_rail_at(path: &std::path::Path, app: RailApp, current: Appearance) -> Appearance {
+    let folded = current.rail_folded(app);
+    let read = if path.exists() { shellman_core::config::try_load_from::<Appearance>(path) } else { Ok(current) };
+    match read {
+        Ok(mut look) => {
+            look.fold_rail(app, !folded);
+            shellman_core::config::save_to(path, &look);
+            look
+        }
+        Err(e) => {
+            eprintln!("shellman: {}: {e}; the sidebar folds here only", path.display());
+            let mut look = current;
+            look.fold_rail(app, !folded);
+            look
+        }
+    }
+}
+
+/// [`Appearance::load_or`] on the file at `path`.
+fn load_or_at(path: &std::path::Path, fallback: Appearance) -> Appearance {
+    if !path.exists() {
+        shellman_core::config::save_to(path, &fallback);
+        return fallback;
+    }
+    shellman_core::config::try_load_from(path).unwrap_or(fallback)
 }
 
 /// Where the file lives, for apps that watch it.
@@ -163,6 +189,31 @@ mod tests {
         assert_eq!(look.rails, Rails::default());
         assert!(!look.rail_folded(RailApp::Files));
         assert!(!look.rail_folded(RailApp::Settings));
+    }
+
+    /// Two apps saving at once could leave the look half written; reading that must not reset
+    /// the accent, glass and font in the app that reads it, nor save the defaults over it.
+    #[test]
+    fn an_unreadable_look_is_kept_not_replaced_by_defaults() {
+        let dir = std::env::temp_dir().join(format!("shellman-appearance-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("appearance.json");
+        let mine = Appearance { glass: 0.2, rail_collapsed: true, ..Appearance::default() };
+        let half = br#"{"accent":"System","glass":0.2,"font":"Def"#;
+        std::fs::write(&path, half).unwrap();
+        // Reading it keeps the look in use.
+        assert_eq!(load_or_at(&path, mine), mine);
+        // Folding a sidebar folds it here, and does not write the defaults over the file.
+        let folded = toggle_rail_at(&path, RailApp::Files, mine);
+        assert!(!folded.rail_folded(RailApp::Files));
+        assert_eq!(folded.glass, 0.2);
+        assert_eq!(std::fs::read(&path).unwrap(), half);
+        // A whole file is read and saved as before.
+        shellman_core::config::save_to(&path, &mine);
+        let saved = toggle_rail_at(&path, RailApp::Tasks, mine);
+        assert_eq!(shellman_core::config::load_from::<Appearance>(&path), saved);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
