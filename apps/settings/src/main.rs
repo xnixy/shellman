@@ -11,7 +11,6 @@ mod saver;
 mod search;
 mod sections;
 mod state;
-mod tip;
 
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use shellman_ui::appearance::Appearance;
@@ -39,7 +38,7 @@ fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("shellman Settings")
-            .with_inner_size([880.0, 640.0])
+            .with_inner_size([960.0, 720.0])
             .with_min_inner_size([700.0, 540.0])
             .with_transparent(true)
             .with_decorations(false),

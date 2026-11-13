@@ -7,18 +7,16 @@ use crate::page;
 use crate::search::{self, Hit};
 use crate::sections::Section;
 use crate::state::State;
-use crate::tip;
 use egui::{pos2, vec2, Align2, Rect, Sense, UiBuilder};
 use shellman_ui::chips::{self, Chip};
 use shellman_ui::glass::islands::{self, Island};
 use shellman_ui::glass::{GlassPanel, Style};
+use shellman_ui::rail;
 use shellman_ui::theme::{self, colors, glyph, icon_font, semibold_font, AccentChoice};
 use std::time::Duration;
 
 /// Space between the window's edge and the islands, and between islands.
 const MARGIN: f32 = 12.0;
-const RAIL_W: f32 = 56.0;
-const RAIL_ICON: f32 = 34.0;
 const TITLE_H: f32 = 46.0;
 const BUTTON_H: f32 = 30.0;
 /// The page's column is kept to a readable width, however wide the window.
@@ -109,7 +107,8 @@ impl SettingsApp {
             islands::drag_gaps(ui, screen);
 
             // The title pill and the page share one column; the rail stands left of it.
-            let left = screen.left() + MARGIN + RAIL_W + MARGIN;
+            let rail_w = rail::width(ui, &self.rail_entries(), rail::mode(screen.width(), self.st.look.rail_collapsed));
+            let left = screen.left() + MARGIN + rail_w + MARGIN;
             let room = screen.right() - MARGIN - left;
             let buttons_w = BUTTON_H * 3.0;
             let width = room.min(COLUMN_MAX);
@@ -204,49 +203,26 @@ impl SettingsApp {
         self.query.clear();
     }
 
-    /// The pill of sections: one icon each, the current one filled with the accent.
+    /// The rail of sections (shared with the other apps): icon and name each, folded to icons
+    /// by the user or by a narrow window.
     fn rail(&mut self, ui: &mut egui::Ui, list: &mut Vec<Island>, screen: Rect, top: f32) {
-        let mut named: Option<(Rect, &str)> = None;
-        let c = colors();
-        let n = Section::ALL.len() as f32;
-        let wanted = 28.0 + n * RAIL_ICON + (n - 1.0) * 4.0;
-        let height = wanted.min(screen.bottom() - MARGIN - top);
-        let rail = Rect::from_min_size(pos2(screen.left() + MARGIN, top), vec2(RAIL_W, height));
-        list.push(Island::pill(rail));
-        let (soft, hover, _) = chips::soft_colors(c.light);
-        let mut y = rail.top() + 14.0;
-        for section in Section::ALL {
-            let cell = Rect::from_min_size(pos2(rail.center().x - RAIL_ICON / 2.0, y), vec2(RAIL_ICON, RAIL_ICON));
-            y += RAIL_ICON + 4.0;
-            if cell.bottom() > rail.bottom() {
-                break;
-            }
-            let resp = ui.interact(cell, egui::Id::new(("rail", section.slug())), Sense::click());
-            let current = self.section == section;
-            let (fill, fg) = if current {
-                (c.accent_fill, c.on_accent)
-            } else if resp.hovered() {
-                (hover, c.text)
-            } else {
-                (soft.gamma_multiply(0.0), c.muted)
-            };
-            ui.painter().rect_filled(cell, 12.0, fill);
-            ui.painter().text(cell.center(), Align2::CENTER_CENTER, section.glyph(), icon_font(16.0), fg);
-            if tip::ready(ui.ctx(), egui::Id::new(("rail-tip", section.slug())), resp.hovered()) {
-                named = Some((cell, section.label()));
-            }
-            if resp.clicked() {
-                self.section = section;
-                self.query.clear();
-            }
+        let entries = self.rail_entries();
+        let solid = (!self.panel.composed()).then(|| self.panel.style());
+        let mode = rail::mode(screen.width(), self.st.look.rail_collapsed);
+        let out = rail::show(ui, list, screen, top, &entries, Some(self.section.slug()), mode, solid.as_ref(), page::GROUP_RADIUS);
+        if let Some(i) = out.clicked {
+            self.section = Section::ALL[i];
+            self.query.clear();
         }
-        // The name of the icon the pointer rests on, as a pill beside the rail.
-        if let Some((cell, label)) = named {
-            let solid = (!self.panel.composed()).then(|| self.panel.style());
-            // Beside the rail (not the icon), level with the icon.
-            let beside = Rect::from_min_max(pos2(rail.right() - 1.0, cell.top()), pos2(rail.right(), cell.bottom()));
-            tip::show(ui, beside, label, screen, list, solid.as_ref());
+        if out.toggled {
+            self.st.look.rail_collapsed = !self.st.look.rail_collapsed;
+            self.st.save_look();
         }
+    }
+
+    /// The rail's rows: one per section, in the section list's order.
+    fn rail_entries(&self) -> Vec<rail::Entry<'static>> {
+        Section::ALL.iter().map(|s| rail::Entry::Item { key: s.slug(), glyph: s.glyph(), label: s.label() }).collect()
     }
 
     /// The page, scrolling under the title pill: its groups become islands, clipped to `area`.
