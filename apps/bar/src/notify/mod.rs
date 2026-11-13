@@ -20,7 +20,7 @@
 mod act;
 mod draw;
 mod feed;
-mod layout;
+pub(crate) mod layout;
 mod window;
 
 use crate::shape::surface;
@@ -98,6 +98,8 @@ pub struct Notify {
     failed: bool,
     /// The primary top bar's clock island: its centre and lower edge, in screen pixels.
     anchor: Option<(i32, i32)>,
+    /// The clock island the open list was opened from, when not the primary's.
+    list_anchor: Option<(i32, i32)>,
     /// Where the window was put.
     placed: Option<[i32; 4]>,
     /// Since when nothing has shown (the window is hidden, its viewport lingering).
@@ -128,6 +130,7 @@ impl Notify {
             front_at_open: None,
             failed: false,
             anchor: None,
+            list_anchor: None,
             placed: None,
             idle_since: None,
         }
@@ -148,16 +151,20 @@ impl Notify {
         self.anchor = Some((centre_x, bottom));
     }
 
-    /// Where the window goes now: under the clock, or at the top centre of the work area until
-    /// the top bar has been drawn.
-    fn wanted(&self) -> [i32; 4] {
-        let (work, scale) = window::primary_work_area();
-        let (x, top) = self.anchor.unwrap_or(((work[0] + work[2]) / 2, work[1]));
-        layout::window_px(x, top, work, scale)
+    /// Where the window goes now: under the clock of the bar the list was opened from (any
+    /// monitor's), else under the primary bar's, or at the top centre of the primary's work area
+    /// until a top bar has been drawn. On that clock's own monitor, with its scale and work area.
+    /// None when no usable window fits there.
+    fn wanted(&self) -> Option<[i32; 4]> {
+        let areas = window::areas();
+        let anchor = if self.feed.list_open() { self.list_anchor.or(self.anchor) } else { self.anchor };
+        let anchor = anchor.or_else(|| areas.first().map(|a| ((a.work[0] + a.work[2]) / 2, a.work[1])))?;
+        let area = layout::area_of(anchor, &areas)?;
+        layout::window_for(anchor, &area)
     }
 
     fn place(&mut self, hwnd: isize) {
-        let wanted = self.wanted();
+        let Some(wanted) = self.wanted() else { return };
         if self.placed != Some(wanted) {
             let [left, top, right, bottom] = wanted;
             place::put(hwnd, RECT { left, top, right, bottom });
@@ -166,10 +173,13 @@ impl Notify {
     }
 
     /// The badge was clicked, with `front` the app window in front: open or close the list.
-    pub fn toggle_list(&mut self, front: Option<isize>) {
+    /// `from` is the clicked bar's clock island (`layout::clock_anchor`): the list opens under
+    /// that one, on its monitor.
+    pub fn toggle_list(&mut self, front: Option<isize>, from: Option<(i32, i32)>) {
         if self.feed.list_open() {
             self.feed.close_list();
         } else {
+            self.list_anchor = from;
             self.feed.open_list();
             self.front_at_open = front;
         }

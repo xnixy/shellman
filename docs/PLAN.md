@@ -49,7 +49,7 @@ Rule: **the top bar is the system, the dock is apps.** Both are windows of one p
 | Running and pinned apps, switching windows | dock |
 | Tray icons, all of them | top bar, right, on every monitor (up to 8, the rest behind a chevron) |
 | Network, volume, battery | top bar, one status pill |
-| Clock, calendar, notifications | top bar, right corner |
+| Clock, calendar, notifications | top bar, right corner (the list opens under the clicked bar's clock, on that monitor, at its scale and work area) |
 | Files, Recycle Bin | dock: Files after the launcher, the bin at the end |
 | Space for maximized windows | each monitor reserves its top bar and dock band |
 

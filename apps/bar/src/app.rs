@@ -51,14 +51,17 @@ impl Shared {
         let front = front.as_ref().map(|window| topbar::Front { window, icon });
         let place = Place { device, primary, origin };
         let islands = self.top.frame(ctx, front, surface::composed(hwnd), &place);
-        // Notifications hang under the primary bar's clock island (the second of three).
-        if let (true, Some((x, y)), Some(clock)) = (primary, origin, islands.get(1)) {
-            let ppp = ctx.pixels_per_point();
-            let centre = x + (clock.rect.center().x * ppp).round() as i32;
-            self.notify.set_anchor(centre, y + (clock.rect.bottom() * ppp).round() as i32);
+        // Notifications hang under a bar's clock island (the second of three): the primary's
+        // for toasts, and for the list the one of the bar whose clock was clicked.
+        let ppp = ctx.pixels_per_point();
+        let anchor = origin.zip(islands.get(1)).map(|(o, clock)| {
+            notify::layout::clock_anchor(o, clock.rect.center().x, clock.rect.bottom(), ppp)
+        });
+        if let (true, Some((x, y))) = (primary, anchor) {
+            self.notify.set_anchor(x, y);
         }
         if self.top.take_badge_click() {
-            self.notify.toggle_list(front_hwnd);
+            self.notify.toggle_list(front_hwnd, anchor);
         }
         // The whole window stays the bar's: a click between the islands lands on it and does
         // nothing (the space is reserved anyway).
