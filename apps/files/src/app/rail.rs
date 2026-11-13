@@ -1,24 +1,19 @@
-//! The rail: a narrow pill down the left with the places as icons (their names show beside them
-//! on hover, see `label`), then the pinned folders, the tags in use as coloured dots, the apps'
-//! places, and This PC with the drives. The current place is lit with the accent. Its empty
-//! part moves the window, and its menu brings hidden places back. When the icons do not all fit,
-//! the rail scrolls with the wheel, and a small chevron says there is more.
+//! The rail: the shared sidebar (`shellman_ui::rail`) down the left, with the places, the pinned
+//! folders, the tags in use as coloured dots, the apps' places, and This PC with the drives, each
+//! group under its heading (a thin line when the rail shows icons only). The current place is lit
+//! with the accent. Rows take drops, open in a new tab on a middle click, and pins and apps'
+//! places have menus; the rail's empty part moves the window, and its menu brings hidden places
+//! back.
 
 use super::actions::Action;
+use super::dnd::{self, Dest};
 use super::tab::Loc;
-use egui::{Align2, CornerRadius, Id, Painter, Rect, ScrollArea, Sense, Ui, UiBuilder, Vec2};
-use shellman_ui::chips::soft_colors;
-use shellman_ui::theme::{self, colors, glyph, icon_font};
-use shellman_ui::widgets::window_drag;
+use egui::{Rect, Ui};
+use shellman_ui::appearance::RailApp;
+use shellman_ui::glass::{Island, Style};
+use shellman_ui::rail::{self, Entry, Icon, Mode, Row};
+use shellman_ui::theme::glyph;
 use std::path::PathBuf;
-
-/// Above the first icon and below the last (the design's 14 px).
-const PAD: f32 = 12.0;
-/// One icon's square, and the room it takes in the rail.
-const ICON: f32 = 40.0;
-const STEP: f32 = 44.0;
-/// A short line between groups.
-const SEPARATOR: f32 = 13.0;
 
 /// The places shown on the rail and on This PC.
 pub(super) fn quick_places() -> Vec<(char, &'static str, PathBuf)> {
@@ -36,176 +31,167 @@ pub(super) fn quick_places() -> Vec<(char, &'static str, PathBuf)> {
     .collect()
 }
 
-/// How tall the rail wants to be for this many icons in each group (empty groups are left out,
-/// with their separator).
-pub(super) fn wanted_height(groups: &[usize]) -> f32 {
-    let shown: Vec<usize> = groups.iter().copied().filter(|&n| n > 0).collect();
-    let icons: usize = shown.iter().sum();
-    PAD * 2.0 + icons as f32 * STEP + shown.len().saturating_sub(1) as f32 * SEPARATOR
+/// What a row of the rail is, beside where it goes.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) enum Kind {
+    Place,
+    Bin,
+    /// A pinned folder, and whether it is still there.
+    Pin { there: bool },
+    Tag,
+    /// An app's place, by its id.
+    App(String),
+    Pc,
+    Drive,
 }
 
-/// Which ends of a scrolled list have more beyond them: (above, below).
-pub(super) fn more(offset: f32, content: f32, view: f32) -> (bool, bool) {
-    (offset > 0.5, offset + view < content - 0.5)
+/// Where a row goes, and what it is.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct Spot {
+    pub(super) loc: Loc,
+    pub(super) kind: Kind,
 }
 
-/// The name of an icon, beside it, once the pointer rests on it (see `shellman_ui::hover`).
-pub(super) fn label(ui: &Ui, resp: &egui::Response, text: &str) {
-    shellman_ui::hover::label(ui, resp, text);
-}
-
-/// One icon of the rail, taking the next step down: lit when `active`, faded when `dim`. The
-/// caller draws the icon itself into the square it is given, in the colour it is given.
-pub(super) fn item(
-    ui: &mut Ui,
-    salt: impl std::hash::Hash,
-    active: bool,
-    dim: bool,
-    icon: impl FnOnce(&Painter, Rect, egui::Color32),
-) -> egui::Response {
-    let c = colors();
-    let (row, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), STEP), Sense::hover());
-    let square = Rect::from_center_size(row.center(), Vec2::splat(ICON));
-    let resp = ui.interact(square, Id::new(("rail", salt)), Sense::click());
-    let p = ui.painter();
-    let r = CornerRadius::same(14);
-    let fg = if active {
-        p.rect_filled(square, r, c.accent_fill);
-        c.on_accent
-    } else {
-        if resp.hovered() {
-            p.rect_filled(square, r, soft_colors(c.light).1);
+impl Spot {
+    /// What dropping files on the row does, if anything.
+    fn dest(&self) -> Option<Dest> {
+        match (&self.kind, &self.loc) {
+            (Kind::Bin, _) => Some(Dest::Bin),
+            (Kind::Place | Kind::Drive | Kind::Pin { there: true }, Loc::Dir(p)) => Some(Dest::Dir(p.clone())),
+            _ => None,
         }
-        c.text
-    };
-    let fg = if dim { theme::with_alpha(fg, 90) } else { fg };
-    icon(p, square, fg);
-    resp
+    }
+
+    /// Whether the row can be opened (a pin whose folder is gone cannot).
+    fn usable(&self) -> bool {
+        self.kind != Kind::Pin { there: false }
+    }
 }
 
-/// An item with a glyph for its icon, named beside it on hover.
-fn glyph_item(ui: &mut Ui, g: char, name: &str, active: bool) -> egui::Response {
-    let resp = item(ui, name, active, false, |p, square, fg| {
-        p.text(
-            square.center(),
-            Align2::CENTER_CENTER,
-            g,
-            icon_font(15.0),
-            fg,
-        );
-    });
-    label(ui, &resp, name);
-    resp
+/// The rail's rows, from its groups: each group that has rows under its heading, the empty ones
+/// left out. `spots` runs beside the entries (`None` for a heading).
+pub(super) struct Rail {
+    pub(super) entries: Vec<Entry<'static>>,
+    pub(super) spots: Vec<Option<Spot>>,
 }
 
-fn separator(ui: &mut Ui) {
-    let c = colors();
-    let (r, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), SEPARATOR), Sense::hover());
-    let line = Rect::from_center_size(r.center(), Vec2::new(20.0, 1.0));
-    ui.painter()
-        .rect_filled(line, 0, theme::with_alpha(c.text, 30));
+impl Rail {
+    pub(super) fn build(groups: Vec<(&'static str, Vec<(Row<'static>, Spot)>)>) -> Self {
+        let mut entries = Vec::new();
+        let mut spots = Vec::new();
+        for (heading, rows) in groups.into_iter().filter(|(_, rows)| !rows.is_empty()) {
+            entries.push(Entry::heading(heading));
+            spots.push(None);
+            for (row, spot) in rows {
+                entries.push(row.into());
+                spots.push(Some(spot));
+            }
+        }
+        Self { entries, spots }
+    }
+
+    /// The key of the row to light: the first one for the place that is open.
+    pub(super) fn selected(&self, current: &Loc) -> Option<&str> {
+        self.spots.iter().zip(&self.entries).find_map(|(spot, entry)| match (spot, entry) {
+            (Some(s), Entry::Row(row)) if s.loc == *current => Some(row.key.as_ref()),
+            _ => None,
+        })
+    }
+}
+
+fn glyph_row(key: impl Into<String>, g: char, label: impl Into<String>, loc: Loc, kind: Kind) -> (Row<'static>, Spot) {
+    (Row::new(key.into(), Icon::Glyph(g), label.into()), Spot { loc, kind })
 }
 
 impl super::FileMan {
-    /// Draw the rail at the top of `area`; returns the pill it is on.
-    pub(super) fn rail(&mut self, ui: &mut Ui, area: Rect, actions: &mut Vec<Action>) -> Rect {
-        let places = quick_places();
-        let groups = [
-            places.len() + usize::from(self.pick.is_none()),
-            self.settings.pins.len(),
-            self.rail_tag_count(),
-            self.shown_apps().len(),
-            1 + self.drives.len(),
-        ];
-        let pill = super::plan::rail(area, wanted_height(&groups));
-        // Its own empty space: moves the window, and its menu brings hidden places back.
-        let bg = ui.interact(pill, Id::new("rail-bg"), Sense::click_and_drag());
-        window_drag(ui, &bg);
-        self.rail_background_menu(&bg, actions);
-
+    /// The rail's rows for this frame.
+    pub(super) fn rail_rows(&mut self, ctx: &egui::Context) -> Rail {
         let current = self.tabs[self.active].loc.clone();
-        let inner = pill.shrink2(Vec2::new(0.0, PAD));
-        let mut child = ui.new_child(UiBuilder::new().id_salt("rail").max_rect(inner));
-        child.set_clip_rect(inner);
-        let out = ScrollArea::vertical()
-            .id_salt("rail-scroll")
-            .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
-            // The wheel scrolls it; a press on an icon is always the icon's.
-            .drag_to_scroll(false)
-            .auto_shrink([false, false])
-            .show(&mut child, |ui| {
-                ui.spacing_mut().item_spacing = Vec2::ZERO;
-                let mut first = true;
-                let mut group = |ui: &mut Ui, n: usize| {
-                    if n > 0 && !std::mem::take(&mut first) {
-                        separator(ui);
-                    }
-                };
-                group(ui, groups[0]);
-                for (g, name, path) in places {
-                    let loc = Loc::Dir(path);
-                    let resp = glyph_item(ui, g, name, current == loc);
-                    if let Loc::Dir(p) = &loc {
-                        super::dnd::zone(ui, resp.rect, super::dnd::Dest::Dir(p.clone()), 14.0);
-                    }
-                    if resp.clicked() {
-                        actions.push(Action::Navigate(loc.clone()));
-                    }
-                    if resp.middle_clicked() {
-                        actions.push(Action::NewTab(loc));
-                    }
-                }
-                // A picker has no use for the bin.
-                if !self.pick_hides(&Loc::Bin) {
-                    let bin = glyph_item(ui, glyph::DELETE, "Recycle Bin", current == Loc::Bin);
-                    super::dnd::zone(ui, bin.rect, super::dnd::Dest::Bin, 14.0);
-                    if bin.clicked() {
-                        actions.push(Action::Navigate(Loc::Bin));
-                    }
-                    if bin.middle_clicked() {
-                        actions.push(Action::NewTab(Loc::Bin));
-                    }
-                }
-                group(ui, groups[1]);
-                self.rail_pins(ui, &current, actions);
-                group(ui, groups[2]);
-                self.rail_tags(ui, &current, actions);
-                group(ui, groups[3]);
-                self.rail_apps(ui, &current, actions);
-                group(ui, groups[4]);
-                if glyph_item(ui, glyph::PC, "This PC", current == Loc::Pc).clicked() {
-                    actions.push(Action::Navigate(Loc::Pc));
-                }
-                for d in &self.drives {
-                    let loc = Loc::Dir(d.root.clone());
-                    let resp = glyph_item(ui, glyph::DRIVE, &d.title(), current == loc);
-                    super::dnd::zone(ui, resp.rect, super::dnd::Dest::Dir(d.root.clone()), 14.0);
-                    if resp.clicked() {
-                        actions.push(Action::Navigate(loc.clone()));
-                    }
-                    if resp.middle_clicked() {
-                        actions.push(Action::NewTab(loc));
-                    }
-                }
-            });
-        // More above or below: a small chevron at that end.
-        let (above, below) = more(out.state.offset.y, out.content_size.y, out.inner_rect.height());
-        let c = colors();
-        for (show, y, g) in [
-            (above, pill.top() + PAD / 2.0 + 1.0, glyph::SORT_UP),
-            (below, pill.bottom() - PAD / 2.0 - 1.0, glyph::SORT_DOWN),
-        ] {
-            if show {
-                ui.painter().text(
-                    egui::pos2(pill.center().x, y),
-                    Align2::CENTER_CENTER,
-                    g,
-                    icon_font(8.0),
-                    c.muted,
-                );
-            }
+        let mut places: Vec<_> = quick_places()
+            .into_iter()
+            .map(|(g, name, path)| glyph_row(format!("place:{}", path.display()), g, name, Loc::Dir(path), Kind::Place))
+            .collect();
+        // A picker has no use for the bin.
+        if !self.pick_hides(&Loc::Bin) {
+            places.push(glyph_row("bin", glyph::DELETE, "Recycle Bin", Loc::Bin, Kind::Bin));
         }
-        pill
+        let pins = self.rail_pins(ctx);
+        let tags = self.rail_tags(&current);
+        let apps = self.rail_apps(ctx);
+        let mut drives = vec![glyph_row("pc", glyph::PC, "This PC", Loc::Pc, Kind::Pc)];
+        drives.extend(self.drives.iter().map(|d| {
+            glyph_row(format!("drive:{}", d.root.display()), glyph::DRIVE, d.title(), Loc::Dir(d.root.clone()), Kind::Drive)
+        }));
+        Rail::build(vec![("Places", places), ("Pinned", pins), ("Tags", tags), ("Apps", apps), ("Drives", drives)])
+    }
+
+    /// How the rail shows in a window this wide.
+    pub(super) fn rail_mode(&self, window_width: f32) -> Mode {
+        rail::mode(window_width, self.look.rail_folded(RailApp::Files))
+    }
+
+    /// Draw the rail at the window's left, `top` down, onto `list`, and act on what was done to it.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn rail(
+        &mut self,
+        ui: &mut Ui,
+        list: &mut Vec<Island>,
+        screen: Rect,
+        top: f32,
+        rows: &Rail,
+        mode: Mode,
+        solid: Option<&Style>,
+        actions: &mut Vec<Action>,
+    ) {
+        let current = self.tabs[self.active].loc.clone();
+        let out = rail::show(ui, list, screen, top, &rows.entries, rows.selected(&current), mode, solid, super::RADIUS);
+        self.rail_background_menu(&out.background, actions);
+        if out.toggled {
+            self.look = shellman_ui::appearance::Appearance::toggle_rail_saved(RailApp::Files, self.look);
+        }
+        for (resp, spot) in out.rows.iter().zip(&rows.spots) {
+            let (Some(resp), Some(spot)) = (resp, spot) else { continue };
+            if let Some(dest) = spot.dest() {
+                dnd::zone(ui, resp.interact_rect, dest, 12.0);
+            }
+            if resp.clicked() {
+                match &spot.loc {
+                    Loc::Dir(p) if !spot.usable() => self.toast(format!("{} is not there any more", p.display())),
+                    loc => actions.push(Action::Navigate(loc.clone())),
+                }
+            }
+            if resp.middle_clicked() && spot.usable() {
+                actions.push(Action::NewTab(spot.loc.clone()));
+            }
+            self.rail_row_menu(resp, spot, actions);
+        }
+    }
+
+    /// The menu of a pinned folder or an app's place.
+    fn rail_row_menu(&self, resp: &egui::Response, spot: &Spot, actions: &mut Vec<Action>) {
+        let (Kind::Pin { .. } | Kind::App(_), Loc::Dir(path)) = (&spot.kind, &spot.loc) else { return };
+        resp.context_menu(|ui| {
+            super::controls::flat_items(ui);
+            if spot.usable() && super::controls::mi(ui, glyph::ADD, "Open in new tab", "") {
+                actions.push(Action::NewTab(spot.loc.clone()));
+                ui.close_menu();
+            }
+            match &spot.kind {
+                Kind::Pin { .. } => {
+                    if super::controls::mi(ui, glyph::UNPIN, "Unpin from sidebar", "") {
+                        actions.push(Action::TogglePin(path.clone()));
+                        ui.close_menu();
+                    }
+                }
+                Kind::App(id) => {
+                    if super::controls::mi(ui, glyph::CLOSE, "Hide from the sidebar", "") {
+                        actions.push(Action::HidePlace(id.clone()));
+                        ui.close_menu();
+                    }
+                }
+                _ => {}
+            }
+        });
     }
 }
 
@@ -213,24 +199,55 @@ impl super::FileMan {
 mod tests {
     use super::*;
 
-    #[test]
-    fn height_counts_icons_and_the_separators_between_groups() {
-        assert_eq!(wanted_height(&[8]), PAD * 2.0 + 8.0 * STEP);
-        assert_eq!(
-            wanted_height(&[8, 0, 0, 3]),
-            PAD * 2.0 + 11.0 * STEP + SEPARATOR
-        );
-        assert_eq!(
-            wanted_height(&[8, 2, 1, 3, 2]),
-            PAD * 2.0 + 16.0 * STEP + 4.0 * SEPARATOR
-        );
+    fn row(key: &str, loc: Loc, kind: Kind) -> (Row<'static>, Spot) {
+        glyph_row(key.to_owned(), 'x', key.to_owned(), loc, kind)
+    }
+
+    fn dir(p: &str) -> Loc {
+        Loc::Dir(PathBuf::from(p))
     }
 
     #[test]
-    fn the_rail_says_when_there_is_more() {
-        assert_eq!(more(0.0, 300.0, 300.0), (false, false));
-        assert_eq!(more(0.0, 500.0, 300.0), (false, true));
-        assert_eq!(more(200.0, 500.0, 300.0), (true, false));
-        assert_eq!(more(100.0, 500.0, 300.0), (true, true));
+    fn empty_groups_have_no_heading_and_spots_line_up() {
+        let rail = Rail::build(vec![
+            ("Places", vec![row("home", dir(r"C:\Users\a"), Kind::Place), row("bin", Loc::Bin, Kind::Bin)]),
+            ("Pinned", vec![]),
+            ("Tags", vec![row("tag:0", Loc::Tag(0), Kind::Tag)]),
+            ("Drives", vec![row("pc", Loc::Pc, Kind::Pc)]),
+        ]);
+        let headings: Vec<&str> = rail
+            .entries
+            .iter()
+            .filter_map(|e| match e {
+                Entry::Heading(h) => Some(h.as_ref()),
+                Entry::Row(_) => None,
+            })
+            .collect();
+        assert_eq!(headings, ["Places", "Tags", "Drives"]);
+        assert_eq!(rail.entries.len(), rail.spots.len());
+        for (e, s) in rail.entries.iter().zip(&rail.spots) {
+            assert_eq!(matches!(e, Entry::Heading(_)), s.is_none());
+        }
+    }
+
+    #[test]
+    fn the_first_row_for_the_open_place_is_lit() {
+        let rail = Rail::build(vec![
+            ("Places", vec![row("place", dir(r"C:\a"), Kind::Place)]),
+            ("Pinned", vec![row("pin", dir(r"C:\a"), Kind::Pin { there: true })]),
+        ]);
+        assert_eq!(rail.selected(&dir(r"C:\a")), Some("place"));
+        assert_eq!(rail.selected(&Loc::Pc), None);
+    }
+
+    #[test]
+    fn a_gone_pin_takes_no_drops_and_does_not_open() {
+        let gone = Spot { loc: dir(r"C:\gone"), kind: Kind::Pin { there: false } };
+        assert_eq!(gone.dest(), None);
+        assert!(!gone.usable());
+        let bin = Spot { loc: Loc::Bin, kind: Kind::Bin };
+        assert!(matches!(bin.dest(), Some(Dest::Bin)));
+        let tag = Spot { loc: Loc::Tag(1), kind: Kind::Tag };
+        assert_eq!(tag.dest(), None);
     }
 }

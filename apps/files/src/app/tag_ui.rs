@@ -1,10 +1,9 @@
 //! Tags in the window: the store kept by the app (saved whenever it changes), the small dots on
 //! cards and rows, and the rail's tag places, which list every item with a tag (`Loc::Tag`).
 
-use super::actions::Action;
 use super::tab::Loc;
 use crate::tags::{Store, COLOURS, COUNT};
-use egui::{Color32, Painter, Pos2, Ui};
+use egui::{Color32, Painter, Pos2};
 use std::path::{Path, PathBuf};
 
 /// The tags' names as last saved, for titles drawn far from the store (a tab's, the window's).
@@ -219,34 +218,16 @@ impl super::FileMan {
         }
     }
 
-    /// The tag places on the rail: one dot per tag that is on anything.
-    pub(super) fn rail_tags(&mut self, ui: &mut Ui, current: &Loc, actions: &mut Vec<Action>) {
-        let used = self.tags.store.used();
-        for i in 0..COUNT {
-            if used & (1 << i) == 0 && *current != Loc::Tag(i as u8) {
-                continue;
-            }
-            let loc = Loc::Tag(i as u8);
-            let name = self.tags.store.name(i).to_owned();
-            let resp = super::rail::item(ui, ("tag", i), *current == loc, false, |p, square, _| {
-                p.circle_filled(square.center(), 6.0, colour(i));
-            });
-            super::rail::label(ui, &resp, &name);
-            if resp.clicked() {
-                actions.push(Action::Navigate(loc.clone()));
-            }
-            if resp.middle_clicked() {
-                actions.push(Action::NewTab(loc));
-            }
-        }
-    }
-
-    /// How many tag places the rail shows.
-    pub(super) fn rail_tag_count(&self) -> usize {
+    /// The tag places' rows on the rail: one dot per tag that is on anything (and the open one).
+    pub(super) fn rail_tags(&self, current: &Loc) -> Vec<(shellman_ui::rail::Row<'static>, super::rail::Spot)> {
         let used = self.tags.store.used();
         (0..COUNT)
-            .filter(|&i| used & (1 << i) != 0 || self.tabs[self.active].loc == Loc::Tag(i as u8))
-            .count()
+            .filter(|&i| used & (1 << i) != 0 || *current == Loc::Tag(i as u8))
+            .map(|i| {
+                let row = shellman_ui::rail::Row::new(format!("tag:{i}"), shellman_ui::rail::Icon::Dot(colour(i)), self.tags.store.name(i).to_owned());
+                (row, super::rail::Spot { loc: Loc::Tag(i as u8), kind: super::rail::Kind::Tag })
+            })
+            .collect()
     }
 }
 

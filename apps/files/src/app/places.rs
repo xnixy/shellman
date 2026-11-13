@@ -3,11 +3,12 @@
 
 use super::actions::Action;
 use super::tab::Loc;
-use egui::emath::GuiRounding;
-use egui::{ColorImage, TextureHandle, TextureOptions, Ui, Vec2};
+use super::rail::{Kind, Spot};
+use egui::{ColorImage, TextureHandle, TextureOptions};
+use shellman_ui::rail::{Icon, Row};
 use shellman_core::places::Place;
 use shellman_core::places_reg::{self, PlacesWatcher};
-use shellman_ui::theme::{glyph, icon_font};
+use shellman_ui::theme::glyph;
 use std::collections::HashMap;
 use std::sync::mpsc::{channel, Receiver, Sender};
 
@@ -166,70 +167,27 @@ impl super::FileMan {
             .collect()
     }
 
-    /// The apps' places, as icons on the rail; their names show on hover.
-    pub(super) fn rail_apps(&mut self, ui: &mut Ui, current: &Loc, actions: &mut Vec<Action>) {
-        let ppp = ui.ctx().pixels_per_point();
-        let px = (ICON_PT * ppp).round() as i32;
+    /// The apps' places' rows on the rail, with their own icons: the app's, else the folder's
+    /// shell icon, else a plain folder glyph (nothing while the app's icon is still loading).
+    pub(super) fn rail_apps(&mut self, ctx: &egui::Context) -> Vec<(Row<'static>, Spot)> {
+        let px = (ICON_PT * ctx.pixels_per_point()).round() as i32;
+        let mut rows = Vec::new();
         for place in self.shown_apps() {
-            let loc = Loc::Dir(place.target.clone());
-            // Own icon, else the folder's shell icon, else a plain folder glyph.
             let own = self.apps.icon(&place, px).map(|t| t.id());
-            let shell = if own.is_none() && !self.apps.icon_pending(&place, px) {
-                self.thumbs.get(&place.target, false).map(|t| t.id())
-            } else {
-                None
+            let pending = self.apps.icon_pending(&place, px);
+            let shell = if own.is_none() && !pending { self.thumbs.get(&place.target, false).map(|t| t.id()) } else { None };
+            // The textures are white masks (see `mono`): the rail tints them like its glyphs.
+            let icon = match own.or(shell) {
+                Some(id) => Icon::Image(id),
+                None if pending => Icon::Blank,
+                None => Icon::Glyph(glyph::FOLDER_FILL),
             };
-            let wait = own.is_none() && shell.is_none() && self.apps.icon_pending(&place, px);
-            let resp = super::rail::item(
-                ui,
-                ("app", &place.id),
-                *current == loc,
-                false,
-                |p, square, fg| {
-                    if let Some(id) = own.or(shell) {
-                        let at =
-                            egui::Rect::from_center_size(square.center(), Vec2::splat(ICON_PT))
-                                .round_to_pixels(ppp);
-                        p.image(
-                            id,
-                            at,
-                            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                            // The texture is a white mask (see `mono`), so this draws it in the
-                            // rail's own colour, like the glyphs beside it.
-                            fg,
-                        );
-                    } else if !wait {
-                        p.text(
-                            square.center(),
-                            egui::Align2::CENTER_CENTER,
-                            glyph::FOLDER_FILL,
-                            icon_font(15.0),
-                            fg,
-                        );
-                    }
-                },
-            );
-            super::rail::label(ui, &resp, &format!("{}\n{}", place.name, place.target.display()));
-            if resp.clicked() {
-                actions.push(Action::Navigate(loc.clone()));
-            }
-            if resp.middle_clicked() {
-                actions.push(Action::NewTab(loc.clone()));
-            }
-            resp.context_menu(|ui| {
-                super::controls::flat_items(ui);
-                if super::controls::mi(ui, glyph::ADD, "Open in new tab", "") {
-                    actions.push(Action::NewTab(loc.clone()));
-                    ui.close_menu();
-                }
-                if super::controls::mi(ui, glyph::CLOSE, "Hide from the rail", "") {
-                    actions.push(Action::HidePlace(place.id.clone()));
-                    ui.close_menu();
-                }
-            });
+            let tip = format!("{}\n{}", place.name, place.target.display());
+            let row = Row::new(format!("app:{}", place.id), icon, place.name.clone()).tip(tip);
+            rows.push((row, Spot { loc: Loc::Dir(place.target.clone()), kind: Kind::App(place.id.clone()) }));
         }
+        rows
     }
-
     /// The menu of the rail's empty part: it brings hidden places back.
     pub(super) fn rail_background_menu(
         &mut self,
