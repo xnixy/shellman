@@ -591,8 +591,12 @@ entry points open it, and it can be Windows' default terminal (below).
 - **A second start**: `new_instance` in `terminal.json`, `"window"` (default, as Windows
   Terminal) or `"tab"`: the launch (folder, profile, command, hold; nothing else) goes as JSON
   over `\\.\pipe\shellman-terminal-<session>` to the first window, which re-checks it, opens the
-  tab and comes forward (`instance.rs`). The pipe refuses remote clients; its default DACL lets
-  only the user, SYSTEM and administrators write.
+  tab and comes forward (`instance.rs`). The pipe refuses remote clients, is made as its first
+  instance (also when made again) with a DACL for the user alone; a launch writes (and lets the
+  window come forward) only after checking that the pipe's server process runs as this user in
+  this session (a pipe name someone else took first gets nothing, and the launch opens its own
+  window); the window reads each message within 1 s and 128 KiB, so a client that connects and
+  never writes cannot stall it. A launch waits up to 2 s while the window is busy with another.
 - **Entry points**: `shellman_core::terminal::open_at(dir)` is the one way shellman opens a
   terminal: the desktop menu's "Open Terminal here" (`apps/shelf`, which had its own
   `wt.exe -d` code) and Files' new "Open Terminal here" (folder background and a folder's menu).
