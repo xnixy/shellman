@@ -609,6 +609,16 @@ entry points open it, and it can be Windows' default terminal (below).
   Terminal's way); Esc drops it; copy-on-select is `copy_on_select` in `terminal.json`. Copied
   text joins soft-wrapped lines, trims trailing blanks, uses CR LF, and a whole-line copy has no
   final line break. Paste: Ctrl+V, Ctrl+Shift+V, Shift+Insert, bracketed when asked.
+- **Find** (stage 3, `app/find.rs`): Ctrl+Shift+F opens a glass pill in the top row between the
+  tabs and the window buttons (as Files' search pill sits in its bar; the tabs' pill gives way).
+  It searches as you type, literally (`alacritty_terminal`'s regex search, metacharacters
+  escaped), case-insensitive unless "Aa" is lit; Enter goes to the next match up (older),
+  Shift+Enter down, wrapping once all are counted; "3 of 120" (a "+" while counting, "No
+  results"); Esc or × closes. Matches on screen are marked amber, the current one in the accent,
+  inside the cells (so they ride the row hashes like the selection). The count walks the whole
+  history bottom-up in 2 000-line slices, 4 ms a frame, so 100 000 lines never stall the window
+  (tested: 100k lines counted in slices); the screen's matches are searched afresh per snapshot,
+  and the count starts over when output came (at most every 0.4 s), keeping to the view.
 - **Mouse to programs**: X10 (9), 1000, 1002, 1003 tracking; normal, UTF-8 (1005) and SGR
   (1006) encodings; focus (1004, also on tab switches); wheel as buttons 64/65 when tracking,
   arrows on the alternate screen with 1007, else scrollback. Shift takes the mouse back.
@@ -665,7 +675,7 @@ each; `SHELLMAN_TERMINAL_STATS=<file>` logs frame times):
   2.3 s → 2.0 s. See the stage-3 report for every run.
 - Idle 20 s: 0.000 CPU-s focused, 0.016 unfocused. A blinking cursor: 2 frames a second for
   15 s, then none. A tab flooding output in the background: no frames.
-- Not yet: colour emoji (drawn in one colour), find in scrollback, splits, a Settings page,
+- Not yet: colour emoji (drawn in one colour), splits, a Settings page,
   OSC 10/11 answers through the system ConPTY (it does not forward the queries; the answering is
   in place), a light palette that keeps bright white readable on coloured backgrounds.
 

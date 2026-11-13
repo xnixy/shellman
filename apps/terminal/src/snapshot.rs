@@ -23,7 +23,20 @@ pub struct Look {
     pub cursor_on: bool,
     /// The link under the pointer, underlined.
     pub hover: Hover,
+    /// Find's matches on screen, and its current one.
+    pub find: Option<Highlight>,
 }
+
+/// What find marks: the matches on screen, and the current one (drawn apart).
+#[derive(Clone, Default, Debug)]
+pub struct Highlight {
+    pub matches: Vec<std::ops::RangeInclusive<Point>>,
+    pub current: Option<std::ops::RangeInclusive<Point>>,
+}
+
+/// Find's match colours: a warm marker for every match, the accent for the current one.
+const MATCH_BG: [u8; 4] = [244, 196, 64, 255];
+const MATCH_FG: [u8; 4] = [24, 22, 16, 255];
 
 /// A link the pointer is on.
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
@@ -98,6 +111,19 @@ pub fn take<T>(term: &Term<T>, look: &Look, frame: &mut Frame) {
         let row = &grid[grid_line];
         // Only rows the selection reaches look at it cell by cell.
         let sel = selection.filter(|r| r.start.line <= grid_line && grid_line <= r.end.line);
+        // Find's matches on this row, as column spans (a match can wrap onto the next row).
+        let span = |m: &std::ops::RangeInclusive<Point>| -> Option<(usize, usize)> {
+            if m.start().line > grid_line || m.end().line < grid_line {
+                return None;
+            }
+            let from = if m.start().line == grid_line { m.start().column.0 } else { 0 };
+            let to = if m.end().line == grid_line { m.end().column.0 } else { cols.saturating_sub(1) };
+            Some((from, to))
+        };
+        let (found, current): (Vec<(usize, usize)>, Option<(usize, usize)>) = match &look.find {
+            Some(h) => (h.matches.iter().filter_map(span).collect(), h.current.as_ref().and_then(span)),
+            None => (Vec::new(), None),
+        };
         for col in 0..cols {
             let cell = &row[Column(col)];
             let f = cell.flags;
@@ -112,6 +138,14 @@ pub fn take<T>(term: &Term<T>, look: &Look, frame: &mut Frame) {
                 std::mem::swap(&mut fg, &mut bg);
                 fg[3] = 255;
                 bg[3] = 255;
+            }
+            if current.is_some_and(|(a, b)| a <= col && col <= b) {
+                let a = look.selection;
+                bg = [a[0], a[1], a[2], 255];
+                fg = [look.on_cursor[0], look.on_cursor[1], look.on_cursor[2], 255];
+            } else if found.iter().any(|&(a, b)| a <= col && col <= b) {
+                bg = MATCH_BG;
+                fg = MATCH_FG;
             }
             if let Some(r) = &sel {
                 if r.contains(Point::new(grid_line, Column(col))) {

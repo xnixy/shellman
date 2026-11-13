@@ -30,6 +30,8 @@ pub enum Shortcut {
     ZoomIn,
     ZoomOut,
     ZoomReset,
+    /// Ctrl+Shift+F: find in the scrollback.
+    Find,
 }
 
 /// The shortcut for a key, if it is one. `physical` is the key's place on the keyboard, for the
@@ -55,6 +57,7 @@ pub fn shortcut(key: egui::Key, physical: Option<egui::Key>, m: Mods) -> Option<
     Some(match key {
         K::T if ctrl_shift => Shortcut::NewTab,
         K::W if ctrl_shift => Shortcut::CloseTab,
+        K::F if ctrl_shift => Shortcut::Find,
         K::Tab if m.ctrl && !m.alt => {
             if m.shift {
                 Shortcut::PrevTab
@@ -137,6 +140,20 @@ impl super::TerminalApp {
             // The profile menu has the keyboard (Escape closes it).
             if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
                 self.strip.close_menu();
+            }
+            return;
+        }
+        if self.find.has_focus(ctx) {
+            // The find pill has the keyboard (it takes Enter and Escape itself); the terminal's
+            // own shortcuts still work.
+            let events = ctx.input(|i| i.events.clone());
+            for event in events {
+                if let egui::Event::Key { key, physical_key, pressed: true, modifiers, .. } = event {
+                    let mods = Mods { shift: modifiers.shift, ctrl: modifiers.ctrl, alt: modifiers.alt };
+                    if let Some(s) = shortcut(key, physical_key, mods) {
+                        self.run(ctx, s);
+                    }
+                }
             }
             return;
         }
@@ -293,6 +310,7 @@ impl super::TerminalApp {
             Shortcut::ZoomIn => self.zoom(Some(1.0)),
             Shortcut::ZoomOut => self.zoom(Some(-1.0)),
             Shortcut::ZoomReset => self.zoom(None),
+            Shortcut::Find => self.find.show(),
         }
     }
 }
@@ -359,6 +377,8 @@ mod tests {
         // Ctrl+T and Ctrl+W alone are the shell's (readline's transpose, delete word).
         assert_eq!(shortcut(K::T, None, CTRL), None);
         assert_eq!(shortcut(K::W, None, CTRL), None);
+        assert_eq!(shortcut(K::F, None, CTRL_SHIFT), Some(Shortcut::Find));
+        assert_eq!(shortcut(K::F, None, CTRL), None);
     }
 
     #[test]

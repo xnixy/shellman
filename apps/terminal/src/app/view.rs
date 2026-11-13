@@ -20,6 +20,8 @@ struct Drawn {
     tab: u64,
     cursor_on: bool,
     hover: Hover,
+    /// Find's state, as a count of its changes.
+    find: u64,
 }
 
 pub struct View {
@@ -84,13 +86,13 @@ impl super::TerminalApp {
         if let Some(next) = next {
             ctx.request_repaint_after(next);
         }
-        let with = Drawn { light: c.light, accent: c.accent, focused, tab: tab.id, cursor_on, hover: self.view.hover.clone() };
+        let with = Drawn { light: c.light, accent: c.accent, focused, tab: tab.id, cursor_on, hover: self.view.hover.clone(), find: self.find.generation };
         if !dirty && self.view.drawn.as_ref() == Some(&with) && self.frame.cols != 0 {
             return 0;
         }
         let rgb = |c: egui::Color32| [c.r(), c.g(), c.b()];
         let palette = Palette::new(c.light, rgb(c.text), rgb(c.bg));
-        let look = Look {
+        let mut look = Look {
             palette,
             cursor: rgb(c.accent_fill),
             on_cursor: rgb(c.on_accent),
@@ -98,13 +100,19 @@ impl super::TerminalApp {
             selection: rgb(c.accent_fill),
             cursor_on,
             hover: self.view.hover.clone(),
+            find: None,
         };
         if self.view.drawn.as_ref().is_none_or(|d| d.light != with.light || d.accent != with.accent || d.tab != with.tab) {
             tab.session.set_colours(Colours { palette, cursor: look.cursor });
         }
         self.view.drawn = Some(with);
         let was_blinking = self.frame.blinking;
-        tab.session.with_term(|term| snapshot::take(term, &look, &mut self.frame));
+        let find = &mut self.find;
+        let frame = &mut self.frame;
+        tab.session.with_term(|term| {
+            look.find = find.highlight(term);
+            snapshot::take(term, &look, frame)
+        });
         if self.frame.blinking && !was_blinking {
             // It just started to blink: the timer starts now.
             if let (_, Some(next)) = self.view.blink_phase(true) {

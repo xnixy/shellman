@@ -20,7 +20,7 @@ use alacritty_terminal::term::{Config, Term, TermMode};
 use alacritty_terminal::tty::{self, ChildEvent, EventedPty, EventedReadWrite};
 use std::borrow::Cow;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 /// The grid's size in cells, and one cell's size in pixels (ConPTY is told both).
@@ -61,6 +61,8 @@ pub struct Colours {
 struct Shared {
     /// New output (or anything else) to draw.
     dirty: AtomicBool,
+    /// Counts the emulator's wake-ups for new output (find recounts when it moves).
+    output_seq: AtomicU64,
     exited: AtomicBool,
     /// The program's exit code, once it exited (when known).
     exit_code: Mutex<Option<i32>>,
@@ -112,6 +114,7 @@ impl EventListener for Listener {
         match event {
             Event::Wakeup => {
                 s.dirty.store(true, Ordering::Release);
+                s.output_seq.fetch_add(1, Ordering::AcqRel);
                 // A tab not shown wakes the window once, for its dot.
                 if s.shown.load(Ordering::Acquire) || !s.activity.swap(true, Ordering::AcqRel) {
                     (self.wake)();
@@ -291,6 +294,7 @@ impl Session {
     fn run<P: EventedPty + OnResize + Send + 'static>(pty: P, program: String, size: Size, scrollback: usize, wake: Arc<dyn Fn() + Send + Sync>) -> std::io::Result<Self> {
         let shared = Arc::new(Shared {
             dirty: AtomicBool::new(true),
+            output_seq: AtomicU64::new(0),
             exited: AtomicBool::new(false),
             exit_code: Mutex::new(None),
             shown: AtomicBool::new(true),
@@ -454,6 +458,17 @@ impl Session {
     /// Read the emulator's state under its lock.
     pub fn with_term<R>(&self, f: impl FnOnce(&Term<Listener>) -> R) -> R {
         f(&self.term.lock())
+    }
+
+    /// How many times output came so far.
+    pub fn output_seq(&self) -> u64 {
+        self.shared.output_seq.load(Ordering::Acquire)
+    }
+
+    /// Change the emulator's state under its lock without asking for a redraw (find's counting,
+    /// which only reads; a scroll it makes is seen by the view anyway).
+    pub fn with_term_quiet<R>(&self, f: impl FnOnce(&mut Term<Listener>) -> R) -> R {
+        f(&mut self.term.lock())
     }
 
     /// Change the emulator's state (the selection, the view) under its lock.

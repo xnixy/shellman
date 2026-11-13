@@ -8,6 +8,7 @@
 //! cursor and the window has the focus). A tab not shown wakes the window only for its dot,
 //! title, bell or exit, so it costs no frames while it runs.
 
+mod find;
 mod input;
 mod pointer;
 mod strip;
@@ -84,6 +85,8 @@ pub struct TerminalApp {
     stats: Stats,
     /// Keys read from the window procedure for a console in win32-input-mode.
     win32_keys: Option<Arc<win32_input::Gate>>,
+    /// Find in the scrollback.
+    find: find::Find,
 }
 
 impl TerminalApp {
@@ -134,6 +137,7 @@ impl TerminalApp {
             stats: Stats::from_env(),
             config,
             win32_keys: hwnd.map(|h| win32_input::install(h, ctx.clone())),
+            find: find::Find::default(),
         })
     }
 
@@ -242,10 +246,10 @@ impl TerminalApp {
 
     /// Whether the next keys go to the shown tab's console whole (win32-input-mode): it asked
     /// for them and nothing else (the profile menu) has the keyboard.
-    fn gate_keys(&self) {
+    fn gate_keys(&self, ctx: &egui::Context) {
         if let Some(gate) = &self.win32_keys {
             let s = &self.tabs.current().session;
-            let active = s.win32_input() && !self.strip.menu_open();
+            let active = s.win32_input() && !self.strip.menu_open() && !self.find.has_focus(ctx);
             gate.set(active, active && s.with_term(crate::select::has));
         }
     }
@@ -319,7 +323,15 @@ impl TerminalApp {
             let top = screen.top() + MARGIN;
             let right = screen.right() - MARGIN;
             let controls = Rect::from_min_max(pos2(right - CONTROLS_W, top), pos2(right, top + TABS_H));
-            let row = Rect::from_min_max(pos2(screen.left() + MARGIN, top), pos2(controls.left() - MARGIN, top + TABS_H));
+            let mut row = Rect::from_min_max(pos2(screen.left() + MARGIN, top), pos2(controls.left() - MARGIN, top + TABS_H));
+            // Find's pill, in the row between the tabs and the window buttons.
+            if self.find.open {
+                let w = find::WIDTH.min(row.width() * 0.6);
+                let pill = Rect::from_min_max(pos2(row.right() - w, top), row.max);
+                row.max.x = pill.left() - MARGIN;
+                list.push(Island::pill(pill));
+                self.find_pill(ui, pill);
+            }
             let pill = self.tab_strip(ui, row);
             list.push(Island::pill(pill));
             list.push(Island::pill(controls));
@@ -347,6 +359,29 @@ impl TerminalApp {
             }
         });
         self.panel.set_islands(&list, ctx.pixels_per_point());
+    }
+
+    /// Find's pill: its contents, what was asked of it, and counting on.
+    fn find_pill(&mut self, ui: &mut egui::Ui, rect: Rect) {
+        let out = find::pill(ui, rect, &mut self.find);
+        if out.close {
+            self.find.close();
+            self.tabs.current().session.mark_dirty();
+            return;
+        }
+        let tab = self.tabs.current();
+        let (id, seq) = (tab.id, tab.session.output_seq());
+        let find = &mut self.find;
+        let more = tab.session.with_term_quiet(|t| {
+            let more = find.step(t, id, seq, out.changed);
+            if let Some(up) = out.go {
+                find.go(t, up);
+            }
+            more
+        });
+        if more {
+            ui.ctx().request_repaint();
+        }
     }
 
     /// Fit the grid to `room`: as many whole cells as fit, the grid starting on a whole pixel.
@@ -446,7 +481,7 @@ impl eframe::App for TerminalApp {
         self.track_tabs(ctx);
         let cpu = self.stats.on().then(|| frame.info().cpu_usage).flatten();
         self.layout(ctx, cpu);
-        self.gate_keys();
+        self.gate_keys(ctx);
     }
 
     fn on_exit(&mut self, gl: Option<&egui_glow::glow::Context>) {
