@@ -22,6 +22,7 @@ use items::{Item, Section};
 use metrics::Metrics;
 use shown::Shown;
 use shellman_ui::glass::{self, Island, Style};
+use shellman_ui::menu::popup::PopupMenu;
 use shellman_core::settings::dock::{DockSettings as Pins, Pin};
 use shellman_core::thumbs::Thumbs;
 use shellman_core::winlist::{self, AppWindow, WindowList, WindowWatcher};
@@ -51,6 +52,9 @@ pub struct Dock {
     front: Option<isize>,
     /// Wheel movement not yet enough for a step, and the icon it happened over.
     scroll: (usize, f32),
+    /// The icons' right-click menu, and the icon it is open for.
+    menu: PopupMenu<menu::Choice>,
+    menu_for: Option<Item>,
 }
 
 impl Dock {
@@ -77,6 +81,8 @@ impl Dock {
             windows: Vec::new(),
             front: None,
             scroll: (0, 0.0),
+            menu: PopupMenu::new(),
+            menu_for: None,
         };
         dock.rebuild();
         dock
@@ -191,8 +197,9 @@ impl Dock {
         }
     }
 
-    /// Right click: the menu for one icon, and what it chose.
-    fn context_menu(&mut self, i: usize, hwnd: isize) {
+    /// Right click: open the menu for one icon. What it chooses comes back in a later frame
+    /// (`menu_picked`).
+    fn context_menu(&mut self, ctx: &egui::Context, i: usize) {
         let item = self.items[i].clone();
         let kind = if item.section == Section::Launcher {
             menu::Kind::Launcher
@@ -202,7 +209,19 @@ impl Dock {
             let pinned = item.pinnable().then(|| item.section == Section::Pinned);
             menu::Kind::App { pinned, windows: item.windows.len() }
         };
-        match menu::show(hwnd, kind) {
+        let entries = menu::entries(&kind);
+        if entries.is_empty() {
+            return;
+        }
+        self.menu.open(ctx, menu::anchor(), entries);
+        self.menu_for = Some(item);
+    }
+
+    /// Do what the icon's menu chose, if it chose something since the last frame.
+    fn menu_picked(&mut self) {
+        let Some(choice) = self.menu.take_pick() else { return };
+        let Some(item) = self.menu_for.take() else { return };
+        match choice {
             menu::Choice::Settings => {
                 shellman_core::sibling::start("settings");
             }
@@ -225,7 +244,6 @@ impl Dock {
                 bin::open();
             }
             menu::Choice::EmptyBin => bin::confirm_and_empty(),
-            menu::Choice::Nothing => {}
         }
     }
 
@@ -246,7 +264,7 @@ impl Dock {
     }
 
     /// Act on what the pointer did this frame, and say what it is over for the preview panel.
-    fn act(&mut self, events: &draw::Events, hwnd: isize, inside: bool, glass_top: f32) -> Hover {
+    fn act(&mut self, ctx: &egui::Context, events: &draw::Events, inside: bool, glass_top: f32) -> Hover {
         let hover = Hover {
             target: events.hovered.map(|(i, center_x)| Target {
                 app_id: self.items[i].app_id.clone(),
@@ -274,7 +292,7 @@ impl Dock {
             self.scroll_step(i, delta);
         }
         if let Some(i) = events.menu {
-            self.context_menu(i, hwnd);
+            self.context_menu(ctx, i);
         }
         hover
     }
@@ -367,6 +385,7 @@ impl Dock {
     /// icons' hover state apart from the other docks'.
     pub fn frame(&mut self, ctx: &egui::Context, hwnd: isize, salt: &str) -> Hover {
         theme::set_light(crate::app::light(ctx));
+        self.menu_picked();
         self.catch_up(ctx);
         let m = self.metrics();
         let style = self.style();
@@ -403,7 +422,7 @@ impl Dock {
         let inside = ctx
             .pointer_hover_pos()
             .is_some_and(|p| glass.contains(p) || bin.is_some_and(|b| b.contains(p)));
-        self.act(&events, hwnd, inside, glass.top())
+        self.act(ctx, &events, inside, glass.top())
     }
 }
 

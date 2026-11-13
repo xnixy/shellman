@@ -1,20 +1,13 @@
 //! The desktop's right-click menu, shown at the point the desktop process reports, on whichever
 //! monitor was clicked.
 //!
-//! It is a plain Windows popup, the component the dock's right-click menu uses: Windows sizes it
-//! to its entries, keeps it on the monitor, opens the submenu, and closes it on Esc or a click
-//! anywhere else. A first version drew shellman's own menu on glass in a window as large as the
-//! monitor; opening it repeatedly crashed the compositor (`dwm.exe`, 18:00:02 on 12 Nov), and a
-//! monitor-sized window also made the bar step aside as for a fullscreen app. The menu's entries
-//! are plain data (`entries`), so a glass menu can come back on top of them once it is safe.
+//! It is shellman's glass popup menu (`shellman_ui::menu::popup`), the one the dock's right-click
+//! menu uses: one small window per process, made once and then only placed, shown and put away
+//! (a first version on a monitor-sized window, its glass made per click, crashed the compositor
+//! on 12 Nov). The entries are plain data (`entries`); the pick comes back as an [`Action`].
 
-use windows::core::HSTRING;
-use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
-use windows::Win32::UI::WindowsAndMessaging::{
-    AppendMenuW, CreatePopupMenu, DestroyMenu, GetForegroundWindow, PostMessageW, SetForegroundWindow,
-    TrackPopupMenuEx, HMENU, MF_GRAYED, MF_POPUP, MF_SEPARATOR, MF_STRING, TPM_LEFTALIGN, TPM_RETURNCMD,
-    TPM_RIGHTBUTTON, TPM_TOPALIGN, WM_NULL,
-};
+use shellman_ui::menu::popup;
+use shellman_ui::theme::glyph;
 
 /// What the menu can do.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -28,29 +21,6 @@ pub enum Action {
     Wallpaper,
     DesktopSettings,
     DisplaySettings,
-}
-
-impl Action {
-    const ALL: [Action; 9] = [
-        Action::NewFolder,
-        Action::NewText,
-        Action::NewNote,
-        Action::Paste,
-        Action::OpenInFiles,
-        Action::Terminal,
-        Action::Wallpaper,
-        Action::DesktopSettings,
-        Action::DisplaySettings,
-    ];
-
-    /// The command id Windows hands back (never 0, which means nothing was picked).
-    fn id(self) -> usize {
-        Self::ALL.iter().position(|a| *a == self).map_or(0, |i| i + 1)
-    }
-
-    fn from_id(id: usize) -> Option<Action> {
-        id.checked_sub(1).and_then(|i| Self::ALL.get(i).copied())
-    }
 }
 
 /// One line of the menu.
@@ -87,54 +57,35 @@ pub fn entries(can_paste: bool) -> Vec<Entry> {
     ]
 }
 
-unsafe fn build(entries: &[Entry]) -> Option<HMENU> {
-    let menu = CreatePopupMenu().ok()?;
-    for e in entries {
-        match e {
-            Entry::Item { label, action, enabled } => {
-                let flags = if *enabled { MF_STRING } else { MF_STRING | MF_GRAYED };
-                let _ = AppendMenuW(menu, flags, action.id(), &HSTRING::from(*label));
-            }
-            Entry::Sub { label, entries } => {
-                if let Some(sub) = build(entries) {
-                    // The submenu is destroyed with its parent.
-                    let _ = AppendMenuW(menu, MF_STRING | MF_POPUP, sub.0 as usize, &HSTRING::from(*label));
-                }
-            }
-            Entry::Separator => {
-                let _ = AppendMenuW(menu, MF_SEPARATOR, 0, None);
-            }
-        }
+/// The glyph beside each entry.
+fn icon(action: Action) -> char {
+    match action {
+        Action::NewFolder => glyph::NEW_FOLDER,
+        Action::NewText => glyph::FILE,
+        Action::NewNote => glyph::DOC,
+        Action::Paste => glyph::PASTE,
+        Action::OpenInFiles => glyph::FOLDER,
+        // Segoe's "CommandPrompt".
+        Action::Terminal => glyph::APP,
+        Action::Wallpaper => glyph::IMAGE,
+        Action::DesktopSettings => glyph::SETTINGS,
+        Action::DisplaySettings => glyph::DESKTOP,
     }
-    Some(menu)
 }
 
-/// Show the menu at `at` (screen pixels), owned by the shelf window `owner`. Blocks until it
-/// closes; returns what was picked.
-pub fn show(owner: isize, at: (i32, i32), can_paste: bool) -> Option<Action> {
-    let hwnd = HWND(owner as *mut _);
-    unsafe {
-        let menu = build(&entries(can_paste))?;
-        // A menu closes on a click elsewhere only if its owner is in front, so it borrows the
-        // foreground (the desktop let this process take it) and gives it back after, unless the
-        // click that closed it went to another window, which then stays in front.
-        let before = GetForegroundWindow();
-        let _ = SetForegroundWindow(hwnd);
-        let picked = TrackPopupMenuEx(
-            menu,
-            (TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_TOPALIGN | TPM_LEFTALIGN).0,
-            at.0,
-            at.1,
-            hwnd,
-            None,
-        );
-        let _ = PostMessageW(Some(hwnd), WM_NULL, WPARAM(0), LPARAM(0));
-        let _ = DestroyMenu(menu);
-        if !before.is_invalid() && before != hwnd && GetForegroundWindow() == hwnd {
-            let _ = SetForegroundWindow(before);
-        }
-        Action::from_id(picked.0 as usize)
-    }
+/// The entries as the glass popup menu takes them. No shortcut hints: none of these has a
+/// shortcut on the desktop yet (the mockup's "Ctrl V" and "Ctrl Alt T" do not exist).
+pub fn popup_entries(entries: &[Entry]) -> Vec<popup::Entry<Action>> {
+    entries
+        .iter()
+        .map(|e| match e {
+            Entry::Item { label, action, enabled } => {
+                popup::Entry::item(*action, *label).icon(icon(*action)).enabled(*enabled)
+            }
+            Entry::Sub { label, entries } => popup::Entry::submenu(*label, popup_entries(entries)).icon(glyph::ADD),
+            Entry::Separator => popup::Entry::separator(),
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -175,12 +126,15 @@ mod tests {
     }
 
     #[test]
-    fn command_ids_round_trip_and_zero_is_nothing() {
-        for a in Action::ALL {
-            assert_ne!(a.id(), 0);
-            assert_eq!(Action::from_id(a.id()), Some(a));
-        }
-        assert_eq!(Action::from_id(0), None);
-        assert_eq!(Action::from_id(99), None);
+    fn the_popup_keeps_the_entries_order_and_state() {
+        let p = popup_entries(&entries(false));
+        assert_eq!(p.len(), 9);
+        let popup::Entry::Submenu { entries: sub, .. } = &p[0] else { panic!("New opens a submenu") };
+        assert_eq!(sub.len(), 3);
+        let popup::Entry::Item(paste) = &p[1] else { panic!("Paste is an item") };
+        assert_eq!((paste.id, paste.enabled, paste.hint.as_str()), (Action::Paste, false, ""));
+        assert!(matches!(p[2], popup::Entry::Separator));
+        let popup::Entry::Item(last) = &p[8] else { panic!("an item") };
+        assert_eq!(last.id, Action::DisplaySettings);
     }
 }

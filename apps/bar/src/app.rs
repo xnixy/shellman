@@ -191,6 +191,8 @@ impl eframe::App for Host {
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // The dock's glass menu window, once there has been a menu.
+        shellman_ui::menu::popup::declare(ctx);
         let mut shared = self.shared.lock().unwrap();
         let mut layout_needed = host::take_layout();
         // Bars repaint only for what they show: this frame runs for many reasons (a window event,

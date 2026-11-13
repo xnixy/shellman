@@ -21,6 +21,7 @@ use shellman_core::watch::Watcher;
 use shellman_core::winlist::WindowWatcher;
 use shellman_ui::appearance::Appearance;
 use shellman_ui::glass::{self, GlassPanel, Island, Style};
+use shellman_ui::menu::popup::{self, Anchor, PopupMenu};
 use std::sync::{Arc, Mutex};
 use windows::Win32::Foundation::{HWND, POINT, RECT};
 use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, MonitorFromPoint, MONITORINFO, MONITOR_DEFAULTTOPRIMARY};
@@ -63,6 +64,8 @@ pub struct Shelf {
     placed: Option<Placed>,
     /// A drag out of the fan is on.
     dragging: bool,
+    /// The desktop's right-click menu.
+    menu: PopupMenu<Action>,
     _windows: WindowWatcher,
 }
 
@@ -90,6 +93,7 @@ impl Shelf {
             drop,
             placed: None,
             dragging: false,
+            menu: PopupMenu::new(),
             _windows: windows,
         }
     }
@@ -339,16 +343,18 @@ impl eframe::App for Shelf {
         if self.dragging && !ctx.input(|i| i.pointer.any_down()) {
             self.dragging = false;
         }
+        // The glass menu's window, once there has been a menu.
+        popup::declare(ctx);
         // The desktop asked for its menu: an open fan closes first.
         if let Some(at) = window::take_menu() {
             self.close_fan(false);
             let can_paste = transfer::clip::state().can_paste();
-            // Blocks until the menu closes (Windows runs it), as the dock's does.
             log::line(format!("menu at {at:?}"));
-            if let Some(action) = menu::show(self.hwnd, at, can_paste) {
-                log::line(format!("menu: {action:?}"));
-                self.run(action);
-            }
+            self.menu.open(ctx, Anchor::at(at.0, at.1), menu::popup_entries(&menu::entries(can_paste)));
+        }
+        if let Some(action) = self.menu.take_pick() {
+            log::line(format!("menu: {action:?}"));
+            self.run(action);
         }
         if self.open.is_some() {
             let focused = ctx.input(|i| i.viewport().focused).unwrap_or(false);
