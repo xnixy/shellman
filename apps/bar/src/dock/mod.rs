@@ -79,6 +79,7 @@ impl Dock {
         });
         watcher.on_front_moved(fullscreen::request_check);
         let bin = bin::Bin::new(ctx.clone(), wake.clone());
+        let _ = items::NAMED.set(wake.clone());
         let mut dock = Self {
             drops: drop_target::Drops::new(wake.clone()),
             wake,

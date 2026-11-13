@@ -24,6 +24,9 @@ pub struct Item {
     pub windows: Vec<isize>,
 }
 
+/// Wakes the docks when an app's name, looked up on a worker, has arrived.
+pub static NAMED: std::sync::OnceLock<crate::wake::Wake> = std::sync::OnceLock::new();
+
 pub const BIN: &str = "shell:RecycleBinFolder";
 /// The Launcher's stand-in id: it is not an app with an exe, so nothing else can match it.
 const LAUNCHER: &str = "shellman:launcher";
@@ -56,7 +59,13 @@ impl Item {
             Section::Launcher => "Launcher".into(),
             Section::Files => "Files".into(),
             Section::Bin => "Recycle Bin".into(),
-            _ => shellman_core::system::app_name::display_name(&self.app_id, self.exe.as_deref()),
+            // Looked up on a worker (the shell and the disk can take 100 ms and more); the
+            // exe's name shows until then, and the docks are woken when it arrives.
+            _ => shellman_core::system::app_name::display_name_soon(&self.app_id, self.exe.as_deref(), || {
+                if let Some(wake) = NAMED.get() {
+                    wake.docks();
+                }
+            }),
         }
     }
 
