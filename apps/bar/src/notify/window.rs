@@ -1,27 +1,40 @@
-//! The Win32 side of the notifications window: where the primary monitor's work area is, and
+//! The Win32 side of the notifications window: the monitors' work areas, and
 //! showing, hiding and (for typing a reply) focusing the window.
 
-use windows::Win32::Foundation::{HWND, POINT};
-use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, MonitorFromPoint, MONITORINFO, MONITOR_DEFAULTTOPRIMARY};
+use super::layout::Area;
+use windows::core::BOOL;
+use windows::Win32::Foundation::{HWND, LPARAM, RECT};
+use windows::Win32::Graphics::Gdi::{EnumDisplayMonitors, GetMonitorInfoW, HDC, HMONITOR, MONITORINFO};
 use windows::Win32::UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI};
 use windows::Win32::UI::WindowsAndMessaging::{
     IsWindowVisible, SetForegroundWindow, ShowWindow, SW_HIDE, SW_SHOWNOACTIVATE,
 };
 
-/// The primary monitor's work area (`[left, top, right, bottom]`, physical pixels: the screen
-/// less the top bar's and the dock's reserved space) and its scale.
-pub fn primary_work_area() -> ([i32; 4], f32) {
-    let mut info = MONITORINFO { cbSize: size_of::<MONITORINFO>() as u32, ..Default::default() };
-    let (mut dpi, mut _y) = (96u32, 96u32);
-    unsafe {
-        let monitor = MonitorFromPoint(POINT { x: 0, y: 0 }, MONITOR_DEFAULTTOPRIMARY);
-        let _ = GetMonitorInfoW(monitor, &mut info);
-        if GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &mut dpi, &mut _y).is_err() || dpi == 0 {
-            dpi = 96;
+/// Every monitor with its work area (the screen less the top bar's and the dock's reserved
+/// space) and its scale, in signed physical pixels; the primary first.
+pub fn areas() -> Vec<Area> {
+    unsafe extern "system" fn visit(monitor: HMONITOR, _: HDC, _: *mut RECT, out: LPARAM) -> BOOL {
+        let out = &mut *(out.0 as *mut Vec<(bool, Area)>);
+        let mut info = MONITORINFO { cbSize: size_of::<MONITORINFO>() as u32, ..Default::default() };
+        if GetMonitorInfoW(monitor, &mut info).as_bool() {
+            let (mut dpi, mut _y) = (96u32, 96u32);
+            if GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &mut dpi, &mut _y).is_err() || dpi == 0 {
+                dpi = 96;
+            }
+            let (m, w) = (info.rcMonitor, info.rcWork);
+            out.push((
+                info.dwFlags & 1 != 0,
+                Area { rect: [m.left, m.top, m.right, m.bottom], work: [w.left, w.top, w.right, w.bottom], scale: dpi as f32 / 96.0 },
+            ));
         }
+        BOOL(1)
     }
-    let w = info.rcWork;
-    ([w.left, w.top, w.right, w.bottom], dpi as f32 / 96.0)
+    let mut out: Vec<(bool, Area)> = Vec::new();
+    unsafe {
+        let _ = EnumDisplayMonitors(None, None, Some(visit), LPARAM((&raw mut out) as isize));
+    }
+    out.sort_by_key(|(primary, _)| !primary);
+    out.into_iter().map(|(_, a)| a).collect()
 }
 
 /// Show without activating, if it is not shown already.

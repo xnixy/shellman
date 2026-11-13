@@ -136,6 +136,47 @@ pub fn window_px(centre_x: i32, top: i32, work: [i32; 4], scale: f32) -> [i32; 4
     [left, top, left + w, work[3].max(top)]
 }
 
+/// One monitor as the window needs it, in physical pixels (signed: monitors left of or above the
+/// primary have negative origins): its rectangle, its work area, and its pixels per point.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Area {
+    pub rect: [i32; 4],
+    pub work: [i32; 4],
+    pub scale: f32,
+}
+
+/// Where a clock island hangs from, in screen pixels: the centre of the island and its lower
+/// edge. `origin` is the bar window's client origin on the screen (signed), the island's
+/// numbers are in points of that bar's window, `ppp` that monitor's pixels per point.
+pub fn clock_anchor(origin: (i32, i32), centre_x: f32, bottom: f32, ppp: f32) -> (i32, i32) {
+    (origin.0 + (centre_x * ppp).round() as i32, origin.1 + (bottom * ppp).round() as i32)
+}
+
+/// The monitor an anchor belongs to: the one holding the island's last pixel row (just above its
+/// lower edge), else the nearest one. None without monitors.
+pub fn area_of(anchor: (i32, i32), areas: &[Area]) -> Option<Area> {
+    let (x, y) = (anchor.0, anchor.1 - 1);
+    let inside = |a: &Area| x >= a.rect[0] && x < a.rect[2] && y >= a.rect[1] && y < a.rect[3];
+    let distance = |a: &Area| {
+        let dx = (a.rect[0] - x).max(x - (a.rect[2] - 1)).max(0) as i64;
+        let dy = (a.rect[1] - y).max(y - (a.rect[3] - 1)).max(0) as i64;
+        dx * dx + dy * dy
+    };
+    areas.iter().find(|a| inside(a)).or_else(|| areas.iter().min_by_key(|a| distance(a))).copied()
+}
+
+/// The window for an anchor on `area`: as wide as the column is at that monitor's scale, kept in
+/// its work area, from the anchor down to the work area's bottom. None when that leaves nothing
+/// (a zero or negative size must never reach the compositor).
+pub fn window_for(anchor: (i32, i32), area: &Area) -> Option<[i32; 4]> {
+    let top = anchor.1.clamp(area.work[1], area.work[3]);
+    let r = window_px(anchor.0, top, area.work, area.scale);
+    (r[2] > r[0] && r[3] - r[1] >= MIN_H).then_some(r)
+}
+
+/// The least height worth a window, in pixels.
+const MIN_H: i32 = 40;
+
 /// "now", "4 min", "2 h", "3 d": how long ago, as the header shows it.
 pub fn ago(secs: u64) -> String {
     match secs {
@@ -208,6 +249,56 @@ mod tests {
         // Kept inside the work area, and never wider than it.
         assert_eq!(window_px(3800, 78, [0, 90, 3840, 2031], 1.5), [3252, 78, 3840, 2031]);
         assert_eq!(window_px(150, 0, [0, 0, 300, 500], 1.0), [0, 0, 300, 500]);
+    }
+
+    /// The setup: primary 4K at 100%, a 4K at 150% to its left, a 4K at 300% to its right.
+    fn setup() -> [Area; 3] {
+        let area = |l: i32, scale: f32| Area { rect: [l, 0, l + 3840, 2160], work: [l, 80, l + 3840, 2100], scale };
+        [area(0, 1.0), area(-3840, 1.5), area(3840, 3.0)]
+    }
+
+    #[test]
+    fn the_anchor_is_in_signed_screen_pixels() {
+        // A bar at x = -3840 (150%): the clock centre at 600 pt is 900 px in.
+        assert_eq!(clock_anchor((-3840, 0), 600.0, 50.0, 1.5), (-3840 + 900, 75));
+        assert_eq!(clock_anchor((3840, 0), 400.0, 20.0, 3.0), (3840 + 1200, 60));
+        assert_eq!(clock_anchor((0, -2160), 100.0, 40.0, 1.0), (100, -2120));
+    }
+
+    #[test]
+    fn the_anchor_picks_its_own_monitor() {
+        let areas = setup();
+        assert_eq!(area_of((1920, 78), &areas), Some(areas[0]));
+        assert_eq!(area_of((-1920, 75), &areas), Some(areas[1]));
+        assert_eq!(area_of((5760, 60), &areas), Some(areas[2]));
+        // The lower edge on the next monitor's top row still belongs to the bar above it.
+        assert_eq!(area_of((-3840, 1), &areas), Some(areas[1]));
+        // Off every monitor: the nearest. None without monitors.
+        assert_eq!(area_of((-9000, 50), &areas), Some(areas[1]));
+        assert_eq!(area_of((0, 0), &[]), None);
+    }
+
+    #[test]
+    fn the_window_is_sized_and_kept_by_the_monitor_it_hangs_on() {
+        let areas = setup();
+        // 100%: 392 px wide, centred on the clock.
+        assert_eq!(window_for((1920, 78), &areas[0]), Some([1724, 80, 2116, 2100]));
+        // 150%, left of the primary: 588 px, negative coordinates.
+        assert_eq!(window_for((-1920, 78), &areas[1]), Some([-2214, 80, -1626, 2100]));
+        // 300%: 1176 px; kept inside the work area at the monitor's edges.
+        assert_eq!(window_for((5760, 78), &areas[2]), Some([5172, 80, 6348, 2100]));
+        assert_eq!(window_for((7600, 78), &areas[2]), Some([6504, 80, 7680, 2100]));
+        assert_eq!(window_for((-3800, 78), &areas[1]), Some([-3840, 80, -3252, 2100]));
+    }
+
+    #[test]
+    fn no_work_area_left_means_no_window() {
+        let flat = Area { rect: [0, 0, 100, 100], work: [0, 90, 100, 90], scale: 1.0 };
+        assert_eq!(window_for((50, 90), &flat), None);
+        let thin = Area { work: [0, 90, 100, 100], ..flat };
+        assert_eq!(window_for((50, 90), &thin), None);
+        let empty = Area { work: [0, 0, 0, 0], ..flat };
+        assert_eq!(window_for((0, 0), &empty), None);
     }
 
     #[test]
