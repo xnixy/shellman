@@ -58,11 +58,17 @@ pub fn due(since: f64, now: f64) -> Result<(), f64> {
 /// The label of `resp`'s icon: `text` (one line, or a name and a muted second line after a
 /// `\n`) beside it, once the pointer has rested on it. Returns where it is, when it shows.
 pub fn label(ui: &egui::Ui, resp: &egui::Response, text: &str) -> Option<Rect> {
-    let ctx = ui.ctx();
+    label_at(ui.ctx(), resp.id, resp.rect, resp.hovered(), text)
+}
+
+/// The same label for something that is not a widget (a link in a terminal's grid): `id` names
+/// it, `anchor` is where it is, `hovered` whether the pointer rests on it now. Call it with
+/// `hovered` false once the pointer leaves, so the delay starts over next time.
+pub fn label_at(ctx: &egui::Context, id: Id, anchor: Rect, hovered: bool, text: &str) -> Option<Rect> {
     let key = Id::new("shellman-hover-label");
-    if !resp.hovered() || ctx.dragged_id().is_some() || text.is_empty() {
+    if !hovered || ctx.dragged_id().is_some() || text.is_empty() {
         // Forget the start only when it was this icon's.
-        let mine = ctx.data(|d| d.get_temp::<(Id, f64)>(key)).is_some_and(|(id, _)| id == resp.id);
+        let mine = ctx.data(|d| d.get_temp::<(Id, f64)>(key)).is_some_and(|(i, _)| i == id);
         if mine {
             ctx.data_mut(|d| d.remove::<(Id, f64)>(key));
         }
@@ -70,9 +76,9 @@ pub fn label(ui: &egui::Ui, resp: &egui::Response, text: &str) -> Option<Rect> {
     }
     let now = ctx.input(|i| i.time);
     let since = match ctx.data(|d| d.get_temp::<(Id, f64)>(key)) {
-        Some((id, t)) if id == resp.id => t,
+        Some((i, t)) if i == id => t,
         _ => {
-            ctx.data_mut(|d| d.insert_temp(key, (resp.id, now)));
+            ctx.data_mut(|d| d.insert_temp(key, (id, now)));
             now
         }
     };
@@ -88,7 +94,7 @@ pub fn label(ui: &egui::Ui, resp: &egui::Response, text: &str) -> Option<Rect> {
     let w = g1.size().x.max(g2.as_ref().map_or(0.0, |g| g.size().x));
     let h = g1.size().y + g2.as_ref().map_or(0.0, |g| g.size().y + 1.0);
     let size = Vec2::new(w + PAD_X * 2.0, (h + PAD_Y * 2.0).max(28.0));
-    let rect = place(resp.rect, size, ctx.screen_rect());
+    let rect = place(anchor, size, ctx.screen_rect());
     let p = ctx.layer_painter(LayerId::new(Order::Tooltip, key));
     let radius = CornerRadius::same(if g2.is_some() { 14 } else { (size.y / 2.0) as u8 });
     p.rect(rect, radius, fill(c.light), Stroke::new(1.0_f32, c.hairline), egui::StrokeKind::Inside);

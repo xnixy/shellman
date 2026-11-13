@@ -144,6 +144,8 @@ struct Update {
     rows: Vec<RowUpdate>,
     /// Whether any row on screen has a colour glyph (else that draw is skipped).
     any_emoji: bool,
+    /// New page sides (greyscale, colour): the textures are made that size, before any glyph.
+    pages: Option<(i32, i32)>,
 }
 
 /// The GPU side, shared with the paint callback (which egui needs to be `Send + Sync`).
@@ -152,7 +154,13 @@ struct Shared {
     update: Update,
     gpu: Option<Gpu>,
     failed: bool,
+    /// The GPU's largest texture side, once known (0 before).
+    max_texture: i32,
 }
+
+/// The largest page made before the GPU says what it takes (any GPU Windows 10 runs on takes
+/// this), and the largest made at all.
+const PAGE_CAP: i32 = 4096;
 
 pub struct Renderer {
     atlas: atlas::Atlas,
@@ -166,21 +174,55 @@ pub struct Renderer {
     hashes: Vec<u64>,
     cols: usize,
     shared: Arc<Mutex<Shared>>,
+    /// The largest page side to make.
+    cap: i32,
+    /// The screen's demand (see [`demand`]) when starting the pages over did not make it fit:
+    /// they are started over again only for a screen needing a quarter less of either, so a
+    /// screen that cannot fit is not placed again every frame (what did not fit is drawn as a
+    /// fallback, and stays so until its row changes).
+    overfull_at: Option<(usize, usize)>,
 }
 
 impl Renderer {
     /// A renderer for the grid font at `px` pixels per em.
     pub fn new(px: f32, family: &str) -> Result<Self, String> {
-        Ok(Self {
-            atlas: atlas::Atlas::new(px, family)?,
-            color: color::ColorAtlas::new(px),
+        Self::with_cap(px, family, PAGE_CAP)
+    }
+
+    /// A renderer whose pages are at most `cap` pixels a side.
+    fn with_cap(px: f32, family: &str, cap: i32) -> Result<Self, String> {
+        let atlas = atlas::Atlas::new(px, family, cap)?;
+        let m = atlas.metrics;
+        let mut r = Self {
+            color: color::ColorAtlas::new(px, m.cell_w, m.cell_h, cap),
+            atlas,
             emoji_rows: Vec::new(),
             px,
             family: family.to_owned(),
             hashes: Vec::new(),
             cols: 0,
             shared: Arc::default(),
-        })
+            cap,
+            overfull_at: None,
+        };
+        r.new_pages();
+        Ok(r)
+    }
+
+    /// Fresh pages were made: the GPU makes its textures their size, and anything still on its
+    /// way for the old ones is dropped.
+    fn new_pages(&mut self) {
+        self.overfull_at = None;
+        let mut shared = self.shared.lock().unwrap();
+        shared.update.pages = Some((self.atlas.side, self.color.side));
+        shared.update.glyphs.clear();
+        shared.update.color_glyphs.clear();
+    }
+
+    /// The largest page to make: the GPU's largest texture, once it said, within [`PAGE_CAP`].
+    fn page_cap(&self) -> i32 {
+        let max = self.shared.lock().unwrap().max_texture;
+        if max > 0 { self.cap.min(max) } else { self.cap }
     }
 
     pub fn metrics(&self) -> Metrics {
@@ -194,11 +236,13 @@ impl Renderer {
         if px == self.px {
             return Ok(());
         }
-        let atlas = atlas::Atlas::new(px, &self.family)?;
+        let cap = self.page_cap();
+        let atlas = atlas::Atlas::new(px, &self.family, cap)?;
+        self.color = color::ColorAtlas::new(px, atlas.metrics.cell_w, atlas.metrics.cell_h, cap);
         self.atlas = atlas;
-        self.color = color::ColorAtlas::new(px);
         self.px = px;
         self.hashes.clear();
+        self.new_pages();
         Ok(())
     }
 
@@ -207,10 +251,12 @@ impl Renderer {
         if family == self.family {
             return Ok(());
         }
-        self.atlas = atlas::Atlas::new(self.px, family)?;
-        self.color = color::ColorAtlas::new(self.px);
+        let cap = self.page_cap();
+        self.atlas = atlas::Atlas::new(self.px, family, cap)?;
+        self.color = color::ColorAtlas::new(self.px, self.atlas.metrics.cell_w, self.atlas.metrics.cell_h, cap);
         self.family = family.to_owned();
         self.hashes.iter_mut().for_each(|h| *h = 0);
+        self.new_pages();
         Ok(())
     }
 
@@ -236,19 +282,23 @@ impl Renderer {
         if changed.is_empty() {
             return 0;
         }
-        let rows = match self.build(frame, &changed) {
-            Ok(rows) => rows,
-            Err(Full) => {
-                // The atlas was emptied: every row is placed again from a fresh one.
-                self.hashes.iter_mut().for_each(|h| *h = 0);
+        let (mut rows, overflowed) = self.build(frame, &changed);
+        if overflowed {
+            // A page has no room left. Start both over and place the whole screen again, when
+            // it would fit them (and did not fail to before at this size); otherwise what did
+            // not fit stays drawn as a fallback, and the rows keep their hashes, so nothing is
+            // placed again until it changes.
+            let demand = demand(frame);
+            let fits = self.fits(demand) && self.overfull_at.is_none_or(|at| demand.0 * 4 <= at.0 * 3 || demand.1 * 4 <= at.1 * 3);
+            if fits {
+                self.atlas.reset();
+                self.color.reset();
                 changed = (0..frame.rows).map(|r| (r, row_hash(frame, r))).collect();
-                match self.build(frame, &changed) {
-                    Ok(rows) => rows,
-                    // Not even one screen fits: draw what was there, try again next time.
-                    Err(Full) => return 0,
-                }
+                let (again, still) = self.build(frame, &changed);
+                rows = again;
+                self.overfull_at = still.then_some(demand);
             }
-        };
+        }
         for &(r, hash) in &changed {
             self.hashes[r] = hash;
         }
@@ -264,11 +314,22 @@ impl Renderer {
         n
     }
 
-    fn build(&mut self, frame: &Frame, changed: &[(usize, u64)]) -> Result<Vec<RowUpdate>, Full> {
-        changed.iter().map(|&(r, _)| self.build_row(frame, r)).collect()
+    /// The changed rows' instances, and whether a glyph found no room on its page (it is then
+    /// drawn as a fallback: a colour glyph as text, a glyph as a box).
+    fn build(&mut self, frame: &Frame, changed: &[(usize, u64)]) -> (Vec<RowUpdate>, bool) {
+        let mut overflowed = false;
+        let rows = changed.iter().map(|&(r, _)| self.build_row(frame, r, &mut overflowed)).collect();
+        (rows, overflowed)
     }
 
-    fn build_row(&mut self, frame: &Frame, r: usize) -> Result<RowUpdate, Full> {
+    /// Whether the pages, started over, would hold a screen with `demand` (see [`demand`]).
+    fn fits(&self, demand: (usize, usize)) -> bool {
+        let m = self.atlas.metrics;
+        // Less a little, for glyphs that are taller or wider than their cell.
+        demand.0 <= self.atlas.capacity() * 9 / 10 && demand.1 <= self.color.capacity(m.cell_w, m.cell_h)
+    }
+
+    fn build_row(&mut self, frame: &Frame, r: usize, overflowed: &mut bool) -> RowUpdate {
         let m = self.atlas.metrics;
         let cols = frame.cols;
         let top = (r as i32 * m.cell_h) as i16;
@@ -324,10 +385,15 @@ impl Renderer {
             }
             if cell.flags & COLOR != 0 {
                 let text = frame.clusters.get(cell.ch).unwrap_or(" ");
-                if let Some(g) = self.color.glyph(text, span as u8, m.cell_w, m.cell_h).map_err(|_| Full)? {
-                    let slots = emoji.get_or_insert_with(|| vec![GlyphInst::default(); cols]);
-                    slots[c] = GlyphInst { pos: [(c as i32 * m.cell_w) as i16, top], uv: [g.x, g.y], size: [g.w, g.h], color: [255, 255, 255, 255] };
-                    continue;
+                match self.color.glyph(text, span as u8, m.cell_w, m.cell_h) {
+                    Ok(Some(g)) => {
+                        let slots = emoji.get_or_insert_with(|| vec![GlyphInst::default(); cols]);
+                        slots[c] = GlyphInst { pos: [(c as i32 * m.cell_w) as i16, top], uv: [g.x, g.y], size: [g.w, g.h], color: [255, 255, 255, 255] };
+                        continue;
+                    }
+                    Ok(None) => {}
+                    // No room: drawn as text below.
+                    Err(atlas::Full) => *overflowed = true,
                 }
             }
             if cell.ch == ' ' || cell.ch == '\0' || cell.fg[3] == 0 {
@@ -336,7 +402,13 @@ impl Renderer {
             let style = (cell.flags & BOLD != 0) as u8 | ((cell.flags & ITALIC != 0) as u8) << 1;
             // A colour cluster no font could draw in colour: its first character, as text.
             let ch = if cell.flags & COLOR != 0 { frame.clusters.get(cell.ch).and_then(|t| t.chars().next()).unwrap_or(' ') } else { cell.ch };
-            let g = self.atlas.glyph(ch, style).map_err(|_| Full)?;
+            let g = match self.atlas.glyph(ch, style) {
+                Ok(g) => g,
+                Err(atlas::Full) => {
+                    *overflowed = true;
+                    self.atlas.fallback
+                }
+            };
             if g.w == 0 {
                 continue;
             }
@@ -378,7 +450,7 @@ impl Renderer {
         bg.resize(cols, RectInst::default());
         over.truncate(cols * OVER_PER_COL);
         over.resize(cols * OVER_PER_COL, RectInst::default());
-        Ok(RowUpdate { index: r, bg, glyphs, over, emoji })
+        RowUpdate { index: r, bg, glyphs, over, emoji }
     }
 
     /// The paint callback that draws the grid into `rect` (which should be whole pixels).
@@ -392,7 +464,10 @@ impl Renderer {
                 let shared = &mut *shared;
                 if shared.gpu.is_none() && !shared.failed {
                     match Gpu::new(gl) {
-                        Ok(gpu) => shared.gpu = Some(gpu),
+                        Ok(gpu) => {
+                            shared.max_texture = gpu.max_texture();
+                            shared.gpu = Some(gpu);
+                        }
                         Err(e) => {
                             eprintln!("terminal: the grid renderer could not start: {e}");
                             shared.failed = true;
@@ -415,8 +490,21 @@ impl Renderer {
     }
 }
 
-/// An atlas page is full: it was emptied, and every row is placed again.
-struct Full;
+/// What a screen needs of the pages: its distinct glyphs, in cells (a wide one counts two), and
+/// its distinct colour glyphs.
+fn demand(frame: &Frame) -> (usize, usize) {
+    let mut text = std::collections::HashSet::new();
+    let mut color = std::collections::HashSet::new();
+    let mut cells = 0;
+    for cell in &frame.cells {
+        if cell.flags & COLOR != 0 {
+            color.insert((cell.ch, cell.flags & WIDE));
+        } else if cell.ch != ' ' && cell.ch != '\0' && text.insert((cell.ch, cell.flags & (BOLD | ITALIC | WIDE))) {
+            cells += if cell.flags & WIDE != 0 { 2 } else { 1 };
+        }
+    }
+    (cells, color.len())
+}
 
 /// A row's cells and, on the cursor's row, the cursor, as one number. Never 0.
 fn row_hash(frame: &Frame, r: usize) -> u64 {
@@ -493,6 +581,66 @@ mod tests {
         assert_ne!(a, b);
         assert_eq!(c.intern("\u{1F600}".into()), Some(a));
         assert_eq!(c.get(b), Some("\u{1F44D}\u{1F3FD}"));
+    }
+
+    /// `rows` rows of `cols` different letters (Latin Extended), starting at `from`.
+    fn letters(rows: usize, cols: usize, from: u32) -> Frame {
+        let cells = (0..rows * cols).map(|i| Cell { ch: char::from_u32(from + i as u32).unwrap(), fg: [255; 4], ..Cell::BLANK }).collect();
+        frame(cells, cols)
+    }
+
+    /// The glyph instances of the rows waiting for the GPU drawn as the fallback box.
+    fn boxes(r: &Renderer) -> usize {
+        let fb = r.atlas.fallback;
+        let shared = r.shared.lock().unwrap();
+        shared.update.rows.iter().flat_map(|row| &row.glyphs).filter(|g| g.size[0] > 0 && g.uv == [fb.x, fb.y]).count()
+    }
+
+    #[test]
+    fn a_screen_too_big_for_its_page_is_drawn_once_not_every_frame() {
+        // A page of 128 px: some 70 glyphs; the screen has 320 different ones.
+        let mut r = Renderer::with_cap(16.0, "", 128).unwrap();
+        assert_eq!(r.atlas.side, 128);
+        let mut f = letters(4, 80, 0x100);
+        // Every row is drawn, what fits as itself and the rest as boxes, and remembered.
+        assert_eq!(r.prepare(&f), 4);
+        assert!(r.hashes.iter().all(|&h| h != 0));
+        let fell_back = boxes(&r);
+        assert!(fell_back > 0 && fell_back < 320, "{fell_back} boxes");
+        // The same screen again: nothing is placed again.
+        r.shared.lock().unwrap().update.rows.clear();
+        assert_eq!(r.prepare(&f), 0);
+        // One cell changes: only its row is made again.
+        f.cells[2 * 80 + 5].ch = 'Ж';
+        assert_eq!(r.prepare(&f), 1);
+        // A screen that fits again: the page starts over and it is drawn whole, no boxes.
+        r.shared.lock().unwrap().update.rows.clear();
+        let small = letters(4, 10, 0x400);
+        assert_eq!(r.prepare(&small), 4);
+        assert_eq!(boxes(&r), 0);
+    }
+
+    #[test]
+    fn emoji_that_find_no_room_are_drawn_as_text() {
+        let mut r = Renderer::with_cap(16.0, "", 128).unwrap();
+        let mut clusters = Clusters::default();
+        // 60 different emoji, two cells each, on a colour page that holds a few dozen.
+        let mut cells = Vec::new();
+        for i in 0..60u32 {
+            let c = clusters.intern(char::from_u32(0x1F600 + i).unwrap().to_string()).unwrap();
+            cells.push(Cell { ch: c, fg: [255; 4], flags: COLOR | WIDE, ..Cell::BLANK });
+            cells.push(Cell::BLANK);
+        }
+        let mut f = frame(cells, 40);
+        f.clusters = clusters;
+        assert_eq!(r.prepare(&f), 3);
+        let shared = r.shared.lock().unwrap();
+        let emoji: usize = shared.update.rows.iter().filter_map(|row| row.emoji.as_ref()).map(|e| e.iter().filter(|g| g.size[0] > 0).count()).sum();
+        let text: usize = shared.update.rows.iter().map(|row| row.glyphs.iter().filter(|g| g.size[0] > 0).count()).sum();
+        assert!(emoji > 0 && emoji < 60, "{emoji} in colour");
+        assert_eq!(emoji + text, 60, "the rest as text");
+        drop(shared);
+        assert_eq!(r.prepare(&f), 0);
     }
 
     #[test]

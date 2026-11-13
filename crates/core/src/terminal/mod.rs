@@ -110,14 +110,50 @@ pub fn dir_arg(dir: &Path) -> String {
     d
 }
 
-/// `dir_arg`, quoted for a command line when it has blanks.
-fn quoted_dir(dir: &Path) -> String {
-    let d = dir_arg(dir);
-    if d.contains([' ', '\t']) {
-        format!("\"{d}\"")
-    } else {
-        d
+/// One argument for a Windows command line, written so `CommandLineToArgvW` (and the C runtime,
+/// which follow the same rules) give back exactly `s`: quoted when it is empty or has a blank or
+/// a quote; inside, a `"` becomes `\"` and the backslashes before a `"` (or before the closing
+/// quote) are doubled. Every argument the terminal puts into a command line goes through this,
+/// so no text (a directory a program reported, a profile name) can end its argument early.
+pub fn quote_arg(s: &str) -> String {
+    if !s.is_empty() && !s.contains([' ', '\t', '\n', '\x0b', '"']) {
+        return s.to_owned();
     }
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    let mut backslashes = 0usize;
+    for c in s.chars() {
+        match c {
+            '\\' => {
+                backslashes += 1;
+                continue;
+            }
+            '"' => {
+                out.extend(std::iter::repeat_n('\\', backslashes * 2 + 1));
+                out.push('"');
+            }
+            _ => {
+                out.extend(std::iter::repeat_n('\\', backslashes));
+                out.push(c);
+            }
+        }
+        backslashes = 0;
+    }
+    out.extend(std::iter::repeat_n('\\', backslashes * 2));
+    out.push('"');
+    out
+}
+
+/// A program's path as the first word of a command line: always quoted. The first word follows
+/// other rules (it ends at the next quote, with no escapes), which is fine for a path, as no
+/// Windows path holds a `"`; one that somehow did loses it rather than end the word early.
+pub fn quote_program(path: &str) -> String {
+    format!("\"{}\"", path.replace('"', ""))
+}
+
+/// `dir_arg`, quoted for a command line.
+fn quoted_dir(dir: &Path) -> String {
+    quote_arg(&dir_arg(dir))
 }
 
 /// The custom command line split into its program and the rest (as typed), with `{dir}`
@@ -177,7 +213,7 @@ fn start(route: &Route, dir: &Path) -> Result<&'static str, String> {
         Route::Shellman(exe) => spawned(Command::new(exe).args(["-d", &d]), "shellman Terminal"),
         Route::WtAlias(exe) => spawned(Command::new(exe).args(["-d", &d]), "Windows Terminal (alias)"),
         Route::WtActivate => {
-            let args = format!("-d \"{d}\"");
+            let args = format!("-d {}", quote_arg(&d));
             if crate::apps_index::activate::activate_with(WINDOWS_TERMINAL, &args) {
                 Ok("Windows Terminal (activation)")
             } else {
@@ -204,6 +240,49 @@ mod tests {
     fn folders_are_one_argument() {
         assert_eq!(dir_arg(Path::new(r"C:\Users\a\Desktop")), r"C:\Users\a\Desktop");
         assert_eq!(dir_arg(Path::new(r"D:\")), r"D:\.");
+    }
+
+    /// What Windows makes of a command line: its arguments after the program.
+    fn argv(line: &str) -> Vec<String> {
+        use windows::core::PCWSTR;
+        use windows::Win32::Foundation::{LocalFree, HLOCAL};
+        use windows::Win32::UI::Shell::CommandLineToArgvW;
+        let wide: Vec<u16> = format!("prog.exe {line}").encode_utf16().chain(std::iter::once(0)).collect();
+        let mut n = 0;
+        let list = unsafe { CommandLineToArgvW(PCWSTR(wide.as_ptr()), &mut n) };
+        assert!(!list.is_null());
+        let out = (1..n as usize).map(|i| unsafe { (*list.add(i)).to_string().unwrap() }).collect();
+        unsafe {
+            let _ = LocalFree(Some(HLOCAL(list.cast())));
+        }
+        out
+    }
+
+    #[test]
+    fn arguments_come_back_unchanged_through_command_line_to_argv() {
+        let hostile = [
+            "",
+            "plain",
+            "with space",
+            "tab\there",
+            r#"a"b"#,
+            r#"/home/x" ; calc.exe ; ""#,
+            r"C:\trailing\",
+            r"C:\with space\",
+            r#"back\\"quote"#,
+            r#"\\\""#,
+            "\"",
+            r"\\server\share",
+            "new\nline",
+            "ünïcode 😀",
+        ];
+        for s in hostile {
+            assert_eq!(argv(&quote_arg(s)), [s], "{s:?} as {}", quote_arg(s));
+        }
+        // Several in one line stay several.
+        let line = format!("-d {} --cd {}", quote_arg("Ubuntu"), quote_arg(r#"/tmp/x" --exec calc.exe ""#));
+        assert_eq!(argv(&line), ["-d", "Ubuntu", "--cd", r#"/tmp/x" --exec calc.exe ""#]);
+        assert_eq!(quote_program(r"C:\Program Files\x.exe"), r#""C:\Program Files\x.exe""#);
     }
 
     #[test]

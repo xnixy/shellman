@@ -36,7 +36,10 @@
 //! again when DWM may have changed its mind: DWM restarted or changed colours, the immersive
 //! colours changed, or another shellman process asks with [`REFRESH_MESSAGE`] (the session does
 //! after it changed the state, the desktop once the app host is up). Rebuilds are coalesced, at
-//! most one per [`REBUILD_GAP`]. `SHELLMAN_GLASS_LOG=1` prints what made a panel do so.
+//! most one per [`REBUILD_GAP`]. `SHELLMAN_GLASS_LOG=1` prints what made a panel do so. An
+//! attempt that made nothing is tried again (`retry`): while only the thread's rate bucket stood
+//! in the way, once it has a token, for up to 10 s (also a panel whose first attach was refused
+//! so); when Windows refused, a few times. A new ask starts the count over.
 //!
 //! The panel defends DWM against its callers: every size goes through `guard` (a piece of no
 //! size is hidden, never sized to 0; nothing past 8192 px; no NaN), and a thread makes at most a
@@ -65,6 +68,7 @@ mod effect;
 mod cloak;
 pub mod guard;
 pub mod islands;
+mod retry;
 mod style;
 mod tree;
 
@@ -127,8 +131,11 @@ struct Inner {
     rebuilding: Cell<bool>,
     /// When the last rebuild ran, for [`REBUILD_GAP`].
     rebuilt: Cell<Option<Instant>>,
-    /// Rebuilds in a row that could not make a new backdrop.
-    retries: Cell<u8>,
+    /// When to try again after an attempt that made no backdrop (`retry`).
+    retry: Cell<retry::Retry>,
+    /// The first attach was refused only because backdrops were being made too often: the
+    /// panel keeps trying to get one, like a rebuild.
+    wanted: Cell<bool>,
     style: Cell<Style>,
     /// Where the surface is, in the window's pixels from its top-left; None for all of it.
     shape: Cell<Option<RECT>>,
@@ -188,13 +195,20 @@ impl GlassPanel {
     pub fn attach(hwnd: isize, style: Style) -> Self {
         let target = HWND(hwnd as *mut _);
         bare(target);
+        let made = compose(hwnd);
+        // Refused for the rate alone: tried again once the bucket has a token.
+        let refused_for_rate = match &made {
+            Err(Refused::RateLimited(ready_in)) => Some(*ready_in),
+            _ => None,
+        };
         let inner = Rc::new(Inner {
             target,
-            composed: RefCell::new(compose(hwnd)),
+            composed: RefCell::new(made.ok()),
             rebuild_pending: Cell::new(false),
             rebuilding: Cell::new(false),
             rebuilt: Cell::new(None),
-            retries: Cell::new(0),
+            retry: Cell::new(retry::Retry::default()),
+            wanted: Cell::new(refused_for_rate.is_some()),
             style: Cell::new(style),
             shape: Cell::new(None),
             also: Cell::new(None),
@@ -217,6 +231,9 @@ impl GlassPanel {
             );
         }
         inner.follow();
+        if let Some(ready_in) = refused_for_rate {
+            inner.retry_after(retry::Outcome::RateLimited(ready_in));
+        }
         Self { inner }
     }
 
@@ -308,26 +325,36 @@ impl Drop for GlassPanel {
     }
 }
 
+/// Why no backdrop was made.
+enum Refused {
+    /// Backdrops were made too often on this thread (`guard::Bucket`): one can be in this long.
+    RateLimited(Duration),
+    /// Composition is off or not there, or Windows would not make it.
+    Unavailable,
+}
+
 /// The backdrop window and its visuals, if Windows can compose them.
-fn compose(hwnd: isize) -> Option<Composed> {
+fn compose(hwnd: isize) -> Result<Composed, Refused> {
     if std::env::var_os("SHELLMAN_NO_COMPOSITION").is_some() {
-        return None;
+        return Err(Refused::Unavailable);
     }
-    let compositor = tree::compositor()?;
+    let compositor = tree::compositor().ok_or(Refused::Unavailable)?;
     // A caller making glass per click or per frame would have DWM create and destroy a target
     // and its textures at that pace; past a short burst, a few a second.
-    if !BACKDROPS.with(|b| {
+    let taken = BACKDROPS.with(|b| {
         let mut bucket = b.get();
-        let ok = bucket.take(Instant::now());
+        let now = Instant::now();
+        let ok = bucket.take(now);
         b.set(bucket);
-        ok
-    }) {
+        if ok { Ok(()) } else { Err(bucket.ready_in(now)) }
+    });
+    if let Err(ready_in) = taken {
         trace(|| format!("glass {hwnd:#x}: backdrop windows made too often, none made now"));
-        return None;
+        return Err(Refused::RateLimited(ready_in));
     }
-    let window = backdrop::create()?;
+    let window = backdrop::create().ok_or(Refused::Unavailable)?;
     match Tree::new(&compositor, window) {
-        Ok(tree) => Some(Composed {
+        Ok(tree) => Ok(Composed {
             window,
             tree,
             settings: watch_effects(hwnd),
@@ -336,7 +363,7 @@ fn compose(hwnd: isize) -> Option<Composed> {
             unsafe {
                 let _ = DestroyWindow(window);
             }
-            None
+            Err(Refused::Unavailable)
         }
     }
 }
@@ -355,7 +382,7 @@ impl Inner {
         if self.rebuilding.get() {
             return;
         }
-        if !self.alive.get() || self.composed.borrow().is_none() {
+        if !self.alive.get() || (self.composed.borrow().is_none() && !self.wanted.get()) {
             self.rebuild_pending.set(false);
             return;
         }
@@ -372,20 +399,27 @@ impl Inner {
         self.rebuild_pending.set(false);
         self.rebuilt.set(Some(Instant::now()));
         self.rebuilding.set(true);
-        let fresh = compose(self.target.0 as isize);
-        let Some(fresh) = fresh else {
-            self.rebuilding.set(false);
-            // Not allowed yet (or Windows refused): keep the old one and try again later, a
-            // few times.
-            let tries = self.retries.get();
-            if tries < 3 {
-                self.retries.set(tries + 1);
-                self.rebuild_pending.set(true);
-                self.later(REBUILD_GAP);
+        let fresh = match compose(self.target.0 as isize) {
+            Ok(fresh) => fresh,
+            Err(refused) => {
+                self.rebuilding.set(false);
+                // Keep the old one, and try again: when the bucket has a token, or (Windows
+                // refused) a few times.
+                self.retry_after(match refused {
+                    Refused::RateLimited(ready_in) => retry::Outcome::RateLimited(ready_in),
+                    Refused::Unavailable => retry::Outcome::Failed,
+                });
+                return;
             }
-            return;
         };
-        self.retries.set(0);
+        self.retry_after(retry::Outcome::Made);
+        // A panel that had no glass yet painted its own surface: have it paint again, now on
+        // glass.
+        if self.wanted.replace(false) {
+            unsafe {
+                let _ = windows::Win32::Graphics::Gdi::InvalidateRect(Some(self.target), None, false);
+            }
+        }
         cloak::remember(self.target, fresh.window);
         let old = self.composed.replace(Some(fresh));
         self.effects.set(effects_enabled());
@@ -402,6 +436,21 @@ impl Inner {
         trace(|| format!("glass {:?}: backdrop made again", self.target.0));
     }
 
+    /// After an attempt came to `outcome`: try again when [`retry::Retry`] says.
+    fn retry_after(&self, outcome: retry::Outcome) {
+        let mut state = self.retry.get();
+        let next = state.after(outcome, Instant::now(), REBUILD_GAP);
+        self.retry.set(state);
+        match next {
+            retry::Next::RetryIn(wait) => {
+                self.rebuild_pending.set(true);
+                self.later(wait);
+            }
+            retry::Next::Done => {}
+            retry::Next::GiveUp => trace(|| format!("glass {:?}: no backdrop made, given up until asked again", self.target.0)),
+        }
+    }
+
     /// Run the pending rebuild after `wait` (the served window's timer; one at a time).
     fn later(&self, wait: Duration) {
         let ms = wait.as_millis().clamp(10, u32::MAX as u128) as u32;
@@ -412,6 +461,10 @@ impl Inner {
 
     /// Ask for a rebuild once the current message is done; several asks make one rebuild.
     fn ask_rebuild(&self) {
+        // A new ask: every attempt again, whatever earlier ones came to.
+        let mut state = self.retry.get();
+        state.asked();
+        self.retry.set(state);
         if !self.rebuild_pending.replace(true) {
             unsafe {
                 let _ = PostMessageW(Some(self.target), rebuild_message(), WPARAM(0), LPARAM(0));

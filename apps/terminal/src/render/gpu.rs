@@ -101,6 +101,10 @@ pub struct Gpu {
     any_emoji: bool,
     cols: usize,
     rows: usize,
+    /// The pages' sides (greyscale, colour), as the renderer made them.
+    atlas_side: i32,
+    color_side: i32,
+    max_texture: i32,
 }
 
 impl Gpu {
@@ -110,17 +114,7 @@ impl Gpu {
             let glyph = program(gl, GLYPH_VS, GLYPH_FS)?;
             let atlas = gl.create_texture()?;
             gl.bind_texture(glow::TEXTURE_2D, Some(atlas));
-            gl.tex_image_2d(
-                glow::TEXTURE_2D,
-                0,
-                glow::R8 as i32,
-                ATLAS,
-                ATLAS,
-                0,
-                glow::RED,
-                glow::UNSIGNED_BYTE,
-                glow::PixelUnpackData::Slice(None),
-            );
+            mono_storage(gl, ATLAS);
             // Glyphs land on whole pixels, so nearest sampling is exact.
             for (p, v) in [
                 (glow::TEXTURE_MIN_FILTER, glow::NEAREST),
@@ -143,8 +137,16 @@ impl Gpu {
                 any_emoji: false,
                 cols: 0,
                 rows: 0,
+                atlas_side: ATLAS,
+                color_side: COLOR_ATLAS,
+                max_texture: gl.get_parameter_i32(glow::MAX_TEXTURE_SIZE),
             })
         }
+    }
+
+    /// The largest texture side this GPU takes.
+    pub fn max_texture(&self) -> i32 {
+        self.max_texture
     }
 
     /// Take in what changed since the last frame: a new grid size, new glyphs, changed rows.
@@ -159,9 +161,26 @@ impl Gpu {
                 alloc(gl, &self.over, cells * OVER_PER_COL * size_of::<RectInst>());
                 alloc(gl, &self.emoji, cells * size_of::<GlyphInst>());
             }
+            // New pages (another font size): the textures take their size, emptied.
+            if let Some((mono, color)) = update.pages.take() {
+                if mono != self.atlas_side {
+                    gl.bind_texture(glow::TEXTURE_2D, Some(self.atlas));
+                    mono_storage(gl, mono);
+                    gl.bind_texture(glow::TEXTURE_2D, None);
+                    self.atlas_side = mono;
+                }
+                if color != self.color_side {
+                    if let Some((_, tex)) = self.color {
+                        gl.bind_texture(glow::TEXTURE_2D, Some(tex));
+                        color_storage(gl, color);
+                        gl.bind_texture(glow::TEXTURE_2D, None);
+                    }
+                    self.color_side = color;
+                }
+            }
             if !update.color_glyphs.is_empty() {
                 if self.color.is_none() {
-                    match color_page(gl) {
+                    match color_page(gl, self.color_side) {
                         Ok(page) => self.color = Some(page),
                         Err(e) => eprintln!("terminal: no colour glyphs: {e}"),
                     }
@@ -233,7 +252,7 @@ impl Gpu {
 
             gl.use_program(Some(self.glyph));
             gl.uniform_2_f32(gl.get_uniform_location(self.glyph, "u_view").as_ref(), view[0], view[1]);
-            gl.uniform_1_f32(gl.get_uniform_location(self.glyph, "u_atlas").as_ref(), ATLAS as f32);
+            gl.uniform_1_f32(gl.get_uniform_location(self.glyph, "u_atlas").as_ref(), self.atlas_side as f32);
             gl.uniform_1_i32(gl.get_uniform_location(self.glyph, "u_tex").as_ref(), 0);
             gl.active_texture(glow::TEXTURE0);
             gl.bind_texture(glow::TEXTURE_2D, Some(self.atlas));
@@ -244,7 +263,7 @@ impl Gpu {
             if let (true, Some((program, tex))) = (self.any_emoji, self.color) {
                 gl.use_program(Some(program));
                 gl.uniform_2_f32(gl.get_uniform_location(program, "u_view").as_ref(), view[0], view[1]);
-                gl.uniform_1_f32(gl.get_uniform_location(program, "u_atlas").as_ref(), COLOR_ATLAS as f32);
+                gl.uniform_1_f32(gl.get_uniform_location(program, "u_atlas").as_ref(), self.color_side as f32);
                 gl.uniform_1_i32(gl.get_uniform_location(program, "u_tex").as_ref(), 0);
                 gl.bind_texture(glow::TEXTURE_2D, Some(tex));
                 gl.bind_vertex_array(Some(self.emoji.vao));
@@ -278,12 +297,22 @@ impl Gpu {
     }
 }
 
-/// The colour page and the program that draws from it.
-unsafe fn color_page(gl: &glow::Context) -> Result<(glow::Program, glow::Texture), String> {
+/// (Re)make the bound texture's storage as a greyscale page of `side`.
+unsafe fn mono_storage(gl: &glow::Context, side: i32) {
+    gl.tex_image_2d(glow::TEXTURE_2D, 0, glow::R8 as i32, side, side, 0, glow::RED, glow::UNSIGNED_BYTE, glow::PixelUnpackData::Slice(None));
+}
+
+/// (Re)make the bound texture's storage as a colour page of `side`.
+unsafe fn color_storage(gl: &glow::Context, side: i32) {
+    gl.tex_image_2d(glow::TEXTURE_2D, 0, glow::RGBA8 as i32, side, side, 0, glow::BGRA, glow::UNSIGNED_BYTE, glow::PixelUnpackData::Slice(None));
+}
+
+/// The colour page (of `side`) and the program that draws from it.
+unsafe fn color_page(gl: &glow::Context, side: i32) -> Result<(glow::Program, glow::Texture), String> {
     let program = program(gl, GLYPH_VS, COLOR_FS)?;
     let tex = gl.create_texture()?;
     gl.bind_texture(glow::TEXTURE_2D, Some(tex));
-    gl.tex_image_2d(glow::TEXTURE_2D, 0, glow::RGBA8 as i32, COLOR_ATLAS, COLOR_ATLAS, 0, glow::BGRA, glow::UNSIGNED_BYTE, glow::PixelUnpackData::Slice(None));
+    color_storage(gl, side);
     for (p, v) in [
         (glow::TEXTURE_MIN_FILTER, glow::NEAREST),
         (glow::TEXTURE_MAG_FILTER, glow::NEAREST),

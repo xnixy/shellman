@@ -164,12 +164,21 @@ pub fn text_bytes(text: &str, alt: bool) -> Vec<u8> {
 }
 
 /// Pasted text: line ends become CR (what Enter sends), and with bracketed paste on it is wrapped
-/// so the shell takes it as one paste, with any end marker inside it taken out.
+/// so the shell takes it as one paste.
+///
+/// A paste is text, never a sequence: every control character except tab and CR is taken out
+/// first (ESC and the rest of C0, DEL, and C1, whose CSI `\u{9b}` some programs take as ESC [).
+/// So nothing in the clipboard can end a bracketed paste early (`\x1b[201~`, however it is
+/// split or nested) and run what follows, or send keys or escape sequences to the program.
 pub fn paste_bytes(text: &str, bracketed: bool) -> Vec<u8> {
-    let text = text.replace("\r\n", "\r").replace('\n', "\r");
+    let text: String = text
+        .replace("\r\n", "\r")
+        .replace('\n', "\r")
+        .chars()
+        .filter(|&c| c == '\t' || c == '\r' || !c.is_control())
+        .collect();
     if bracketed {
-        let inner = text.replace("\x1b[201~", "");
-        format!("\x1b[200~{inner}\x1b[201~").into_bytes()
+        format!("\x1b[200~{text}\x1b[201~").into_bytes()
     } else {
         text.into_bytes()
     }
@@ -421,7 +430,16 @@ mod tests {
         assert_eq!(paste_bytes("a\nb\r\nc", false), b"a\rb\rc");
         assert_eq!(paste_bytes("ls\n", true), b"\x1b[200~ls\r\x1b[201~");
         // A pasted end marker cannot end the paste early.
-        assert_eq!(paste_bytes("x\x1b[201~y", true), b"\x1b[200~xy\x1b[201~");
+        assert_eq!(paste_bytes("x\x1b[201~y", true), b"\x1b[200~x[201~y\x1b[201~");
+        // Nor one that a single removal would put back together.
+        let nested = paste_bytes("echo hi\x1b[20\x1b[201~1~\rcalc.exe\r", true);
+        assert_eq!(nested, b"\x1b[200~echo hi[20[201~1~\rcalc.exe\r\x1b[201~");
+        assert_eq!(nested.windows(6).filter(|w| w == b"\x1b[201~").count(), 1);
+        // No control characters but tab and CR, bracketed or not; C1 CSI too.
+        assert_eq!(paste_bytes("a\tb\x03c\x1b[2Jd\x7fe\u{9b}31mf\u{85}g", false), "a\tbc[2Jde31mfg".as_bytes());
+        assert_eq!(paste_bytes("\x00\x08\x1b", true), b"\x1b[200~\x1b[201~");
+        // Text that only looks like controls stays.
+        assert_eq!(paste_bytes("ünï ^[ \\x1b", false), "ünï ^[ \\x1b".as_bytes());
     }
 
     fn w(vk: u16, sc: u16, ch: u16, down: bool, state: u32) -> String {

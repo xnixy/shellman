@@ -133,9 +133,18 @@ pub fn keeps(vk: u16, m: Mods, selection: bool) -> bool {
     }
 }
 
-impl super::TerminalApp {
-    /// Keys, typed text and pastes go to the shown tab's shell, after the terminal's own.
-    pub(super) fn input(&mut self, ctx: &egui::Context) {
+/// The open tab whose id is `id`: where input typed into it goes. None once it closed (input
+/// for it is dropped, never sent to whichever tab is shown now).
+pub fn typing_tab<T>(tabs: &crate::tabs::Tabs<T>, id: u64, id_of: impl Fn(&T) -> u64) -> Option<&T> {
+    tabs.iter().find(|t| id_of(t) == id)
+}
+
+impl super::TerminalApp {    /// Keys, typed text and pastes go to the shell of the tab they were typed into: the one
+    /// shown when the frame began (`typed_into`, its id), which a tab closing or a tab handed
+    /// over may have replaced as the shown one since; if that tab is gone they are dropped.
+    /// After one of the terminal's own shortcuts (which may show another tab) they go to the tab
+    /// shown then.
+    pub(super) fn input(&mut self, ctx: &egui::Context, typed_into: u64) {
         if self.strip.menu_open() {
             // The profile menu has the keyboard (Escape closes it).
             if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
@@ -158,6 +167,7 @@ impl super::TerminalApp {
             return;
         }
         let events = ctx.input(|i| i.events.clone());
+        let mut target = typed_into;
         let mut out = Vec::new();
         let mut typed = false;
         // Keys the console took whole (win32-input-mode) came first, through the window
@@ -171,7 +181,21 @@ impl super::TerminalApp {
         }
         let whole_keys = self.win32_keys.as_ref().is_some_and(|g| g.active());
         for event in events {
-            let mode = self.tabs.current().session.mode();
+            // The tab typed into, if it is still open.
+            let Some(tab) = typing_tab(&self.tabs, target, |t| t.id) else {
+                // Gone: only the terminal's own shortcuts still count.
+                if let egui::Event::Key { key, physical_key, pressed: true, modifiers, .. } = event {
+                    let mods = Mods { shift: modifiers.shift, ctrl: modifiers.ctrl, alt: modifiers.alt };
+                    if let Some(s) = shortcut(key, physical_key, mods) {
+                        out.clear();
+                        self.run(ctx, s);
+                        target = self.tabs.current().id;
+                    }
+                }
+                continue;
+            };
+            let session = &tab.session;
+            let mode = session.mode();
             let app_cursor = mode.contains(TermMode::APP_CURSOR);
             match event {
                 // Typed text came as key events already.
@@ -190,16 +214,18 @@ impl super::TerminalApp {
                     let mods = Mods { shift: modifiers.shift, ctrl: modifiers.ctrl, alt: modifiers.alt };
                     if let Some(s) = shortcut(key, physical_key, mods) {
                         // What was typed before goes first, to the tab it was typed in.
-                        self.flush(&mut out, &mut typed);
+                        self.flush(&mut out, &mut typed, target);
                         self.run(ctx, s);
+                        target = self.tabs.current().id;
                         continue;
                     }
-                    let session = &self.tabs.current().session;
                     let has_selection = session.with_term(select::has);
                     // Enter copies a selection (and Escape drops it), as in Windows Terminal.
                     if has_selection && mods == Mods::NONE && matches!(key, egui::Key::Enter | egui::Key::Escape) {
                         if key == egui::Key::Enter {
-                            self.copy_selection(ctx);
+                            if let Some(text) = session.with_term(select::text).filter(|t| !t.is_empty()) {
+                                ctx.copy_text(text);
+                            }
                         }
                         session.with_term_mut(|t| t.selection = None);
                         continue;
@@ -207,8 +233,7 @@ impl super::TerminalApp {
                     if whole_keys {
                         // Only the terminal's own keys reach egui then (paging the history).
                         if let Some(Local::ScrollPage(dir)) = map_key(key, mods).and_then(|k| keys::local(k, mods)) {
-                            let s = &self.tabs.current().session;
-                            s.scroll(dir * (s.size().rows as i32 - 1).max(1));
+                            session.scroll(dir * (session.size().rows as i32 - 1).max(1));
                         }
                         continue;
                     }
@@ -221,8 +246,7 @@ impl super::TerminalApp {
                     }
                     match keys::local(k, mods) {
                         Some(Local::ScrollPage(dir)) => {
-                            let s = &self.tabs.current().session;
-                            s.scroll(dir * (s.size().rows as i32 - 1).max(1));
+                            session.scroll(dir * (session.size().rows as i32 - 1).max(1));
                         }
                         None => {
                             out.extend(keys::key_bytes(k, mods, app_cursor).unwrap_or_default());
@@ -238,10 +262,12 @@ impl super::TerminalApp {
                 // copied; without one, Ctrl+C is the interrupt it always was.
                 egui::Event::Copy => {
                     let m = ctx.input(|i| i.modifiers);
-                    if self.tabs.current().session.with_term(select::has) {
-                        self.copy_selection(ctx);
+                    if session.with_term(select::has) {
+                        if let Some(text) = session.with_term(select::text).filter(|t| !t.is_empty()) {
+                            ctx.copy_text(text);
+                        }
                         if !m.shift {
-                            self.tabs.current().session.with_term_mut(|t| t.selection = None);
+                            session.with_term_mut(|t| t.selection = None);
                         }
                     } else if m.ctrl && !m.shift && !whole_keys {
                         out.push(0x03);
@@ -266,22 +292,24 @@ impl super::TerminalApp {
             out.extend(keys::text_bytes(&c.to_string(), true));
             typed = true;
         }
-        self.flush(&mut out, &mut typed);
+        self.flush(&mut out, &mut typed, target);
     }
 
-    /// Send what was typed to the shown tab; typing drops a selection and shows the cursor.
-    fn flush(&mut self, out: &mut Vec<u8>, typed: &mut bool) {
-        if *typed {
-            let s = &self.tabs.current().session;
-            if s.with_term(|t| t.selection.is_some()) {
-                s.with_term_mut(|t| t.selection = None);
-            }
+    /// Send what was typed to tab `target` (by id), if it is still open; typing drops a
+    /// selection and shows the cursor.
+    fn flush(&mut self, out: &mut Vec<u8>, typed: &mut bool, target: u64) {
+        let bytes = std::mem::take(out);
+        let was_typed = std::mem::take(typed);
+        let Some(tab) = typing_tab(&self.tabs, target, |t| t.id) else { return };
+        let s = &tab.session;
+        if was_typed && s.with_term(|t| t.selection.is_some()) {
+            s.with_term_mut(|t| t.selection = None);
+        }
+        s.write(bytes);
+        if was_typed && target == self.tabs.current().id {
             self.view.restart_blink();
         }
-        self.tabs.current().session.write(std::mem::take(out));
-        *typed = false;
     }
-
     /// Put the selection on the clipboard.
     pub(super) fn copy_selection(&self, ctx: &egui::Context) -> bool {
         match self.tabs.current().session.with_term(select::text) {
@@ -363,6 +391,28 @@ pub fn map_key(key: egui::Key, mods: Mods) -> Option<Key> {
 mod tests {
     use super::*;
     use egui::Key as K;
+
+    /// A frame's keys follow the tab they were typed into, not whichever tab is shown once
+    /// closed tabs are reaped and handed-over tabs open (both happen before input is read).
+    #[test]
+    fn typed_keys_never_reach_another_tab() {
+        use crate::tabs::Tabs;
+        let id = |t: &u64| *t;
+        // Tabs 1 and 2, 1 shown: the frame begins with keys typed into 1.
+        let mut tabs = Tabs::new(1u64);
+        tabs.open(2);
+        tabs.select(0);
+        let typed_into = *tabs.current();
+        // A tab handed over opens and is shown: the keys still go to 1.
+        tabs.open(3);
+        assert_eq!(*tabs.current(), 3);
+        assert_eq!(typing_tab(&tabs, typed_into, id), Some(&1));
+        // Tab 1's shell exited and it closed: the keys go nowhere, not to the tab shown now.
+        tabs.select(0);
+        assert!(tabs.retain(|&t| t != 1));
+        assert_ne!(*tabs.current(), 1);
+        assert_eq!(typing_tab(&tabs, typed_into, id), None);
+    }
 
     const CTRL_SHIFT: Mods = Mods { shift: true, ctrl: true, alt: false };
     const CTRL_ALT: Mods = Mods { shift: false, ctrl: true, alt: true };

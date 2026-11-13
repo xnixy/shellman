@@ -53,6 +53,9 @@ pub struct Tab {
     /// Stays open after its program exits (`--hold`); `held` once that was said in it.
     hold: bool,
     held: bool,
+    /// The WSL distribution it runs (a profile's), whose POSIX directories a new tab of that
+    /// same distribution may start in.
+    distro: Option<String>,
 }
 
 pub struct TerminalApp {
@@ -104,11 +107,11 @@ impl TerminalApp {
             look_watch.set_dirs(vec![dir]);
         }
         let minimized = handoff.as_ref().is_some_and(Arrived::minimized);
-        let first = match handoff {
-            Some(arrived) => attach(arrived, &renderer, &config, wake.clone()).map_err(|e| format!("could not show the console: {e}"))?,
+        let (first, distro) = match handoff {
+            Some(arrived) => (attach(arrived, &renderer, &config, wake.clone()).map_err(|e| format!("could not show the console: {e}"))?, None),
             None => {
-                let (command, dir) = plan(&profiles, &config, &launch, None);
-                spawn(&command, Some(dir), &renderer, &config, wake.clone()).map_err(|e| format!("could not start {command}: {e}"))?
+                let (command, dir, distro) = plan(&profiles, &config, &launch, None);
+                (spawn(&command, Some(dir), &renderer, &config, wake.clone()).map_err(|e| format!("could not start {command}: {e}"))?, distro)
             }
         };
         if minimized {
@@ -116,7 +119,7 @@ impl TerminalApp {
         }
         let inbox = instance::listen(wake.clone());
         Ok(Self {
-            tabs: Tabs::new(Tab { id: 0, session: first, hold: launch.hold && launch.command.is_some(), held: false }),
+            tabs: Tabs::new(Tab { id: 0, session: first, hold: launch.hold && launch.command.is_some(), held: false, distro }),
             next_id: 1,
             profiles,
             font_pt,
@@ -148,19 +151,25 @@ impl TerminalApp {
             Some(p) => p,
             None => profiles::pick(&self.profiles, &self.config.default_profile),
         };
-        let cwd = self.tabs.current().session.cwd();
-        let (command, dir) = p.launch(cwd.as_deref(), &home());
-        self.open_tab(&command, dir, false);
+        let shown = self.tabs.current();
+        let cwd = shown.session.cwd();
+        let dir = match &cwd {
+            Some(path) => profiles::Dir::Reported { path, distro: shown.distro.as_deref() },
+            None => profiles::Dir::None,
+        };
+        let (command, dir) = p.launch(dir, &home());
+        let distro = p.distro().map(str::to_owned);
+        self.open_tab(&command, dir, false, distro);
     }
 
     /// Open a tab running `command` in `dir`, right after the shown one, and show it.
-    fn open_tab(&mut self, command: &str, dir: PathBuf, hold: bool) {
+    fn open_tab(&mut self, command: &str, dir: PathBuf, hold: bool, distro: Option<String>) {
         match spawn(command, Some(dir), &self.renderer, &self.config, self.wake.clone()) {
             Ok(session) => {
                 let id = self.next_id;
                 self.next_id += 1;
                 self.leave_tab();
-                self.tabs.open(Tab { id, session, hold, held: false });
+                self.tabs.open(Tab { id, session, hold, held: false, distro });
                 self.enter_tab();
             }
             Err(e) => eprintln!("terminal: could not start {command}: {e}"),
@@ -174,9 +183,10 @@ impl TerminalApp {
             return;
         }
         for launch in launches {
-            let cwd = self.tabs.current().session.cwd();
-            let (command, dir) = plan(&self.profiles, &self.config, &launch, cwd);
-            self.open_tab(&command, dir, launch.hold && launch.command.is_some());
+            let shown = self.tabs.current();
+            let cwd = shown.session.cwd().map(|c| (c, shown.distro.clone()));
+            let (command, dir, distro) = plan(&self.profiles, &self.config, &launch, cwd);
+            self.open_tab(&command, dir, launch.hold && launch.command.is_some(), distro);
         }
         ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
         ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
@@ -259,7 +269,7 @@ impl TerminalApp {
     /// The font and its size (zoom starts over), the history kept, copy-on-select, the default
     /// profile and what a second start does; `default_terminal` is read where it is used.
     fn reload_config(&mut self) {
-        let new = Config::read();
+        let Some(new) = Config::try_read() else { return };
         if new == self.config {
             return;
         }
@@ -425,26 +435,45 @@ impl TerminalApp {
     }
 }
 
-/// Start a shell sized like the shown grid (fixed on its first frame).
+/// Start a shell sized like the shown grid (fixed on its first frame). A folder that is not
+/// there (or not a folder) is found by CreateProcess itself, not probed beforehand: the shell
+/// then starts in home instead.
 fn spawn(command: &str, dir: Option<PathBuf>, renderer: &Renderer, config: &Config, wake: Arc<dyn Fn() + Send + Sync>) -> std::io::Result<Session> {
     let m = renderer.metrics();
     let size = Size { cols: 80, rows: 24, cell_w: m.cell_w as u16, cell_h: m.cell_h as u16 };
-    Session::start(Start { command, dir, size, scrollback: config.scrollback }, wake)
+    let fallback = dir.as_ref().map(|_| home()).filter(|h| Some(h) != dir.as_ref());
+    match Session::start(Start { command, dir, size, scrollback: config.scrollback }, wake.clone()) {
+        Err(e) if fallback.is_some() => {
+            eprintln!("terminal: {e}; starting in the home folder");
+            Session::start(Start { command, dir: fallback, size, scrollback: config.scrollback }, wake)
+        }
+        started => started,
+    }
 }
 
-/// What a tab for `launch` runs and where: its command, else its profile's shell (the default
-/// when none is named or the name is unknown), in its folder, else `cwd` (the shown tab's), else
+/// What a tab for `launch` runs and where, and the WSL distribution it is: its command, else
+/// its profile's shell (the default when none is named or the name is unknown), in its folder,
+/// else `cwd` (the shown tab's reported directory, with the distribution that tab runs), else
 /// the folder this was started in, else home.
-fn plan(profiles: &[Profile], config: &Config, launch: &Launch, cwd: Option<String>) -> (String, PathBuf) {
-    let here = launch.dir.as_ref().map(|d| d.display().to_string()).or(cwd).or_else(|| start_dir().map(|d| d.display().to_string()));
+fn plan(profiles: &[Profile], config: &Config, launch: &Launch, cwd: Option<(String, Option<String>)>) -> (String, PathBuf, Option<String>) {
+    let started = start_dir();
+    let dir = match (&launch.dir, &cwd, &started) {
+        (Some(d), _, _) => profiles::Dir::Given(d),
+        (None, Some((path, distro)), _) => profiles::Dir::Reported { path, distro: distro.as_deref() },
+        (None, None, Some(d)) => profiles::Dir::Given(d),
+        (None, None, None) => profiles::Dir::None,
+    };
     match &launch.command {
         Some(command) => {
-            let dir = here.map(PathBuf::from).filter(|d| d.is_dir()).unwrap_or_else(home);
-            (command.clone(), dir)
+            // Any shell can run a command: only a Windows folder is somewhere to start it.
+            let p = profiles::pick(profiles, "Command Prompt");
+            let (_, dir) = p.launch(dir, &home());
+            (command.clone(), dir, None)
         }
         None => {
             let p = profiles::pick(profiles, launch.profile.as_deref().unwrap_or(&config.default_profile));
-            p.launch(here.as_deref(), &home())
+            let (command, dir) = p.launch(dir, &home());
+            (command, dir, p.distro().map(str::to_owned))
         }
     }
 }
@@ -497,6 +526,9 @@ impl eframe::App for TerminalApp {
     }
 
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        // This frame's keys were typed into the tab shown now; closing tabs and tabs handed
+        // over may show another before they are sent.
+        let typed_into = self.tabs.current().id;
         if !self.reap(ctx) {
             return;
         }
@@ -504,7 +536,7 @@ impl eframe::App for TerminalApp {
         self.track_system(ctx);
         self.track_focus(ctx);
         shellman_ui::app_icon::sync_window_icon(ctx, shellman_ui::app_icon::Kind::Shellman);
-        self.input(ctx);
+        self.input(ctx, typed_into);
         self.track_tabs(ctx);
         let cpu = self.stats.on().then(|| frame.info().cpu_usage).flatten();
         self.layout(ctx, cpu);

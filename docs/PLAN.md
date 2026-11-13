@@ -25,7 +25,13 @@ Shared code:
 - `crates/core`: shell plumbing that has no layout: file ops, shell images, the Windows context
   menu, folder watching, the app index (the shell's Apps folder), live DWM previews
   (`live_thumb`), shared settings types (`settings::{dock,bar,launcher}`), and settings files
-  under `%APPDATA%\shellman`. `SHELLMAN_CONFIG_DIR` overrides that folder, for tests.
+  under `%APPDATA%\shellman`. `SHELLMAN_CONFIG_DIR` overrides that folder, for tests. A save
+  (`config::save_to`) writes a temporary file of its own (process, thread, count), flushes it and
+  renames it over the file, so two apps saving the shared `appearance.json` at once never leave
+  half a file. A file that cannot be read is tried again after 5 ms; still unreadable, the
+  forgiving `load` gives defaults but this process then never saves over it while it stays
+  unreadable, and code that would save what it read (folding a sidebar, Settings and the terminal
+  following a file) uses `try_load` and keeps what it holds.
 - `crates/buildinfo`: the build stamp (`<crate version>+<git describe> <commit date>`, or
   `SHELLMAN_BUILD_STAMP`) every exe carries as its `ProductVersion`, put there by each app's
   `build.rs` (`shellman_buildinfo::apply`).
@@ -595,8 +601,12 @@ entry points open it, and it can be Windows' default terminal (below).
 - **A second start**: `new_instance` in `terminal.json`, `"window"` (default, as Windows
   Terminal) or `"tab"`: the launch (folder, profile, command, hold; nothing else) goes as JSON
   over `\\.\pipe\shellman-terminal-<session>` to the first window, which re-checks it, opens the
-  tab and comes forward (`instance.rs`). The pipe refuses remote clients; its default DACL lets
-  only the user, SYSTEM and administrators write.
+  tab and comes forward (`instance.rs`). The pipe refuses remote clients, is made as its first
+  instance (also when made again) with a DACL for the user alone; a launch writes (and lets the
+  window come forward) only after checking that the pipe's server process runs as this user in
+  this session (a pipe name someone else took first gets nothing, and the launch opens its own
+  window); the window reads each message within 1 s and 128 KiB, so a client that connects and
+  never writes cannot stall it. A launch waits up to 2 s while the window is busy with another.
 - **Entry points**: `shellman_core::terminal::open_at(dir)` is the one way shellman opens a
   terminal: the desktop menu's "Open Terminal here" (`apps/shelf`, which had its own
   `wt.exe -d` code) and Files' new "Open Terminal here" (folder background and a folder's menu).
@@ -705,7 +715,15 @@ entry points open it, and it can be Windows' default terminal (below).
   `osc.rs`, `profiles.rs`, `tabs.rs`, `render/boxdraw.rs`, `app/input.rs` shortcuts.
 - **Tabs**: Ctrl+Shift+T / + (default profile), Ctrl+Shift+1..9 (n-th profile), the ∨ menu
   (profiles, a glass island); a new tab opens right after the shown one, in its directory when
-  the shell reports one (OSC 7 / 9;9; WSL gets it as `--cd`), else home. Ctrl+Shift+W, middle
+  the shell reports one (OSC 7 / 9;9; WSL gets it as `--cd`), else home. A reported directory is
+  output, so anyone's: it is kept only as an absolute path with no control characters or `"`;
+  a Windows one only as a drive-letter path on a local drive (OSC 7 host empty, `localhost` or
+  this computer's name; no UNC, no `\\?\`, no network drive: checked by syntax and
+  `GetDriveTypeW`, never probed on the UI thread, so a hostile `\\host\share` neither freezes
+  the window nor receives credentials); a POSIX one only for a new tab of the same WSL
+  distribution as the tab that reported it. A folder that is not there makes the start fall
+  back to home. Every argument is quoted by `shellman_core::terminal::quote_arg`
+  (`CommandLineToArgvW` rules). Ctrl+Shift+W, middle
   click or × closes (the last closes the window; a shell that exits closes its tab); Ctrl+Tab,
   Ctrl+Shift+Tab, Ctrl+Alt+1..9 (9 the last), click; drag to reorder. Title: the program's OSC
   0/2 title (a console exe's path shortened to its name), else the shell's name and folder. A
@@ -720,7 +738,14 @@ entry points open it, and it can be Windows' default terminal (below).
   ^C), Ctrl+Shift+C, Ctrl+Insert, Enter; right-click copies a selection, else pastes (Windows
   Terminal's way); Esc drops it; copy-on-select is `copy_on_select` in `terminal.json`. Copied
   text joins soft-wrapped lines, trims trailing blanks, uses CR LF, and a whole-line copy has no
-  final line break. Paste: Ctrl+V, Ctrl+Shift+V, Shift+Insert, bracketed when asked.
+  final line break. Paste: Ctrl+V, Ctrl+Shift+V, Shift+Insert, bracketed when asked. A paste is
+  text only: every control character but tab and CR (ESC and the rest of C0, DEL, C1) is taken
+  out first, so the clipboard can neither end a bracketed paste early nor send escape sequences.
+  Input waits for the console: at most 1 MiB is queued for its pipe (`pty.rs` `MAX_QUEUED`);
+  past that the writer pushes back and the event loop keeps the rest until the console reads,
+  so a huge paste into a program that reads slowly costs one copy, not one per wait. Nothing is
+  dropped.
+  (Not done: Windows Terminal's warning before a multi-line or very large paste.)
 - **Find** (stage 3, `app/find.rs`): Ctrl+Shift+F opens a glass pill in the top row between the
   tabs and the window buttons (as Files' search pill sits in its bar; the tabs' pill gives way).
   It searches as you type, literally (`alacritty_terminal`'s regex search, metacharacters
@@ -734,13 +759,27 @@ entry points open it, and it can be Windows' default terminal (below).
 - **Mouse to programs**: X10 (9), 1000, 1002, 1003 tracking; normal, UTF-8 (1005) and SGR
   (1006) encodings; focus (1004, also on tab switches); wheel as buttons 64/65 when tracking,
   arrows on the alternate screen with 1007, else scrollback. Shift takes the mouse back.
-- **Links**: OSC 8 hyperlinks underline on hover; a URL in the text underlines while Ctrl is
-  held; Ctrl+click opens either (http, https, file, ftp, mailto only). OSC 52 copies (reads are
-  refused).
+- **Links**: OSC 8 hyperlinks underline on hover, and a glass hover label shows where the link
+  really goes (an OSC 8 link's text can say anything) and what Ctrl+click will do; a URL in the
+  text underlines while Ctrl is held. Ctrl+click (`clip::parse_link`, off the UI thread): `http`,
+  `https` and `mailto` open with Windows' handler; a `file:` link is never opened (run), only
+  shown: its folder (or the folder itself) opens in shellman Files, and only for a drive-letter
+  path on a local drive (`local.rs`: no host but `localhost`, no UNC, no `\\?\`, no network
+  drive, so nothing reaches another computer). Everything else (other schemes, control
+  characters, blanks or `"` in the link, bad `%` escapes, `user@host` web links) is ignored.
+  Files has no "select this file" start yet, so a file's folder opens without it selected.
+  OSC 52 copies (reads are refused).
 - **Cursor**: DECSCUSR shapes; blinking at Windows' caret rate, only while focused, stopping
   (shown) after 15 s without input or output, so an idle window draws nothing.
 - **Drawing**: a GPU renderer inside egui's frame (an `egui_glow` paint callback). Glyphs by
-  DirectWrite (`crossfont`, with font fallback) into a 2048 px greyscale atlas (colour emoji on a page of their own, above); box drawing
+  DirectWrite (`crossfont`, with font fallback) into a greyscale atlas page (colour emoji on a page of their own, above),
+  sized from the cell (2048 px for ordinary sizes, up to 4096 or the GPU's largest texture for a
+  big font on a high-DPI monitor, so about 1000 cells' glyphs fit). A page with no room evicts
+  nothing by itself: the renderer starts both pages over and places the screen again only when
+  the screen's distinct glyphs would fit (and a quarter fewer than the last time that failed);
+  otherwise what found no room is drawn as a fallback (an emoji as text, a glyph as a box
+  outline) and every row keeps its hash, so a screen that cannot fit is drawn once, not again
+  every frame (it used to stop updating); box drawing
   (light, heavy, double, rounded), blocks, shades, quadrants and Powerline triangles / half
   discs are drawn cell-sized by `render/boxdraw.rs` so they join without gaps (dashes and
   diagonals stay the font's). Three instanced draws: background runs, glyphs, then lines and the
@@ -748,7 +787,8 @@ entry points open it, and it can be Windows' default terminal (below).
 - **Colour emoji** (stage 3, `emoji.rs`, `render/color.rs`): a wide character in the emoji
   blocks, or one with VS16 or a keycap mark, is drawn in colour: Direct2D draws it with
   DirectWrite's colour font (Segoe UI Emoji) into a premultiplied bitmap through WIC (software,
-  no device, no window), once, onto a 1024 px BGRA colour page of its own, drawn by a fourth
+  no device, no window), once, onto a BGRA colour page of its own (1024 px, more for a big font:
+  sized for 128 two-cell emoji), drawn by a fourth
   instanced draw. Cell widths stay `wcwidth`'s (the emulator's, and ConPTY measures the same way,
   see ConPTY above), so the cursor never drifts; a ZWJ sequence (👨‍👩‍👧‍👦, four wide cells) or an
   emoji with a skin tone (👍🏽, two) is shaped by DirectWrite into one glyph in the first two cells

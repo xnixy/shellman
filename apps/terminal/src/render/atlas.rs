@@ -9,10 +9,27 @@
 use crossfont::{BitmapBuffer, FontDesc, FontKey, GlyphKey, Rasterize, Rasterizer, Size, Slant, Style, Weight};
 use std::collections::HashMap;
 
-/// The atlas is a square of this many pixels a side.
+/// The atlas is a square of at least this many pixels a side (more for a large font).
 pub const ATLAS: i32 = 2048;
 /// Space between glyphs, so sampling never bleeds into a neighbour.
-const PAD: i32 = 1;
+pub const PAD: i32 = 1;
+/// How many cell-sized glyphs the greyscale page is sized to hold at least.
+const CELLS_HELD: usize = 1024;
+
+/// The side of a square page for `boxes` boxes of `w` x `h` (shelf-packed), a power of two, at
+/// least `min` and at most `cap` (the GPU's largest texture, or less).
+pub fn page_side(w: i32, h: i32, boxes: usize, min: i32, cap: i32) -> i32 {
+    let need = ((boxes as f64) * ((w + PAD) as f64) * ((h + PAD) as f64)).sqrt().ceil() as i32 + PAD;
+    let side = (need.max(1) as u32).next_power_of_two() as i32;
+    side.max(min).min(cap.max(64))
+}
+
+/// How many boxes of `w` x `h` a page of `side` holds, shelf-packed.
+pub fn capacity(side: i32, w: i32, h: i32) -> usize {
+    let across = (side - PAD) / (w + PAD);
+    let down = (side - PAD) / (h + PAD);
+    (across.max(0) * down.max(0)) as usize
+}
 
 /// Families tried in order for the grid's font.
 const FAMILIES: [&str; 3] = ["Cascadia Mono", "Cascadia Code", "Consolas"];
@@ -57,7 +74,9 @@ pub struct Upload {
     pub pixels: Vec<u8>,
 }
 
-/// The atlas is full: it was emptied, and everything placed before must be placed again.
+/// The atlas has no room for a glyph. Nothing is evicted: the renderer decides whether to start
+/// the page over ([`Atlas::reset`]) or draw the glyph as [`Atlas::fallback`].
+#[derive(Debug)]
 pub struct Full;
 
 pub struct Atlas {
@@ -70,12 +89,16 @@ pub struct Atlas {
     cursor: (i32, i32),
     shelf: i32,
     pub uploads: Vec<Upload>,
+    /// The page's side in pixels (from the cell's size, see [`page_side`]).
+    pub side: i32,
+    /// A cell-sized box outline, always on the page: what a glyph that finds no room is drawn as.
+    pub fallback: Glyph,
 }
 
 impl Atlas {
     /// Load the grid font at `px` pixels per em: `family` if it is installed (and not empty),
     /// else the first of [`FAMILIES`] that is.
-    pub fn new(px: f32, family: &str) -> Result<Self, String> {
+    pub fn new(px: f32, family: &str, cap: i32) -> Result<Self, String> {
         let mut raster = Rasterizer::new().map_err(|e| e.to_string())?;
         let size = Size::from_px(px);
         let face = |raster: &mut Rasterizer, family: &str, weight, slant| {
@@ -107,7 +130,7 @@ impl Atlas {
             strike: (m.strikeout_position + m.strikeout_thickness / 2.0).round() as i32,
             strike_thick: thick(m.strikeout_thickness),
         };
-        Ok(Self {
+        let mut atlas = Self {
             raster,
             fonts: [regular, bold, italic, bold_italic],
             size,
@@ -116,7 +139,44 @@ impl Atlas {
             cursor: (PAD, PAD),
             shelf: 0,
             uploads: Vec::new(),
-        })
+            side: page_side(cell_w, cell_h, CELLS_HELD, ATLAS, cap),
+            fallback: Glyph::default(),
+        };
+        atlas.reset();
+        Ok(atlas)
+    }
+
+    /// Start the page over: every glyph is forgotten (and placed again when next asked for),
+    /// and the fallback box is placed first.
+    pub fn reset(&mut self) {
+        self.glyphs.clear();
+        self.uploads.clear();
+        self.cursor = (PAD, PAD);
+        self.shelf = 0;
+        let m = self.metrics;
+        let (w, h) = (m.cell_w, m.cell_h);
+        self.fallback = match self.place(w, h) {
+            Ok((x, y)) => {
+                let t = (w / 10).max(1);
+                let (x0, x1, y0, y1) = (w / 8, w - w / 8, h / 5, h - h / 5);
+                let pixels = (0..h)
+                    .flat_map(|py| (0..w).map(move |px| (px, py)))
+                    .map(|(px, py)| {
+                        let inside = px >= x0 && px < x1 && py >= y0 && py < y1;
+                        let edge = px < x0 + t || px >= x1 - t || py < y0 + t || py >= y1 - t;
+                        if inside && edge { 255 } else { 0 }
+                    })
+                    .collect();
+                self.uploads.push(Upload { x, y, w, h, pixels });
+                Glyph { x: x as u16, y: y as u16, w: w as u16, h: h as u16, left: 0, top: m.baseline as i16 }
+            }
+            Err(Full) => Glyph::default(),
+        };
+    }
+
+    /// How many cell-sized glyphs the page holds.
+    pub fn capacity(&self) -> usize {
+        capacity(self.side, self.metrics.cell_w, self.metrics.cell_h)
     }
 
     /// The glyph for `c` in face `style` (0 to 3), rasterized and placed the first time.
@@ -161,25 +221,60 @@ impl Atlas {
         Ok(glyph)
     }
 
-    /// A free spot of `w` by `h`, on the current shelf or a new one. A full atlas is emptied.
+    /// A free spot of `w` by `h`, on the current shelf or a new one; Full when there is none
+    /// (the page is left as it is).
     fn place(&mut self, w: i32, h: i32) -> Result<(i32, i32), Full> {
-        if w + 2 * PAD > ATLAS || h + 2 * PAD > ATLAS {
-            return Err(Full);
+        place(&mut self.cursor, &mut self.shelf, self.side, w, h)
+    }
+}
+
+/// Shelf packing on a page of `side`: where a `w` x `h` box goes, moving `cursor` and `shelf`
+/// on; Full (and nothing moved) when it does not fit.
+pub fn place(cursor: &mut (i32, i32), shelf: &mut i32, side: i32, w: i32, h: i32) -> Result<(i32, i32), Full> {
+    if w + 2 * PAD > side || h + 2 * PAD > side {
+        return Err(Full);
+    }
+    let (mut at, mut height) = (*cursor, *shelf);
+    if at.0 + w + PAD > side {
+        at = (PAD, at.1 + height + PAD);
+        height = 0;
+    }
+    if at.1 + h + PAD > side {
+        return Err(Full);
+    }
+    *cursor = (at.0 + w + PAD, at.1);
+    *shelf = height.max(h);
+    Ok(at)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pages_grow_with_the_cell_up_to_the_cap() {
+        // An ordinary font: the old 2048 page.
+        assert_eq!(page_side(11, 24, CELLS_HELD, ATLAS, 4096), 2048);
+        // 36 pt on a 300% monitor: bigger, so a screen's worth fits.
+        let big = page_side(80, 171, CELLS_HELD, ATLAS, 4096);
+        assert_eq!(big, 4096);
+        assert!(capacity(big, 80, 171) >= 1000);
+        // Never past what the GPU takes.
+        assert_eq!(page_side(80, 171, CELLS_HELD, ATLAS, 2048), 2048);
+    }
+
+    #[test]
+    fn a_full_page_is_left_as_it_is() {
+        let (mut cursor, mut shelf) = ((PAD, PAD), 0);
+        let mut placed = 0;
+        while place(&mut cursor, &mut shelf, 64, 10, 20).is_ok() {
+            placed += 1;
         }
-        if self.cursor.0 + w + PAD > ATLAS {
-            self.cursor = (PAD, self.cursor.1 + self.shelf + PAD);
-            self.shelf = 0;
-        }
-        if self.cursor.1 + h + PAD > ATLAS {
-            self.glyphs.clear();
-            self.uploads.clear();
-            self.cursor = (PAD, PAD);
-            self.shelf = 0;
-            return Err(Full);
-        }
-        let at = self.cursor;
-        self.cursor.0 += w + PAD;
-        self.shelf = self.shelf.max(h);
-        Ok(at)
+        assert_eq!(placed, capacity(64, 10, 20));
+        let before = (cursor, shelf);
+        assert!(place(&mut cursor, &mut shelf, 64, 10, 20).is_err());
+        assert_eq!((cursor, shelf), before, "a refusal moves nothing");
+        // A smaller box may still fit at the end of the shelf.
+        assert!(place(&mut cursor, &mut shelf, 64, 1, 1).is_ok());
     }
 }

@@ -135,20 +135,26 @@ impl Scanner {
         } else {
             None
         };
-        if let Some(cwd) = cwd {
+        if let Some(cwd) = cwd.filter(|c| reported_cwd_ok(c)) {
             found(Found::Cwd(cwd));
         }
     }
 }
 
-/// The path of a `file://host/path` URI: percent-decoded, and `/C:/x` made `C:\x`.
+/// The path of a `file://host/path` URI: percent-decoded, and `/C:/x` made `C:\x`. A Windows
+/// path counts only from this computer (no host, `localhost` or its own name); a POSIX path is
+/// WSL's, whose host is the distribution's own, and is only ever handed to that distribution.
 pub fn cwd_from_uri(uri: &str) -> Option<String> {
     let rest = uri.strip_prefix("file://")?;
     // The host, up to the path's first slash (empty for `file:///`).
-    let path = &rest[rest.find('/')?..];
-    let path = percent_decode(path)?;
+    let slash = rest.find('/')?;
+    let host = &rest[..slash];
+    let path = percent_decode(&rest[slash..])?;
     let b = path.as_bytes();
     if b.len() >= 3 && b[0] == b'/' && b[1].is_ascii_alphabetic() && b[2] == b':' {
+        if !this_computer(host) {
+            return None;
+        }
         let mut win = path[1..].replace('/', "\\");
         if win.len() == 2 {
             win.push('\\');
@@ -156,6 +162,18 @@ pub fn cwd_from_uri(uri: &str) -> Option<String> {
         return Some(win);
     }
     Some(path)
+}
+
+/// Whether an OSC 7 host names this computer.
+fn this_computer(host: &str) -> bool {
+    host.is_empty()
+        || host.eq_ignore_ascii_case("localhost")
+        || std::env::var("COMPUTERNAME").is_ok_and(|me| {
+            // Its name, or its full name (`pc.example.lan`).
+            let h = host.to_ascii_lowercase();
+            let me = me.to_ascii_lowercase();
+            !me.is_empty() && (h == me || h.strip_prefix(&me).is_some_and(|r| r.starts_with('.')))
+        })
 }
 
 fn percent_decode(s: &str) -> Option<String> {
@@ -173,6 +191,22 @@ fn percent_decode(s: &str) -> Option<String> {
         }
     }
     String::from_utf8(out).ok()
+}
+
+/// Whether a directory a program reported may be kept at all: an absolute path of a kind a new
+/// tab can start in (`C:\...`, or `/...` from WSL), with no control characters and no `"`.
+/// Output is anyone's (a file shown with `cat`), so what it reports is checked before it is
+/// stored; it reaches a command line only through `quote_arg` anyway.
+pub fn reported_cwd_ok(p: &str) -> bool {
+    if p.chars().any(|c| c.is_control() || c == '"') {
+        return false;
+    }
+    let b = p.as_bytes();
+    let drive = b.len() >= 3 && b[0].is_ascii_alphabetic() && b[1] == b':' && b[2] == b'\\';
+    // A backslash in a POSIX path is legal but never needed; refusing it keeps WSL from ever
+    // reading one as a Windows (UNC) path.
+    let posix = b.first() == Some(&b'/') && !p.contains('\\');
+    drive || posix
 }
 
 /// Whether a reported directory is a Windows path (one a Windows shell can start in).
@@ -196,7 +230,7 @@ mod tests {
 
     #[test]
     fn osc_7_gives_the_directory() {
-        assert_eq!(scan(&[b"x\x1b]7;file://pc/C:/Users/me/My%20Stuff\x07y"]), [Found::Cwd(r"C:\Users\me\My Stuff".into())]);
+        assert_eq!(scan(&[b"x\x1b]7;file://localhost/C:/Users/me/My%20Stuff\x07y"]), [Found::Cwd(r"C:\Users\me\My Stuff".into())]);
         assert_eq!(scan(&[b"\x1b]7;file://debian/home/me\x1b\\"]), [Found::Cwd("/home/me".into())]);
         assert_eq!(scan(&[b"\x1b]7;file:///D:/\x07"]), [Found::Cwd(r"D:\".into())]);
     }
@@ -237,6 +271,39 @@ mod tests {
     #[test]
     fn an_unterminated_sequence_cut_by_another_is_dropped() {
         assert_eq!(scan(&[b"\x1b]7;file://h/a\x1b[0m\x1b]7;file://h/b\x07"]), [Found::Cwd("/b".into())]);
+    }
+
+    #[test]
+    fn hostile_directories_are_not_kept() {
+        // A quote, control characters (here percent-encoded), relative paths.
+        for seq in [
+            &b"\x1b]7;file://h/home/x%22%20;calc%20%22\x07"[..],
+            b"\x1b]7;file://h/home/x%0Acalc\x07",
+            b"\x1b]7;file://h/home/x%1B[201~\x07",
+            b"\x1b]7;file://h/C:/x%22y\x07",
+            b"\x1b]9;9;C:\\x\"y\x07",
+            b"\x1b]9;9;relative\\dir\x07",
+            b"\x1b]9;9;C:relative\x07",
+            b"\x1b]9;9;C:\\a\tb\x07",
+        ] {
+            assert_eq!(scan(&[seq]), [], "{}", String::from_utf8_lossy(seq));
+        }
+        assert!(reported_cwd_ok(r"C:\Users\me"));
+        assert!(reported_cwd_ok("/home/me/my dir"));
+        assert!(!reported_cwd_ok("~/x"));
+    }
+
+    #[test]
+    fn windows_directories_only_from_this_computer() {
+        assert_eq!(scan(&[b"\x1b]7;file://attacker.invalid/C:/x\x07"]), []);
+        assert_eq!(scan(&[b"\x1b]7;file://localhost/C:/x\x07"]), [Found::Cwd(r"C:\x".into())]);
+        if let Ok(me) = std::env::var("COMPUTERNAME") {
+            let seq = format!("\x1b]7;file://{}/C:/x\x07", me.to_lowercase());
+            assert_eq!(scan(&[seq.as_bytes()]), [Found::Cwd(r"C:\x".into())]);
+        }
+        // UNC from either sequence (syntax only: nothing is contacted).
+        assert_eq!(scan(&[b"\x1b]9;9;\\\\attacker.invalid\\share\x07"]), []);
+        assert_eq!(scan(&[b"\x1b]7;file:///%5C%5Cattacker.invalid%5Cshare\x07"]), []);
     }
 
     #[test]
