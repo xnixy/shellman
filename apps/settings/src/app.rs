@@ -283,6 +283,9 @@ impl SettingsApp {
                 if self.section != Section::Storage {
                     self.st.storage.stop();
                 }
+                if self.section != Section::DefaultApps {
+                    self.st.default_apps.stop();
+                }
                 if self.section != Section::Mouse {
                     self.st.mouse.stop();
                 }

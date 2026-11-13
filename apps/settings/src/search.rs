@@ -43,6 +43,8 @@ const ENTRIES: &[Entry] = &[
     e(Section::Storage, "", "disk drive space free used capacity"),
     e(Section::Storage, "Drives", "disk c: free space full capacity partition volume"),
     e(Section::Storage, "On the system drive", "downloads documents desktop pictures videos appdata recycle bin large folders size usage cleanup"),
+    e(Section::DefaultApps, "", "default programs open with file types associations browser email handler"),
+    e(Section::DefaultApps, "File types and links", "txt pdf png jpg mp3 mp4 zip html http https mailto web browser pdf viewer music video picture photo"),
     e(Section::Apps, "", "programs installed software"),
     e(Section::Apps, "Uninstall", "remove modify change programs"),
     e(Section::Startup, "", "autostart login sign in boot"),

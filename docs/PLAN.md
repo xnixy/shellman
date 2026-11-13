@@ -12,7 +12,7 @@ accent color, fast.
 | `apps/launcher` | Start menu and search | working: Spotlight-style panel, app grid, ranked search, most used, the Win key (through the switcher's hook) |
 | `apps/switcher` | Alt+Tab, Task View | working: Alt+Tab with live previews. Next: Task View (Win+Tab) |
 | `apps/desktop` | wallpaper window, desktop icons | working: wallpaper per monitor; keeps Windows' modern-app host running. Next: desktop icons, right-click menu |
-| `apps/settings` | Settings pages for the shell | working: Appearance, Dock, Top bar, Launcher, About |
+| `apps/settings` | Settings pages for the shell | working: Appearance, Dock, Top bar, Launcher, About; rebuilt Windows pages: Sound, Display, Apps, Startup, Fonts, Mouse & keyboard, Power, Date, time & region, Storage, Default apps (read-only) |
 | `apps/tasks` | Task Manager (Ctrl+Shift+Esc, through the switcher's hook) | working: Processes (apps and background, grouped, sort, search, End task / End process tree / details), Performance (CPU, memory, GPUs, disks, network). Reads through `crates/core/src/procs`. Next: Services (read-only), elevated End task through `shellman-elevate` |
 | `apps/session` | the shell process itself | built, not yet the shell: starts and supervises the apps, runs startup items, safety net, `--install`/`--uninstall` (never run yet) |
 
@@ -148,6 +148,15 @@ Rule: **the top bar is the system, the dock is apps.** Both are windows of one p
 - Opened from the top bar glyph's right-click, the dock Launcher icon's menu, and the launcher's
   "shellman Settings" row.
 - Single instance.
+- Windows pages rebuilt here (Windows' own Settings does not open without Explorer): all read the
+  live value when shown and write at once, from `crates/core/src/system/` (`pointer`, `power_*`,
+  `region*`, `storage`, `default_apps`). Measured unelevated on 26300: mouse and keyboard
+  `SystemParametersInfoW`, the plan's timeouts and button actions, power mode and plan
+  (`powrprof`), the time zone (`SeTimeZonePrivilege` is held by Users, switched on for the call),
+  daylight saving and the `HKCU\Control Panel\International` values all work; nothing needs
+  `shellman-elevate`. Rows a machine lacks are hidden (no lid, no battery column on a desktop).
+  Default apps is read-only: `UserChoice` is hash-protected, so there is no change button.
+  Storage counts folders on workers, never follows reparse points, and only offers "Open in Files".
 
 ## Modern apps without Explorer
 

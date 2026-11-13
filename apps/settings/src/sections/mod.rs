@@ -17,6 +17,7 @@ mod fonts_tabs;
 mod fonts_view;
 mod fonts_worker;
 mod launcher;
+mod default_apps;
 mod storage;
 mod storage_rows;
 mod datetime;
@@ -33,6 +34,7 @@ pub use display::DisplayView;
 pub use fonts_view::FontsView;
 pub use icon_pack::IconsView;
 pub use mouse::MouseView;
+pub use default_apps::DefaultAppsView;
 pub use storage::StorageView;
 pub use datetime::DateTimeView;
 pub use power::PowerView;
@@ -50,6 +52,7 @@ pub enum Section {
     Power,
     DateTime,
     Storage,
+    DefaultApps,
     Apps,
     Startup,
     Fonts,
@@ -60,7 +63,7 @@ pub enum Section {
 }
 
 impl Section {
-    pub const ALL: [Section; 14] = [
+    pub const ALL: [Section; 15] = [
         Section::Appearance,
         Section::Sound,
         Section::Display,
@@ -68,6 +71,7 @@ impl Section {
         Section::Power,
         Section::DateTime,
         Section::Storage,
+        Section::DefaultApps,
         Section::Apps,
         Section::Startup,
         Section::Fonts,
@@ -86,6 +90,7 @@ impl Section {
             Section::Power => "Power",
             Section::DateTime => "Date, time & region",
             Section::Storage => "Storage",
+            Section::DefaultApps => "Default apps",
             Section::Apps => "Apps",
             Section::Startup => "Startup apps",
             Section::Fonts => "Fonts",
@@ -106,6 +111,7 @@ impl Section {
             Section::Power => glyph::BATTERY,
             Section::DateTime => '\u{E823}',
             Section::Storage => glyph::DRIVE,
+            Section::DefaultApps => '\u{E8E5}',
             Section::Apps => '\u{E71D}',
             Section::Startup => '\u{E7E8}',
             // Segoe Fluent Icons' Font glyph.
@@ -126,6 +132,7 @@ impl Section {
             Section::Power => power::show(ui, state),
             Section::DateTime => datetime::show(ui, state),
             Section::Storage => storage::show(ui, state),
+            Section::DefaultApps => default_apps::show(ui, state),
             Section::Apps => apps::show(ui, state),
             Section::Startup => startup::show(ui, state),
             Section::Fonts => fonts::show(ui, state),
@@ -150,6 +157,7 @@ impl Section {
                 | Section::Power
                 | Section::DateTime
                 | Section::Storage
+                | Section::DefaultApps
                 | Section::Apps
                 | Section::Startup
                 | Section::Fonts
@@ -170,6 +178,7 @@ impl Section {
             Section::Power => "power",
             Section::DateTime => "datetime",
             Section::Storage => "storage",
+            Section::DefaultApps => "default-apps",
             Section::Apps => "apps",
             Section::Startup => "startup",
             Section::Fonts => "fonts",
