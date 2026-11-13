@@ -17,6 +17,7 @@ pub mod live;
 pub mod media;
 pub mod media_art;
 pub mod netlist;
+pub mod pointer;
 pub mod power;
 pub mod radios;
 pub mod sound_choices;

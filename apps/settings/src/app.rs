@@ -274,6 +274,9 @@ impl SettingsApp {
                 if self.section != Section::Display {
                     self.st.display.stop();
                 }
+                if self.section != Section::Mouse {
+                    self.st.mouse.stop();
+                }
                 if self.section != Section::Startup {
                     self.st.startup.stop();
                 }
