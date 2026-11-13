@@ -458,7 +458,11 @@ impl super::FileMan {
                 if self.tags.store.rekey(&r.path, &target) {
                     self.tags_changed();
                 }
-                self.tabs[self.active].select_after_load = Some((target, false));
+                // The item stays selected under its new name; alone, the cursor goes to it too.
+                let tab = &mut self.tabs[self.active];
+                if tab.renamed(&r.path, &target) {
+                    tab.select_after_load = Some((target, false));
+                }
                 self.load(self.active);
             }
             Err(e) => self.toast(format!("Couldn't rename: {e}")),
