@@ -74,7 +74,7 @@ pub fn build(items: Vec<Item>, probe: &dyn Fn(&Item) -> Found) -> Vec<Row> {
             let found = probe(&item);
             let fallback = match item.origin {
                 Origin::Folder { .. } => display_stem(&item.name),
-                Origin::Run { .. } => item.name.clone(),
+                Origin::Run { .. } | Origin::Packaged { .. } => item.name.clone(),
             };
             let title = found.description.filter(|d| !d.trim().is_empty()).unwrap_or(fallback);
             Row { item, title, exe: found.exe, missing: found.missing }

@@ -194,6 +194,11 @@ other way than WM_QUIT would bring Explorer back. "Keep Settings, Calculator and
 working" (About page, `shell.json`, default off) turns it off; `SHELLMAN_APP_HOST=off|on` overrides
 for tests. Its log is `%LOCALAPPDATA%\shellman\app-host.log`.
 
+The host runs the user's startup items (Run keys without StartupApproved, packaged startup
+tasks, Startup folders) when it is the first to create the logon's `RunStuffHasBeenRun` marker;
+the session creates that marker itself when it runs them, so the host never repeats them (see
+"Startup items" under the session).
+
 The bar puts its work areas back when they change under it: an Explorer that runs even briefly
 sets every monitor's for its own taskbar, and again whenever they change while it runs. So the
 bar waits: a work-area change or `TaskbarCreated` starts a timer; after 400 ms of quiet, if no
@@ -341,17 +346,45 @@ no egui, no `shellman-core`; it must be the most robust piece. Beside Explorer n
   to 4 s, logs who is left, never kills.
 - **Startup items** (what Explorer does at logon): RunOnce (HKCU; HKLM only if elevated, the value
   is deleted before the command starts, or after with a `!` prefix), Policies\Explorer\Run, HKLM
-  Run and its WOW6432Node twin, HKCU Run, the common and the user Startup folders (via ShellExecute).
-  Disabled items are skipped by `...\Explorer\StartupApproved\{Run,Run32,StartupFolder}`: first
-  byte even enabled, odd disabled, missing enabled, HKCU before HKLM (observed, not documented;
-  see `startup/approved.rs`). First start 6 s after the session, then 1.5 s apart. Once per logon:
-  a volatile HKCU key `Software\shellman\session-startup` (it outlives a crashed session and is
-  removed at logoff; a named kernel object would die with the session); a session that adopted
-  apps skips them as well. Not started in test runs. `shellman-session --dry-run` prints the
-  apps and each item with why it is enabled or disabled, and changes nothing.
-  Packaged apps' startup tasks are left out: their state is in
-  `HKCU\Software\Classes\Local Settings\...\AppModel\SystemAppData\<package>\<task>` but
-  there is no public call to run one; ShellAppRuntime (see above) does logon tasks.
+  Run and its WOW6432Node twin, HKCU Run, then packaged apps' startup tasks, then the common and
+  the user Startup folders (via ShellExecute). First start 6 s after the session, then 1.5 s
+  apart. `shellman-session --dry-run` prints the apps and each item with why it is enabled or
+  disabled, and Windows' run marker (below), and changes nothing.
+  - Switched-off Run and folder items: `...\Explorer\StartupApproved\{Run,Run32,StartupFolder}`,
+    read as the shell's own `shell\lib\runonce` code does (ShellAppRuntime.exe 10.0.26100.9818,
+    which shares it with Explorer): only the low bit of the first DWORD counts (odd disabled,
+    even or 00 enabled), the FILETIME is ignored (`01 00..00` is disabled), missing or unreadable
+    means enabled, and an item is judged only in its own hive's key (HKLM items under HKLM).
+    Explorer's behaviour agrees (Shell-Core/Operational 9707 events: it never ran Docker Desktop's
+    `01` item). See `startup/approved.rs`.
+  - Packaged startup tasks (`desktop:`/`uap5:StartupTask` extensions, `windows.startupTask`):
+    listed from each package's manifest, judged by
+    `HKCU\...\AppModel\SystemAppData\<family>\<TaskId>\State` (`StartupTaskState`: 0
+    disabled, 1 disabled by user, 2 enabled, 3 disabled by policy, 4 enabled by policy; missing:
+    the manifest's `Enabled`). Started the way the shell does, through the undocumented but
+    unrestricted `Windows.ApplicationModel.Internal.StartupTaskInternal` (list of the user's
+    enabled tasks) and `...StartupTaskActivator` (activate one; the app runs with its identity,
+    launched by sihost), matched by program name. UWP (non full-trust) tasks are skipped while
+    modern apps cannot open. See `startup/packaged*.rs`. Not verified end to end on this machine:
+    its only enabled task (1Password) already ran; listing is.
+  - Once per logon, and only by shellman: a volatile HKCU key `Software\shellman\session-startup`
+    (it outlives a crashed session and is removed at logoff; a named kernel object would die
+    with the session); a session that adopted apps skips them as well. It also creates Windows'
+    own marker, volatile `HKCU\...\Explorer\SessionInfo\<session>\RunStuffHasBeenRun`:
+    Explorer and ShellAppRuntime run the Run keys, startup tasks and folders only when they
+    create that key themselves. Without it, turning on "Keep Settings, Calculator and the Store
+    working" mid-session made the host run everything again (seen: a second
+    SecurityHealthSystray, Docker Desktop, and 1Password's task), and the host skips
+    StartupApproved for its Run pass (its filter is never configured: the configure call goes to
+    `IUnknown_QueryService(NULL, ..)`), so switched-off items came up too. If the marker already
+    exists on a fresh logon, Explorer or the host has the run and shellman does not run them.
+    The host still processes HKCU RunOnce each time it starts. Not started in test runs.
+  - Other places, for the record: RunServices(Once) are obsolete and run by nothing on Windows
+    10/11; Active Setup (`HKLM\...\Active Setup\Installed Components` StubPath) is run by
+    Explorer's logon tasks (not handled; only matters right after installs that use it);
+    `Winlogon\Userinit` runs before any shell (Winlogon's own); `HKCU\...\Windows\Load`/`Run`
+    (win.ini era) are honoured by Explorer only on old builds; scheduled tasks "at log on" are
+    started by Task Scheduler, not the shell, so they run without Explorer already.
 - **Safety net**: if Shift is held at the session's start, or the bar's exe is missing, or the bar
   was given up on (crash budget spent) or ended with exit code 0, or a running bar has no
   `Shell_TrayWnd` 20 s after its own latest (re)start, the session starts `explorer.exe` (unless

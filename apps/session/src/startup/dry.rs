@@ -10,6 +10,7 @@ pub fn dry_run() {
     for a in &list {
         println!("  {:<10} {} {}", a.name, a.exe.display(), a.args.join(" "));
     }
+    super::win::init_com();
     let items = super::collect(&Real);
     println!("\nstartup items, in the order they would start ({}):", items.len());
     for i in &items {
@@ -20,5 +21,11 @@ pub fn dry_run() {
     }
     let on = items.iter().filter(|i| i.enabled).count();
     println!("\n{on} would start, {} would not. Nothing was started or changed.", items.len() - on);
-    println!("Packaged (Store) apps' startup tasks are not handled here.");
+    let session = super::win::session_id();
+    let marker = if super::guard::windows_marker(&Real, session) {
+        "present: Explorer or the modern-app host would not run these again"
+    } else {
+        "absent: a modern-app host started now would run them again (the session sets it when it runs them)"
+    };
+    println!("Windows' marker SessionInfo\\{session}\\RunStuffHasBeenRun: {marker}.");
 }

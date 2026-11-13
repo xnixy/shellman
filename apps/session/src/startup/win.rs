@@ -1,16 +1,36 @@
 //! The session's Win32 side of startup items: knowing whether it is elevated, and starting an
-//! item. (Expanding `%VARS%` and finding the Startup folders are shared, in core.)
+//! item. (Expanding `%VARS%`, finding the Startup folders and packaged tasks are shared, in core.)
 
 use super::items::{Item, Origin};
+use super::packaged_win;
 use super::runner::Launcher;
 use windows::core::{HSTRING, PCWSTR, PWSTR};
 use windows::Win32::Foundation::{CloseHandle, HANDLE};
 use windows::Win32::Security::{GetTokenInformation, TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY};
+use windows::Win32::System::Com::{CoInitializeEx, COINIT_MULTITHREADED};
+use windows::Win32::System::RemoteDesktop::ProcessIdToSessionId;
 use windows::Win32::System::Threading::{
-    CreateProcessW, GetCurrentProcess, OpenProcessToken, CREATE_NEW_PROCESS_GROUP, PROCESS_INFORMATION, STARTUPINFOW,
+    CreateProcessW, GetCurrentProcess, GetCurrentProcessId, OpenProcessToken, CREATE_NEW_PROCESS_GROUP,
+    PROCESS_INFORMATION, STARTUPINFOW,
 };
 use windows::Win32::UI::Shell::{ShellExecuteExW, SEE_MASK_FLAG_NO_UI, SEE_MASK_NOASYNC, SHELLEXECUTEINFOW};
 use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+
+/// COM for this thread (the package manager and the startup-task classes need it).
+pub fn init_com() {
+    unsafe {
+        let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+    }
+}
+
+/// The logon session this process runs in (the `SessionInfo\<n>` of Windows' marker).
+pub fn session_id() -> u32 {
+    let mut id = 0u32;
+    unsafe {
+        let _ = ProcessIdToSessionId(GetCurrentProcessId(), &mut id);
+    }
+    id
+}
 
 pub fn is_elevated() -> bool {
     unsafe {
@@ -67,6 +87,15 @@ impl Launcher for Real {
             // quotes does not parse as one, so that falls back to the shell.
             Origin::Run { .. } => {
                 if create_process(&item.command) { Ok(()) } else { shell_execute(&item.command) }
+            }
+            // As the shell does it, so the app runs with its package identity and sees a
+            // startup-task activation. A UWP task needs the immersive shell, which is there only
+            // while Explorer or the modern-app host runs; without it activation hangs ~45 s.
+            Origin::Packaged { full_trust, executable, task_id, .. } => {
+                if !full_trust && !shellman_core::app_host::modern_apps_available() {
+                    return Err("a UWP task, and modern apps cannot open now (the modern-apps setting is off)".into());
+                }
+                packaged_win::start(executable, task_id).map(|_pid| ())
             }
         }
     }

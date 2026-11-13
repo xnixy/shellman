@@ -23,7 +23,7 @@ fn resolve(p: &Path) -> Option<PathBuf> {
 
 pub fn probe(item: &Item) -> Found {
     let (exe, known) = match &item.origin {
-        Origin::Run { .. } => {
+        Origin::Run { .. } | Origin::Packaged { .. } => {
             let exe = exe_of_command(&item.command, &|p| resolve(p).is_some());
             (exe, true)
         }

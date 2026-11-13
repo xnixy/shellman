@@ -9,6 +9,8 @@
 pub mod approved;
 pub mod describe;
 pub mod items;
+pub mod packaged;
+pub mod packaged_win;
 pub mod rows;
 pub mod toggle;
 pub mod watch;
