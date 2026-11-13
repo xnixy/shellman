@@ -701,7 +701,15 @@ entry points open it, and it can be Windows' default terminal (below).
   `osc.rs`, `profiles.rs`, `tabs.rs`, `render/boxdraw.rs`, `app/input.rs` shortcuts.
 - **Tabs**: Ctrl+Shift+T / + (default profile), Ctrl+Shift+1..9 (n-th profile), the ∨ menu
   (profiles, a glass island); a new tab opens right after the shown one, in its directory when
-  the shell reports one (OSC 7 / 9;9; WSL gets it as `--cd`), else home. Ctrl+Shift+W, middle
+  the shell reports one (OSC 7 / 9;9; WSL gets it as `--cd`), else home. A reported directory is
+  output, so anyone's: it is kept only as an absolute path with no control characters or `"`;
+  a Windows one only as a drive-letter path on a local drive (OSC 7 host empty, `localhost` or
+  this computer's name; no UNC, no `\\?\`, no network drive: checked by syntax and
+  `GetDriveTypeW`, never probed on the UI thread, so a hostile `\\host\share` neither freezes
+  the window nor receives credentials); a POSIX one only for a new tab of the same WSL
+  distribution as the tab that reported it. A folder that is not there makes the start fall
+  back to home. Every argument is quoted by `shellman_core::terminal::quote_arg`
+  (`CommandLineToArgvW` rules). Ctrl+Shift+W, middle
   click or × closes (the last closes the window; a shell that exits closes its tab); Ctrl+Tab,
   Ctrl+Shift+Tab, Ctrl+Alt+1..9 (9 the last), click; drag to reorder. Title: the program's OSC
   0/2 title (a console exe's path shortened to its name), else the shell's name and folder. A
