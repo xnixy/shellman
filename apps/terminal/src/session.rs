@@ -62,6 +62,8 @@ struct Shared {
     /// New output (or anything else) to draw.
     dirty: AtomicBool,
     exited: AtomicBool,
+    /// The program's exit code, once it exited (when known).
+    exit_code: Mutex<Option<i32>>,
     /// This tab is the one shown: its output wakes the window.
     shown: AtomicBool,
     /// Output came while the tab was not shown.
@@ -139,7 +141,12 @@ impl EventListener for Listener {
                 let size = *s.size.lock().unwrap();
                 self.write(format(size));
             }
-            Event::ChildExit(_) | Event::Exit => {
+            Event::ChildExit(status) => {
+                *s.exit_code.lock().unwrap() = status.code();
+                s.exited.store(true, Ordering::Release);
+                self.wake();
+            }
+            Event::Exit => {
                 s.exited.store(true, Ordering::Release);
                 self.wake();
             }
@@ -270,6 +277,7 @@ impl Session {
         let shared = Arc::new(Shared {
             dirty: AtomicBool::new(true),
             exited: AtomicBool::new(false),
+            exit_code: Mutex::new(None),
             shown: AtomicBool::new(true),
             activity: AtomicBool::new(false),
             bell: AtomicBool::new(false),
@@ -366,6 +374,18 @@ impl Session {
 
     pub fn exited(&self) -> bool {
         self.shared.exited.load(Ordering::Acquire)
+    }
+
+    pub fn exit_code(&self) -> Option<i32> {
+        *self.shared.exit_code.lock().unwrap()
+    }
+
+    /// Show `text` (with escape sequences) as if the program had written it: a note of the
+    /// terminal's own, such as that the program exited.
+    pub fn print(&self, text: &str) {
+        let mut parser: alacritty_terminal::vte::ansi::Processor = alacritty_terminal::vte::ansi::Processor::new();
+        parser.advance(&mut *self.term.lock(), text.as_bytes());
+        self.shared.dirty.store(true, Ordering::Release);
     }
 
     /// Whether this tab is the one shown. Showing it clears its activity and bell.

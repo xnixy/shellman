@@ -248,12 +248,14 @@ fn native_rows(ctx: &Context, open: &Open) -> Vec<Row<Pick>> {
         rows.push(act(glyph::REFRESH, "Refresh", "F5", Action::Refresh));
         rows.push(act(glyph::COPY, "Copy folder path", "", Action::CopyPath));
         let dir = open.target.folder.clone();
-        rows.push(act(glyph::ADD, "Open in new tab", "", Action::NewTab(Loc::Dir(dir))));
+        rows.push(act(glyph::ADD, "Open in new tab", "", Action::NewTab(Loc::Dir(dir.clone()))));
+        rows.push(act(glyph::APP, "Open Terminal here", "", Action::OpenTerminal(dir)));
     } else {
         rows.push(act(glyph::OPEN_EXTERNAL, "Open", "Enter", Action::OpenSelected));
         if open.is_dir {
             let dir: PathBuf = open.target.items[0].clone();
             rows.push(act(glyph::ADD, "Open in new tab", "", Action::NewTab(Loc::Dir(dir.clone()))));
+            rows.push(act(glyph::APP, "Open Terminal here", "", Action::OpenTerminal(dir.clone())));
             rows.push(act(glyph::PIN, super::pins::menu_label(ctx, &dir), "", Action::TogglePin(dir)));
         }
         rows.push(Row::separator());

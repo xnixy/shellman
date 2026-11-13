@@ -1,10 +1,12 @@
 #![windows_subsystem = "windows"]
-//! Terminal: shells in tabs, in a glass window. `shellman-terminal [command line]` runs the
-//! command line in the first tab instead of the default profile (see `config.rs`).
+//! Terminal: shells in tabs, in a glass window. The command line (`-d`, `-p`, `-e`/`--`,
+//! `--hold`) is in `cli.rs`; a second start can hand its tab to the open window (`instance.rs`).
 
 mod app;
+mod cli;
 mod clip;
 mod config;
+mod instance;
 mod keys;
 mod mouse;
 mod osc;
@@ -23,7 +25,35 @@ use shellman_ui::glass::{GlassPanel, Style};
 use shellman_ui::{theme, window};
 
 fn main() -> eframe::Result {
-    let command = command_line();
+    let line = command_line().unwrap_or_default();
+    let mut launch = match cli::parse(&line) {
+        Ok(cli::Mode::Window(l)) => l,
+        Err(e) => {
+            say(&format!("shellman-terminal: {e}\n{}", cli::USAGE));
+            std::process::exit(2);
+        }
+    };
+    // The folder this was started in goes with the launch, so a window it is handed to opens
+    // the tab there (the receiving window's own folder means nothing for it).
+    if launch.dir.is_none() {
+        launch.dir = app::start_dir();
+    }
+    if config::Config::load().new_instance == config::NewInstance::Tab && instance::hand_over(&launch) {
+        return Ok(());
+    }
+    run_window(launch)
+}
+
+/// Print to the console this was started from, if any (a Windows-subsystem exe has none of its own).
+fn say(text: &str) {
+    use windows::Win32::System::Console::{AttachConsole, ATTACH_PARENT_PROCESS};
+    unsafe {
+        let _ = AttachConsole(ATTACH_PARENT_PROCESS);
+    }
+    eprintln!("{text}");
+}
+
+fn run_window(launch: cli::Launch) -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("Terminal")
@@ -60,7 +90,7 @@ fn main() -> eframe::Result {
                 }
             }
             let panel = panel.ok_or("the window has no handle")?;
-            Ok(Box::new(app::TerminalApp::new(&cc.egui_ctx, look, panel, command)?))
+            Ok(Box::new(app::TerminalApp::new(&cc.egui_ctx, look, panel, launch)?))
         }),
     )
 }

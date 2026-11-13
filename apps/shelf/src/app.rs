@@ -11,7 +11,7 @@ use crate::folders::Folders;
 use crate::geometry;
 use crate::menu::{self, Action};
 use crate::stacks::{self, Stacks};
-use crate::{actions, log, terminal, wallpaper, window};
+use crate::{actions, log, wallpaper, window};
 use egui::{pos2, Rect};
 use shellman_core::outside;
 use shellman_core::settings::desktop::{DesktopSettings, Stack};
@@ -212,7 +212,7 @@ impl Shelf {
             }
             Action::OpenInFiles => actions::open_in_files(&dir),
             Action::Terminal => {
-                std::thread::spawn(move || match terminal::open_here(&dir) {
+                std::thread::spawn(move || match shellman_core::terminal::open_at(&dir) {
                     Ok(how) => log::line(format!("terminal: {how} in {}", dir.display())),
                     Err(e) => log::line(format!("terminal: {e}")),
                 });

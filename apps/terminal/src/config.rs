@@ -1,6 +1,7 @@
 //! The terminal's own settings, `terminal.json` in shellman's config folder (`%APPDATA%\shellman`,
 //! or `SHELLMAN_CONFIG_DIR`). Written with its defaults the first time, so there is a file to
-//! edit; a Settings page comes later.
+//! edit; a Settings page comes later. `default_terminal` / `custom_terminal` are read by every
+//! app (`shellman_core::terminal`), not just this one.
 
 use serde::{Deserialize, Serialize};
 
@@ -19,6 +20,21 @@ pub struct Config {
     pub scrollback: usize,
     /// Copy a selection as soon as it is made.
     pub copy_on_select: bool,
+    /// What starting the terminal again does while a window is open: a new window (as Windows
+    /// Terminal does), or a new tab in the open one.
+    pub new_instance: NewInstance,
+    /// Which terminal shellman's "Open Terminal here" opens (read by `shellman_core::terminal`;
+    /// kept here so saving this file keeps it).
+    #[serde(flatten)]
+    pub open_with: shellman_core::terminal::Choice,
+}
+
+#[derive(Clone, Copy, Default, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum NewInstance {
+    #[default]
+    Window,
+    Tab,
 }
 
 impl Default for Config {
@@ -29,6 +45,8 @@ impl Default for Config {
             font_size: 12.0,
             scrollback: 10_000,
             copy_on_select: false,
+            new_instance: NewInstance::Window,
+            open_with: Default::default(),
         }
     }
 }
@@ -73,5 +91,15 @@ mod tests {
         assert!(c.copy_on_select);
         assert_eq!(c.scrollback, 10_000);
         assert_eq!(c.default_profile, "Windows PowerShell");
+        assert_eq!(c.new_instance, NewInstance::Window);
+    }
+
+    #[test]
+    fn the_terminal_choice_sits_beside_the_rest() {
+        let c: Config = serde_json::from_str(r#"{"new_instance": "tab", "default_terminal": "windows-terminal"}"#).unwrap();
+        assert_eq!(c.new_instance, NewInstance::Tab);
+        assert_eq!(c.open_with.default_terminal, shellman_core::terminal::Which::WindowsTerminal);
+        let v = serde_json::to_value(Config::default()).unwrap();
+        assert_eq!((v["default_terminal"].as_str(), v["new_instance"].as_str()), (Some("shellman"), Some("window")));
     }
 }

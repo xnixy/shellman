@@ -22,7 +22,6 @@ mod geometry;
 mod log;
 mod menu;
 mod stacks;
-mod terminal;
 mod text;
 mod wallpaper;
 mod window;

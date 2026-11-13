@@ -67,6 +67,8 @@ pub(super) enum Action {
     ToggleDetails,
     /// Ctrl+Space: select or unselect the item under the cursor.
     ToggleCursor,
+    /// Open a terminal in this folder (the one chosen in `terminal.json`).
+    OpenTerminal(PathBuf),
 }
 
 pub(super) struct Rename {
@@ -259,6 +261,13 @@ impl super::FileMan {
                 let row = tab.cursor.filter(|&c| tab.selected.contains(&tab.entry(c).path));
                 let pos = self.ctx.input(|i| i.pointer.latest_pos()).unwrap_or_else(|| self.ctx.screen_rect().center());
                 self.open_menu(row, pos);
+            }
+            Action::OpenTerminal(dir) => {
+                std::thread::spawn(move || {
+                    if let Err(e) = shellman_core::terminal::open_at(&dir) {
+                        eprintln!("files: {e}");
+                    }
+                });
             }
             Action::Reveal(path) => {
                 if let Some(parent) = path.parent().filter(|p| p.is_dir()) {

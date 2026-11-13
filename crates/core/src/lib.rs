@@ -25,6 +25,7 @@ pub mod shell_menu;
 pub mod sibling;
 pub mod startup;
 pub mod system;
+pub mod terminal;
 pub mod thumbs;
 pub mod transfer;
 pub mod watch;

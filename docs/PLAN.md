@@ -14,7 +14,7 @@ accent color, fast.
 | `apps/desktop` | wallpaper window | working: wallpaper per monitor; keeps Windows' modern-app host running; hands a right-click to the shelf |
 | `apps/shelf` | desktop icons, the desktop's right-click menu | stage 1 working: the shelf (drop zone, Desktop / Downloads / Recent stacks that fan open, drag out, drop in), the right-click menu, Settings › Desktop. Next: widgets top right (stage 2) |
 | `apps/tasks` | Task Manager (Ctrl+Shift+Esc, through the switcher's hook) | working: Processes (apps and background, grouped, sort, search, End task / End process tree / details), Performance (CPU, memory, GPUs, disks, network), Services (read-only: status, startup type, PID, description, sort, search, go to process; read through the SCM in `crates/core/src/services`, off the UI thread, only while the page shows). End task / tree try unelevated first and, only when Windows refuses, go through `shellman-elevate`'s `end-processes <pid>:<start time>...` behind the UAC prompt (the helper rechecks start time and refuses critical processes); critical processes stay un-endable. Reads through `crates/core/src/procs` |
-| `apps/terminal` | Windows Terminal | stage 1: one shell in glass, GPU-drawn grid, scrollback. Next: tabs, selection, mouse, profiles |
+| `apps/terminal` | Windows Terminal | stage 2: tabs, selection, mouse, profiles; `-d`/`-p`/`-e`/`--hold`; shellman's "Open Terminal here" opens it. Next: Windows' default terminal |
 | `apps/settings` | Settings pages for the shell | working: Appearance, Desktop, Dock, Top bar, Launcher, About; rebuilt Windows pages: Sound, Display, Apps, Startup, Fonts, Mouse & keyboard, Power, Date, time & region, Storage, Default apps (changes through Windows Settings), Windows Update |
 | `apps/session` | the shell process itself | built, not yet the shell: starts and supervises the apps, runs startup items, safety net, `--install`/`--uninstall` (never run yet) |
 
@@ -443,9 +443,30 @@ Decision: no host of our own is possible, and Windows' host is off unless the us
 
 ## Terminal
 
-`apps/terminal` (`shellman-terminal.exe [command line]`) is to replace Windows Terminal. Order of
-work: stage 1 (one shell, GPU grid) and stage 2 (tabs, selection, mouse, profiles) are done; next
-shellman's entry points open it, then it is registered as Windows' default terminal.
+`apps/terminal` (`shellman-terminal.exe`) is to replace Windows Terminal. Order of work: stage 1
+(one shell, GPU grid) and stage 2 (tabs, selection, mouse, profiles) are done, and shellman's own
+entry points open it; next it is registered as Windows' default terminal.
+
+- **Command line** (`cli.rs`, tested): `-d/--dir <folder>` (the first tab starts there; a WSL
+  profile gets it as `--cd`), `-p/--profile <name>`, `-e <command line>` or `-- <command line>`
+  (run that instead of the shell; the rest of the line reaches CreateProcess exactly as typed,
+  taken by offset from the raw line), `--hold` (the tab stays after the program exits, saying
+  its exit code). A bare command line (`shellman-terminal cmd /k ver`) still works. Bad
+  arguments print usage to the parent console and exit 2.
+- **A second start**: `new_instance` in `terminal.json`, `"window"` (default, as Windows
+  Terminal) or `"tab"`: the launch (folder, profile, command, hold; nothing else) goes as JSON
+  over `\\.\pipe\shellman-terminal-<session>` to the first window, which re-checks it, opens the
+  tab and comes forward (`instance.rs`). The pipe refuses remote clients; its default DACL lets
+  only the user, SYSTEM and administrators write.
+- **Entry points**: `shellman_core::terminal::open_at(dir)` is the one way shellman opens a
+  terminal: the desktop menu's "Open Terminal here" (`apps/shelf`, which had its own
+  `wt.exe -d` code) and Files' new "Open Terminal here" (folder background and a folder's menu).
+  Launcher, dock and Task Manager start apps by path and have no terminal entry of their own.
+  The choice is `default_terminal` in `terminal.json`: `"shellman"` (default), `"windows-terminal"`
+  or `"custom"` with `custom_terminal` (a command line, `{dir}` for the folder). A missing choice
+  falls back: shellman's terminal (sibling exe), Windows Terminal (app alias `wt.exe -d`, then the
+  activation manager), Command Prompt in a new console. **Owed**: a control for it in Settings
+  (not added while Settings is being edited elsewhere); `terminal.json` is the place for now.
 
 - **Emulation**: `alacritty_terminal` 0.26: grid, scrollback, VT parser and the pseudo-console
   (ConPTY, or a `conpty.dll` found on PATH or beside the exe), on a thread of its own per tab.
@@ -503,7 +524,8 @@ shellman's entry points open it, then it is registered as Windows' default termi
   each WSL distribution (registry `Lxss`, default first, Docker's skipped), Git Bash. The
   terminal's own `terminal.json` in the shellman config folder (`SHELLMAN_CONFIG_DIR` aware,
   written with defaults the first time): `default_profile`, `font_family`, `font_size` (12),
-  `scrollback` (10 000), `copy_on_select` (false). Zoom: Ctrl+wheel, Ctrl+plus/minus, Ctrl+0.
+  `scrollback` (10 000), `copy_on_select` (false), `new_instance` and `default_terminal` (above).
+  Zoom: Ctrl+wheel, Ctrl+plus/minus, Ctrl+0.
 - **Keyboard**: text comes as Windows composed it (dead keys, AltGr, IME commits), so layouts
   are not assumed; AltGr reaches egui without Ctrl and Alt and its characters go as text.
 
