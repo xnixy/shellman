@@ -50,8 +50,9 @@ pub fn plan(paths: &[PathBuf], dir: &Path, effect: u32) -> Option<Op> {
     }
 }
 
-/// Bring files into `dir`: move, copy, or make shortcuts, as `effect` says. Blocking.
-pub fn bring(paths: Vec<PathBuf>, dir: &Path, effect: u32) {
+/// Bring files into `dir`: move, copy, or make shortcuts, as `effect` says. Blocking. True when
+/// a move or copy ran and finished whole (nothing cancelled or failed).
+pub fn bring(paths: Vec<PathBuf>, dir: &Path, effect: u32) -> bool {
     if effect == LINK {
         for p in &paths {
             let name = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
@@ -60,13 +61,22 @@ pub fn bring(paths: Vec<PathBuf>, dir: &Path, effect: u32) {
                 crate::log::line(format!("shortcut to {}: {e}", p.display()));
             }
         }
-        return;
+        return false;
     }
-    let Some(op) = plan(&paths, dir, effect) else { return };
-    match fsops::shell_op(0, op, &paths, Some(dir)) {
+    let Some(op) = plan(&paths, dir, effect) else { return false };
+    let result = fsops::shell_op(0, op, &paths, Some(dir));
+    match &result {
         Ok(done) => crate::log::line(format!("{op:?} {} item(s) into {} (all done: {done})", paths.len(), dir.display())),
         Err(e) => crate::log::line(format!("{op:?} into {}: {e}", dir.display())),
     }
+    result == Ok(true)
+}
+
+/// Whether a paste empties the clipboard: after a cut whose move finished whole, as Explorer
+/// does. A move that failed, was cancelled or did not run leaves the clipboard as it was, so
+/// the paste can be tried again.
+fn clears_clipboard(cut: bool, moved: bool) -> bool {
+    cut && moved
 }
 
 /// A new file in `dir` holding a dropped or pasted picture or text, named after `name`
@@ -98,8 +108,8 @@ pub fn paste(dir: &Path) {
     match payload {
         Payload::Files(paths) => {
             let cut = effect & MOVE != 0 && effect & COPY == 0;
-            bring(paths, dir, if cut { MOVE } else { COPY });
-            if cut {
+            let moved = bring(paths, dir, if cut { MOVE } else { COPY });
+            if clears_clipboard(cut, moved) {
                 clip::clear_if(seq);
             }
         }
@@ -177,6 +187,20 @@ mod tests {
         // The Desktop into itself, or nothing at all.
         assert_eq!(plan(&[PathBuf::from(r"C:\Users\a\Desktop")], dir, MOVE), None);
         assert_eq!(plan(&[], dir, MOVE), None);
+    }
+
+    #[test]
+    fn a_cut_is_cleared_only_once_moved() {
+        assert!(clears_clipboard(true, true));
+        assert!(!clears_clipboard(true, false), "failed or cancelled: the cut stays to try again");
+        assert!(!clears_clipboard(false, true), "a copy leaves the clipboard alone");
+        // A move into the folder the items are in does not run: nothing moved.
+        let dir = temp("cut-here");
+        let f = dir.join("x.txt");
+        std::fs::write(&f, b"x").unwrap();
+        assert!(!bring(vec![f.clone()], &dir, MOVE));
+        assert!(f.exists());
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]
