@@ -33,7 +33,7 @@ pub fn battery(ui: &mut Ui, b: Battery) {
     });
 }
 
-pub fn show(ui: &mut Ui, menu: &mut PowerMenu) -> Option<Asked> {
+pub fn show(ui: &mut Ui, menu: &mut PowerMenu, restart_pending: bool) -> Option<Asked> {
     let mut asked = None;
     let width = ui.available_width();
     let (row, _) = ui.allocate_exact_size(Vec2::new(width, BUTTON), Sense::hover());
@@ -58,16 +58,16 @@ pub fn show(ui: &mut Ui, menu: &mut PowerMenu) -> Option<Asked> {
     }
     if menu.is_open() {
         ui.add_space(GAP - ui.spacing().item_spacing.y);
-        if let Some(action) = choices(ui, menu) {
+        if let Some(action) = choices(ui, menu, restart_pending) {
             asked = Some(Asked::Power(action));
         }
     }
     asked
 }
 
-/// Restart, Shut down, Sign out, side by side. Returns a confirmed choice.
-fn choices(ui: &mut Ui, menu: &mut PowerMenu) -> Option<Action> {
-    let c = colors();
+/// Restart, Shut down, Sign out, side by side, with "Update and restart" on a row of its own above
+/// them while updates wait for a restart. Returns a confirmed choice.
+fn choices(ui: &mut Ui, menu: &mut PowerMenu, restart_pending: bool) -> Option<Action> {
     let now = Instant::now();
     menu.expire(now);
     if let Some(deadline) = menu.deadline() {
@@ -75,25 +75,36 @@ fn choices(ui: &mut Ui, menu: &mut PowerMenu) -> Option<Action> {
         ui.ctx().request_repaint_after(deadline.saturating_duration_since(now));
     }
     let width = ui.available_width();
+    let mut confirmed = None;
+    if let Some(action) = power_menu::extra_choice(restart_pending) {
+        let (row, _) = ui.allocate_exact_size(Vec2::new(width, CHOICE_HEIGHT), Sense::hover());
+        confirmed = choice(ui, menu, action, row, 0, now);
+        ui.add_space(GAP - ui.spacing().item_spacing.y);
+    }
     let (row, _) = ui.allocate_exact_size(Vec2::new(width, CHOICE_HEIGHT), Sense::hover());
     let w = (width - GAP * 2.0) / 3.0;
-    let mut confirmed = None;
     for (i, action) in CHOICES.into_iter().enumerate() {
         let r = Rect::from_min_size(Pos2::new(row.left() + i as f32 * (w + GAP), row.top()), Vec2::new(w, CHOICE_HEIGHT));
-        let resp = ui.interact(r, egui::Id::new(("power", i)), Sense::click());
-        let armed = menu.armed() == Some(action);
-        let fill = match (armed, resp.hovered()) {
-            (true, _) => c.danger,
-            (false, true) => kit::well(true),
-            (false, false) => kit::tile_fill(false),
-        };
-        let fg = if armed { egui::Color32::WHITE } else { c.text };
-        ui.painter().rect_filled(r, CornerRadius::same((CHOICE_HEIGHT / 2.0) as u8), fill);
-        let text = power_menu::label(action, armed);
-        ui.painter().text(r.center(), Align2::CENTER_CENTER, text, small_font(), fg);
-        if resp.clicked() {
-            confirmed = menu.press(action, now);
-        }
+        confirmed = choice(ui, menu, action, r, i + 1, now).or(confirmed);
     }
     confirmed
+}
+
+/// One pill in `r`; a click is `PowerMenu::press`, which says whether it confirms.
+fn choice(ui: &mut Ui, menu: &mut PowerMenu, action: Action, r: Rect, slot: usize, now: Instant) -> Option<Action> {
+    let c = colors();
+    let resp = ui.interact(r, egui::Id::new(("power", slot)), Sense::click());
+    let armed = menu.armed() == Some(action);
+    let fill = match (armed, resp.hovered()) {
+        (true, _) => c.danger,
+        (false, true) => kit::well(true),
+        (false, false) => kit::tile_fill(false),
+    };
+    let fg = if armed { egui::Color32::WHITE } else { c.text };
+    ui.painter().rect_filled(r, CornerRadius::same((CHOICE_HEIGHT / 2.0) as u8), fill);
+    ui.painter().text(r.center(), Align2::CENTER_CENTER, power_menu::label(action, armed), small_font(), fg);
+    if resp.clicked() {
+        return menu.press(action, now);
+    }
+    None
 }

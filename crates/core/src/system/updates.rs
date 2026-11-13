@@ -139,6 +139,28 @@ impl Drop for Watch {
     }
 }
 
+/// Whether installed updates are waiting for a restart. Starts the update manager (about 0.2 s),
+/// so call it from a worker thread, once per showing of a panel, never from a frame.
+pub fn restart_pending() -> bool {
+    // SAFETY: the thread's own COM start-up, matched below.
+    let com = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) }.is_ok();
+    let w = Worker {
+        mgr: WindowsUpdateManager::CreateInstance(&HSTRING::from("shellman")).ok(),
+        unavailable: None,
+        live: HashMap::new(),
+        failed: HashMap::new(),
+        notice: None,
+        sink: Box::new(|_| {}),
+    };
+    let pending = w.mgr.is_some() && w.read().overview(now()).restart;
+    drop(w);
+    if com {
+        // SAFETY: matches the successful CoInitializeEx above; the manager is dropped.
+        unsafe { CoUninitialize() };
+    }
+    pending
+}
+
 /// Seconds since 1970 now.
 pub fn now() -> i64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64)
@@ -429,5 +451,13 @@ mod tests {
             println!("{:?}", logic::headline(&s.overview(now())));
         }
         drop(w);
+    }
+
+    /// Reads only; prints whether this machine waits for a restart.
+    #[test]
+    #[ignore = "starts the real update manager"]
+    fn restart_pending_reads_this_machine() {
+        let t = std::time::Instant::now();
+        println!("restart pending: {} ({:?})", restart_pending(), t.elapsed());
     }
 }

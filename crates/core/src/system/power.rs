@@ -24,6 +24,8 @@ pub enum Action {
     SignOut,
     Restart,
     ShutDown,
+    /// Restart and install what Windows Update has waiting (`update_and_restart_call`).
+    UpdateAndRestart,
 }
 
 /// The Windows call an action comes down to.
@@ -40,8 +42,8 @@ pub enum Call {
 
 /// "Update and restart": restart, installing what Windows Update has waiting on the way, as
 /// Windows' own power menu does when an update needs a restart. Not forced (apps can still hold
-/// it up) and no grace period. The Settings page offers it; the power menu could offer it on the
-/// same signal (`updates::Snapshot` says a restart is needed).
+/// it up) and no grace period. The Settings page offers it, and the Control Center's power choices
+/// when `updates::restart_pending` says a restart is waiting.
 pub fn update_and_restart_call() -> Call {
     Call::InitiateShutdown { flags: SHUTDOWN_RESTART.0 | SHUTDOWN_INSTALL_UPDATES.0 }
 }
@@ -55,6 +57,7 @@ pub fn plan(action: Action) -> Call {
         Action::SignOut => Call::ExitWindows { flags: EWX_LOGOFF.0, privilege: false },
         Action::Restart => Call::ExitWindows { flags: EWX_REBOOT.0, privilege: true },
         Action::ShutDown => Call::ExitWindows { flags: EWX_POWEROFF.0, privilege: true },
+        Action::UpdateAndRestart => update_and_restart_call(),
     }
 }
 
@@ -123,6 +126,11 @@ mod tests {
         assert_eq!(plan(Action::SignOut), Call::ExitWindows { flags: 0, privilege: false });
         assert_eq!(plan(Action::Restart), Call::ExitWindows { flags: 2, privilege: true });
         assert_eq!(plan(Action::ShutDown), Call::ExitWindows { flags: 8, privilege: true });
+    }
+
+    #[test]
+    fn update_and_restart_is_an_action_with_that_call() {
+        assert_eq!(plan(Action::UpdateAndRestart), update_and_restart_call());
     }
 
     #[test]

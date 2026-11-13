@@ -18,6 +18,7 @@ use shellman_core::system::radios::{Connectivity, ConnectivityWatch};
 use shellman_core::system::status::{self, Battery};
 use shellman_ui::glass;
 use shellman_ui::theme;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -45,6 +46,8 @@ pub struct Control {
     media: MediaView,
     battery: Option<Battery>,
     power: PowerMenu,
+    /// Updates are waiting for a restart (read off the UI thread at every showing).
+    restart_pending: Arc<AtomicBool>,
     /// Whether the tiles may open Settings pages: asked at every showing (see `settings_page`).
     links: bool,
     /// The showing this window last saw, whether it has had focus since, and when it appeared.
@@ -67,6 +70,7 @@ impl Control {
             media: MediaView::default(),
             battery: None,
             power: PowerMenu::default(),
+            restart_pending: Arc::new(AtomicBool::new(false)),
             links: false,
             seen_shown: 0,
             had_focus: false,
@@ -82,6 +86,14 @@ impl Control {
         ctx.request_repaint_after(FOCUS_RETRY + Duration::from_millis(10));
         self.battery = status::battery();
         self.links = settings_page::available();
+        // The update manager takes ~0.2 s to start: ask on a worker, keep the last answer meanwhile.
+        let (pending, repaint) = (self.restart_pending.clone(), ctx.clone());
+        std::thread::spawn(move || {
+            let now = shellman_core::system::updates::restart_pending();
+            if pending.swap(now, Ordering::Relaxed) != now {
+                repaint.request_repaint();
+            }
+        });
         self.live = Some(Live {
             sound: SoundWatch::start(self.wake.clone()),
             connectivity: ConnectivityWatch::start(self.wake.clone()),
@@ -218,7 +230,7 @@ impl Control {
             if let Some(b) = battery {
                 footer::battery(ui, b);
             }
-            if let Some(a) = footer::show(ui, &mut self.power) {
+            if let Some(a) = footer::show(ui, &mut self.power, self.restart_pending.load(Ordering::Relaxed)) {
                 asked = Asked::Footer(a);
             }
         });
