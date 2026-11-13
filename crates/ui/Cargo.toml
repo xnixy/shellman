@@ -32,3 +32,6 @@ windows-numerics = "0.2"
 
 [dev-dependencies]
 serde_json.workspace = true
+# The popup menu's example (`examples/popup_menu.rs`) runs in a real eframe app.
+eframe.workspace = true
+raw-window-handle.workspace = true

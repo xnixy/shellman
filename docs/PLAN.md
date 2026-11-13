@@ -77,7 +77,8 @@ Rule: **the top bar is the system, the dock is apps.** Both are windows of one p
   a fixed order (by handle), and so does scrolling. With one window, a click on the app in front
   minimizes it. Middle click opens a new window.
 - Hovering shows live DWM previews, and sliding along the dock scrubs them.
-- Right-click on an icon: a native Windows popup with Pin / Unpin and Close. On the Launcher
+- Right-click on an icon: shellman's glass popup menu (see the desktop's right-click menu) with
+  Pin / Unpin and Close. On the Launcher
   icon: Settings. On the Recycle Bin: Open (in Files, never Explorer) and Empty Recycle Bin
   (grey when empty; a native confirmation first). The dock window is only as tall as its icons, so the menu cannot live in it.
 - No magnification, which would repaint on every mouse move; a short hover lift instead.
@@ -197,17 +198,52 @@ of the Control Center).
 The desktop process hears the right-click on a wallpaper window, lets the shelf's process take
 the foreground (it received the click, so it may), and posts the shelf window a registered message
 with the point (`core::desktop_menu`; `--menu x y` starts a shelf that opens it when none runs).
-The shelf shows a plain Windows popup there, the component the dock's menu uses: New (Folder,
+The shelf shows shellman's glass popup menu there, the component the dock's menu uses: New (Folder,
 Text document, Markdown note), Paste (greyed with nothing to paste), Open in Files, Open Terminal
 here, Change wallpaper…, Desktop settings, Display settings. "Edit desktop…" comes with the widgets.
+No shortcut hints: none of these has a shortcut on the desktop yet.
 
 A first version drew shellman's own menu on glass in an egui window as large as the clicked
-monitor. Opening it repeatedly crashed `dwm.exe` (12 Nov, 18:00:02, `dwmcore.dll`, E_INVALIDARG),
-most likely from a glass panel created and destroyed per menu on a monitor-sized window (and, in
-one state, re-attached every frame); a monitor-sized topmost window also made the bar hide as for
-a fullscreen app. Rule from it: never a window as large as a monitor for a popup, and never
-create glass per click. A glass menu should come back as one window, sized to the menu, made once
-and kept.
+monitor. Opening it repeatedly crashed `dwm.exe` (12 Nov, 18:00:02, `dwmcore.dll`, E_INVALIDARG:
+DWM fails fast when a composition surface gets a size of 0, negative or above 16384), from a glass
+panel created and destroyed per menu on a monitor-sized window (and, in one state, re-attached
+every frame); a monitor-sized topmost window also made the bar hide as for a fullscreen app. Rule
+from it: never a window as large as a monitor for a popup, never create glass per click, never a
+size that has not been checked.
+
+### The glass popup menu (`shellman_ui::menu::popup`)
+
+One component for menus that cannot live inside their app's window: the desktop's (shelf) and
+the dock's (bar). Files keeps its in-window menu (`shellman_ui::menu::Menu`, same rows), and the
+Windows shell's context menu stays Windows' own.
+
+- API: `popup::declare(ctx)` in every root frame; `PopupMenu::<T>::open(ctx, Anchor::at(x, y) or
+  Anchor::above(x, y), entries)` with points in physical pixels; `take_pick()` in a later frame of
+  the viewport that opened it (woken when something is picked). Entries: items (icon, `&` letter,
+  hint, disabled, checked, danger), separators, headings, one level of submenus.
+- One window per process: an egui viewport declared from the first open on, found by its title,
+  made a topmost popup tool window, and given its glass panel once, while still hidden. An open
+  only sizes and places it (hidden, cloaked), lays out the glass islands, shows it with the focus,
+  and uncloaks it after two frames at the target monitor's scale. Closing cloaks it, hides its
+  glass pieces (empty region, no clicks) and parks it shown-but-cloaked at its last size: a hidden
+  egui window spins on a pending frame, and the window is never shrunk to nothing.
+- The window is the menu, or the menu and its submenu side by side as two islands; the shadow lies
+  in the glass's backdrop window. Every size passes `place::guard` (finite, at least 24 px, no
+  larger than the work area, never above 8192) before a window or glass sees it.
+- Placed in physical pixels on the clicked monitor's work area, laid out at that monitor's scale;
+  flips left/up at the edges, the submenu to the left when there is no room on the right.
+- Closes on a pick, Esc, a click outside (`core::outside`), the focus leaving, or another menu of
+  the process opening; the focus goes back to the window that had it on a pick or Esc. Keys:
+  arrows, Home/End, Left/Right for the submenu, Enter/Space, `&` letters and first letters. The
+  submenu also opens after the pointer rests 200 ms. No animation.
+- Measured (12 Nov, test instance, secondary monitors at 150 % and 300 %): 0 ms of CPU in 3 s
+  after a menu closed; the top bar and dock stay up while it is open; no `dwm.exe` errors.
+  `cargo run -p shellman-ui --example popup_menu -- <x> <y> [--sub] [--light] [--glass 0.2]`
+  opens one to look at.
+- Later: Files' and the Windows shell's menus could move onto it. The shell menu would need its
+  items read into entries (as `core::shell_menu` already walks them for Files), owner-drawn items
+  as pictures, `InvokeCommand` with the picked id, and submenus filled on open; the popup would
+  need picture rows, a scroll for long menus, and deeper submenus.
 
 `dwm.exe` crashed 16 times that day (10:24, 12:06, 18:00), always the same fail-fast in
 `dwmcore` after `CreateTexture2D` returned E_INVALIDARG: a texture of size 0, negative or past
@@ -574,6 +610,6 @@ from Run new task with `cmd`. Signing in as another user is unaffected (the valu
 2. Win+1-9 (the lone Win key is done).
 3. Dock: drag-and-drop onto icons, badges and progress, Recycle Bin empty / full.
 4. Top bar: "now" pill, notifications and calendar.
-5. Desktop: widgets (Today, Now playing) and arrange mode; a glass right-click menu.
+5. Desktop: widgets (Today, Now playing) and arrange mode.
 6. Task View.
 7. `session`: built. Next: try the swap on a spare user account, then on the real one.
