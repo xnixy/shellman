@@ -526,6 +526,9 @@ impl eframe::App for TerminalApp {
     }
 
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        // This frame's keys were typed into the tab shown now; closing tabs and tabs handed
+        // over may show another before they are sent.
+        let typed_into = self.tabs.current().id;
         if !self.reap(ctx) {
             return;
         }
@@ -533,7 +536,7 @@ impl eframe::App for TerminalApp {
         self.track_system(ctx);
         self.track_focus(ctx);
         shellman_ui::app_icon::sync_window_icon(ctx, shellman_ui::app_icon::Kind::Shellman);
-        self.input(ctx);
+        self.input(ctx, typed_into);
         self.track_tabs(ctx);
         let cpu = self.stats.on().then(|| frame.info().cpu_usage).flatten();
         self.layout(ctx, cpu);
