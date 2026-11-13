@@ -380,6 +380,17 @@ from Run new task with `cmd`. Signing in as another user is unaffected (the valu
 - shellman's own apps are drawn in the user's accent wherever shellman shows them: dock,
   switcher, launcher, settings, window icons.
 - The icon embedded in each exe is fixed at the default accent.
+- Icon packs (`crates/core/src/icon_pack`): freedesktop themes or folders of images, added in
+  Settings › Appearance › Icon pack, matched to Windows apps by exe name, AUMID and shortcut name
+  through an alias table. `icons.json` holds the choice and per-app overrides.
+- **Islands**, the built-in pack and the default: the mockups' dock tiles, 66 icons (shellman's
+  own apps, the Recycle Bin empty and full, ~35 kinds of app, ~23 well-known apps in their own
+  colours). Sources in `assets/icon-packs/islands` (written by `tools/islands/make.py`; README
+  there), compiled into every app by `crates/core/build.rs` (about 135 KB an exe) and known by
+  paths that exist nowhere on disk. A small variant (heavier glyph) is drawn at 64 px and under.
+  No `icons.json`, or one without a `pack` key, means Islands; `"pack": null` is "Windows icons"
+  and stays so. Shellman's own apps take a pack's icon only by exact name (`shellman-files`), so
+  other packs leave them in the accent.
 
 ## Order of work
 

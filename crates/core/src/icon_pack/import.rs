@@ -83,7 +83,14 @@ fn is_image(path: &Path) -> bool {
 fn safe_name(name: &str) -> String {
     let cleaned: String = name.chars().map(|c| if r#"\/:*?"<>|"#.contains(c) { '_' } else { c }).collect();
     let cleaned = cleaned.trim().trim_matches('.').to_string();
-    if cleaned.is_empty() { "pack".to_string() } else { cleaned }
+    if cleaned.is_empty() {
+        "pack".to_string()
+    } else if super::builtin::is_builtin(&cleaned) {
+        // The built-in pack's name means the built-in pack; a copy added from a folder is another.
+        format!("{cleaned} (folder)")
+    } else {
+        cleaned
+    }
 }
 
 /// Copy what a pack needs (its `index.theme`, and the images; for a theme, only the app icons)
@@ -290,5 +297,6 @@ mod tests {
         assert_eq!(safe_name("a/b:c"), "a_b_c");
         assert_eq!(safe_name(".."), "pack");
         assert_eq!(safe_name(" Papirus "), "Papirus");
+        assert_eq!(safe_name("islands"), "islands (folder)");
     }
 }

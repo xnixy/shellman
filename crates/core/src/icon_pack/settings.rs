@@ -5,15 +5,28 @@ use std::collections::BTreeMap;
 
 pub const NAME: &str = "icons";
 
-#[derive(Clone, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
+/// The pack used when none was ever chosen: shellman's own, Islands.
+///
+/// How a saved file reads: no `icons.json`, or one without a `pack` key, is the default (a fresh
+/// setup, or one from before packs existed, which never chose anything); `"pack": null` is the
+/// user's choice of every app's own icon ("Windows icons"), kept as it is; a name is that pack.
+/// Settings always writes the key, so a choice once made is never taken for "none chosen".
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct IconSettings {
-    /// The pack's folder name under `icon-packs`; none for every app's own icon.
+    /// The pack: `Islands` (built in), or a folder name under `icon-packs`; none for every app's
+    /// own icon.
     pub pack: Option<String>,
     /// An app (its id, or its program's path) to an image file that is its icon, pack or not.
     pub overrides: BTreeMap<String, String>,
     /// Apps that keep their own icon even when the pack has one.
     pub skip: Vec<String>,
+}
+
+impl Default for IconSettings {
+    fn default() -> Self {
+        Self { pack: Some(super::builtin::NAME.to_string()), overrides: BTreeMap::new(), skip: Vec::new() }
+    }
 }
 
 /// How an app id or path is compared: lower case, one kind of slash.
@@ -74,6 +87,24 @@ mod tests {
         assert_eq!(serde_json::from_str::<IconSettings>("{}").unwrap(), IconSettings::default());
         let none: IconSettings = serde_json::from_str(r#"{ "pack": null }"#).unwrap();
         assert_eq!(none.pack, None);
+    }
+
+    #[test]
+    fn islands_unless_something_else_was_chosen() {
+        let read = |json: &str| serde_json::from_str::<IconSettings>(json).unwrap().pack;
+        // Nothing chosen yet: a fresh setup, or a file with only overrides in it.
+        assert_eq!(IconSettings::default().pack.as_deref(), Some("Islands"));
+        assert_eq!(read("{}").as_deref(), Some("Islands"));
+        assert_eq!(read(r#"{ "skip": ["x"] }"#).as_deref(), Some("Islands"));
+        // A choice stays: every app's own icon, or another pack.
+        assert_eq!(read(r#"{ "pack": null }"#), None);
+        assert_eq!(read(r#"{ "pack": "Papirus" }"#).as_deref(), Some("Papirus"));
+        // And is written so that it stays.
+        let none = IconSettings { pack: None, ..Default::default() };
+        assert_eq!(serde_json::from_str::<IconSettings>(&serde_json::to_string(&none).unwrap()).unwrap(), none);
+        // A missing or unreadable file is the default too.
+        let missing = std::env::temp_dir().join("shellman-no-such-icons.json");
+        assert_eq!(crate::config::load_from::<IconSettings>(&missing).pack.as_deref(), Some("Islands"));
     }
 
     #[test]

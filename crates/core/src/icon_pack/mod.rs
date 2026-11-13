@@ -7,6 +7,7 @@
 //! `icons.json` is looked at again at most twice a second, and a change (made by Settings, in
 //! another process) bumps `generation`, so whoever caches by it starts afresh.
 
+pub mod builtin;
 pub mod import;
 pub mod index;
 pub mod names;
@@ -68,7 +69,8 @@ fn refresh(inner: &mut Inner, force: bool) {
         return;
     }
     inner.checked = Some(Instant::now());
-    let pack_dir = |s: &IconSettings| s.pack.as_ref().and_then(|p| import::packs_dir().map(|d| d.join(p)));
+    // The built-in pack has no folder to watch.
+    let pack_dir = |s: &IconSettings| s.pack.as_ref().filter(|p| !builtin::is_builtin(p)).and_then(|p| import::packs_dir().map(|d| d.join(p)));
     let first = inner.generation == 0;
     let settings_now = settings_stamp();
     let pack_now = pack_dir(&inner.settings).and_then(|d| modified(&d));
@@ -84,10 +86,23 @@ fn refresh(inner: &mut Inner, force: bool) {
     if pack_changed || first {
         inner.index = None;
         inner.pack = inner.settings.pack.clone();
-        if let (Some(name), Some(root)) = (inner.pack.clone(), import::packs_dir()) {
-            start_build(name, root);
+        match inner.pack.clone() {
+            // Compiled in: ready at once, so the first frame already shows it.
+            Some(name) if builtin::is_builtin(&name) => inner.index = Some(builtin_index()),
+            Some(name) => {
+                if let Some(root) = import::packs_dir() {
+                    start_build(name, root);
+                }
+            }
+            None => {}
         }
     }
+}
+
+/// The built-in pack's index, made once.
+fn builtin_index() -> Arc<PackIndex> {
+    static INDEX: OnceLock<Arc<PackIndex>> = OnceLock::new();
+    INDEX.get_or_init(|| Arc::new(builtin::index())).clone()
 }
 
 /// Read a pack on its own thread, and hand the index to whoever asks next.
@@ -149,17 +164,28 @@ fn keys(app: &AppRef) -> Vec<String> {
     keys
 }
 
-fn is_shellmans_own(app: &AppRef) -> bool {
+/// The pack name of one of shellman's own apps (`shellman-files`), from its program's file name.
+fn own_name(app: &AppRef) -> Option<String> {
     let name = |p: &str| p.rsplit(['\\', '/']).next().unwrap_or(p).to_lowercase();
-    let own = |f: String| f.starts_with("shellman-") && f.ends_with(".exe");
-    own(name(app.id)) || app.exe.is_some_and(|e| own(name(&e.to_string_lossy())))
+    let own = |f: String| {
+        let stem = f.strip_suffix(".exe")?;
+        (stem.len() > "shellman-".len() && stem.starts_with("shellman-")).then(|| stem.to_string())
+    };
+    app.exe.and_then(|e| own(name(&e.to_string_lossy()))).or_else(|| own(name(app.id)))
+}
+
+#[cfg(test)]
+fn is_shellmans_own(app: &AppRef) -> bool {
+    own_name(app).is_some()
 }
 
 /// The image file to draw for the app instead of its own icon: its override, else the pack's, or
-/// none (draw the app's own). Shellman's own apps keep their accent-coloured icons.
+/// none (draw the app's own). Shellman's own apps are matched only by their exact names
+/// (`shellman-files`), which only a pack made for shellman has; any other pack leaves them their
+/// accent-coloured icons.
 pub fn resolve(app: &AppRef) -> Option<PathBuf> {
     let keys = keys(app);
-    if keys.is_empty() && app.name.is_none() || is_shellmans_own(app) {
+    if keys.is_empty() && app.name.is_none() {
         return None;
     }
     let memo = format!("{}|{}|{}", keys.join("|"), app.name.unwrap_or(""), app.exe.is_some());
@@ -192,7 +218,21 @@ pub fn decide(settings: &IconSettings, index: Option<&PackIndex>, app: &AppRef, 
         return None;
     }
     let index = index?;
+    if let Some(own) = own_name(app) {
+        return index.get_exact(&own);
+    }
     index.lookup(&names::candidates(app))
+}
+
+/// The pack's image for something that is not an app, by its icon name: `user-trash` and
+/// `user-trash-full` for the Recycle Bin. None when the pack has no such icon (or is not read yet).
+pub fn resolve_named(name: &str) -> Option<PathBuf> {
+    let index = {
+        let mut s = state().lock().unwrap();
+        refresh(&mut s, false);
+        s.index.clone()
+    };
+    index?.get_exact(name)
 }
 
 /// What a path handed to the icon code is, as far as matching goes: a program, a shortcut, or an
@@ -242,6 +282,9 @@ pub fn coverage(index: &PackIndex, apps: &[crate::apps_index::App]) -> (usize, u
 
 /// The pack for `name` as an index, read now (for Settings, which reads on its own thread).
 pub fn read_pack(name: &str) -> PackIndex {
+    if builtin::is_builtin(name) {
+        return builtin::index();
+    }
     match import::packs_dir() {
         Some(root) => PackIndex::build(&root.join(name), Some(&root)),
         None => PackIndex::default(),
@@ -325,11 +368,32 @@ mod tests {
     }
 
     #[test]
-    fn shellmans_own_apps_are_left_alone() {
-        let own = AppRef { id: "", exe: Some(Path::new(r"C:\x\shellman-files.exe")), name: None };
-        assert_eq!(resolve(&own), None);
+    fn shellmans_own_apps_only_take_their_exact_names() {
+        let own = AppRef { id: "", exe: Some(Path::new(r"C:\x\shellman-files.exe")), name: Some("Files") };
+        let s = IconSettings::default();
+        // A pack not made for shellman, with icons for the words in its apps' names: left alone.
+        let dir = temp("own");
+        touch(&dir, "files.svg", "<svg/>");
+        touch(&dir, "folder.svg", "<svg/>");
+        touch(&dir, "shellman.svg", "<svg/>");
+        let other = PackIndex::build(&dir, None);
+        assert_eq!(decide(&s, Some(&other), &own, &keys(&own)), None);
+        // One that has it by name.
+        touch(&dir, "shellman-files.svg", "<svg/>");
+        let made = PackIndex::build(&dir, None);
+        assert!(decide(&s, Some(&made), &own, &keys(&own)).unwrap().ends_with("shellman-files.svg"));
+        let _ = std::fs::remove_dir_all(dir);
+        // Islands has every one the dock and launcher show.
+        let islands = builtin::index();
+        for exe in ["shellman-files", "shellman-settings", "shellman-tasks", "shellman-terminal", "shellman-launcher", "shellman-control"] {
+            let path = format!(r"C:\Programs\shellman\{exe}.exe");
+            let a = AppRef { id: &path, exe: Some(Path::new(&path)), name: None };
+            assert!(decide(&s, Some(&islands), &a, &keys(&a)).is_some(), "{exe}");
+        }
+        assert!(islands.get_exact("user-trash").is_some() && islands.get_exact("user-trash-full").is_some());
         assert!(is_shellmans_own(&AppRef { id: r"c:\x\shellman-bar.exe", exe: None, name: None }));
         assert!(!is_shellmans_own(&app(r"C:\x\firefox.exe")));
+        assert!(!is_shellmans_own(&app(r"C:\x\shellman-.exe")));
     }
 
     #[test]

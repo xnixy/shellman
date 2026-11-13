@@ -5,7 +5,9 @@
 //! no window of its own tall enough for an in-window dialog.
 
 use shellman_core::recycle_bin::{self, BinState};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::channel;
+use std::sync::Once;
 use std::time::Duration;
 use windows::core::HSTRING;
 use windows::Win32::Foundation::HWND;
@@ -30,6 +32,31 @@ pub fn can_empty() -> bool {
         Ok(Some(state)) => !state.is_empty(),
         Ok(None) | Err(_) => true,
     }
+}
+
+/// How often the bin is looked at for its full or empty icon.
+const WATCH_EVERY: Duration = Duration::from_secs(3);
+
+static FULL: AtomicBool = AtomicBool::new(false);
+
+/// Whether the bin had something in it when last looked (every few seconds, on a thread of its
+/// own, which starts with the first call and repaints `ctx` when the answer changes): for the icon
+/// pack's empty and full bins.
+pub fn looks_full(ctx: &egui::Context) -> bool {
+    static WATCH: Once = Once::new();
+    WATCH.call_once(|| {
+        let ctx = ctx.clone();
+        std::thread::spawn(move || loop {
+            if let Some(state) = recycle_bin::state() {
+                let full = !state.is_empty();
+                if FULL.swap(full, Ordering::Relaxed) != full {
+                    ctx.request_repaint();
+                }
+            }
+            std::thread::sleep(WATCH_EVERY);
+        });
+    });
+    FULL.load(Ordering::Relaxed)
 }
 
 /// Ask, then empty the bin. Runs on its own thread: the message box and the shell call both

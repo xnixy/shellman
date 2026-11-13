@@ -185,15 +185,25 @@ fn lerp_color(a: Color32, b: Color32, t: f32) -> Color32 {
     Color32::from_rgba_premultiplied(l(a.r(), b.r()), l(a.g(), b.g()), l(a.b(), b.b()), l(a.a(), b.a()))
 }
 
-/// The image for an item, drawn sharp at `px` pixels: shellman's own icons (the Launcher and
-/// Files) in the accent, everything else from the shell.
+/// The image for an item, drawn sharp at `px` pixels: the icon pack's tile where it has one
+/// (shellman's own apps and the Recycle Bin included), else shellman's own icons (the Launcher and
+/// Files) in the accent, and everything else from the shell.
 pub(super) fn texture(ctx: &egui::Context, item: &Item, px: f32, thumbs: &mut Thumbs) -> Option<(egui::TextureId, Vec2)> {
     if item.section == Section::Launcher {
-        return Some(app_icon::kind_texture_px(ctx, Kind::Shellman, px));
+        return app_icon::own_texture_px(ctx, "shellman-launcher.exe", Kind::Shellman, px, thumbs);
+    }
+    if item.section == Section::Bin {
+        let name = if super::bin::looks_full(ctx) { "user-trash-full" } else { "user-trash" };
+        if let Some(image) = shellman_core::icon_pack::resolve_named(name) {
+            return thumbs.get(&image, true).map(|t| (t.id(), t.size_vec2()));
+        }
     }
     let path = item.icon_source()?;
     match app_icon::kind_for_exe(&path) {
-        Some(kind) => Some(app_icon::kind_texture_px(ctx, kind, px)),
+        Some(kind) => match app_icon::own_from_pack(&path) {
+            Some(image) => thumbs.get(&image, true).map(|t| (t.id(), t.size_vec2())),
+            None => Some(app_icon::kind_texture_px(ctx, kind, px)),
+        },
         None => thumbs.get(&path, true).map(|t| (t.id(), t.size_vec2())),
     }
 }
