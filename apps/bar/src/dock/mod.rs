@@ -237,7 +237,7 @@ impl Dock {
         let Some(item) = self.menu_for.take() else { return };
         match choice {
             menu::Choice::Settings => {
-                shellman_core::sibling::start("settings");
+                std::thread::spawn(|| shellman_core::sibling::start("settings"));
             }
             menu::Choice::TogglePin => {
                 if item.section == Section::Pinned {
@@ -307,7 +307,7 @@ impl Dock {
             } else if self.items[i].section == Section::Bin {
                 bin::open();
             } else if let Some(target) = self.items[i].launch_target() {
-                shellman_core::fsops::open(&target);
+                launch(target);
             }
         }
         if let Some((i, delta)) = events.scrolled {
@@ -328,13 +328,16 @@ fn is_bar_window(w: &AppWindow) -> bool {
 }
 
 /// Start what a pin or icon opens: a pinned folder opens in Files, anything else through the
-/// shell.
+/// shell. On a thread of its own: a pin on a sleeping or network drive, or a slow shell
+/// handler, would otherwise freeze every bar window.
 fn launch(target: std::path::PathBuf) {
-    if target.is_dir() {
-        shellman_core::sibling::start_with("files", &[&target.to_string_lossy()]);
-    } else {
-        shellman_core::fsops::open(&target);
-    }
+    std::thread::spawn(move || {
+        if target.is_dir() {
+            shellman_core::sibling::start_with("files", &[&target.to_string_lossy()]);
+        } else {
+            shellman_core::fsops::open(&target);
+        }
+    });
 }
 
 /// Ask a window to close, as its own close button would.
