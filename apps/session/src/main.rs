@@ -112,6 +112,8 @@ fn run(mut fleet: supervisor::Fleet, net: Option<Net>, shift: Option<safety::Rea
         let mut extra = None;
         if let Some(net) = &net {
             state = match state {
+                // While Windows asks to end the session the bar may be gone on purpose.
+                State::Watching if shutdown::quiet() => State::Watching,
                 State::Watching => {
                     let (bar, since) = fleet.bar();
                     let seen = safety::Seen { shift: false, bar, tray_up: fallback::tray_up(), since };

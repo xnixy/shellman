@@ -25,6 +25,8 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPA
                 shutdown::run("end of session");
             } else {
                 shutdown::ENDING.store(false, Ordering::SeqCst);
+                // The supervisor's next pass (right after this message) restarts what exited.
+                shutdown::CANCELLED.store(true, Ordering::SeqCst);
                 log::line("end of session cancelled");
             }
             LRESULT(0)

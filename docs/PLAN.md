@@ -841,7 +841,10 @@ beside Explorer for tests.
   `shellman-*.old<digits>.exe` files beside itself that are not in use.
 - **Logoff**: a hidden top-level window answers WM_QUERYENDSESSION with yes at once; on
   WM_ENDSESSION (or WM_CLOSE) it posts WM_CLOSE to every top-level window of the children, waits up
-  to 4 s, logs who is left, never kills.
+  to 4 s, logs who is left, never kills. An app that exits between the query and the answer is
+  not a crash and is not restarted then, and the bar counts as pending (never "lost", so no
+  fallback); when the end is cancelled (WM_ENDSESSION FALSE) every app that exited meanwhile is
+  started again in order. Apps left stopped or given up on before the query stay as they were.
 - **Startup items** (what Explorer does at logon): RunOnce (HKCU; HKLM only if elevated, the value
   is deleted before the command starts, or after with a `!` prefix), Policies\Explorer\Run, HKLM
   Run and its WOW6432Node twin, HKCU Run, then packaged apps' startup tasks, then the common and
@@ -887,8 +890,8 @@ beside Explorer for tests.
   was given up on (crash budget spent) or ended with exit code 0, or a running bar has no
   `Shell_TrayWnd` 20 s after its own latest (re)start, the session falls back to Explorer. A bar
   whose restart is pending is never "lost" (a single crash after 80 minutes used to hand the
-  session to Explorer, because the 20 s were counted from the session's start). Shift also
-  skips every shellman app.
+  session to Explorer, because the 20 s were counted from the session's start), and nothing is
+  decided while Windows is asking to end the session. Shift also skips every shellman app.
   - The fleet is *parked*: nothing is started or restarted, apps that run are left running,
     restart requests are answered 2. Parking is not ending: the startup items carry on (only a
     real logoff or the window closing stops them; a park used to end them, and the Explorer

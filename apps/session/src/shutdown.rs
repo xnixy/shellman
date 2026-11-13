@@ -20,6 +20,9 @@ pub static STOPPING: AtomicBool = AtomicBool::new(false);
 /// Set from WM_QUERYENDSESSION: Windows is about to end the session, so children that exit now
 /// are not crashes. Cleared again if the end is cancelled.
 pub static ENDING: AtomicBool = AtomicBool::new(false);
+/// Set from WM_ENDSESSION(FALSE): the end was cancelled. The supervisor takes it and starts
+/// again the apps that exited meanwhile.
+pub static CANCELLED: AtomicBool = AtomicBool::new(false);
 
 static PIDS: Mutex<Vec<u32>> = Mutex::new(Vec::new());
 

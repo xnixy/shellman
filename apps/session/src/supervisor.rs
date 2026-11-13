@@ -61,6 +61,8 @@ pub trait Os {
     fn requests(&self) -> Vec<String>;
     /// The session is ending, or Windows asked whether it may end it: nothing starts.
     fn quiet(&self) -> bool;
+    /// An end of session was cancelled (`WM_ENDSESSION` FALSE) since the last call.
+    fn take_cancelled(&self) -> bool;
     /// Which processes to close at logoff (`shutdown`).
     fn publish(&self, pids: Vec<u32>);
     fn publish_names(&self, names: Vec<String>);
@@ -95,6 +97,9 @@ impl Os for Real {
     fn quiet(&self) -> bool {
         shutdown::quiet()
     }
+    fn take_cancelled(&self) -> bool {
+        shutdown::CANCELLED.swap(false, std::sync::atomic::Ordering::SeqCst)
+    }
     fn publish(&self, pids: Vec<u32>) {
         shutdown::publish(pids)
     }
@@ -115,6 +120,9 @@ struct Slot {
     started: Instant,
     /// A restart was requested: the deadline by which it must have closed on its own.
     restart: Option<Instant>,
+    /// It exited while Windows was asking to end the session: not a crash, not restarted then,
+    /// and started again if the end is cancelled.
+    ended_while_ending: bool,
 }
 
 pub struct Fleet {
@@ -136,7 +144,7 @@ impl Fleet {
         let mut fleet = Fleet { slots: Vec::new(), t0, adopted: 0, parked: false, os };
         for (i, app) in apps.into_iter().enumerate() {
             let mut slot =
-                Slot { app, proc: None, crashes: Crashes::default(), due: None, started: t0, restart: None };
+                Slot { app, proc: None, crashes: Crashes::default(), due: None, started: t0, restart: None, ended_while_ending: false };
             match fleet.adopt(&slot.app) {
                 Some(p) => {
                     log::line(&format!("{}: already running as pid {}, adopted", slot.app.name, p.pid()));
@@ -213,7 +221,8 @@ impl Fleet {
     /// the list has no bar).
     pub fn bar(&self) -> (Bar, Duration) {
         match self.slots.iter().find(|s| s.app.is_bar()) {
-            Some(s) => (Bar::of(s.proc.is_some(), s.due.is_some()), s.started.elapsed()),
+            // One that exited during a logoff that may yet be cancelled is pending, never lost.
+            Some(s) => (Bar::of(s.proc.is_some(), s.due.is_some() || s.ended_while_ending), s.started.elapsed()),
             None => (Bar::Absent, self.since_start()),
         }
     }
@@ -272,7 +281,8 @@ impl Fleet {
         let name = self.slots[i].app.name.clone();
         let requested = self.slots[i].restart.take().is_some();
         if self.os.quiet() {
-            log::line(&format!("{name}: exited with {code:#x} while ending, not restarted"));
+            log::line(&format!("{name}: exited with {code:#x} while ending, not restarted (again if the end is cancelled)"));
+            self.slots[i].ended_while_ending = true;
             return;
         }
         let next = if requested {
@@ -297,10 +307,28 @@ impl Fleet {
         Self::apply(&mut self.slots[i], next);
     }
 
+    /// The end of the session was cancelled: start again, in order, every app that exited while
+    /// Windows was asking (whatever its exit code; nothing is counted as a crash). Apps given up
+    /// on or left stopped before the query stay as they were; pending restarts start as due.
+    fn after_cancelled_end(&mut self) {
+        let now = Instant::now();
+        let mut k = 0;
+        for s in &mut self.slots {
+            if std::mem::take(&mut s.ended_while_ending) && s.proc.is_none() {
+                log::line(&format!("{}: exited while the session was ending, which was cancelled: starting it again", s.app.name));
+                s.due = Some(now + GAP * k);
+                k += 1;
+            }
+        }
+    }
+
     /// One pass over what happened: exits first, then anything due to start.
     pub fn step(&mut self) {
         if self.parked {
             return;
+        }
+        if self.os.take_cancelled() {
+            self.after_cancelled_end();
         }
         for name in self.os.requests() {
             self.request_restart(&name);
@@ -379,6 +407,7 @@ pub mod fake {
         pub closed: RefCell<Vec<u32>>,
         pub requests: RefCell<Vec<String>>,
         pub quiet: Cell<bool>,
+        pub cancelled: Cell<bool>,
         pub parked: Cell<Option<bool>>,
         pub missing: RefCell<Vec<String>>,
     }
@@ -448,6 +477,9 @@ pub mod fake {
         }
         fn quiet(&self) -> bool {
             self.0.quiet.get()
+        }
+        fn take_cancelled(&self) -> bool {
+            self.0.cancelled.replace(false)
         }
         fn publish(&self, _: Vec<u32>) {}
         fn publish_names(&self, _: Vec<String>) {}
@@ -532,6 +564,32 @@ mod tests {
         world.end(world.pid_of("bar"), 1);
         fleet.step();
         assert_eq!(fleet.bar().0, Bar::Pending);
+        assert!(fleet.waits().1.is_some_and(|d| d <= crate::policy::DELAYS[0]));
+    }
+
+    #[test]
+    fn a_cancelled_end_of_session_starts_what_exited_meanwhile() {
+        let (mut fleet, world) = fleet(&["desktop", "bar", "shelf", "launcher"]);
+        // An app left stopped on purpose before the query stays stopped.
+        world.end(world.pid_of("launcher"), 0);
+        fleet.step();
+        // WM_QUERYENDSESSION: the bar crashes, the shelf closes politely.
+        world.quiet.set(true);
+        world.end(world.pid_of("bar"), 0xC000_0005);
+        world.end(world.pid_of("shelf"), 0);
+        fleet.step();
+        assert_eq!(fleet.bar().0, Bar::Pending, "never 'lost' (that would fall back to Explorer)");
+        assert_eq!((world.starts("bar"), world.starts("shelf")), (1, 1), "nothing starts while ending");
+        // WM_ENDSESSION(FALSE).
+        world.quiet.set(false);
+        world.cancelled.set(true);
+        settle(&mut fleet);
+        assert_eq!((world.starts("bar"), world.starts("shelf")), (2, 2));
+        assert_eq!(world.starts("launcher"), 1);
+        assert_eq!(fleet.bar().0, Bar::Running);
+        // The crash during the query was not counted: the next crash is a first one.
+        world.end(world.pid_of("bar"), 1);
+        fleet.step();
         assert!(fleet.waits().1.is_some_and(|d| d <= crate::policy::DELAYS[0]));
     }
 
