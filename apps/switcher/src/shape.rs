@@ -126,7 +126,10 @@ impl Screen {
     /// The monitor most of `hwnd` is on; the primary one for no window.
     pub fn of(hwnd: isize) -> Self {
         unsafe {
-            let monitor = MonitorFromWindow(HWND(hwnd as *mut _), MONITOR_DEFAULTTOPRIMARY);
+            let monitor = match test_point() {
+                Some(at) => windows::Win32::Graphics::Gdi::MonitorFromPoint(at, MONITOR_DEFAULTTOPRIMARY),
+                None => MonitorFromWindow(HWND(hwnd as *mut _), MONITOR_DEFAULTTOPRIMARY),
+            };
             let mut info = MONITORINFO { cbSize: size_of::<MONITORINFO>() as u32, ..Default::default() };
             let _ = GetMonitorInfoW(monitor, &mut info);
             let (mut dpi_x, mut dpi_y) = (96u32, 96u32);
@@ -205,4 +208,13 @@ pub fn hide(hwnd: isize) {
 /// Whether the panel is on screen: shown and not cloaked.
 pub fn is_on(hwnd: isize) -> bool {
     unsafe { IsWindowVisible(HWND(hwnd as *mut _)) }.as_bool() && !glass::is_cloaked(hwnd)
+}
+
+/// A test copy (`SHELLMAN_INSTANCE` set) shows on the monitor holding `SHELLMAN_TEST_AT=x,y`
+/// (screen pixels) instead of the one in front, as the launcher's does.
+fn test_point() -> Option<windows::Win32::Foundation::POINT> {
+    std::env::var("SHELLMAN_INSTANCE").ok().filter(|i| !i.is_empty())?;
+    let at = std::env::var("SHELLMAN_TEST_AT").ok()?;
+    let (x, y) = at.split_once(',')?;
+    Some(windows::Win32::Foundation::POINT { x: x.trim().parse().ok()?, y: y.trim().parse().ok()? })
 }

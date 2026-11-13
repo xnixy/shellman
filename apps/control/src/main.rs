@@ -20,6 +20,7 @@ use shellman_ui::theme;
 use std::sync::Arc;
 
 fn main() -> eframe::Result {
+    shellman_core::timing::init("control");
     let background = std::env::args().any(|a| a == "--background");
     let instance = match summon::claim(background) {
         summon::Claim::Signalled => return Ok(()),
@@ -35,12 +36,16 @@ fn main() -> eframe::Result {
             .with_resizable(false)
             .with_always_on_top()
             .with_taskbar(false),
+        // A test copy (SHELLMAN_CONFIG_DIR) keeps its window state beside its settings.
+        persistence_path: shellman_core::config::ui_state_override("control"),
         ..Default::default()
     };
+    shellman_core::timing::mark("eframe start (window, GL context)");
     eframe::run_native(
         "shellman-control",
         options,
         Box::new(move |cc| {
+            shellman_ui::timing::gl_ready(cc.gl.as_deref());
             theme::install_fonts(&cc.egui_ctx);
             theme::set_light(cc.egui_ctx.theme() == egui::Theme::Light);
             theme::apply(&cc.egui_ctx);

@@ -24,6 +24,7 @@ use windows::Win32::Foundation::{GetLastError, ERROR_ALREADY_EXISTS};
 use windows::Win32::System::Threading::CreateMutexW;
 
 fn main() -> eframe::Result {
+    shellman_core::timing::init("switcher");
     // One switcher per session: a second would only fight the first for the keys.
     // SHELLMAN_INSTANCE names a test copy, which then has its own mutex (and see `demo`).
     let instance = std::env::var("SHELLMAN_INSTANCE").ok().filter(|s| !s.is_empty());
@@ -45,12 +46,16 @@ fn main() -> eframe::Result {
             .with_resizable(false)
             .with_always_on_top()
             .with_taskbar(false),
+        // A test copy (SHELLMAN_CONFIG_DIR) keeps its window state beside its settings.
+        persistence_path: shellman_core::config::ui_state_override("switcher"),
         ..Default::default()
     };
+    shellman_core::timing::mark("eframe start (window, GL context)");
     eframe::run_native(
         "shellman-switcher",
         options,
         Box::new(|cc| {
+            shellman_ui::timing::gl_ready(cc.gl.as_deref());
             theme::install_fonts(&cc.egui_ctx);
             theme::set_light(cc.egui_ctx.theme() == egui::Theme::Light);
             theme::apply(&cc.egui_ctx);
@@ -127,6 +132,29 @@ impl eframe::App for App {
 /// Stand-in for the keyboard in a test copy: twice, a few seconds apart, as if Alt+Tab were
 /// pressed twice and then Esc; after that the process is left idle to be measured.
 fn demo(sink: std::sync::Arc<impl Fn(keys::Key) + Send + Sync + 'static>) {
+    // `SHELLMAN_TEST_SUMMON=1`: instead, each signal of the named event
+    // `Local\shellman-switcher-summon-<instance>` is Tab pressed twice (the panel shows at once),
+    // and Esc a second later; for measuring how fast it opens.
+    if std::env::var_os("SHELLMAN_TEST_SUMMON").is_some_and(|v| v == "1") {
+        let instance = std::env::var("SHELLMAN_INSTANCE").unwrap_or_default();
+        let name = HSTRING::from(format!("Local\\shellman-switcher-summon-{instance}"));
+        let Ok(event) = (unsafe { windows::Win32::System::Threading::CreateEventW(None, false, false, &name) }) else {
+            return;
+        };
+        let event = event.0 as isize;
+        std::thread::spawn(move || {
+            use windows::Win32::System::Threading::{WaitForSingleObject, INFINITE};
+            let event = windows::Win32::Foundation::HANDLE(event as *mut _);
+            while unsafe { WaitForSingleObject(event, INFINITE) }.0 == 0 {
+                shellman_core::timing::mark_mem("summon received");
+                sink(keys::Key::Next);
+                sink(keys::Key::Next);
+                std::thread::sleep(std::time::Duration::from_millis(1000));
+                sink(keys::Key::Cancel);
+            }
+        });
+        return;
+    }
     std::thread::spawn(move || {
         for _ in 0..2 {
             std::thread::sleep(std::time::Duration::from_secs(4));

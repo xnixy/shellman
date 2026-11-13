@@ -205,6 +205,11 @@ impl Thumbs {
         any
     }
 
+    /// How many images were asked for and have not arrived yet.
+    pub fn pending(&self) -> usize {
+        self.cache.values().filter(|s| matches!(s, Slot::Pending)).count()
+    }
+
     /// Drop requests nobody is waiting for any more, after leaving a folder.
     pub fn cancel_pending(&mut self) {
         let (lock, _) = &*self.queue;

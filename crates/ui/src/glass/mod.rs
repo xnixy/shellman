@@ -194,6 +194,7 @@ impl GlassPanel {
     /// Windows' own corners, border and backdrop, and gets a rounded window region so clicks
     /// outside the shape fall through. See [`GlassPanel::composed`] for whether there is glass.
     pub fn attach(hwnd: isize, style: Style) -> Self {
+        let _timing = shellman_core::timing::span("glass attach");
         let target = HWND(hwnd as *mut _);
         bare(target);
         let made = compose(hwnd);

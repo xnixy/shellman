@@ -12,6 +12,9 @@ name = "shellman_ui"
 shellman-core.workspace = true
 shellman-icons.workspace = true
 egui.workspace = true
+# Opening-speed timing (`timing`): a paint callback marks when a frame was painted. Same version
+# as eframe's.
+egui_glow = { version = "0.31", default-features = false }
 serde.workspace = true
 windows-core.workspace = true
 windows = { workspace = true, features = [

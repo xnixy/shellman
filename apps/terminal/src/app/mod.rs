@@ -96,10 +96,14 @@ impl TerminalApp {
     /// `launch`: what the first tab runs, and where; or `handoff`, a console Windows handed over.
     pub fn new(ctx: &egui::Context, look: Appearance, panel: GlassPanel, hwnd: Option<isize>, launch: Launch, handoff: Option<Arrived>) -> Result<Self, String> {
         let config = if handoff.is_some() { Config::read() } else { Config::load() };
+        let detecting = shellman_core::timing::span("terminal: profiles detect");
         let profiles = profiles::build(&profiles::detect());
+        drop(detecting);
         let ppp = ctx.pixels_per_point();
         let font_pt = config.font_size;
+        let rendering = shellman_core::timing::span("terminal: renderer (font atlas)");
         let renderer = Renderer::new(view::font_px(font_pt, ppp), &config.font_family)?;
+        drop(rendering);
         let wake_ctx = ctx.clone();
         let wake: Arc<dyn Fn() + Send + Sync> = Arc::new(move || wake_ctx.request_repaint());
         let look_watch = shellman_core::watch::Watcher::quick(ctx.clone());
@@ -107,6 +111,7 @@ impl TerminalApp {
             look_watch.set_dirs(vec![dir]);
         }
         let minimized = handoff.as_ref().is_some_and(Arrived::minimized);
+        let starting = shellman_core::timing::span("terminal: shell started");
         let (first, distro) = match handoff {
             Some(arrived) => (attach(arrived, &renderer, &config, wake.clone()).map_err(|e| format!("could not show the console: {e}"))?, None),
             None => {
@@ -114,6 +119,7 @@ impl TerminalApp {
                 (spawn(&command, Some(dir), &renderer, &config, wake.clone()).map_err(|e| format!("could not start {command}: {e}"))?, distro)
             }
         };
+        drop(starting);
         if minimized {
             ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
         }
@@ -541,6 +547,11 @@ impl eframe::App for TerminalApp {
         let cpu = self.stats.on().then(|| frame.info().cpu_usage).flatten();
         self.layout(ctx, cpu);
         self.gate_keys(ctx);
+        shellman_ui::timing::content(ctx, "first frame", 0);
+        // The shell's first bytes (its prompt) are drawn in this frame.
+        if self.tabs.current().session.output_seq() > 0 {
+            shellman_ui::timing::content(ctx, "shell prompt", 0);
+        }
     }
 
     fn on_exit(&mut self, gl: Option<&egui_glow::glow::Context>) {

@@ -127,6 +127,7 @@ fn run(
                     continue;
                 }
                 held = None;
+                let started = std::time::Instant::now();
                 let walk = target::context_menu(HWND(hwnd as *mut _), &target)
                     .and_then(|cm| Walk::query(cm, target.extended, palette));
                 let Some(mut walk) = walk else {
@@ -134,6 +135,9 @@ fn run(
                     continue;
                 };
                 let items = walk.top(&plan);
+                crate::timing::mark_with("shell menu: top level read", || {
+                    format!("{:.1} ms, {} entries", started.elapsed().as_secs_f64() * 1000.0, items.len())
+                });
                 if !emit(Event::Tree { gen, items: items.clone(), done: walk.pending() == 0 }) {
                     break;
                 }
@@ -159,6 +163,9 @@ fn run(
                         break 'outer;
                     }
                 }
+                crate::timing::mark_with("shell menu: submenus filled", || {
+                    format!("{:.1} ms since the read began", started.elapsed().as_secs_f64() * 1000.0)
+                });
                 held = Some(h);
             }
             Request::Expand { gen, path, plan } => {

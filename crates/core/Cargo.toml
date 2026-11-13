@@ -24,3 +24,7 @@ windows-core.workspace = true
 windows-future.workspace = true
 # Draws SVG icon packs. No text, no system fonts, no embedded rasters: icons are plain paths.
 resvg = { version = "0.45", default-features = false }
+
+[dev-dependencies]
+# `examples/open_probe.rs` (opening speed): an OpenGL and a Direct3D 11 device, for comparison.
+windows = { workspace = true, features = ["Win32_Graphics_OpenGL", "Win32_Graphics_Direct3D", "Win32_Graphics_Direct3D11"] }

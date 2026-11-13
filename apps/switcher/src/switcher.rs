@@ -119,6 +119,9 @@ impl Switcher {
             glass: self.glass,
             scale: open.screen.scale,
         };
+        if open.shown.is_some() {
+            shellman_ui::timing::content(ctx, "switcher", OPENED.load(Ordering::Relaxed));
+        }
         if let Some(i) = panel::draw(ctx, &view, &mut self.icons) {
             let hwnd = open.windows[i].hwnd;
             keys::close();
@@ -156,6 +159,7 @@ impl Switcher {
 
     /// Alt+Tab: list the windows, in front first, and select the one to switch to.
     fn start(&mut self, back: bool) {
+        shellman_core::timing::mark("open started (UI thread)");
         let front = winlist::foreground();
         let screen = Screen::of(front.unwrap_or(0));
         let mut windows = self.list.refresh();
@@ -166,6 +170,7 @@ impl Switcher {
             keys::close();
             return;
         }
+        OPENED.fetch_add(1, Ordering::Relaxed);
         let front_is_first = front == Some(windows[0].hwnd);
         self.open = Some(Open {
             sel: select::first(windows.len(), front_is_first, back),
@@ -240,6 +245,7 @@ impl Switcher {
             }
         }
         shape::show_at(self.hwnd, panel_rect(open));
+        shellman_core::timing::mark("window shown");
         self.ctx.request_repaint();
     }
 
@@ -258,6 +264,9 @@ fn panel_rect(open: &Open) -> windows::Win32::Foundation::RECT {
     let size = ((open.layout.w * s).round() as i32, (open.layout.h * s).round() as i32);
     open.screen.centred(size)
 }
+
+/// Counts openings, for the opening-speed milestones (`SHELLMAN_TIMING=1`).
+static OPENED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// Set in a test copy, which has no keyboard: Alt counts as held until Esc.
 pub static DEMO: AtomicBool = AtomicBool::new(false);

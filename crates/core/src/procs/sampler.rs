@@ -46,13 +46,19 @@ impl Sampler {
         let thread = std::thread::Builder::new()
             .name("procs sampler".into())
             .spawn(move || {
+                let making = crate::timing::span("procs: open the source");
                 let mut source = make();
+                drop(making);
+                let mut first = true;
                 while !s.stop.load(Ordering::Acquire) {
                     if paused() {
                         s.wait(PAUSED_CHECK);
                         continue;
                     }
+                    let timing = first.then(|| crate::timing::span("procs: first reading"));
+                    first = false;
                     let sample = source.sample();
+                    drop(timing);
                     if let Ok(mut l) = s.latest.lock() {
                         *l = Some(sample);
                     }

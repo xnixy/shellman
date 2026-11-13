@@ -35,6 +35,7 @@ pub mod system;
 pub mod taskbar_list;
 pub mod terminal;
 pub mod thumbs;
+pub mod timing;
 pub mod transfer;
 pub mod warm;
 pub mod watch;

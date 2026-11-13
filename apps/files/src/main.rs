@@ -21,6 +21,7 @@ fn main() {
     if shellman_core::warm::asked() {
         return;
     }
+    shellman_core::timing::init("files");
     let start = args::parse(std::env::args_os().skip(1));
     let session = match &start {
         args::Start::Pick(path) => match shellman_pick::read_request(path) {
@@ -51,6 +52,7 @@ fn run(start: args::Start, session: Option<pick::Session>) -> eframe::Result {
         let _ = windows::Win32::System::Ole::OleInitialize(None);
     }
     let settings = settings::load_settings();
+    shellman_core::timing::mark("settings loaded");
     let picking = session.is_some();
     let owner = session.as_ref().map_or(0, |s| s.req.owner);
     let size = if picking { placement::PICK_SIZE } else { placement::DEFAULT_SIZE };
@@ -84,10 +86,12 @@ fn run(start: args::Start, session: Option<pick::Session>) -> eframe::Result {
         },
         ..Default::default()
     };
+    shellman_core::timing::mark("eframe start (window, GL context)");
     eframe::run_native(
         "shellman-files",
         options,
         Box::new(move |cc| {
+            shellman_ui::timing::gl_ready(cc.gl.as_deref());
             theme::install_fonts(&cc.egui_ctx);
             theme::set_light(
                 std::env::var_os("SHELLMAN_FORCE_LIGHT").is_some()
@@ -106,6 +110,7 @@ fn run(start: args::Start, session: Option<pick::Session>) -> eframe::Result {
                     hwnd = win32.hwnd.get();
                     // A picker belongs to the asking app's window: above it, and with it.
                     pick::host::set_owner(hwnd, owner);
+                    let _timing = shellman_core::timing::span("files: place, frame and glass the window");
                     if let Some(at) = at {
                         placement::move_to(hwnd, at);
                     }
@@ -116,6 +121,7 @@ fn run(start: args::Start, session: Option<pick::Session>) -> eframe::Result {
                     panel = Some(GlassPanel::attach(hwnd, Style::from_theme(app::RADIUS)));
                 }
             }
+            let _built = shellman_core::timing::span("app built");
             Ok(Box::new(app::FileMan::new(
                 cc.egui_ctx.clone(),
                 settings,

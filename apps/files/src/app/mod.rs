@@ -562,6 +562,67 @@ impl FileMan {
         });
     }
 
+    /// For measuring how fast the right-click menu opens without real input: a test copy
+    /// (`SHELLMAN_INSTANCE` and `SHELLMAN_TEST_SUMMON=1` set) opens the folder's background menu
+    /// in the middle of the window, or closes it, each time the named event
+    /// `Local\shellman-files-menu-<instance>` is set.
+    fn test_menu(&mut self, ctx: &egui::Context, actions: &mut Vec<actions::Action>) {
+        use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+        static STATE: AtomicU8 = AtomicU8::new(0);
+        static ASKED: AtomicBool = AtomicBool::new(false);
+        if STATE.load(Ordering::Relaxed) == 0 {
+            STATE.store(1, Ordering::Relaxed);
+            let instance = std::env::var("SHELLMAN_INSTANCE").ok().filter(|i| !i.is_empty());
+            let on = std::env::var_os("SHELLMAN_TEST_SUMMON").is_some_and(|v| v == "1");
+            if let (Some(instance), true) = (instance, on) {
+                let name = windows::core::HSTRING::from(format!("Local\\shellman-files-menu-{instance}"));
+                use windows::Win32::System::Threading::{CreateEventW, WaitForSingleObject, INFINITE};
+                if let Ok(event) = unsafe { CreateEventW(None, false, false, &name) } {
+                    let (event, wake) = (event.0 as isize, ctx.clone());
+                    std::thread::spawn(move || {
+                        let event = windows::Win32::Foundation::HANDLE(event as *mut _);
+                        while unsafe { WaitForSingleObject(event, INFINITE) }.0 == 0 {
+                            shellman_core::timing::mark("menu: test request received");
+                            ASKED.store(true, Ordering::Release);
+                            wake.request_repaint();
+                        }
+                    });
+                }
+            }
+        }
+        if ASKED.swap(false, Ordering::AcqRel) {
+            if self.menu.is_open() {
+                self.menu.close();
+            } else {
+                actions.push(actions::Action::MenuPress(None));
+                actions.push(actions::Action::MenuOpen(None, ctx.screen_rect().center()));
+            }
+        }
+    }
+
+    /// Opening-speed milestones (`SHELLMAN_TIMING=1`): the first frame with the folder listed,
+    /// and the first with every picture asked for so far in.
+    fn timing_marks(&mut self, ctx: &egui::Context) {
+        if !shellman_core::timing::enabled() {
+            return;
+        }
+        use std::sync::atomic::{AtomicU8, Ordering};
+        static STAGE: AtomicU8 = AtomicU8::new(0);
+        let tab = &self.tabs[self.active];
+        match STAGE.load(Ordering::Relaxed) {
+            0 if !tab.loading => {
+                shellman_core::timing::mark_with("listing", || format!("{} items", tab.view.len()));
+                shellman_ui::timing::content(ctx, "listing", 0);
+                STAGE.store(1, Ordering::Relaxed);
+            }
+            1 if self.thumbs.pending() == 0 => {
+                shellman_ui::timing::content(ctx, "settled (pictures in)", 0);
+                STAGE.store(2, Ordering::Relaxed);
+            }
+            _ => {}
+        }
+    }
+
     fn toast(&mut self, text: impl Into<String>) {
         self.toast = Some((text.into(), self.ctx.input(|i| i.time)));
     }
@@ -812,6 +873,7 @@ impl eframe::App for FileMan {
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        shellman_ui::timing::content(ctx, "first frame", 0);
         self.drain();
         self.watch_tabs();
         // The bin is also re-listed when the window is brought back, in case a change slipped by.
@@ -842,6 +904,7 @@ impl eframe::App for FileMan {
             self.pick_poll();
         }
         let mut actions = Vec::new();
+        self.test_menu(ctx, &mut actions);
         self.pick_keys(ctx, &mut actions);
         self.keyboard(ctx, &mut actions);
         self.dnd_begin(ctx, &mut actions);
@@ -849,6 +912,7 @@ impl eframe::App for FileMan {
         // Before the layout, which hands the open dialog to the glass with the islands.
         self.dialogs(ctx);
         self.layout(ctx, &mut actions);
+        self.timing_marks(ctx);
 
         for a in actions {
             self.apply(a);

@@ -114,6 +114,7 @@ impl Appearance {
 
     /// Make the theme use this look.
     pub fn apply(&self, ctx: &egui::Context) {
+        let _timing = shellman_core::timing::span("look: apply");
         theme::set_accent(ctx, self.accent.resolve());
         theme::set_glass(ctx, self.glass);
         // Does nothing when the window already wears this font.
