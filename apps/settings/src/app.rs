@@ -277,6 +277,9 @@ impl SettingsApp {
                 if self.section != Section::Power {
                     self.st.power.stop();
                 }
+                if self.section != Section::DateTime {
+                    self.st.datetime.stop();
+                }
                 if self.section != Section::Mouse {
                     self.st.mouse.stop();
                 }

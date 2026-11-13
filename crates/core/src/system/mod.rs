@@ -22,6 +22,8 @@ pub mod power;
 pub mod power_logic;
 pub mod power_settings;
 pub mod radios;
+pub mod region;
+pub mod region_logic;
 pub mod sound_choices;
 pub mod sound_dev;
 pub mod sound_enable;
