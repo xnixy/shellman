@@ -356,8 +356,11 @@ invokes the picked one.
 
 Where it is used (13 Nov):
 
-- Files: the item / multi-selection / background menu (Files' entries, then the shell's: icons,
-  owner-drawn rows, deferred submenus filled on open), the Recycle Bin's item and background
+- Files: the item / multi-selection / background menu: Files' own entries (about a dozen rows),
+  then one "More options" submenu holding the shell's entries (icons, owner-drawn rows, deferred
+  submenus filled on open; entries that repeat Files' own left out). The shell's menu is read
+  when the right button goes down (or when More options opens), no longer ahead on every
+  selection change. Then the Recycle Bin's item and background
   menus, a tab's menu, the sidebar's row and background menus, both Sort dropdowns, Move to /
   Copy to, and the picker's file type list. The Menu key and Shift+F10 open the menu beside the
   cursor's row. A dropdown's button clicked again closes its menu. Seen on the left monitor, dark

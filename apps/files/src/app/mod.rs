@@ -191,9 +191,6 @@ pub(crate) struct FileMan {
     had_focus: bool,
     /// The right-click menu, with the shell's entries it reads ahead.
     menu: menu::ContextMenu,
-    /// The selection's fingerprint when the menu target to read ahead was last worked out.
-    menu_sig: Option<(u64, u64, usize, Option<usize>)>,
-    menu_settle_target: Option<shellman_core::shell_menu::Target>,
     /// The places other apps registered for the navigation pane, followed live.
     apps: places::Registered,
     /// Which pinned folders are still there.
@@ -299,8 +296,6 @@ impl FileMan {
             bin_dirs: Vec::new(),
             had_focus: true,
             menu,
-            menu_sig: None,
-            menu_settle_target: None,
             apps: places::Registered::new(&ctx_for_apps),
             pin_exists: pins::Exists::default(),
             pick,
@@ -627,8 +622,7 @@ impl FileMan {
         }
     }
 
-    /// Draw the right-click menu and run what was picked; read ahead the menu for a selection
-    /// that has settled.
+    /// Draw the right-click menu and run what was picked.
     fn context_menu(&mut self, ctx: &egui::Context) {
         if self.menu.is_open() {
             self.tag_menu_state();
@@ -639,25 +633,6 @@ impl FileMan {
         }
         for a in picked {
             self.apply(a);
-        }
-        let tab = &self.tabs[self.active];
-        // A cheap fingerprint of the selection, so the target is only built when it changes.
-        let sig = (tab.id, tab.gen, tab.selected.len(), tab.cursor);
-        if self.menu_sig != Some(sig) {
-            self.menu_sig = Some(sig);
-            self.menu_settle_target = if tab.loc == Loc::Bin || tab.selected.len() > 64 {
-                None
-            } else {
-                let row = tab
-                    .cursor
-                    .filter(|&c| tab.selected.contains(&tab.entry(c).path));
-                let row = row.or_else(|| tab.selection().first().and_then(|e| tab.row_of(&e.path)));
-                self.menu_target(row)
-            };
-        }
-        let now = ctx.input(|i| i.time);
-        if let Some(wait) = self.menu.settle(self.menu_settle_target.clone(), now) {
-            ctx.request_repaint_after(std::time::Duration::from_secs_f64(wait));
         }
     }
 }

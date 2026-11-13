@@ -23,8 +23,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-/// The selection has to stay this long before its menu is read ahead of a right click.
-const SETTLE: f64 = 0.3;
+
 /// Icon textures kept; past this they are dropped and made again as needed.
 const MAX_TEXTURES: usize = 512;
 /// A dropdown's button clicked this soon after its menu closed by that same click closes it,
@@ -39,6 +38,8 @@ pub(super) enum Pick {
     Shell(Vec<usize>),
     /// A shell submenu at this path, left unfilled because it was slow, is opening.
     Expand(Vec<usize>),
+    /// "More options", the shell's entries, is opening.
+    More,
 }
 
 /// What the open right-click menu is for.
@@ -90,8 +91,7 @@ pub(super) struct ContextMenu {
     loader: Loader,
     open: Option<Open>,
     textures: HashMap<u64, TextureHandle>,
-    /// The target last seen, since when, and whether its walk was asked for yet.
-    settling: Option<(Target, f64, bool)>,
+
     /// The plain menu open now, by its key; and the last one that closed, and when.
     plain: Option<&'static str>,
     closed: Option<(&'static str, f64)>,
@@ -108,7 +108,7 @@ impl ContextMenu {
             loader: Loader::new(hwnd, Arc::new(move || ctx2.request_repaint())),
             open: None,
             textures: HashMap::new(),
-            settling: None,
+
             plain: None,
             closed: None,
             made: None,
@@ -124,35 +124,9 @@ impl ContextMenu {
         self.loader.want(target);
     }
 
-    /// Read the menu for the current selection once it has settled, so it is usually ready
-    /// before the right click. Returns how long until it settles, while it has not.
-    pub(super) fn settle(&mut self, target: Option<Target>, now: f64) -> Option<f64> {
-        let Some(target) = target else {
-            self.settling = None;
-            return None;
-        };
-        match &self.settling {
-            Some((t, _, _)) if *t == target => {}
-            _ => self.settling = Some((target, now, false)),
-        }
-        let (t, since, asked) = self.settling.as_mut()?;
-        if *asked || self.menu.is_open() {
-            return None;
-        }
-        let left = SETTLE - (now - *since);
-        if left > 0.0 {
-            return Some(left);
-        }
-        *asked = true;
-        let t = t.clone();
-        self.loader.want(&t);
-        None
-    }
-
     /// Open the right-click menu at `pos` (a point of the window) for `target`.
     pub(super) fn open(&mut self, ctx: &Context, pos: Pos2, target: Target, background: bool, has_clip: (bool, bool)) {
         let is_dir = target.items.len() == 1 && target.items[0].is_dir();
-        self.loader.refresh(&target);
         let open = Open { target, is_dir, background, has_clip };
         let entries = self.entries(ctx, &open);
         self.menu.open(ctx, Anchor::in_window(ctx, pos), entries);
@@ -160,23 +134,33 @@ impl ContextMenu {
         self.plain = None;
     }
 
-    /// The right-click menu's entries now: Files' own, then the shell's as far as they are read.
+    /// The right-click menu's entries now: Files' own, then "More options", the shell's entries
+    /// as far as they are read (the walk starts when the right button goes down, or when the
+    /// submenu opens).
     fn entries(&mut self, ctx: &Context, open: &Open) -> Vec<Entry<Pick>> {
         let mut entries = native_entries(ctx, open);
-        if let Some(view) = self.loader.view(&open.target) {
-            let shell = shell_entries(ctx, &mut self.textures, view.items, &[]);
-            if !shell.is_empty() {
-                entries.push(Entry::separator());
-                entries.extend(shell);
-            } else if view.loading {
-                entries.push(Entry::separator());
-                entries.push(Entry::note("Loading more options…"));
+        let mut more = Vec::new();
+        match self.loader.view(&open.target) {
+            Some(view) => {
+                let items: Vec<(usize, &Item)> = view.items.iter().enumerate().filter(|(_, i)| !duplicate(i)).collect();
+                more = shell_entries(ctx, &mut self.textures, &items, &[]);
+                if more.is_empty() && view.loading {
+                    more.push(Entry::note("Loading…"));
+                }
+                if let Some(note) = view.note {
+                    if !more.is_empty() {
+                        more.push(Entry::separator());
+                    }
+                    more.push(Entry::note(note));
+                }
             }
-            if let Some(note) = view.note {
-                entries.push(Entry::separator());
-                entries.push(Entry::note(note));
-            }
+            None => more.push(Entry::note("Loading…")),
         }
+        if more.is_empty() {
+            more.push(Entry::note("Nothing more"));
+        }
+        entries.push(Entry::separator());
+        entries.push(Entry::submenu("More options", more).icon(glyph::MORE).on_open(Pick::More));
         entries
     }
 
@@ -196,13 +180,16 @@ impl ContextMenu {
             Some(Pick::Shell(path)) => self.pick_shell(&path, actions),
             _ => {}
         }
-        if let Some(Pick::Expand(path)) = self.menu.take_opened() {
-            if let Some(open) = &self.open {
+        match (self.menu.take_opened(), &self.open) {
+            // Read now if the right button's press did not already (the Menu key).
+            (Some(Pick::More), Some(open)) => self.loader.want(&open.target),
+            (Some(Pick::Expand(path)), Some(open)) => {
                 let item = self.loader.view(&open.target).and_then(|v| chain(v.items, &path).last().cloned().cloned());
                 if let Some(item) = item {
                     self.loader.expand(&open.target, &item);
                 }
             }
+            _ => {}
         }
         if !self.menu.is_open() {
             self.open = None;
@@ -427,11 +414,59 @@ pub(super) fn with_mnemonic(label: &str, letter: Option<char>) -> String {
     out
 }
 
-/// The shell's entries, `prefix` being the path of the submenu they are in.
-fn shell_entries(ctx: &Context, textures: &mut HashMap<u64, TextureHandle>, items: &[Item], prefix: &[usize]) -> Vec<Entry<Pick>> {
+/// Verbs and labels of the shell's entries that Files' own entries already offer.
+const DUPLICATES: [&str; 17] = [
+    "open",
+    "cut",
+    "copy",
+    "paste",
+    "delete",
+    "rename",
+    "properties",
+    "copyaspath",
+    "pastelink",
+    "refresh",
+    "open in terminal",
+    "open in new tab",
+    "copy as path",
+    "paste shortcut",
+    "new folder",
+    "openinterminal",
+    "opennewtab",
+];
+
+/// Whether a top-level shell entry repeats one of Files' own (by its verb or its label).
+fn duplicate(item: &Item) -> bool {
+    if item.separator || item.is_submenu() {
+        return false;
+    }
+    let verb = item.verb.as_deref().map(str::to_lowercase);
+    let label = item.title().to_lowercase();
+    DUPLICATES.iter().any(|d| verb.as_deref() == Some(*d) || label == *d)
+}
+
+/// Separators only between entries: none first, last or twice in a row.
+fn tidy<T>(entries: Vec<Entry<T>>) -> Vec<Entry<T>> {
+    let mut out: Vec<Entry<T>> = Vec::with_capacity(entries.len());
+    for e in entries {
+        let sep = matches!(e, Entry::Separator);
+        if sep && out.last().is_none_or(|l| matches!(l, Entry::Separator)) {
+            continue;
+        }
+        out.push(e);
+    }
+    if out.last().is_some_and(|l| matches!(l, Entry::Separator)) {
+        out.pop();
+    }
+    out
+}
+
+/// The shell's entries (each with its index in the shell's list), `prefix` being the path of
+/// the submenu they are in.
+fn shell_entries(ctx: &Context, textures: &mut HashMap<u64, TextureHandle>, items: &[(usize, &Item)], prefix: &[usize]) -> Vec<Entry<Pick>> {
     let mut out = Vec::with_capacity(items.len());
     let ppp = ctx.pixels_per_point();
-    for (i, item) in items.iter().enumerate() {
+    for &(i, item) in items {
         if item.separator {
             out.push(Entry::separator());
             continue;
@@ -445,7 +480,8 @@ fn shell_entries(ctx: &Context, textures: &mut HashMap<u64, TextureHandle>, item
         }
         let label = with_mnemonic(&item.title(), item.mnemonic);
         let mut entry = if item.is_submenu() {
-            let mut sub = shell_entries(ctx, textures, &item.submenu, &path);
+            let children: Vec<(usize, &Item)> = item.submenu.iter().enumerate().collect();
+            let mut sub = shell_entries(ctx, textures, &children, &path);
             let mut entry = None;
             match item.cascade {
                 Cascade::Pending if sub.is_empty() => sub.push(Entry::note("Loading…")),
@@ -465,7 +501,7 @@ fn shell_entries(ctx: &Context, textures: &mut HashMap<u64, TextureHandle>, item
         }
         out.push(entry);
     }
-    out
+    tidy(out)
 }
 
 /// One texture per distinct picture.
@@ -596,6 +632,36 @@ mod tests {
         let Entry::Item(i) = e else { panic!() };
         assert!(matches!(i.id, Pick::Native(Action::Refresh)));
         assert_eq!((i.icon, i.hint.as_str(), i.enabled, i.checked, i.danger), (Some(glyph::REFRESH), "F5", false, true, true));
+    }
+
+    #[test]
+    fn shell_entries_that_repeat_files_own_are_left_out() {
+        let shell = |label: &str, verb: Option<&str>| Item { label: label.into(), verb: verb.map(Into::into), ..Default::default() };
+        assert!(duplicate(&shell("Open in Terminal", None)));
+        assert!(duplicate(&shell("Cut", Some("cut"))));
+        assert!(duplicate(&shell("Ausschneiden", Some("cut"))));
+        assert!(duplicate(&shell("Properties", Some("properties"))));
+        assert!(!duplicate(&shell("Pin to Quick access", Some("pintohome"))));
+        assert!(!duplicate(&shell("Open with Zed", None)));
+        // A submenu is never dropped for its name.
+        let send = Item { label: "Open".into(), cascade: Cascade::Pending, ..Default::default() };
+        assert!(!duplicate(&send));
+        assert!(!duplicate(&Item::separator()));
+    }
+
+    #[test]
+    fn separators_are_only_between_entries() {
+        let e: Vec<Entry<u8>> = vec![
+            Entry::separator(),
+            Entry::item(1, "a"),
+            Entry::separator(),
+            Entry::separator(),
+            Entry::item(2, "b"),
+            Entry::separator(),
+        ];
+        let kinds: Vec<bool> = tidy(e).iter().map(|e| matches!(e, Entry::Separator)).collect();
+        assert_eq!(kinds, [false, true, false]);
+        assert!(tidy::<u8>(vec![Entry::separator()]).is_empty());
     }
 
     #[test]
