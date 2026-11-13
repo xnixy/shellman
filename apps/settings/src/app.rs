@@ -274,6 +274,21 @@ impl SettingsApp {
                 if self.section != Section::Display {
                     self.st.display.stop();
                 }
+                if self.section != Section::Power {
+                    self.st.power.stop();
+                }
+                if self.section != Section::DateTime {
+                    self.st.datetime.stop();
+                }
+                if self.section != Section::Storage {
+                    self.st.storage.stop();
+                }
+                if self.section != Section::DefaultApps {
+                    self.st.default_apps.stop();
+                }
+                if self.section != Section::Mouse {
+                    self.st.mouse.stop();
+                }
                 if self.section != Section::Startup {
                     self.st.startup.stop();
                 }
