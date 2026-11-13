@@ -120,7 +120,7 @@ fn draw_row(
     match item {
         Item::App(index) => {
             crate::icon::paint(p, icon, &apps[index], thumbs);
-            name(p, name_at, name_w, &apps[index].name, Some(query), ink);
+            name(p, name_at, name_w, &apps[index].name, apps[index].alias().as_deref(), Some(query), ink);
             let kind = if apps[index].own {
                 "shellman"
             } else if apps[index].windows_twin {
@@ -139,7 +139,7 @@ fn draw_row(
                 icon_font(16.0),
                 c.accent_text,
             );
-            name(p, name_at, name_w, &format!("Run \"{}\"", query.trim()), None, ink);
+            name(p, name_at, name_w, &format!("Run \"{}\"", query.trim()), None, None, ink);
             sub(p, sub_at, "Run this command", ink, selected);
         }
     }
@@ -150,8 +150,16 @@ fn draw_row(
 
 /// A name at `at` (left, vertically centred), cut to `width`; letters the query matched stand
 /// out against the rest.
-fn name(p: &Painter, at: egui::Pos2, width: f32, text: &str, query: Option<&str>, ink: Color32) {
-    let marks = query.map(|q| crate::rank::matched(text, q)).unwrap_or_default();
+fn name(
+    p: &Painter,
+    at: egui::Pos2,
+    width: f32,
+    text: &str,
+    alias: Option<&str>,
+    query: Option<&str>,
+    ink: Color32,
+) {
+    let marks = query.map(|q| crate::rank::matched_with_alias(text, alias, q)).unwrap_or_default();
     let any = marks.contains(&true);
     let format = |on: bool| TextFormat {
         font_id: egui::FontId::proportional(NAME_SIZE),

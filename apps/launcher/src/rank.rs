@@ -154,6 +154,22 @@ fn fuzzy(name: &[char], starts: &[bool], word: &[char]) -> Option<i32> {
     Some(FUZZY + bonus.min(60) - spread.min(40))
 }
 
+/// `matched` for an app that also answers to an `alias`: a word that only the alias contains
+/// (shellman's own apps and "shellman") marks nothing in the name, instead of lighting up
+/// scattered letters of it.
+pub fn matched_with_alias(name: &str, alias: Option<&str>, query: &str) -> Vec<bool> {
+    let Some(alias) = alias else { return matched(name, query) };
+    let (name_l, alias_l) = (name.to_lowercase(), alias.to_lowercase());
+    let kept: Vec<&str> = query
+        .split_whitespace()
+        .filter(|w| {
+            let w = w.to_lowercase();
+            name_l.contains(&w) || !alias_l.contains(&w)
+        })
+        .collect();
+    matched(name, &kept.join(" "))
+}
+
 /// For each character of `name`, whether the query's words matched there, to show in the
 /// results. A word marks its first plain substring match, else its letters in order; same
 /// case-insensitive rules as ranking, but only the marks matter here.
@@ -215,6 +231,20 @@ mod tests {
         assert_eq!(on("Visual Studio Code", "vis code"), "VisCode");
         assert_eq!(on("Notepad", "ntp"), "Ntp");
         assert_eq!(on("Notepad", "zzz"), "");
+    }
+
+    #[test]
+    fn an_alias_only_match_highlights_nothing_in_the_name() {
+        let on = |name: &str, alias: Option<&str>, q: &str| -> String {
+            name.chars().zip(matched_with_alias(name, alias, q)).filter(|(_, m)| *m).map(|(c, _)| c).collect()
+        };
+        let alias = Some("shellman Task Manager");
+        assert_eq!(on("Task Manager", alias, "shellman"), "");
+        assert_eq!(on("Task Manager", alias, "shellman task"), "Task");
+        assert_eq!(on("Task Manager", alias, "task"), "Task");
+        assert_eq!(on("Task Manager", alias, "tskmgr"), on("Task Manager", None, "tskmgr"));
+        assert!(!on("Task Manager", alias, "tskmgr").is_empty());
+        assert_eq!(on("Notepad", None, "ntp"), "Ntp");
     }
 
     fn ranked(names: &[&str], query: &str) -> Vec<String> {
