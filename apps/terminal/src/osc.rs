@@ -13,6 +13,8 @@ pub enum Found {
     Cwd(String),
     /// DECSET / DECRST 9.
     X10(bool),
+    /// DECSET / DECRST 9001: win32-input-mode, which ConPTY asks for at its start.
+    Win32Input(bool),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -96,6 +98,9 @@ impl Scanner {
                             if let Some(params) = self.buf.strip_prefix(b"?") {
                                 if params.split(|&c| c == b';').any(|p| p == b"9") {
                                     found(Found::X10(b == b'h'));
+                                }
+                                if params.split(|&c| c == b';').any(|p| p == b"9001") {
+                                    found(Found::Win32Input(b == b'h'));
                                 }
                             }
                         }
@@ -219,6 +224,14 @@ mod tests {
         assert_eq!(scan(&[b"\x1b[?9h"]), [Found::X10(true)]);
         assert_eq!(scan(&[b"\x1b[?1000;9l"]), [Found::X10(false)]);
         assert_eq!(scan(&[b"\x1b[?1049h\x1b[9h\x1b[?19h"]), []);
+    }
+
+    #[test]
+    fn decset_9001_is_win32_input_mode() {
+        // ConPTY's opening request, split across reads, beside focus events.
+        assert_eq!(scan(&[b"\x1b[?9001h\x1b[?1004h"]), [Found::Win32Input(true)]);
+        assert_eq!(scan(&[b"\x1b[?90", b"01;1004l"]), [Found::Win32Input(false)]);
+        assert_eq!(scan(&[b"\x1b[?900h\x1b[9001h"]), []);
     }
 
     #[test]

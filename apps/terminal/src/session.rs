@@ -71,6 +71,8 @@ struct Shared {
     bell: AtomicBool,
     /// DECSET 9, which the emulator does not track.
     x10: AtomicBool,
+    /// DECSET 9001: the console wants whole key events (`keys::Win32Key`).
+    win32_input: AtomicBool,
     /// The title a program set; None for the default.
     title: Mutex<Option<String>>,
     /// The working directory the shell last reported.
@@ -211,6 +213,7 @@ impl<P: EventedPty> std::io::Read for ScanReader<P> {
         self.scanner.feed(&buf[..n], |found| match found {
             Found::Cwd(dir) => *shared.cwd.lock().unwrap() = Some(dir),
             Found::X10(on) => shared.x10.store(on, Ordering::Release),
+            Found::Win32Input(on) => shared.win32_input.store(on, Ordering::Release),
         });
         Ok(n)
     }
@@ -294,6 +297,7 @@ impl Session {
             activity: AtomicBool::new(false),
             bell: AtomicBool::new(false),
             x10: AtomicBool::new(false),
+            win32_input: AtomicBool::new(false),
             title: Mutex::new(None),
             cwd: Mutex::new(None),
             copy: Mutex::new(None),
@@ -413,6 +417,11 @@ impl Session {
 
     pub fn x10(&self) -> bool {
         self.shared.x10.load(Ordering::Acquire)
+    }
+
+    /// Whether the console asked for win32-input-mode.
+    pub fn win32_input(&self) -> bool {
+        self.shared.win32_input.load(Ordering::Acquire)
     }
 
     /// What a program asked to copy, once.

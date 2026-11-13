@@ -634,6 +634,20 @@ entry points open it, and it can be Windows' default terminal (below).
   Zoom: Ctrl+wheel, Ctrl+plus/minus, Ctrl+0.
 - **Keyboard**: text comes as Windows composed it (dead keys, AltGr, IME commits), so layouts
   are not assumed; AltGr reaches egui without Ctrl and Alt and its characters go as text.
+- **win32-input-mode** (stage 3; `keys.rs` `Win32Key`/`Composer`, `app/win32_input.rs`): ConPTY
+  asks for it at its start (`CSI ? 9001 h`, seen by `osc.rs`); from then on keys go to the console
+  as whole key events, `CSI Vk;Sc;Uc;Kd;Cs;Rc _` (microsoft/terminal spec #4999), so console
+  programs get real key-downs and key-ups with scan codes and modifier state (PSReadLine's own
+  Shift+arrow selection and Ctrl+C copy, Ctrl+Alt combinations, Shift on its own). egui has no
+  key-ups or scan codes, so a subclass of the window procedure reads `WM_KEYDOWN`/`UP` and the
+  `WM_CHAR`s `TranslateMessage` already queued for them (a dead key sends nothing, the next key
+  carries the composed character; a key that types nothing goes bare; key-ups carry their
+  character by `ToUnicodeEx` without touching the dead-key state) and keeps those messages from
+  egui, except the terminal's own keys (`input::keeps`: its shortcuts, paste, Ctrl+C / Enter /
+  Escape only while it has a selection, Shift+PgUp/PgDn, Alt+F4 / Alt+Space), modifiers (sent and
+  also left to egui) and IME keys (committed text goes as text). The encoding is tested against
+  the spec's examples; live, a `ReadKey` loop saw Shift's own key-down and key-up (which the VT
+  path never sends).
 
 Measured (release, a 1800x1100 px window on a 4K monitor at 150 %, 240 Hz, same placement for
 each; `SHELLMAN_TERMINAL_STATS=<file>` logs frame times):
@@ -652,8 +666,6 @@ each; `SHELLMAN_TERMINAL_STATS=<file>` logs frame times):
 - Idle 20 s: 0.000 CPU-s focused, 0.016 unfocused. A blinking cursor: 2 frames a second for
   15 s, then none. A tab flooding output in the background: no frames.
 - Not yet: colour emoji (drawn in one colour), find in scrollback, splits, a Settings page,
-  win32-input-mode (ConPTY's `?9001`: exact key events; without it PSReadLine's own Ctrl+C copy
-  of its selection did not reach the clipboard in a test),
   OSC 10/11 answers through the system ConPTY (it does not forward the queries; the answering is
   in place), a light palette that keeps bright white readable on coloured backgrounds.
 

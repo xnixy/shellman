@@ -12,6 +12,7 @@ mod input;
 mod pointer;
 mod strip;
 mod view;
+pub mod win32_input;
 
 use crate::cli::Launch;
 use crate::config::Config;
@@ -81,11 +82,13 @@ pub struct TerminalApp {
     /// Launches another start of the terminal handed to this window (`instance`).
     inbox: instance::Inbox,
     stats: Stats,
+    /// Keys read from the window procedure for a console in win32-input-mode.
+    win32_keys: Option<Arc<win32_input::Gate>>,
 }
 
 impl TerminalApp {
     /// `launch`: what the first tab runs, and where; or `handoff`, a console Windows handed over.
-    pub fn new(ctx: &egui::Context, look: Appearance, panel: GlassPanel, launch: Launch, handoff: Option<Arrived>) -> Result<Self, String> {
+    pub fn new(ctx: &egui::Context, look: Appearance, panel: GlassPanel, hwnd: Option<isize>, launch: Launch, handoff: Option<Arrived>) -> Result<Self, String> {
         let config = if handoff.is_some() { Config::read() } else { Config::load() };
         let profiles = profiles::build(&profiles::detect());
         let ppp = ctx.pixels_per_point();
@@ -130,6 +133,7 @@ impl TerminalApp {
             inbox,
             stats: Stats::from_env(),
             config,
+            win32_keys: hwnd.map(|h| win32_input::install(h, ctx.clone())),
         })
     }
 
@@ -233,6 +237,16 @@ impl TerminalApp {
         theme::set_light(ctx.theme() == egui::Theme::Light);
         if self.look.accent == AccentChoice::System {
             theme::set_accent(ctx, AccentChoice::System.resolve());
+        }
+    }
+
+    /// Whether the next keys go to the shown tab's console whole (win32-input-mode): it asked
+    /// for them and nothing else (the profile menu) has the keyboard.
+    fn gate_keys(&self) {
+        if let Some(gate) = &self.win32_keys {
+            let s = &self.tabs.current().session;
+            let active = s.win32_input() && !self.strip.menu_open();
+            gate.set(active, active && s.with_term(crate::select::has));
         }
     }
 
@@ -432,6 +446,7 @@ impl eframe::App for TerminalApp {
         self.track_tabs(ctx);
         let cpu = self.stats.on().then(|| frame.info().cpu_usage).flatten();
         self.layout(ctx, cpu);
+        self.gate_keys();
     }
 
     fn on_exit(&mut self, gl: Option<&egui_glow::glow::Context>) {
