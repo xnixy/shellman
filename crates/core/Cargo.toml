@@ -17,7 +17,9 @@ roxmltree = "0.21"
 serde.workspace = true
 serde_json.workspace = true
 # Task Manager (`procs`): counters, process memory, and the GPUs' names and memory sizes.
-windows = { workspace = true, features = ["Win32_System_Performance", "Win32_System_ProcessStatus", "Win32_Graphics_Dxgi", "Win32_Graphics_Dxgi_Common", "Win32_System_WinRT"] }
+windows = { workspace = true, features = ["Win32_System_Performance", "Win32_System_ProcessStatus", "Win32_Graphics_Dxgi", "Win32_Graphics_Dxgi_Common", "Win32_System_WinRT", "Win32_System_UpdateAgent"] }
+# Windows Update (`system::wu_api`, generated): its lists are this crate's vector views.
+windows-collections = "0.2"
 windows-core.workspace = true
 windows-future.workspace = true
 # Draws SVG icon packs. No text, no system fonts, no embedded rasters: icons are plain paths.

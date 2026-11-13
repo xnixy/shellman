@@ -259,6 +259,9 @@ impl SettingsApp {
                 if self.section != Section::Storage {
                     self.st.storage.stop();
                 }
+                if self.section != Section::Updates {
+                    self.st.updates.stop();
+                }
                 if self.section != Section::DefaultApps {
                     self.st.default_apps.stop();
                 }

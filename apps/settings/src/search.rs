@@ -48,6 +48,11 @@ const ENTRIES: &[Entry] = &[
     e(Section::Storage, "On the system drive", "downloads documents desktop pictures videos appdata recycle bin large folders size usage cleanup"),
     e(Section::DefaultApps, "", "default programs open with file types associations browser email handler"),
     e(Section::DefaultApps, "File types and links", "txt pdf png jpg mp3 mp4 zip html http https mailto web browser pdf viewer music video picture photo"),
+    e(Section::Updates, "", "windows update check for updates patches security restart upgrade"),
+    e(Section::Updates, "Updates", "pending download install restart waiting kb security quality driver feature definition"),
+    e(Section::Updates, "Optional updates", "drivers optional download and install"),
+    e(Section::Updates, "Pause updates", "pause resume weeks stop updates"),
+    e(Section::Updates, "Update history", "installed failed history kb past"),
     e(Section::Apps, "", "programs installed software"),
     e(Section::Apps, "Uninstall", "remove modify change programs"),
     e(Section::Startup, "", "autostart login sign in boot"),
@@ -182,6 +187,14 @@ mod tests {
         assert!(find("restore segoe").iter().any(|h| h.section == Section::Fonts));
         assert!(find("line height").iter().any(|h| *h == Hit { section: Section::Fonts, group: "Tune" }));
         assert!(find("old dialogs").iter().any(|h| *h == Hit { section: Section::Fonts, group: "Coverage" }));
+    }
+
+    #[test]
+    fn windows_update_and_its_groups_are_found() {
+        assert_eq!(find("windows update")[0], Hit { section: Section::Updates, group: "" });
+        assert!(find("pause").contains(&Hit { section: Section::Updates, group: "Pause updates" }));
+        assert!(find("check for updates").iter().any(|h| h.section == Section::Updates));
+        assert!(find("history").contains(&Hit { section: Section::Updates, group: "Update history" }));
     }
 
     #[test]

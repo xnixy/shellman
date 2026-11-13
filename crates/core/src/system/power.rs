@@ -11,8 +11,9 @@ use windows::Win32::Security::{
 };
 use windows::Win32::System::Power::SetSuspendState;
 use windows::Win32::System::Shutdown::{
-    ExitWindowsEx, LockWorkStation, EWX_LOGOFF, EWX_POWEROFF, EWX_REBOOT, EXIT_WINDOWS_FLAGS,
-    SHTDN_REASON_FLAG_PLANNED, SHTDN_REASON_MAJOR_OTHER, SHTDN_REASON_MINOR_OTHER,
+    ExitWindowsEx, InitiateShutdownW, LockWorkStation, EWX_LOGOFF, EWX_POWEROFF, EWX_REBOOT, EXIT_WINDOWS_FLAGS,
+    SHTDN_REASON_FLAG_PLANNED, SHTDN_REASON_MAJOR_OPERATINGSYSTEM, SHTDN_REASON_MAJOR_OTHER,
+    SHTDN_REASON_MINOR_OTHER, SHTDN_REASON_MINOR_SERVICEPACK, SHUTDOWN_FLAGS, SHUTDOWN_INSTALL_UPDATES, SHUTDOWN_RESTART,
 };
 use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
@@ -32,6 +33,17 @@ pub enum Call {
     SetSuspendState,
     /// `ExitWindowsEx` with these flags; restart and shut down also need the shutdown privilege.
     ExitWindows { flags: u32, privilege: bool },
+    /// `InitiateShutdownW` with these flags, for a restart that installs the updates Windows has
+    /// waiting (needs the shutdown privilege).
+    InitiateShutdown { flags: u32 },
+}
+
+/// "Update and restart": restart, installing what Windows Update has waiting on the way, as
+/// Windows' own power menu does when an update needs a restart. Not forced (apps can still hold
+/// it up) and no grace period. The Settings page offers it; the power menu could offer it on the
+/// same signal (`updates::Snapshot` says a restart is needed).
+pub fn update_and_restart_call() -> Call {
+    Call::InitiateShutdown { flags: SHUTDOWN_RESTART.0 | SHUTDOWN_INSTALL_UPDATES.0 }
 }
 
 /// Which call carries out `action`. Apps are asked to close, never forced: one with unsaved
@@ -49,9 +61,19 @@ pub fn plan(action: Action) -> Call {
 /// Carry out `action`. False when Windows refused. Blocks only briefly (Windows queues the
 /// request), but callers should still make it from a worker or a button's click, never a loop.
 pub fn perform(action: Action) -> bool {
+    carry_out(plan(action))
+}
+
+/// Restart and install pending updates (see `update_and_restart_call`). False when Windows
+/// refused. Never called by tests: it would restart the machine.
+pub fn update_and_restart() -> bool {
+    carry_out(update_and_restart_call())
+}
+
+fn carry_out(call: Call) -> bool {
     // SAFETY: plain FFI calls; the token handle is closed after use.
     unsafe {
-        match plan(action) {
+        match call {
             Call::LockWorkStation => LockWorkStation().is_ok(),
             Call::SetSuspendState => SetSuspendState(false, false, false),
             Call::ExitWindows { flags, privilege } => {
@@ -60,6 +82,13 @@ pub fn perform(action: Action) -> bool {
                 }
                 let reason = SHTDN_REASON_MAJOR_OTHER | SHTDN_REASON_MINOR_OTHER | SHTDN_REASON_FLAG_PLANNED;
                 ExitWindowsEx(EXIT_WINDOWS_FLAGS(flags), reason).is_ok()
+            }
+            Call::InitiateShutdown { flags } => {
+                if !enable_shutdown_privilege() {
+                    return false;
+                }
+                let reason = SHTDN_REASON_MAJOR_OPERATINGSYSTEM | SHTDN_REASON_MINOR_SERVICEPACK | SHTDN_REASON_FLAG_PLANNED;
+                InitiateShutdownW(None, None, 0, SHUTDOWN_FLAGS(flags), reason) == 0
             }
         }
     }
@@ -105,6 +134,16 @@ mod tests {
                 assert_eq!(flags & (EWX_FORCE | EWX_FORCEIFHUNG), 0);
             }
         }
+    }
+
+    #[test]
+    fn update_and_restart_restarts_and_installs_without_forcing() {
+        const SHUTDOWN_FORCE_OTHERS: u32 = 1;
+        const SHUTDOWN_FORCE_SELF: u32 = 2;
+        const SHUTDOWN_POWEROFF: u32 = 8;
+        let Call::InitiateShutdown { flags } = update_and_restart_call() else { panic!("wrong call") };
+        assert_eq!(flags, 0x4 | 0x40, "SHUTDOWN_RESTART | SHUTDOWN_INSTALL_UPDATES");
+        assert_eq!(flags & (SHUTDOWN_FORCE_OTHERS | SHUTDOWN_FORCE_SELF | SHUTDOWN_POWEROFF), 0);
     }
 
     #[test]
