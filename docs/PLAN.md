@@ -758,7 +758,14 @@ entry points open it, and it can be Windows' default terminal (below).
 - **Cursor**: DECSCUSR shapes; blinking at Windows' caret rate, only while focused, stopping
   (shown) after 15 s without input or output, so an idle window draws nothing.
 - **Drawing**: a GPU renderer inside egui's frame (an `egui_glow` paint callback). Glyphs by
-  DirectWrite (`crossfont`, with font fallback) into a 2048 px greyscale atlas (colour emoji on a page of their own, above); box drawing
+  DirectWrite (`crossfont`, with font fallback) into a greyscale atlas page (colour emoji on a page of their own, above),
+  sized from the cell (2048 px for ordinary sizes, up to 4096 or the GPU's largest texture for a
+  big font on a high-DPI monitor, so about 1000 cells' glyphs fit). A page with no room evicts
+  nothing by itself: the renderer starts both pages over and places the screen again only when
+  the screen's distinct glyphs would fit (and a quarter fewer than the last time that failed);
+  otherwise what found no room is drawn as a fallback (an emoji as text, a glyph as a box
+  outline) and every row keeps its hash, so a screen that cannot fit is drawn once, not again
+  every frame (it used to stop updating); box drawing
   (light, heavy, double, rounded), blocks, shades, quadrants and Powerline triangles / half
   discs are drawn cell-sized by `render/boxdraw.rs` so they join without gaps (dashes and
   diagonals stay the font's). Three instanced draws: background runs, glyphs, then lines and the
@@ -766,7 +773,8 @@ entry points open it, and it can be Windows' default terminal (below).
 - **Colour emoji** (stage 3, `emoji.rs`, `render/color.rs`): a wide character in the emoji
   blocks, or one with VS16 or a keycap mark, is drawn in colour: Direct2D draws it with
   DirectWrite's colour font (Segoe UI Emoji) into a premultiplied bitmap through WIC (software,
-  no device, no window), once, onto a 1024 px BGRA colour page of its own, drawn by a fourth
+  no device, no window), once, onto a BGRA colour page of its own (1024 px, more for a big font:
+  sized for 128 two-cell emoji), drawn by a fourth
   instanced draw. Cell widths stay `wcwidth`'s (the emulator's, and ConPTY measures the same way,
   see ConPTY above), so the cursor never drifts; a ZWJ sequence (👨‍👩‍👧‍👦, four wide cells) or an
   emoji with a skin tone (👍🏽, two) is shaped by DirectWrite into one glyph in the first two cells

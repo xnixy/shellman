@@ -20,9 +20,11 @@ use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM;
 use windows::Win32::Graphics::Imaging::{CLSID_WICImagingFactory, GUID_WICPixelFormat32bppPBGRA, IWICBitmap, IWICImagingFactory, WICBitmapCacheOnLoad};
 use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED};
 
-/// The colour page is a square of this many pixels a side (BGRA).
+/// The colour page is a square of at least this many pixels a side (BGRA); more for a large
+/// font (see `atlas::page_side`).
 pub const COLOR_ATLAS: i32 = 1024;
-const PAD: i32 = 1;
+/// How many two-cell emoji the colour page is sized to hold at least.
+const EMOJI_HELD: usize = 128;
 
 /// Where a colour glyph is on its page.
 #[derive(Clone, Copy, Default, Debug)]
@@ -118,15 +120,32 @@ pub struct ColorAtlas {
     cursor: (i32, i32),
     shelf: i32,
     pub uploads: Vec<Upload>,
+    /// The page's side in pixels.
+    pub side: i32,
 }
 
-/// The page is full: it was emptied, and everything placed before must be placed again.
-pub struct Full;
+pub use super::atlas::Full;
+use super::atlas::PAD;
 
 impl ColorAtlas {
-    /// For glyphs `em_px` pixels to the em (the grid font's size).
-    pub fn new(em_px: f32) -> Self {
-        Self { painter: None, failed: false, em_px, glyphs: HashMap::new(), cursor: (PAD, PAD), shelf: 0, uploads: Vec::new() }
+    /// For glyphs `em_px` pixels to the em (the grid font's size), in cells of `cell_w` x
+    /// `cell_h`, on a page no bigger than `cap`.
+    pub fn new(em_px: f32, cell_w: i32, cell_h: i32, cap: i32) -> Self {
+        let side = super::atlas::page_side(2 * cell_w, cell_h, EMOJI_HELD, COLOR_ATLAS, cap);
+        Self { painter: None, failed: false, em_px, glyphs: HashMap::new(), cursor: (PAD, PAD), shelf: 0, uploads: Vec::new(), side }
+    }
+
+    /// Start the page over: every glyph is forgotten (and drawn again when next asked for).
+    pub fn reset(&mut self) {
+        self.glyphs.clear();
+        self.uploads.clear();
+        self.cursor = (PAD, PAD);
+        self.shelf = 0;
+    }
+
+    /// How many two-cell emoji the page holds.
+    pub fn capacity(&self, cell_w: i32, cell_h: i32) -> usize {
+        super::atlas::capacity(self.side, 2 * cell_w, cell_h)
     }
 
     /// The glyph for `text` in a box of `cells` cells of `cell_w` x `cell_h`; None when it cannot
@@ -153,6 +172,9 @@ impl ColorAtlas {
             }
         }
         let (w, h) = (cell_w * cells as i32, cell_h);
+        // No room: say so before drawing it for nothing.
+        let (mut cursor, mut shelf) = (self.cursor, self.shelf);
+        super::atlas::place(&mut cursor, &mut shelf, self.side, w, h)?;
         let pixels = match self.painter.as_mut().unwrap().paint(text, w, h) {
             Ok(p) => p,
             Err(_) => return Ok(None),
@@ -168,25 +190,9 @@ impl ColorAtlas {
         Ok(Some(g))
     }
 
+    /// A free spot of `w` by `h`; Full (the page left as it is) when there is none.
     fn place(&mut self, w: i32, h: i32) -> Result<(i32, i32), Full> {
-        if w + 2 * PAD > COLOR_ATLAS || h + 2 * PAD > COLOR_ATLAS {
-            return Err(Full);
-        }
-        if self.cursor.0 + w + PAD > COLOR_ATLAS {
-            self.cursor = (PAD, self.cursor.1 + self.shelf + PAD);
-            self.shelf = 0;
-        }
-        if self.cursor.1 + h + PAD > COLOR_ATLAS {
-            self.glyphs.clear();
-            self.uploads.clear();
-            self.cursor = (PAD, PAD);
-            self.shelf = 0;
-            return Err(Full);
-        }
-        let at = self.cursor;
-        self.cursor.0 += w + PAD;
-        self.shelf = self.shelf.max(h);
-        Ok(at)
+        super::atlas::place(&mut self.cursor, &mut self.shelf, self.side, w, h)
     }
 }
 
@@ -198,7 +204,7 @@ mod tests {
     /// family's ZWJ sequence is one glyph (it fits the two-cell box it is given).
     #[test]
     fn emoji_come_out_in_colour() {
-        let mut atlas = ColorAtlas::new(20.0);
+        let mut atlas = ColorAtlas::new(20.0, 12, 24, 4096);
         let g = atlas.glyph("\u{1F600}", 2, 12, 24).ok().flatten().expect("drawn");
         assert_eq!((g.w, g.h), (24, 24));
         let px = &atlas.uploads[0].pixels;
