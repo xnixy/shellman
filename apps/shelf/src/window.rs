@@ -1,4 +1,5 @@
-//! The shelf window's place and manners.
+//! The shelf windows' place and manners: the process's first window (the primary monitor's
+//! shelf, which also hears the desktop) and one per other monitor, all alike.
 //!
 //! It lives at desktop level: above the wallpaper windows (and Windows' own `Progman`), below
 //! every other window, never in Alt+Tab or the dock (a tool window that never activates), and
@@ -11,15 +12,17 @@
 //!
 //! It also hears what the shelf reacts to without polling: the desktop's request for the menu
 //! (a registered message from the desktop process), a check for a fullscreen app in front
-//! (posted by the window watcher), and monitor or work-area changes.
+//! (posted by the window watcher, and answered for every shelf window, each for its own
+//! monitor), and monitor or work-area changes.
 
 use shellman_core::winlist::fullscreen::foreground_covers_monitor_of;
 use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
+use std::sync::MutexGuard;
 use std::sync::{Mutex, OnceLock};
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Dwm::{DwmExtendFrameIntoClientArea, DwmSetWindowAttribute, DWMWA_BORDER_COLOR};
 use windows::Win32::UI::Controls::MARGINS;
-use windows::Win32::UI::Shell::{DefSubclassProc, SetWindowSubclass};
+use windows::Win32::UI::Shell::{DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass};
 use windows::Win32::UI::WindowsAndMessaging::{
     GetClassNameW, GetTopWindow, GetWindow, GetWindowLongPtrW, GetWindowRect, GetWindowThreadProcessId,
     IsWindowVisible, PostMessageW, SetWindowLongPtrW, SetWindowPos, GWL_EXSTYLE, GWL_STYLE, GW_HWNDNEXT,
@@ -38,20 +41,39 @@ const DESKTOP_CLASSES: [&str; 3] = ["ShellmanDesktop", "Progman", "WorkerW"];
 const SUBCLASS: usize = 0x5348_4c46;
 
 static CTX: OnceLock<egui::Context> = OnceLock::new();
+/// The first window, which the window watcher's checks are posted to.
 static HWND_: AtomicIsize = AtomicIsize::new(0);
-/// Above everything while a stack is open.
-static RAISED: AtomicBool = AtomicBool::new(false);
-/// A fullscreen app covers the primary monitor.
-static COVERED: AtomicBool = AtomicBool::new(false);
+/// Every shelf window.
+static SHELVES: Mutex<Vec<isize>> = Mutex::new(Vec::new());
+/// The shelf windows above everything (a stack of theirs is open).
+static RAISED: Mutex<Vec<isize>> = Mutex::new(Vec::new());
+/// The shelf windows whose monitor a fullscreen app covers.
+static COVERED: Mutex<Vec<isize>> = Mutex::new(Vec::new());
 /// The monitors or work areas changed since the window was last placed.
 static LAYOUT: AtomicBool = AtomicBool::new(true);
 /// Where the desktop asked for its menu, not yet taken.
 static MENU_AT: Mutex<Option<(i32, i32)>> = Mutex::new(None);
 
-/// Give `hwnd` (the shelf window, created hidden) its manners. Call once, on the UI thread.
+fn list(m: &'static Mutex<Vec<isize>>) -> MutexGuard<'static, Vec<isize>> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Give `hwnd` (the process's first shelf window, created hidden) its manners. Call once, on
+/// the UI thread.
 pub fn prepare(hwnd: isize, ctx: &egui::Context) {
     let _ = CTX.set(ctx.clone());
     HWND_.store(hwnd, Ordering::Release);
+    prepare_other(hwnd);
+}
+
+/// Give another monitor's shelf window the same manners. Call once per window, on the UI thread.
+pub fn prepare_other(hwnd: isize) {
+    {
+        let mut all = list(&SHELVES);
+        if !all.contains(&hwnd) {
+            all.push(hwnd);
+        }
+    }
     let h = HWND(hwnd as *mut _);
     unsafe {
         // DWMWA_COLOR_NONE: the glass draws the edge.
@@ -108,10 +130,33 @@ pub fn place(hwnd: isize, rect: RECT) {
     }
 }
 
+/// A shelf window is about to close (its monitor went away): forget it.
+pub fn forget(hwnd: isize) {
+    for l in [&SHELVES, &RAISED, &COVERED] {
+        list(l).retain(|h| *h != hwnd);
+    }
+    unsafe {
+        let _ = RemoveWindowSubclass(HWND(hwnd as *mut _), Some(proc), SUBCLASS);
+    }
+}
+
+fn raised(hwnd: isize) -> bool {
+    list(&RAISED).contains(&hwnd)
+}
+
 /// Raise the window above everything (a stack is open), or put it back at desktop level.
 pub fn set_raised(hwnd: isize, on: bool) {
-    if RAISED.swap(on, Ordering::AcqRel) == on {
-        return;
+    // The lock is let go before the window moves: the move comes back through `proc`.
+    {
+        let mut up = list(&RAISED);
+        if up.contains(&hwnd) == on {
+            return;
+        }
+        if on {
+            up.push(hwnd);
+        } else {
+            up.retain(|h| *h != hwnd);
+        }
     }
     let h = HWND(hwnd as *mut _);
     let flags = SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER;
@@ -138,9 +183,24 @@ pub fn ask_menu(at: (i32, i32)) {
     }
 }
 
-/// Whether a fullscreen app covers the shelf's monitor.
-pub fn covered() -> bool {
-    COVERED.load(Ordering::Acquire)
+/// Whether a fullscreen app covers the monitor of the shelf window `hwnd`.
+pub fn covered(hwnd: isize) -> bool {
+    list(&COVERED).contains(&hwnd)
+}
+
+/// Look at the window in front for every shelf window; true when that changed for any.
+fn check_all() -> bool {
+    let all = list(&SHELVES).clone();
+    let now: Vec<isize> = all.into_iter().filter(|h| foreground_covers_monitor_of(*h)).collect();
+    let mut covered = list(&COVERED);
+    let changed = *covered != now;
+    *covered = now;
+    changed
+}
+
+/// Have the windows placed again (the settings moved or resized the shelf).
+pub fn ask_layout() {
+    LAYOUT.store(true, Ordering::Release);
 }
 
 /// True once after the monitors or work areas changed (and at the start).
@@ -213,7 +273,7 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPA
         WM_MOUSEACTIVATE => return LRESULT(MA_NOACTIVATE),
         WM_WINDOWPOSCHANGING => {
             let pos = &mut *(lparam.0 as *mut WINDOWPOS);
-            if pos.flags & SWP_NOZORDER == Default::default() && !RAISED.load(Ordering::Acquire) {
+            if pos.flags & SWP_NOZORDER == Default::default() && !raised(hwnd.0 as isize) {
                 pos.hwndInsertAfter = desktop_slot();
             }
         }
@@ -226,8 +286,7 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPA
             change.styleNew = fix_style(change.styleNew);
         }
         WM_CHECK => {
-            let now = foreground_covers_monitor_of(hwnd.0 as isize);
-            if COVERED.swap(now, Ordering::AcqRel) != now {
+            if check_all() {
                 repaint();
             }
             return LRESULT(0);

@@ -1,4 +1,6 @@
-//! The shelf process's one window and its frames.
+//! The shelf process's windows and their frames: the primary monitor's shelf in the first
+//! window and, with "All displays", one per other monitor (`views`), all showing the same
+//! stacks. One fan is open at a time, on the shelf it was opened from.
 //!
 //! Frames run only when something happened: the pointer over the shelf, a folder that changed, a
 //! thumbnail that arrived, the settings, the desktop asking for its menu. At rest nothing asks
@@ -11,10 +13,10 @@ use crate::folders::Folders;
 use crate::geometry;
 use crate::menu::{self, Action};
 use crate::stacks::{self, Stacks};
-use crate::{actions, log, terminal, wallpaper, window};
-use egui::{pos2, Rect};
+use crate::views::{self, View};
+use crate::{actions, displays, log, terminal, wallpaper, window};
 use shellman_core::outside;
-use shellman_core::settings::desktop::{DesktopSettings, Stack};
+use shellman_core::settings::desktop::{DesktopSettings, ShelfOn, Stack};
 use shellman_core::thumbs::Thumbs;
 use shellman_core::transfer::{self, COPY, LINK, MOVE};
 use shellman_core::watch::Watcher;
@@ -23,28 +25,21 @@ use shellman_ui::appearance::Appearance;
 use shellman_ui::glass::{self, GlassPanel, Island, Style};
 use shellman_ui::menu::popup::{self, Anchor, PopupMenu};
 use std::sync::{Arc, Mutex};
-use windows::Win32::Foundation::{HWND, POINT, RECT};
-use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, MonitorFromPoint, MONITORINFO, MONITOR_DEFAULTTOPRIMARY};
-use windows::Win32::UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI};
+use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, SetForegroundWindow};
 
 /// How long a fan takes to open or close.
 const FAN_TIME: f32 = 0.16;
 
-/// Where the window was put, and the space it has for the shelf.
-#[derive(Clone, Copy, PartialEq, Debug)]
-struct Placed {
-    /// The window, in pixels.
-    rect: RECT,
-    /// Between the top bar and the dock, in the window's points.
-    area: Rect,
-    /// The monitor's pixels per point.
-    scale: f32,
-}
-
 pub struct Shelf {
+    /// The window whose frame runs now (the first window's outside them).
     hwnd: isize,
-    panel: GlassPanel,
+    /// That window's viewport.
+    current: egui::ViewportId,
+    /// Every shelf window, the first window first.
+    views: Vec<View>,
+    /// The monitors have been looked at.
+    laid_out: bool,
     look: Appearance,
     /// The settings folder: the look and `desktop.json`.
     config_watch: Watcher,
@@ -56,14 +51,16 @@ pub struct Shelf {
     open: Option<Stack>,
     /// The stack whose fan is drawn: the open one, or the one still closing.
     drawn: Option<Stack>,
+    /// The window (viewport and handle) the fan is open or closing on.
+    fan_on: Option<(egui::ViewportId, isize)>,
     /// The window in front before a fan took the focus, to give it back.
     before: Option<isize>,
     /// The fan had the focus at some point (so losing it means closing).
     fan_focused: bool,
-    drop: Arc<Mutex<drop::Shared>>,
-    placed: Option<Placed>,
     /// A drag out of the fan is on.
     dragging: bool,
+    /// The window the drag started from.
+    drag_on: Option<egui::ViewportId>,
     /// The desktop's right-click menu.
     menu: PopupMenu<Action>,
     _windows: WindowWatcher,
@@ -79,7 +76,9 @@ impl Shelf {
         log::line(format!("started; folders {folders:?}"));
         Self {
             hwnd,
-            panel,
+            current: egui::ViewportId::ROOT,
+            views: vec![View::first(hwnd, panel, drop)],
+            laid_out: false,
             look,
             config_watch,
             settings: DesktopSettings::load(),
@@ -88,29 +87,34 @@ impl Shelf {
             thumbs: Thumbs::new(ctx.clone()),
             open: None,
             drawn: None,
+            fan_on: None,
             before: None,
             fan_focused: false,
-            drop,
-            placed: None,
             dragging: false,
+            drag_on: None,
             menu: PopupMenu::new(),
             _windows: windows,
         }
     }
 
-    /// Put the window on the primary monitor's edge, as tall as the monitor.
-    fn place(&mut self) {
-        let (monitor, work, scale) = primary();
-        let w = (geometry::window_width() * scale).round() as i32;
-        let (left, right) = match self.settings.shelf.edge {
-            shellman_core::settings::desktop::Edge::Left => (monitor.left, monitor.left + w),
-            shellman_core::settings::desktop::Edge::Right => (monitor.right - w, monitor.right),
-        };
-        let rect = RECT { left, top: monitor.top, right, bottom: monitor.bottom };
-        window::place(self.hwnd, rect);
-        let to_pt = |px: i32| (px - monitor.top) as f32 / scale;
-        let area = Rect::from_min_max(pos2(0.0, to_pt(work.top)), pos2(geometry::window_width(), to_pt(work.bottom)));
-        self.placed = Some(Placed { rect, area, scale });
+    /// Look at the monitors and bring the windows in line: which monitors have a shelf (the
+    /// setting; the primary alone while the shelf is off), each window on its monitor's edge.
+    fn lay_out(&mut self, ctx: &egui::Context) {
+        let monitors = shellman_core::monitors::all();
+        let on = if self.settings.shelf_shown() { self.settings.shelf.on } else { ShelfOn::Primary };
+        let (primary, others) = displays::split(displays::targets(on, &monitors));
+        let names: Vec<String> = monitors
+            .iter()
+            .map(|m| {
+                let r = m.rect;
+                format!("{} {}x{} at {},{} {}%", m.device, r.right - r.left, r.bottom - r.top, r.left, r.top, (m.scale * 100.0).round())
+            })
+            .collect();
+        log::line(format!("monitors: {}; shelves on {on:?}", names.join("; ")));
+        views::sync(&mut self.views, primary, others, ctx);
+        self.laid_out = true;
+        // Whether a fullscreen app covers each window's monitor.
+        window::request_check();
     }
 
     fn reload(&mut self, ctx: &egui::Context) {
@@ -122,15 +126,31 @@ impl Shelf {
         let settings = DesktopSettings::load();
         if settings != self.settings {
             let moved = settings.shelf.edge != self.settings.shelf.edge;
+            // Which monitors have a shelf, and how tall each window is.
+            let relaid = settings.shelf.on != self.settings.shelf.on
+                || settings.shelf_shown() != self.settings.shelf_shown()
+                || settings.stacks().len() != self.settings.stacks().len();
             self.settings = settings;
             if moved {
                 self.close_fan(false);
-                self.place();
+            }
+            if moved || relaid {
+                window::ask_layout();
             }
         }
     }
 
     fn open_fan(&mut self, stack: Stack, ctx: &egui::Context) {
+        // One fan at a time: one open on another monitor's shelf closes there.
+        let switching = self.open.is_some();
+        if let Some((view, hwnd)) = self.fan_on {
+            if view != self.current {
+                window::set_raised(hwnd, false);
+            }
+        }
+        self.fan_on = Some((self.current, self.hwnd));
+        // The click that opened this fan is no click outside it.
+        let _ = outside::take_click();
         self.open = Some(stack);
         self.drawn = Some(stack);
         self.fan_focused = false;
@@ -140,7 +160,7 @@ impl Shelf {
         // The focus, for Esc (the click on the shelf lets this process take it).
         unsafe {
             let front = GetForegroundWindow();
-            if front.0 as isize != self.hwnd {
+            if front.0 as isize != self.hwnd && !switching {
                 self.before = (!front.is_invalid()).then_some(front.0 as isize);
             }
             let _ = SetForegroundWindow(HWND(self.hwnd as *mut _));
@@ -155,8 +175,9 @@ impl Shelf {
         }
         outside::stop();
         let before = self.before.take();
+        let fan = self.fan_on.map_or(self.hwnd, |(_, h)| h);
         unsafe {
-            if give_back && GetForegroundWindow().0 as isize == self.hwnd {
+            if give_back && GetForegroundWindow().0 as isize == fan {
                 if let Some(b) = before {
                     let _ = SetForegroundWindow(HWND(b as *mut _));
                 }
@@ -235,18 +256,20 @@ impl Shelf {
         -(bias as i64) * 60
     }
 
-    /// The shelf's frame: the islands to show this time.
-    fn shelf_frame(&mut self, ctx: &egui::Context, placed: Placed) -> Vec<Island> {
+    /// The shelf's frame in the window of `self.views[view]`: the islands to show this time.
+    fn shelf_frame(&mut self, ctx: &egui::Context, view: usize, placed: displays::Placement) -> Vec<Island> {
         let stacks = self.settings.stacks();
         let window = ctx.screen_rect();
         let layout = geometry::layout(window, placed.area, self.settings.shelf.edge, stacks.len());
-        // The fan eases open and shut.
-        let t = ctx.animate_bool_with_time(egui::Id::new("fan"), self.open.is_some(), FAN_TIME);
-        if t <= 0.0 && self.open.is_none() && self.drawn.take().is_some() {
+        // The fan eases open and shut, on the shelf it was opened from.
+        let mine = self.fan_on.is_some_and(|(v, _)| v == self.current);
+        let t = ctx.animate_bool_with_time(egui::Id::new("fan").with(self.current), mine && self.open.is_some(), FAN_TIME);
+        if mine && t <= 0.0 && self.open.is_none() && self.drawn.take().is_some() {
             window::set_raised(self.hwnd, false);
+            self.fan_on = None;
         }
         let eased = 1.0 - (1.0 - t).powi(3);
-        let fan_kind = self.drawn.filter(|k| stacks.contains(k));
+        let fan_kind = if mine { self.drawn.filter(|k| stacks.contains(k)) } else { None };
         let fan_items = fan_kind.map(|k| stacks::fan(self.stacks.items(k), geometry::FAN_ITEMS));
         let pills = match (fan_kind, &fan_items) {
             (Some(k), Some((shown, _))) => {
@@ -256,7 +279,8 @@ impl Shelf {
             }
             _ => Vec::new(),
         };
-        let keep = self.drop.lock().map(|d| d.hovering).unwrap_or(false);
+        let drop = self.views[view].drop.clone();
+        let keep = drop.lock().map(|d| d.hovering).unwrap_or(false);
         let now_utc = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
         let offset = Self::offset();
         let mut islands = vec![Island::new(layout.shelf, geometry::RADIUS)];
@@ -267,7 +291,7 @@ impl Shelf {
             i
         }));
         let style = Style::from_theme(geometry::RADIUS);
-        let composed = self.panel.composed();
+        let composed = self.views[view].panel.as_ref().is_some_and(GlassPanel::composed);
         let events = egui::CentralPanel::default()
             .frame(egui::Frame::new())
             .show(ctx, |ui| {
@@ -297,10 +321,12 @@ impl Shelf {
         let origin = (placed.rect.left, placed.rect.top);
         let scale = ctx.pixels_per_point();
         let shelf_px = geometry::rect_to_screen(layout.shelf, origin, scale);
-        let mut inside = vec![shelf_px];
-        inside.extend(pills.iter().map(|r| geometry::rect_to_screen(*r, origin, scale)));
-        outside::set_rects(&inside);
-        if let Ok(mut d) = self.drop.lock() {
+        if mine {
+            let mut inside = vec![shelf_px];
+            inside.extend(pills.iter().map(|r| geometry::rect_to_screen(*r, origin, scale)));
+            outside::set_rects(&inside);
+        }
+        if let Ok(mut d) = drop.lock() {
             d.zone = Some(shelf_px);
             d.dest = self.folders.drop_target(&self.settings.shelf.drop_to).map(|p| {
                 let name = self.settings.shelf.drop_to.label();
@@ -311,15 +337,61 @@ impl Shelf {
     }
 }
 
-/// The primary monitor's rectangle and work area (pixels), and its scale.
-fn primary() -> (RECT, RECT, f32) {
-    unsafe {
-        let m = MonitorFromPoint(POINT { x: 0, y: 0 }, MONITOR_DEFAULTTOPRIMARY);
-        let mut info = MONITORINFO { cbSize: size_of::<MONITORINFO>() as u32, ..Default::default() };
-        let _ = GetMonitorInfoW(m, &mut info);
-        let (mut dx, mut dy) = (96u32, 96u32);
-        let _ = GetDpiForMonitor(m, MDT_EFFECTIVE_DPI, &mut dx, &mut dy);
-        (info.rcMonitor, info.rcWork, dx.max(96) as f32 / 96.0)
+impl Shelf {
+    /// One shelf window's frame, in its own viewport's `ctx`.
+    fn view_frame(&mut self, ctx: &egui::Context, view: usize) {
+        crate::theme_for(ctx);
+        if !self.views[view].adopt() {
+            // Made at the end of this frame: look again in the next.
+            ctx.request_repaint();
+            return;
+        }
+        let Some(hwnd) = self.views[view].hwnd else { return };
+        let id = self.views[view].id;
+        self.hwnd = hwnd;
+        self.current = id;
+        if self.views[view].placed.is_none() {
+            let (edge, stacks) = (self.settings.shelf.edge, self.settings.stacks().len());
+            self.views[view].place(edge, stacks);
+        }
+        let shown = self.settings.shelf_shown() && !window::covered(hwnd) && self.views[view].monitor.is_some();
+        if self.dragging && self.drag_on == Some(id) && !ctx.input(|i| i.pointer.any_down()) {
+            self.dragging = false;
+            self.drag_on = None;
+        }
+        if self.open.is_some() && self.fan_on.is_some_and(|(v, _)| v == id) {
+            let focused = ctx.input(|i| i.viewport().focused).unwrap_or(false);
+            self.fan_focused |= focused;
+            let esc = ctx.input(|i| i.key_pressed(egui::Key::Escape));
+            if esc {
+                self.close_fan(true);
+            } else if outside::take_click() || (self.fan_focused && !focused && !self.dragging) || !shown {
+                self.close_fan(false);
+            }
+        }
+        // The window must sit at the scale of the monitor it was placed on before the shelf is
+        // laid out in its points; a frame at the old scale draws nothing.
+        let placed = self.views[view].placed.filter(|p| (p.scale - ctx.pixels_per_point()).abs() < 0.01);
+        let islands = match (shown, placed) {
+            (true, Some(p)) => self.shelf_frame(ctx, view, p),
+            _ => {
+                if self.views[view].placed.is_some() && placed.is_none() {
+                    ctx.request_repaint();
+                }
+                if let Ok(mut d) = self.views[view].drop.lock() {
+                    d.zone = None;
+                }
+                Vec::new()
+            }
+        };
+        if self.dragging && self.drag_on.is_none() {
+            self.drag_on = Some(id);
+        }
+        if let Some(panel) = &self.views[view].panel {
+            panel.set_style(Style::from_theme(geometry::RADIUS));
+            // Only the islands show and take clicks; the rest of the window lets the desktop through.
+            panel.set_islands_only(&islands, ctx.pixels_per_point(), None);
+        }
     }
 }
 
@@ -333,16 +405,12 @@ impl eframe::App for Shelf {
         if !self.config_watch.poll().is_empty() {
             self.reload(ctx);
         }
-        if window::take_layout() || self.placed.is_none() {
-            self.place();
+        if window::take_layout() || !self.laid_out {
+            self.lay_out(ctx);
         }
-        let shown = self.settings.shelf_shown() && !window::covered();
         self.stacks.set_active(self.settings.shelf_shown(), &self.folders);
         self.stacks.poll();
         self.thumbs.poll(ctx);
-        if self.dragging && !ctx.input(|i| i.pointer.any_down()) {
-            self.dragging = false;
-        }
         // The glass menu's window, once there has been a menu.
         popup::declare(ctx);
         // The desktop asked for its menu: an open fan closes first.
@@ -356,35 +424,22 @@ impl eframe::App for Shelf {
             log::line(format!("menu: {action:?}"));
             self.run(action);
         }
-        if self.open.is_some() {
-            let focused = ctx.input(|i| i.viewport().focused).unwrap_or(false);
-            self.fan_focused |= focused;
-            let esc = ctx.input(|i| i.key_pressed(egui::Key::Escape));
-            if esc {
-                self.close_fan(true);
-            } else if outside::take_click() || (self.fan_focused && !focused && !self.dragging) || !shown {
-                self.close_fan(false);
-            }
+        // The first window (the primary's shelf), then every other monitor's, drawn now with it.
+        self.view_frame(ctx, 0);
+        for view in 1..self.views.len() {
+            let (id, builder) = (self.views[view].id, self.views[view].builder());
+            ctx.show_viewport_immediate(id, builder, |ctx, _| {
+                self.view_frame(ctx, view);
+                shellman_ui::font_atlas::end_frame(ctx);
+            });
         }
-        // The window must sit at the scale of the monitor it was placed on before the shelf is
-        // laid out in its points; a frame at the old scale draws nothing.
-        let placed = self.placed.filter(|p| (p.scale - ctx.pixels_per_point()).abs() < 0.01);
-        let islands = match (shown, placed) {
-            (true, Some(p)) => self.shelf_frame(ctx, p),
-            _ => {
-                if self.placed.is_some() && placed.is_none() {
-                    ctx.request_repaint();
-                }
-                if let Ok(mut d) = self.drop.lock() {
-                    d.zone = None;
-                }
-                Vec::new()
-            }
-        };
-        self.panel.set_style(Style::from_theme(geometry::RADIUS));
-        // Only the islands show and take clicks; the rest of the window lets the desktop through.
-        self.panel.set_islands_only(&islands, ctx.pixels_per_point(), None);
-        let dropped = self.drop.lock().map(|mut d| std::mem::take(&mut d.dropped)).unwrap_or_default();
+        self.hwnd = self.views[0].hwnd.unwrap_or(self.hwnd);
+        self.current = egui::ViewportId::ROOT;
+        let dropped: Vec<_> = self
+            .views
+            .iter()
+            .flat_map(|v| v.drop.lock().map(|mut d| std::mem::take(&mut d.dropped)).unwrap_or_default())
+            .collect();
         if !dropped.is_empty() {
             if let Some(dir) = self.folders.drop_target(&self.settings.shelf.drop_to) {
                 std::thread::spawn(move || {

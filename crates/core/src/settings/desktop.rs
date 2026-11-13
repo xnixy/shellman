@@ -35,7 +35,7 @@ impl Style {
     }
 }
 
-/// Which edge of the primary monitor the shelf stands on.
+/// Which edge of its monitor the shelf stands on.
 #[derive(Clone, Copy, Default, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub enum Edge {
     #[default]
@@ -50,6 +50,27 @@ impl Edge {
         match self {
             Edge::Left => "Left",
             Edge::Right => "Right",
+        }
+    }
+}
+
+/// Which monitors have a shelf.
+#[derive(Clone, Copy, Default, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub enum ShelfOn {
+    /// The primary monitor only.
+    Primary,
+    /// Every monitor, each with its own shelf showing the same stacks.
+    #[default]
+    All,
+}
+
+impl ShelfOn {
+    pub const ALL: [ShelfOn; 2] = [ShelfOn::Primary, ShelfOn::All];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            ShelfOn::Primary => "Primary display",
+            ShelfOn::All => "All displays",
         }
     }
 }
@@ -109,6 +130,8 @@ impl DropTo {
 pub struct ShelfSettings {
     /// Off hides the shelf in either style.
     pub show: bool,
+    /// The primary monitor only, or every monitor.
+    pub on: ShelfOn,
     pub edge: Edge,
     /// The stacks shown, each once. The shelf shows them in `Stack::ALL`'s order.
     pub stacks: Vec<Stack>,
@@ -119,6 +142,7 @@ impl Default for ShelfSettings {
     fn default() -> Self {
         Self {
             show: true,
+            on: ShelfOn::All,
             edge: Edge::Left,
             stacks: Stack::ALL.to_vec(),
             drop_to: DropTo::Desktop,
@@ -192,6 +216,7 @@ mod tests {
         assert_eq!(s.style, Style::ShelfWidgets);
         assert!(s.shelf_shown());
         assert_eq!(s.shelf.edge, Edge::Left);
+        assert_eq!(s.shelf.on, ShelfOn::All);
         assert_eq!(s.stacks(), Stack::ALL);
         assert_eq!(s.shelf.drop_to, DropTo::Desktop);
         assert_eq!(serde_json::from_str::<DesktopSettings>("{}").unwrap(), s);
@@ -216,6 +241,10 @@ mod tests {
         assert!(s.shelf.show);
         assert_eq!(s.stacks(), Stack::ALL);
         assert!(s.widgets.today);
+        // A file from before the setting existed gets a shelf on every monitor.
+        assert_eq!(s.shelf.on, ShelfOn::All);
+        let primary: DesktopSettings = serde_json::from_str(r#"{ "shelf": { "on": "Primary" } }"#).unwrap();
+        assert_eq!(primary.shelf.on, ShelfOn::Primary);
         let folder: DesktopSettings =
             serde_json::from_str(r#"{ "shelf": { "drop_to": { "Folder": "D:\\Inbox" } } }"#).unwrap();
         assert_eq!(folder.shelf.drop_to, DropTo::Folder(PathBuf::from("D:\\Inbox")));

@@ -12,7 +12,7 @@ accent color, fast.
 | `apps/launcher` | Start menu and search | working: Spotlight-style panel, app grid, ranked search, most used, the Win key (through the switcher's hook) |
 | `apps/switcher` | Alt+Tab, Task View | working: Alt+Tab with live previews. Next: Task View (Win+Tab) |
 | `apps/desktop` | wallpaper window | working: wallpaper per monitor; keeps Windows' modern-app host running; hands a right-click to the shelf |
-| `apps/shelf` | desktop icons, the desktop's right-click menu | stage 1 working: the shelf (drop zone, Desktop / Downloads / Recent stacks that fan open, drag out, drop in), the right-click menu, Settings › Desktop. Next: widgets top right (stage 2) |
+| `apps/shelf` | desktop icons, the desktop's right-click menu | stage 1 working: the shelf on every monitor or the primary only (drop zone, Desktop / Downloads / Recent stacks that fan open, drag out, drop in), the right-click menu on every monitor, Settings › Desktop. Next: widgets top right (stage 2) |
 | `apps/tasks` | Task Manager (Ctrl+Shift+Esc, through the switcher's hook) | working: Processes (apps and background, grouped, sort, search, End task / End process tree / details), Performance (CPU, memory, GPUs, disks, network), Services (read-only: status, startup type, PID, description, sort, search, go to process; read through the SCM in `crates/core/src/services`, off the UI thread, only while the page shows). End task / tree try unelevated first and, only when Windows refuses, go through `shellman-elevate`'s `end-processes <pid>:<start time>...` behind the UAC prompt (the helper rechecks start time and refuses critical processes); critical processes stay un-endable. Reads through `crates/core/src/procs` |
 | `apps/terminal` | Windows Terminal | stage 1: one shell in glass, GPU-drawn grid, scrollback. Next: tabs, selection, mouse, profiles |
 | `apps/settings` | Settings pages for the shell | working: Appearance, Desktop, Dock, Top bar, Launcher, About; rebuilt Windows pages: Sound, Display, Apps, Startup, Fonts, Mouse & keyboard, Power, Date, time & region, Storage, Default apps (changes through Windows Settings), Windows Update |
@@ -173,8 +173,28 @@ is in the crates: `glass`, `thumbs`, `transfer` (drag source, drop target, clipb
 `watch`, `winlist::fullscreen` and the window watcher, `outside` (the click-outside hook, moved out
 of the Control Center).
 
-- One window, the root viewport: on the primary monitor's edge, as tall as the monitor, wide
-  enough for an open fan; only its islands show and take clicks (`set_islands_only`).
+- On every monitor or the primary only: Settings › Desktop › "Show shelf on" (`shelf.on` in
+  `desktop.json`: `Primary` or `All`, default `All`). Every shelf shows the same stacks from the
+  same folder watches and thumbnails (one process); one fan is open at a time, on the shelf it
+  was opened from. Each is placed in its own monitor's pixels, on the edge setting's side of its
+  work area, centred between its bars.
+- Windows: the root viewport carries the primary's shelf (and hears the desktop's menu request);
+  every other monitor gets an immediate viewport of its own, keyed by device name
+  (`shellman shelf <device>`, never the root's title). Monitors come from
+  `core::monitors::all` (the bar still has its own copy of that enumeration). On a display,
+  work-area or DPI change the list is read again (`displays::targets`, `reconcile`): a monitor
+  still there keeps its window and is only placed again; a monitor gone (or a setting that no
+  longer gives it a shelf) has its glass dropped, drop target revoked and subclass removed, and
+  its viewport is no longer declared, so the window closes. A monitor reporting a zero, tiny or
+  odd rectangle, a work area outside it, or a scale that is not one is skipped until it reports
+  something sane: no window is made or sized for it.
+- Sizes (`displays::place`): a window is as wide as the shelf plus its fan (660 pt) and as tall
+  as the shelf plus the furthest any fan of any stack can open above and below it, plus the
+  shadow, cut to the monitor; never the monitor's size (990x1248 px at 150%, 1980x1915 at 300%
+  on 3840x2160). The size changes only with the monitor, the edge or the number of stacks, never
+  per fan, and must pass `glass::guard::window` unchanged; a monitor too narrow for it (under
+  ~660 pt wide) gets no shelf. Its glass is attached once when the window is first found. Only
+  its islands show and take clicks (`set_islands_only`).
 - Desktop level: a tool window that never activates, so never in Alt+Tab or the dock. Whenever
   anyone moves it in the z-order (showing it, the window library), the move is redirected to just
   above the topmost visible desktop window (`ShellmanDesktop`, `Progman`), found walking from the
@@ -182,8 +202,9 @@ of the Control Center).
   first non-desktop window from the bottom is the wrong place. Other windows coming forward never
   move it, so this costs nothing at rest. While a stack is open the window is topmost and has the
   focus (for Esc); it goes back down when the fan has closed.
-- Steps aside for fullscreen apps like the bars: the window watcher posts a check, and the shelf
-  shows no islands while `foreground_covers_monitor_of` says so.
+- Steps aside for fullscreen apps like the bars, per monitor: the window watcher posts a check
+  to the root window, which asks `foreground_covers_monitor_of` for every shelf window; a
+  shelf shows no islands while its monitor is covered.
 - Idle: no repaint loop. Frames come from the pointer, folder changes (a folder watch per folder,
   reads on worker threads), thumbnails arriving, the settings file, and the menu request; the fan's
   160 ms open/close animation is the only animation. Measured: 0.016 s of CPU in 10 s at rest.
@@ -207,6 +228,16 @@ with the point (`core::desktop_menu`; `--menu x y` starts a shelf that opens it 
 The shelf shows shellman's glass popup menu there, the component the dock's menu uses: New (Folder,
 Text document, Markdown note), Paste (greyed with nothing to paste), Open in Files, Open Terminal
 here, Change wallpaper…, Desktop settings, Display settings. "Edit desktop…" comes with the widgets.
+It works on every monitor: shellman's wallpaper window covers each monitor (one per monitor in
+the desktop process), each hands its right-click over with the point, and the popup takes the
+work area and scale of the monitor at that point (checked at 150% left of the primary and 300%
+below right). A shelf started at 18:39 on 12 Nov from the stage-1 build kept running after the
+install was replaced, and showed an older menu (white, no icons, no glass) on the 300% monitor; the
+running processes must be restarted after an install.
+
+Widgets (stage 2), when built: on the primary only by default (top right of its work area, as
+the mockup), with a "Show widgets on" setting like the shelf's (`Primary` / `All`), made the
+same way: a small window per monitor sized to the widgets, never the monitor.
 No shortcut hints: none of these has a shortcut on the desktop yet.
 
 A first version drew shellman's own menu on glass in an egui window as large as the clicked
