@@ -716,7 +716,10 @@ entry points open it, and it can be Windows' default terminal (below).
   ^C), Ctrl+Shift+C, Ctrl+Insert, Enter; right-click copies a selection, else pastes (Windows
   Terminal's way); Esc drops it; copy-on-select is `copy_on_select` in `terminal.json`. Copied
   text joins soft-wrapped lines, trims trailing blanks, uses CR LF, and a whole-line copy has no
-  final line break. Paste: Ctrl+V, Ctrl+Shift+V, Shift+Insert, bracketed when asked.
+  final line break. Paste: Ctrl+V, Ctrl+Shift+V, Shift+Insert, bracketed when asked. A paste is
+  text only: every control character but tab and CR (ESC and the rest of C0, DEL, C1) is taken
+  out first, so the clipboard can neither end a bracketed paste early nor send escape sequences.
+  (Not done: Windows Terminal's warning before a multi-line or very large paste.)
 - **Find** (stage 3, `app/find.rs`): Ctrl+Shift+F opens a glass pill in the top row between the
   tabs and the window buttons (as Files' search pill sits in its bar; the tabs' pill gives way).
   It searches as you type, literally (`alacritty_terminal`'s regex search, metacharacters
