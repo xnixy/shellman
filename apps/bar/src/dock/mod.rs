@@ -7,6 +7,7 @@
 //! them brings the window forward wherever it is.
 
 mod bin;
+mod drag;
 mod draw;
 mod items;
 mod menu;
@@ -28,6 +29,7 @@ use shellman_core::thumbs::Thumbs;
 use shellman_core::winlist::{self, AppWindow, WindowList, WindowWatcher};
 use shellman_ui::theme;
 use windows::Win32::Foundation::{HWND, LPARAM, RECT, WPARAM};
+use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_ESCAPE};
 use windows::Win32::UI::WindowsAndMessaging::{
     GetClientRect, IsIconic, PostMessageW, SetForegroundWindow, ShowWindow, SW_MINIMIZE, SW_RESTORE, WM_CLOSE,
 };
@@ -55,6 +57,8 @@ pub struct Dock {
     /// The icons' right-click menu, and the icon it is open for.
     menu: PopupMenu<menu::Choice>,
     menu_for: Option<Item>,
+    /// An icon being picked up and moved (see `drag`).
+    drag: drag::Machine,
 }
 
 impl Dock {
@@ -83,6 +87,7 @@ impl Dock {
             scroll: (0, 0.0),
             menu: PopupMenu::new(),
             menu_for: None,
+            drag: drag::Machine::default(),
         };
         dock.rebuild();
         dock
@@ -391,13 +396,19 @@ impl Dock {
         let style = self.style();
         surface::set_style(hwnd, style);
         let scale = ctx.pixels_per_point();
-        let (xs, width) = metrics::layout(&self.items, &m);
+        let (w, h) = client_size(hwnd);
+        let window = egui::vec2(w as f32, h as f32) / scale;
+        let held = self.drag_frame(ctx, salt, window, &m);
+        // While an icon is in hand the others show where it would land; otherwise the real order.
+        let shown_items = match &held.preview {
+            Some(items) => items.clone(),
+            None => self.items.clone(),
+        };
+        let (xs, width) = metrics::layout(&shown_items, &m);
         // The apps island eases to its new width as the icons slide (see `draw`), and the bin's
         // island follows its right edge.
         let shown = ctx.animate_value_with_time(egui::Id::new(("dock width", salt)), width, draw::MOVE);
-        let (w, h) = client_size(hwnd);
-        let window = egui::vec2(w as f32, h as f32) / scale;
-        let has_bin = self.items.iter().any(|i| i.section == Section::Bin);
+        let has_bin = shown_items.iter().any(|i| i.section == Section::Bin);
         let (glass, bin) = metrics::islands(window, shown, has_bin, &m);
         let islands: Vec<Island> = std::iter::once(glass).chain(bin).map(|r| Island::new(r, m.radius)).collect();
         let composed = surface::composed(hwnd);
@@ -406,7 +417,7 @@ impl Dock {
             .show(ctx, |ui| {
                 // Room under the icons for the islands' own fill, when it is painted here.
                 let under = ui.painter().add(egui::Shape::Noop);
-                let scene = draw::Scene { items: &self.items, front: self.front, metrics: m, xs: &xs, width, glass, bin, salt, tint: style.tint };
+                let scene = draw::Scene { items: &shown_items, front: self.front, metrics: m, xs: &xs, width, glass, bin, salt, tint: style.tint, lifted: held.lifted };
                 let events = draw::paint(ui, &scene, &mut self.thumbs);
                 if !composed {
                     // No composed glass: the islands are painted here, without blur or shadow.
@@ -422,8 +433,100 @@ impl Dock {
         let inside = ctx
             .pointer_hover_pos()
             .is_some_and(|p| glass.contains(p) || bin.is_some_and(|b| b.contains(p)));
+        if let Some((i, origin, grab)) = events.pressed {
+            if shown_items[i].pinnable() && !held.busy {
+                self.drag.press(salt, &shown_items[i].app_id, origin, grab);
+            }
+        }
+        if held.busy {
+            // Nothing else reacts to the pointer while an icon is moved (or was, this frame).
+            return Hover { target: None, inside, dismiss: true };
+        }
         self.act(ctx, &events, inside, glass.top())
     }
+
+    /// Advance a drag in this dock window by one frame: the pointer and Esc, then what the other
+    /// icons should show and where the icon in hand is drawn. A drop saves the new order.
+    fn drag_frame(&mut self, ctx: &egui::Context, salt: &str, window: egui::Vec2, m: &Metrics) -> Held {
+        let mut held = Held::default();
+        if !self.drag.is_for(salt) {
+            return held;
+        }
+        let (pos, down) = ctx.input(|i| (i.pointer.hover_pos(), i.pointer.primary_down()));
+        // Bars never take the keyboard focus, so Esc is read from the keyboard itself.
+        let esc = unsafe { GetAsyncKeyState(i32::from(VK_ESCAPE.0)) } as u16 & 0x8000 != 0;
+        let step = self.drag.update(pos, down, esc);
+        let (xs, width) = metrics::layout(&self.items, m);
+        let (glass, _) = metrics::islands(window, width, false, m);
+        let aim = |this: &Self, id: &str, grab: f32, p: egui::Pos2| -> Aim {
+            // Along the dock only, and not past the glass's ends.
+            let left = (p.x - grab).clamp(glass.left(), (glass.right() - m.icon).max(glass.left()));
+            let inside = glass.expand2(egui::vec2(0.0, 8.0)).contains(p);
+            let center = left + m.icon / 2.0 - glass.center().x + width / 2.0;
+            let slot = inside.then(|| items::drop_slot(&this.items, &xs, m.icon, id, center)).flatten();
+            Aim { id: id.to_owned(), left, slot }
+        };
+        match step {
+            drag::Step::Idle | drag::Step::Pending | drag::Step::Click => {}
+            drag::Step::Dragging(_) => {
+                held.busy = true;
+                // Out of the window the icon stays where it was last seen.
+                let hand = self.drag.held().map(|(id, grab)| (id.to_owned(), grab)).zip(self.drag.last());
+                if let Some(a) = hand.map(|((id, grab), p)| aim(self, &id, grab, p)) {
+                    if self.items.iter().any(|i| i.app_id == a.id) {
+                        held.preview = a.slot.map(|k| items::preview(&self.items, &a.id, k));
+                        held.lifted = Some(draw::Lifted { app_id: a.id, left: a.left });
+                    } else {
+                        // The app went away while in hand.
+                        self.drag.cancel();
+                    }
+                }
+                // Esc cannot wake a window by itself: look again soon.
+                ctx.request_repaint_after(std::time::Duration::from_millis(50));
+            }
+            drag::Step::Drop { id, grab, pos } => {
+                held.busy = true;
+                // Let go out of the window: nothing to drop on.
+                if let Some(Aim { slot: Some(k), .. }) = pos.map(|p| aim(self, &id, grab, p)) {
+                    self.drop_at(&id, k);
+                }
+            }
+            drag::Step::Cancel => {
+                held.busy = true;
+            }
+        }
+        held
+    }
+
+    /// Put the app at pinned slot `k`, pinning it if it was only running, and save at once. The
+    /// other docks follow when the bars are woken.
+    fn drop_at(&mut self, app_id: &str, k: usize) {
+        let Some(item) = self.items.iter().find(|i| i.app_id == app_id) else { return };
+        let pin = Pin { app_id: item.app_id.clone(), exe: item.exe.clone() };
+        if items::move_pin(&mut self.pins.pins, &self.files, pin, k) {
+            self.pins.save();
+            self.rebuild();
+            self.wake.bars();
+        }
+    }
+}
+
+/// What a frame of a drag changes in a dock window.
+#[derive(Default)]
+struct Held {
+    /// The icons in the order they would have after a drop here, while one is in hand.
+    preview: Option<Vec<Item>>,
+    /// The icon in hand and where it is drawn.
+    lifted: Option<draw::Lifted>,
+    /// A drag is on or ended this frame: the pointer belongs to it.
+    busy: bool,
+}
+
+/// Where the icon in hand is, and the pinned slot a drop there would take.
+struct Aim {
+    id: String,
+    left: f32,
+    slot: Option<usize>,
 }
 
 /// A window's client size, in pixels.
