@@ -5,7 +5,7 @@ use crate::actions::Actions;
 use crate::histories::Histories;
 use crate::instance::Instance;
 use crate::model::List;
-use crate::{performance, processes};
+use crate::{performance, processes, services};
 use egui::{pos2, vec2, Align2, Rect, Sense};
 use shellman_core::procs::end::Native;
 use shellman_core::procs::native::NativeSource;
@@ -39,6 +39,7 @@ const START_INTERVAL: Duration = Duration::from_millis(1000);
 pub enum Page {
     Processes,
     Performance,
+    Services,
 }
 
 /// One entry of the rail.
@@ -49,9 +50,10 @@ enum RailItem {
     Startup,
 }
 
-const RAIL: [(RailItem, char, &str); 3] = [
+const RAIL: [(RailItem, char, &str); 4] = [
     (RailItem::Page(Page::Processes), glyph::VIEW_LIST, "Processes"),
     (RailItem::Page(Page::Performance), '\u{E9D2}', "Performance"),
+    (RailItem::Page(Page::Services), glyph::SETTINGS, "Services"),
     (RailItem::Startup, glyph::POWER, "Startup apps (in Settings)"),
 ];
 
@@ -60,6 +62,7 @@ impl Page {
         match self {
             Page::Processes => "Processes",
             Page::Performance => "Performance",
+            Page::Services => "Services",
         }
     }
 }
@@ -79,6 +82,9 @@ pub struct State {
     pub took: Duration,
     /// Set by a page to switch pages after the frame.
     pub go_to: Option<Page>,
+    /// Set by a page to empty the search box after the frame (it filters another page's rows).
+    pub clear_search: bool,
+    pub services: services::Page,
 }
 
 /// Ending what Windows refuses runs the helper behind the UAC prompt, and wakes the window when
@@ -116,6 +122,7 @@ impl TasksApp {
         });
         let start_page = match std::env::args().skip_while(|a| a != "--page").nth(1).as_deref() {
             Some("performance") => Page::Performance,
+            Some("services") => Page::Services,
             _ => Page::Processes,
         };
         Self {
@@ -135,6 +142,8 @@ impl TasksApp {
                 own_pid: std::process::id(),
                 took: Duration::ZERO,
                 go_to: None,
+                clear_search: false,
+                services: services::Page::default(),
             },
             _instance: instance,
         }
@@ -178,12 +187,16 @@ impl TasksApp {
             match self.page {
                 Page::Processes => processes::show(ui, area, &mut self.st, &mut list),
                 Page::Performance => performance::show(ui, area, &mut self.st, &mut list),
+                Page::Services => services::show(ui, area, &mut self.st, &mut list),
             }
             if !self.panel.composed() {
                 ui.painter().set(under, egui::Shape::Vec(islands::solid_shapes(&list, &self.panel.style())));
             }
         });
         self.panel.set_islands(&list, ctx.pixels_per_point());
+        if std::mem::take(&mut self.st.clear_search) {
+            self.query.clear();
+        }
         if let Some(page) = self.st.go_to.take() {
             self.page = page;
             ctx.request_repaint();
@@ -205,7 +218,7 @@ impl TasksApp {
         let buttons = Rect::from_min_max(pos2(rect.right() - 10.0 - BUTTON_H * 3.0, y - BUTTON_H / 2.0), pos2(rect.right() - 10.0, y + BUTTON_H / 2.0));
         chips::window_buttons(ui, buttons);
         let speed = self.speed_chip(ui, buttons.left() - 12.0, y);
-        if self.page == Page::Processes {
+        if matches!(self.page, Page::Processes | Page::Services) {
             let room = speed - 12.0 - (chip.right() + 16.0);
             let width = SEARCH_W.min(room);
             if width > 80.0 {
@@ -239,7 +252,7 @@ impl TasksApp {
         ui.painter().text(pos2(rect.left() + 14.0, rect.center().y), Align2::CENTER_CENTER, glyph::SEARCH, icon_font(11.0), c.muted);
         let inner = Rect::from_min_max(pos2(rect.left() + 26.0, rect.top() + 4.0), pos2(rect.right() - 10.0, rect.bottom() - 4.0));
         let edit = egui::TextEdit::singleline(&mut self.query)
-            .hint_text("Search name, PID or command line")
+            .hint_text(if self.page == Page::Services { "Search name, description or PID" } else { "Search name, PID or command line" })
             .frame(false)
             .margin(egui::Margin::symmetric(2, 2))
             .vertical_align(egui::Align::Center)
@@ -305,6 +318,11 @@ impl eframe::App for TasksApp {
         shellman_ui::app_icon::sync_window_icon(ctx, shellman_ui::app_icon::Kind::Shellman);
         self.take_sample();
         self.st.actions.poll();
+        if self.page == Page::Services {
+            // The services are read only while their page shows, and not while minimised.
+            let minimised = ctx.input(|i| i.viewport().minimized == Some(true));
+            self.st.services.tick(ctx, &self.query, self.sampler.interval(), minimised);
+        }
         self.layout(ctx);
     }
 }

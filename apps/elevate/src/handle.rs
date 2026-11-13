@@ -22,9 +22,12 @@ pub fn run(op: &Op) -> bool {
         Op::SysfontReuse { generation } => elevated::run_and_report(&Step::Reuse { generation: generation.clone() }),
         // Each process by PID and start time, in the caller's order (children first). One that
         // fails does not stop the rest; the exit code says whether any failed.
-        Op::EndProcesses { targets } => targets
-            .iter()
-            .map(|&(pid, created)| end::terminate_as_helper(Key { pid, created }).is_ok())
-            .fold(true, |all, ok| all && ok),
+        Op::EndProcesses { targets } => {
+            let mut all = true;
+            for &(pid, created) in targets {
+                all &= end::terminate_as_helper(Key { pid, created }).is_ok();
+            }
+            all
+        }
     }
 }

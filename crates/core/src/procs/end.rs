@@ -131,4 +131,23 @@ mod tests {
         let status = child.wait().unwrap();
         assert_eq!(status.code(), Some(1));
     }
+
+    /// What Windows refuses an unelevated program is told apart from a process that is gone:
+    /// only the first goes to the administrator helper. Nothing is ended here: `open_checked`
+    /// only opens (and closes) a handle, even when this runs elevated.
+    #[test]
+    fn refused_and_gone_are_told_apart() {
+        use super::super::info::{open_checked, OpenError};
+        use windows::Win32::System::Threading::PROCESS_TERMINATE;
+        let mut r = super::super::nt::Reader::default();
+        let all = r.processes();
+        let lsass = all.iter().find(|p| p.name.eq_ignore_ascii_case("lsass.exe")).expect("lsass");
+        let key = Key { pid: lsass.pid, created: lsass.created };
+        assert!(matches!(open_checked(key, PROCESS_TERMINATE), Err(OpenError::Denied) | Ok(_)), "a protected system process is refused, not gone");
+        let me = std::process::id();
+        let own = all.iter().find(|p| p.pid == me).unwrap();
+        assert!(matches!(open_checked(Key { pid: me, created: own.created + 1 }, PROCESS_TERMINATE), Err(OpenError::Gone)), "reused PID");
+        assert!(matches!(open_checked(Key { pid: 0x0FFF_FFF0, created: 1 }, PROCESS_TERMINATE), Err(OpenError::Gone)), "no such PID");
+        assert_eq!(Native.terminate(Key { pid: 0x0FFF_FFF0, created: 1 }), Err(EndError::Gone));
+    }
 }

@@ -14,6 +14,7 @@ mod instance;
 mod model;
 mod performance;
 mod processes;
+mod services;
 
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use shellman_ui::appearance::Appearance;
