@@ -185,18 +185,16 @@ pub fn highlight(ui: &egui::Ui, rect: egui::Rect, resp: &egui::Response, radius:
     ui.painter().rect_filled(rect, egui::CornerRadius::same(radius), fill);
 }
 
-/// Summon shellman's launcher: its exe sits next to the bar's. Running it again signals the
-/// resident one to show or hide, so a click is a toggle. Without the exe, Windows' Start opens,
-/// as the Win key does.
+/// Summon shellman's launcher: its exe sits next to the bar's. The resident one is signalled to
+/// show or hide (no process is started for it), so a click is a toggle. Without the exe, Windows'
+/// Start opens, as the Win key does.
 pub fn open_start() {
     let launcher = std::env::current_exe()
         .ok()
         .and_then(|exe| exe.parent().map(|dir| dir.join("shellman-launcher.exe")))
         .filter(|path| path.exists());
-    if let Some(path) = launcher {
-        if std::process::Command::new(path).spawn().is_ok() {
-            return;
-        }
+    if launcher.is_some() && shellman_core::summon::launcher() {
+        return;
     }
     unsafe {
         keybd_event(VK_LWIN.0 as u8, 0, Default::default(), 0);
