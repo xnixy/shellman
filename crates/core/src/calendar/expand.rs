@@ -138,14 +138,19 @@ fn overlaps(i: &Instance, from: i64, to: i64) -> bool {
     i.start < to && (i.end > from || (i.end == i.start && i.start >= from))
 }
 
-/// The start values of every occurrence of a master event up to `to`.
-fn occurrences(e: &Event, to: i64, r: &Resolver) -> Vec<DateValue> {
+/// The start values of the occurrences of a master event that can touch `[from, to)`: those
+/// before are passed over (they still count toward COUNT), so a rule with thousands of earlier
+/// occurrences still reaches the window.
+fn occurrences(e: &Event, from: i64, to: i64, r: &Resolver) -> Vec<DateValue> {
     let tz = tz_of(&e.start).map(str::to_owned);
     let mut out = vec![e.start.clone()];
     if let Some(rule) = e.rrule.as_deref().and_then(rrule::parse) {
         let start_wall = wall_of(&e.start);
-        // The window's end on the event's own clock, with a day of slack for the offset.
+        // The window on the event's own clock, with slack for the offset; an occurrence that
+        // starts before the window but lasts into it counts too.
         let end_wall = to + 2 * DAY;
+        let len = if e.start.is_date() { e.length(r).saturating_mul(DAY) } else { e.length(r) };
+        let from_wall = from.saturating_sub(len).saturating_sub(2 * DAY);
         let until = rule.until.clone();
         let is_utc = matches!(e.start, DateValue::Utc(_));
         let past = |w: i64| match &until {
@@ -157,7 +162,7 @@ fn occurrences(e: &Event, to: i64, r: &Resolver) -> Vec<DateValue> {
             Some(Until::Wall(u)) => w > *u,
             None => false,
         };
-        out = rrule::expand(&rule, start_wall, end_wall, &past, 2000).into_iter().map(|w| same_kind(&e.start, w)).collect();
+        out = rrule::expand(&rule, start_wall, from_wall, end_wall, &past, 2000).into_iter().map(|w| same_kind(&e.start, w)).collect();
         if out.is_empty() {
             out.push(e.start.clone());
         }
@@ -209,7 +214,7 @@ pub fn instances(objects: &[Vec<Component>], calendar: &str, from: i64, to: i64,
         if let Some(m) = &master {
             if !m.cancelled {
                 let ex: Vec<Key> = m.exdates.iter().map(|x| key(x, r)).collect();
-                for occ in occurrences(m, to, r) {
+                for occ in occurrences(m, from, to, r) {
                     let k = key(&occ, r);
                     if ex.contains(&k) {
                         continue;
@@ -336,6 +341,16 @@ mod tests {
         let got = run(&ics, wall_at(2026, 7, 1, 0, 0), wall_at(2026, 7, 2, 0, 0));
         // Floating: the viewer's zone (London, summer).
         assert_eq!(starts(&got), ["20260701T110000"]);
+    }
+
+    #[test]
+    fn todays_occurrence_of_a_long_running_rule_shows() {
+        let ics = cal(concat!(
+            "BEGIN:VEVENT\r\nUID:pill\r\nSUMMARY:Pill\r\nDTSTART;TZID=Europe/London:20150101T080000\r\nDURATION:PT5M\r\nRRULE:FREQ=DAILY;COUNT=5000\r\nEND:VEVENT\r\n",
+            "BEGIN:VEVENT\r\nUID:standup\r\nSUMMARY:Standup\r\nDTSTART;TZID=Europe/London:20150101T093000\r\nDURATION:PT15M\r\nRRULE:FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR\r\nEND:VEVENT\r\n",
+        ));
+        let got = run(&ics, wall_at(2026, 11, 12, 0, 0), wall_at(2026, 11, 13, 0, 0));
+        assert_eq!(starts(&got), ["20261112T080000", "20261112T093000"]);
     }
 
     #[test]

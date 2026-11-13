@@ -85,7 +85,7 @@ impl Observance {
                 None => false,
             };
             // Onsets up to the instant (a year of slack covers any offset).
-            for w in rrule::expand(rule, self.start, utc + self.from + DAY, &past, 4000) {
+            for w in rrule::expand(rule, self.start, self.start, utc + self.from + DAY, &past, 4000) {
                 take(as_utc(w));
             }
         }

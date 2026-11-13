@@ -272,14 +272,16 @@ fn period_start(rule: &RRule, start: i64, k: i64) -> i64 {
 }
 
 /// The wall times of the rule's occurrences from `start` (the first occurrence's wall time,
-/// DTSTART) that are no later than `end`. `past_until` says whether a wall time is beyond the
-/// rule's UNTIL (it knows the event's zone). At most `max` are given.
-pub fn expand(rule: &RRule, start: i64, end: i64, past_until: &dyn Fn(i64) -> bool, max: usize) -> Vec<i64> {
+/// DTSTART) that fall in `[from, end]`. `past_until` says whether a wall time is beyond the
+/// rule's UNTIL (it knows the event's zone). Occurrences before `from` still count toward
+/// COUNT, but are neither given nor count toward `max`: an old rule with thousands of earlier
+/// occurrences still reaches the window. At most `max` are given.
+pub fn expand(rule: &RRule, start: i64, from: i64, end: i64, past_until: &dyn Fn(i64) -> bool, max: usize) -> Vec<i64> {
     let mut out = Vec::new();
     let first_day = day_of(start);
     let tod = time_of(start);
     if rule.freq == Freq::SubDaily {
-        if start <= end && !past_until(start) {
+        if start >= from && start <= end && !past_until(start) {
             out.push(start);
         }
         return out;
@@ -324,6 +326,9 @@ pub fn expand(rule: &RRule, start: i64, end: i64, past_until: &dyn Fn(i64) -> bo
             if w > end {
                 return out;
             }
+            if w < from {
+                continue;
+            }
             out.push(w);
             if out.len() >= max {
                 return out;
@@ -351,7 +356,7 @@ mod tests {
             Some(Until::Day(d)) => day_of(w) > *d,
             None => false,
         };
-        expand(&r, start, end, &past, 500).into_iter().map(stamp).collect()
+        expand(&r, start, start, end, &past, 500).into_iter().map(stamp).collect()
     }
 
     #[test]
@@ -413,8 +418,24 @@ mod tests {
         let start = wall(2001, 1, 1, 7, 0, 0);
         let end = wall(2026, 11, 26, 0, 0, 0);
         let r = parse("FREQ=DAILY").unwrap();
-        let got = expand(&r, start, end, &|_| false, 100_000);
+        let got = expand(&r, start, start, end, &|_| false, 100_000);
         assert_eq!(stamp(*got.last().unwrap()), "20261125T070000");
         assert!(got.len() < 1000);
+    }
+
+    #[test]
+    fn thousands_of_earlier_occurrences_still_reach_the_window() {
+        let (from, end) = (wall(2026, 11, 12, 0, 0, 0), wall(2026, 11, 13, 0, 0, 0));
+        // Daily, 5000 times from 2015: the 12 Nov 2026 one is about the 4334th.
+        let r = parse("FREQ=DAILY;COUNT=5000").unwrap();
+        let got = expand(&r, wall(2015, 1, 1, 9, 0, 0), from, end, &|_| false, 2000);
+        assert_eq!(got.into_iter().map(stamp).collect::<Vec<_>>(), ["20261112T090000"]);
+        // COUNT still counts the earlier ones: 4000 from 2015 ended in 2025.
+        let r = parse("FREQ=DAILY;COUNT=4000").unwrap();
+        assert!(expand(&r, wall(2015, 1, 1, 9, 0, 0), from, end, &|_| false, 2000).is_empty());
+        // Every weekday, monthly, since 2015: some 3,100 before the window.
+        let r = parse("FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR").unwrap();
+        let got = expand(&r, wall(2015, 1, 1, 8, 0, 0), from, end, &|_| false, 2000);
+        assert_eq!(got.into_iter().map(stamp).collect::<Vec<_>>(), ["20261112T080000"]);
     }
 }
