@@ -121,7 +121,7 @@ impl TerminalApp {
             profiles,
             font_pt,
             renderer,
-            frame: Frame { cols: 0, rows: 0, cells: Vec::new(), cursor: None, blinking: false },
+            frame: Frame { cols: 0, rows: 0, cells: Vec::new(), cursor: None, blinking: false, clusters: Default::default() },
             panel,
             look,
             wake,

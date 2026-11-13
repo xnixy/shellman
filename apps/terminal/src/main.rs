@@ -9,6 +9,7 @@ mod clip;
 mod config;
 mod conpty;
 mod defterm;
+mod emoji;
 mod instance;
 mod keys;
 mod mouse;

@@ -26,8 +26,15 @@ shellman-core.workspace = true
 shellman-ui.workspace = true
 # The `implement` / `interface` macros (the default-terminal handoff, `defterm`) name this crate.
 windows-core.workspace = true
-# Win32_System_Pipes: a second start hands its tab to the open window (`instance.rs`).
-windows = { workspace = true, features = ["Win32_System_Pipes"] }
+# Win32_System_Pipes: a second start hands its tab to the open window (`instance.rs`). Direct2D and
+# DirectWrite draw colour emoji (`render/color.rs`).
+windows = { workspace = true, features = [
+    "Win32_System_Pipes",
+    "Win32_Graphics_Direct2D",
+    "Win32_Graphics_Direct2D_Common",
+    "Win32_Graphics_DirectWrite",
+    "Win32_Graphics_Dxgi_Common",
+] }
 
 [build-dependencies]
 winresource.workspace = true

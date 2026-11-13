@@ -120,6 +120,8 @@ pub fn take<T>(term: &Term<T>, look: &Look, frame: &mut Frame) {
             let to = if m.end().line == grid_line { m.end().column.0 } else { cols.saturating_sub(1) };
             Some((from, to))
         };
+        // Columns a joined emoji before them took over: drawn blank.
+        let mut taken_until = 0usize;
         let (found, current): (Vec<(usize, usize)>, Option<(usize, usize)>) = match &look.find {
             Some(h) => (h.matches.iter().filter_map(span).collect(), h.current.as_ref().and_then(span)),
             None => (Vec::new(), None),
@@ -172,9 +174,21 @@ pub fn take<T>(term: &Term<T>, look: &Look, frame: &mut Frame) {
             }
             let hidden = f.intersects(Flags::HIDDEN | Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER);
             let mut ch = if hidden { ' ' } else { cell.c };
+            if col < taken_until {
+                ch = ' ';
+            } else if !hidden && crate::emoji::candidate(cell) {
+                // A colour emoji (with what joins it): one glyph from the colour page.
+                if let Some((text, taken)) = crate::emoji::in_row(row, col, cols) {
+                    if let Some(id) = frame.clusters.intern(text) {
+                        ch = id;
+                        flags |= render::COLOR;
+                        taken_until = col + if f.contains(Flags::WIDE_CHAR) { 2 } else { 1 } + taken;
+                    }
+                }
+            }
             // Combining marks after a character: drawn as the one precomposed character they
             // make, where there is one (e and U+0301 as é).
-            if let Some(marks) = cell.zerowidth().filter(|_| !hidden) {
+            if let Some(marks) = cell.zerowidth().filter(|_| !hidden && flags & render::COLOR == 0) {
                 ch = compose(ch, marks);
             }
             // A wide character's spacer keeps its background run going but draws nothing.
