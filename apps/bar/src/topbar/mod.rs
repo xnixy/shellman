@@ -15,6 +15,7 @@
 mod clock;
 mod layout;
 mod left;
+pub mod now;
 mod right;
 mod status;
 
@@ -44,8 +45,11 @@ pub struct TopBar {
     pub badge: crate::notify::Badge,
     /// The clock (which opens the notifications) was clicked since the last look.
     badge_clicked: bool,
+    /// The "now" pill, left of the clock.
+    pub pill: now::Pill,
+    /// What the pill was asked since the last look.
+    asked: Option<now::Asked>,
 }
-
 
 /// The app in front, as the left island shows it.
 pub struct Front<'a> {
@@ -78,6 +82,16 @@ impl TopBar {
         std::mem::take(&mut self.badge_clicked)
     }
 
+    /// What the "now" pill was asked (a click or the wheel) since the last look.
+    pub fn take_asked(&mut self) -> Option<now::Asked> {
+        self.asked.take()
+    }
+
+    /// The bar's settings as the top bars last read them.
+    pub fn settings(&mut self) -> BarSettings {
+        *self.settings.get_or_insert_with(BarSettings::load)
+    }
+
     /// Read the bar's settings again, when something saved them (the settings app).
     pub fn reload_settings(&mut self) {
         self.settings = None;
@@ -108,8 +122,13 @@ impl TopBar {
                 let settings = *self.settings.get_or_insert_with(BarSettings::load);
                 let (centre, clicked) = clock::draw(ui, bar, row, right.left(), &settings, self.badge);
                 self.badge_clicked |= clicked;
-                let left = left::draw(ui, bar, row, front, centre.left() - layout::SPACE);
-                let list: Vec<Island> = [left, centre, right].into_iter().map(Island::pill).collect();
+                // The pill sits just left of the clock, when there is room for it.
+                let (pill, asked) = self.pill.draw(ui, row, centre.left() - layout::SPACE, bar.left() + layout::SIDE);
+                self.asked = asked.or(self.asked.take());
+                let left_ends = pill.map_or(centre.left(), |p| p.left()) - layout::SPACE;
+                let left = left::draw(ui, bar, row, front, left_ends);
+                // The clock stays second: notifications hang from islands[1].
+                let list: Vec<Island> = [left, centre, right].into_iter().chain(pill).map(Island::pill).collect();
                 if !composed {
                     // No composed glass: the islands are painted here, without blur or shadow.
                     ui.painter().set(under, egui::Shape::Vec(islands::solid_shapes(&list, &style)));

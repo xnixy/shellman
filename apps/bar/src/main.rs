@@ -11,6 +11,7 @@ mod bars;
 mod dock;
 mod fullscreen;
 mod host;
+mod live;
 mod monitors;
 mod notify;
 mod place;
@@ -109,6 +110,8 @@ fn main() -> eframe::Result {
                 bars: bars::Bars::new(mode),
                 preview: preview::Preview::new(cc.egui_ctx.clone()),
                 notify: notify::Notify::new(cc.egui_ctx.clone(), dnd_was_on()),
+                live: live::Live::default(),
+                wake: Some(wake.clone()),
             };
             Ok(Box::new(app::Host::new(shared, wake, look, look_watch, minimized)))
         }),

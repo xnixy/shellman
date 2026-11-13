@@ -215,6 +215,7 @@ mod tests {
                 instances,
             }),
             weather: None,
+            spans: Vec::new(),
         }
     }
 

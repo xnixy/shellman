@@ -79,7 +79,7 @@ impl Widgets {
         if shown && w.today {
             let feeds = self.feeds.get_or_insert_with(|| {
                 let ctx = ctx.clone();
-                Feeds::start(move || ctx.request_repaint_of(egui::ViewportId::ROOT))
+                Feeds::start(move || ctx.request_repaint_of(egui::ViewportId::ROOT), |line| log::line(line))
             });
             let cal = &w.calendar;
             let fahrenheit = w.weather.units.fahrenheit(shellman_core::system::region::imperial());

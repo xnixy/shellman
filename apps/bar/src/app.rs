@@ -33,6 +33,13 @@ pub struct Shared {
     pub bars: Bars,
     pub preview: preview::Preview,
     pub notify: notify::Notify,
+    /// The calendar and what is playing, for the "now" pill and the calendar.
+    pub live: crate::live::Live,
+    pub wake: Option<Wake>,
+}
+
+fn now_utc() -> i64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64)
 }
 
 impl Shared {
@@ -51,6 +58,14 @@ impl Shared {
         if host::take_power() {
             self.top.power_changed();
         }
+        // What the "now" pill shows: worked out here, cheaply, in every top bar's frame (the
+        // countdown moves on with the clock's minute repaint).
+        let settings = self.top.settings();
+        let shown = self.now_pill(&settings);
+        if self.top.pill.update(shown, Instant::now()) {
+            // Another bar may have taken the change first; the rest follow.
+            self.wake_tops();
+        }
         let front = front.as_ref().map(|window| topbar::Front { window, icon });
         let place = Place { device, primary, origin };
         let islands = self.top.frame(ctx, front, surface::composed(hwnd), &place);
@@ -66,9 +81,35 @@ impl Shared {
         if self.top.take_badge_click() {
             self.notify.toggle_list(front_hwnd, anchor);
         }
+        match self.top.take_asked() {
+            Some(topbar::now::Asked::Media(action)) => self.live.act(action),
+            Some(topbar::now::Asked::Day(day)) => self.notify.open_on_day(day, front_hwnd, anchor),
+            None => {}
+        }
         // The whole window stays the bar's: a click between the islands lands on it and does
         // nothing (the space is reserved anyway).
         surface::set_islands(hwnd, &islands, ctx.pixels_per_point(), false, None);
+    }
+
+    /// What the "now" pill should show now.
+    fn now_pill(&self, settings: &BarSettings) -> Option<topbar::now::pick::Shown> {
+        let live = &self.live;
+        let snapshot = live.cal.snapshot.as_ref().filter(|_| live.calendar_set_up());
+        let inputs = topbar::now::pick::Inputs {
+            settings: settings.now,
+            events: snapshot.map(|s| (s.instances.as_slice(), s.calendars.as_slice())),
+            media: live.playing.as_ref(),
+            paused_since: live.paused_since,
+            now: now_utc(),
+            h24: live.h24(),
+        };
+        topbar::now::pick::pick(&inputs, &|t| live.offset(t))
+    }
+
+    fn wake_tops(&self) {
+        if let Some(w) = &self.wake {
+            w.tops();
+        }
     }
 
     /// Lay the open preview panel out for its app's current windows.
@@ -124,6 +165,8 @@ pub struct Host {
     badge: notify::Badge,
     /// Bar windows were still being adopted in the last frame.
     adopting: bool,
+    /// The live data has been told the settings once.
+    live_configured: bool,
 }
 
 impl Host {
@@ -143,6 +186,7 @@ impl Host {
             _minimized: minimized,
             badge: notify::Badge::default(),
             adopting: true,
+            live_configured: false,
         }
     }
 
@@ -204,7 +248,23 @@ impl eframe::App for Host {
         // Bars repaint only for what they show: this frame runs for many reasons (a window event,
         // a timer of the preview or the notifications) that change nothing on most bars.
         let mut wake_all = false;
-        if !self.look_watch.poll().is_empty() {
+        let changed_files = !self.look_watch.poll().is_empty();
+        if changed_files || !self.live_configured {
+            // The calendar account lives in the desktop's settings, in the same folder.
+            self.live_configured = true;
+            let live_wake: Arc<dyn Fn() + Send + Sync> = Arc::new(host::request_frame);
+            let bar = BarSettings::load();
+            shared.live.configure(&bar, &shellman_core::settings::desktop::DesktopSettings::load(), &live_wake);
+        }
+        let (cal_changed, media_changed) = shared.live.poll();
+        if cal_changed || media_changed {
+            // The pill decides in the bars' frames whether it shows anything new.
+            self.wake.tops();
+            if shared.notify.window_exists() {
+                ctx.request_repaint_of(notify::id());
+            }
+        }
+        if changed_files {
             // The same folder holds the dock's pins and the bar's settings.
             shared.dock.reload_pins();
             shared.top.reload_settings();
@@ -245,7 +305,8 @@ impl eframe::App for Host {
         let notify_open = shared.notify.tick(Instant::now(), self.settings.do_not_disturb, covered);
         if host::take_clock() {
             // The clock jumped or the machine woke: the top bars were woken by the host window;
-            // the notifications' "4 min" redraw too.
+            // the notifications' "4 min" redraw too, and the calendar is read again.
+            shared.live.refresh();
             self.wake.tops();
             if notify_open {
                 ctx.request_repaint_of(notify::id());

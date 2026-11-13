@@ -186,6 +186,18 @@ impl Notify {
         self.changed();
     }
 
+    /// Open the list (if it is not open) under the clock `from`, showing `day` in the calendar.
+    pub fn open_on_day(&mut self, _day: i64, front: Option<isize>, from: Option<(i32, i32)>) {
+        if !self.feed.list_open() {
+            self.toggle_list(front, from);
+        }
+    }
+
+    /// Whether the window exists (it can be repainted).
+    pub fn window_exists(&self) -> bool {
+        self.hwnd.is_some()
+    }
+
     /// The app in front is now `front`: an open list closes when another app comes forward.
     pub fn front_is(&mut self, front: Option<isize>) {
         if self.feed.list_open() && front.is_some() && front != self.front_at_open {

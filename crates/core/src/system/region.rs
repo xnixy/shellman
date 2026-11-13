@@ -12,7 +12,8 @@ use crate::registry::{Hive, Real, Registry, Value};
 use windows::core::{HSTRING, PCWSTR};
 use windows::Win32::Foundation::{CloseHandle, GetLastError, ERROR_NOT_ALL_ASSIGNED, LPARAM, LUID, WPARAM};
 use windows::Win32::Globalization::{
-    EnumDateFormatsExEx, GetDateFormatEx, GetTimeFormatEx, DATE_LONGDATE, DATE_SHORTDATE, ENUM_DATE_FORMATS_FLAGS,
+    EnumDateFormatsExEx, GetDateFormatEx, GetLocaleInfoEx, GetTimeFormatEx, DATE_LONGDATE, DATE_SHORTDATE,
+    ENUM_DATE_FORMATS_FLAGS, LOCALE_IFIRSTDAYOFWEEK, LOCALE_IFIRSTWEEKOFYEAR,
 };
 use windows::Win32::Security::{
     AdjustTokenPrivileges, LookupPrivilegeValueW, LUID_AND_ATTRIBUTES, SE_PRIVILEGE_ENABLED, SE_TIME_ZONE_NAME,
@@ -43,6 +44,9 @@ pub struct Intl {
     pub long_date: String,
     /// 0 Monday to 6 Sunday.
     pub first_day: u32,
+    /// How week 1 is chosen (`iFirstWeekOfYear`): 0 the week of 1 January, 1 the first full
+    /// week, 2 the first with four days (ISO 8601).
+    pub first_week: u32,
 }
 
 impl Intl {
@@ -189,13 +193,47 @@ pub fn imperial() -> bool {
 }
 
 pub fn read_intl() -> Intl {
+    // A value the user never changed may be missing from the key: the locale's own then.
+    let number = |name: &str, info: u32| text(name).trim().parse::<u32>().ok().or_else(|| locale_number(info));
     Intl {
         short_time: text("sShortTime"),
         long_time: text("sTimeFormat"),
         short_date: text("sShortDate"),
         long_date: text("sLongDate"),
-        first_day: text("iFirstDayOfWeek").trim().parse().unwrap_or(0).min(6),
+        first_day: number("iFirstDayOfWeek", LOCALE_IFIRSTDAYOFWEEK).unwrap_or(0).min(6),
+        first_week: number("iFirstWeekOfYear", LOCALE_IFIRSTWEEKOFYEAR).unwrap_or(0).min(2),
     }
+}
+
+/// A number the user's locale defines (`LOCALE_IFIRSTDAYOFWEEK` and the like).
+fn locale_number(info: u32) -> Option<u32> {
+    let mut buf = [0u16; 16];
+    // SAFETY: a valid buffer; a null name is the user's default locale.
+    let n = unsafe { GetLocaleInfoEx(PCWSTR::null(), info, Some(&mut buf)) };
+    wide_to_string(&buf[..(n.max(0) as usize).min(buf.len())]).trim().parse().ok()
+}
+
+/// A day (counted from 1970-01-01) written with a date `pattern` in the user's locale: "MMMM
+/// yyyy" for "November 2026", "dddd d MMMM" for "Thursday 12 November", "ddd" for "Thu".
+pub fn format_day(day: i64, pattern: &str) -> String {
+    let (y, m, d) = crate::calendar::time::civil_from_days(day);
+    let st = windows::Win32::Foundation::SYSTEMTIME {
+        wYear: y.clamp(1601, 30827) as u16,
+        wMonth: m as u16,
+        wDay: d as u16,
+        wDayOfWeek: ((crate::calendar::time::weekday(day) + 1) % 7) as u16,
+        ..Default::default()
+    };
+    let p = HSTRING::from(pattern);
+    let mut buf = [0u16; 128];
+    // SAFETY: valid buffers and date.
+    let n = unsafe { GetDateFormatEx(PCWSTR::null(), Default::default(), Some(&st), &p, Some(&mut buf), PCWSTR::null()) };
+    wide_to_string(&buf[..(n.max(0) as usize).min(buf.len())])
+}
+
+/// Today in the user's long date format ("Thursday, 12 November 2026").
+pub fn long_date_now() -> String {
+    sample_date(&text("sLongDate"))
 }
 
 /// Tell every window the user's regional settings changed.
