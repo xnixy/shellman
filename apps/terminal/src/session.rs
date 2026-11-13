@@ -274,21 +274,14 @@ impl Session {
     /// draw.
     pub fn start(start: Start, wake: Arc<dyn Fn() + Send + Sync>) -> std::io::Result<Self> {
         let Start { command, dir, size, scrollback } = start;
-        let options = tty::Options {
-            // The command line goes to CreateProcess as it was typed.
-            shell: Some(tty::Shell::new(command.to_owned(), Vec::new())),
-            working_directory: dir,
-            drain_on_exit: true,
-            env: Default::default(),
-            escape_args: false,
-        };
-        let pty = tty::new(&options, size.into(), 0)?;
+        // The command line goes to CreateProcess as it was typed.
+        let pty = crate::conpty::spawn(command, dir.as_deref(), size.into())?;
         Self::run(pty, program_name(command), size, scrollback, wake)
     }
 
     /// Show a console Windows handed over (default terminal): `program` names it until it sets
     /// a title.
-    pub fn attach(pty: crate::handoff_pty::HandoffPty, program: String, size: Size, scrollback: usize, wake: Arc<dyn Fn() + Send + Sync>) -> std::io::Result<Self> {
+    pub fn attach(pty: crate::pty::Pty, program: String, size: Size, scrollback: usize, wake: Arc<dyn Fn() + Send + Sync>) -> std::io::Result<Self> {
         Self::run(pty, program, size, scrollback, wake)
     }
 

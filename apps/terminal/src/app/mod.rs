@@ -16,7 +16,7 @@ mod view;
 use crate::cli::Launch;
 use crate::config::Config;
 use crate::defterm::server::Arrived;
-use crate::handoff_pty::HandoffPty;
+use crate::pty::Pty;
 use crate::instance;
 use crate::profiles::{self, Profile};
 use crate::render::{Frame, Renderer};
@@ -379,7 +379,7 @@ fn attach(arrived: Arrived, renderer: &Renderer, config: &Config, wake: Arc<dyn 
     let size = Size { cols: 80, rows: 24, cell_w: m.cell_w as u16, cell_h: m.cell_h as u16 };
     // A console's title is often its exe's whole path: shortened as a program's title is.
     let name = arrived.title.map(|t| crate::session::short_title(&t)).unwrap_or(arrived.program);
-    let pty = HandoffPty::new(arrived.handles, size.into())?;
+    let pty = Pty::handoff(arrived.handles, size.into())?;
     Session::attach(pty, name, size, config.scrollback, wake)
 }
 
@@ -390,7 +390,7 @@ pub fn run_hidden(arrived: Arrived) {
     use alacritty_terminal::tty::{EventedPty, EventedReadWrite};
     use std::io::Read;
     let size = WindowSize { num_lines: 24, num_cols: 80, cell_width: 1, cell_height: 1 };
-    let Ok(mut pty) = HandoffPty::new(arrived.handles, size) else { return };
+    let Ok(mut pty) = Pty::handoff(arrived.handles, size) else { return };
     let mut sink = [0u8; 64 * 1024];
     loop {
         while pty.reader().read(&mut sink).unwrap_or(0) > 0 {}

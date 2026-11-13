@@ -507,7 +507,7 @@ entry points open it, and it can be Windows' default terminal (below).
   falls back: shellman's terminal (sibling exe), Windows Terminal (app alias `wt.exe -d`, then the
   activation manager), Command Prompt in a new console. **Owed**: a control for it in Settings
   (not added while Settings is being edited elsewhere); `terminal.json` is the place for now.
-- **Windows' default terminal** (`defterm/`, `handoff_pty.rs`): where a console program shows
+- **Windows' default terminal** (`defterm/`, `pty.rs`): where a console program shows
   when it starts with no terminal (a `.bat`, Win+R `cmd`, a program spawning `powershell`). Off
   until `shellman-terminal --register-default-terminal`; `--unregister-default-terminal` undoes
   it. Both are per user, no admin, and print the pair before and after.
@@ -531,7 +531,7 @@ entry points open it, and it can be Windows' default terminal (below).
     (`REGCLS_SINGLEUSE`: one console, one window, as WT's default "new window"). The call's
     `[in]` handles are checked (signal is a pipe, server and client are processes) and
     duplicated; we make the input and output pipes and return OpenConsole's ends.
-    `HandoffPty` drives them as `alacritty_terminal`'s `Pty` would: output read on a thread and
+    `pty::Pty` drives them as `alacritty_terminal`'s `Pty` would: output read on a thread and
     posted to the poller, input queued to a writer thread, resize as the 6-byte signal packet
     (`PTY_SIGNAL_RESIZE_WINDOW` = 8, cols, rows), the end when the client (or the console) exits;
     dropping it closes signal, reference, then the console's process, as `ClosePseudoConsole`
@@ -549,12 +549,33 @@ entry points open it, and it can be Windows' default terminal (below).
     `OpenConsoleProxy.dll` (~40 KB) registered as the proxy-stub for the handoff IIDs under HKCU
     `Interface\{…}\ProxyStubClsid32`, which one third-party report (SonicTerm #1655) found broke
     every terminal's handoff while installed, so it must be tested against WT side by side. The
-    same bundle would also give the newer `conpty.dll` (`Microsoft.Windows.Console.ConPTY`) for
-    throughput. Packaging (an MSIX/sparse package, which needs a signed package) is only needed
+    `OpenConsole.exe` bundled since stage 3 (for throughput, above) does not change this: it is
+    Microsoft's build, with Windows Terminal's `CConsoleHandoff` CLSID compiled in, and the
+    NuGet package has no `OpenConsoleProxy.dll`. Using it as the delegation console would mean
+    registering WT's CLSID per user to it (clashing with WT's own packaged registration while WT
+    is installed) plus a proxy-stub for the handoff interfaces, so the rebuild with a CLSID of our
+    own (above) is still the clean way. Packaging (an MSIX/sparse package, which needs a signed package) is only needed
     to be listed in Windows Settings' picker, which is unreachable here anyway.
 
-- **Emulation**: `alacritty_terminal` 0.26: grid, scrollback, VT parser and the pseudo-console
-  (ConPTY, or a `conpty.dll` found on PATH or beside the exe), on a thread of its own per tab.
+- **ConPTY** (`conpty.rs`, `pty.rs`; stage 3): pseudo-consoles are made through Microsoft's
+  redistributable ConPTY, `conpty.dll` + `OpenConsole.exe` from NuGet
+  `Microsoft.Windows.Console.ConPTY` 1.25.260930003 (MIT, Microsoft-signed; files, hashes and
+  source in `third_party/conpty/README.md`), when both sit beside `shellman-terminal.exe`; else
+  through Windows' own API (inbox conhost). `apps/terminal/build.rs` copies the two x64 files next
+  to the exe in `target\<profile>`; **the install must put both in the same folder as
+  `shellman-terminal.exe`** (and, like the exes, rename them aside rather than overwrite them while
+  terminals run: the dll is loaded and each tab runs an OpenConsole). The dll is loaded by full
+  path only (alacritty's own ConPTY code also tried `conpty.dll` from PATH, and it leaked the
+  console's pipe ends). Created with `PSEUDOCONSOLE_GLYPH_WIDTH_WCSWIDTH`, so OpenConsole measures
+  emoji per code point as the emulator does. The tab's pty is ours for both kinds (created and
+  handed over): output read on a thread into a 1 MiB buffer, input on a writer thread. The console
+  host is released (`ReleasePseudoConsole`) once the program started, so it exits after its last
+  program and its output pipe breaks: a program's end is told to the emulator only after that
+  and after the parser took every byte (at most 3 s, for a program that left a child on the
+  console; a handed-over console, which is not released, waits for output to go quiet). That
+  fixed stage 2's lost last line of a program that exits at once.
+- **Emulation**: `alacritty_terminal` 0.26: grid, scrollback and VT parser, on a thread of its own
+  per tab.
   Its listener answers the pty directly (cursor reports, OSC 4/10/11 colour queries from the
   theme's palette) and wakes the window. The pty's output passes through `osc.rs` on its way:
   OSC 7 / OSC 9;9 (the shell's directory) and DECSET 9 (X10 mouse), which the emulator does not
@@ -623,11 +644,16 @@ each; `SHELLMAN_TERMINAL_STATS=<file>` logs frame times):
   never finished (the stall above). During it the system ConPTY's conhost uses a whole core and
   the terminal 1.2 (parser thread and UI); frames take 0.25 ms of CPU at 241 fps. So the gap is
   ConPTY: Windows Terminal brings its own (OpenConsole), which passes output through.
+- Stage 3, the bundled ConPTY (release, a 1758x1095 px window on the left 4K monitor at 150 %,
+  medians of 3, measured while a game ran on the primary monitor, so absolute times are noisy;
+  the ratio is the point): `cat` of the 100 MB file in WSL, inbox conhost 9.5 s → bundled
+  OpenConsole 2.5 s (Windows Terminal was 2.4 s in stage 2); `dir /s C:\Windows\System32`
+  2.3 s → 2.0 s. See the stage-3 report for every run.
 - Idle 20 s: 0.000 CPU-s focused, 0.016 unfocused. A blinking cursor: 2 frames a second for
   15 s, then none. A tab flooding output in the background: no frames.
 - Not yet: colour emoji (drawn in one colour), find in scrollback, splits, a Settings page,
   win32-input-mode (ConPTY's `?9001`: exact key events; without it PSReadLine's own Ctrl+C copy
-  of its selection did not reach the clipboard in a test), bundling OpenConsole/`conpty.dll`,
+  of its selection did not reach the clipboard in a test),
   OSC 10/11 answers through the system ConPTY (it does not forward the queries; the answering is
   in place), a light palette that keeps bright white readable on coloured backgrounds.
 
