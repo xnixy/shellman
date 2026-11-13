@@ -1,0 +1,377 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Desktop Concepts</title>
+<style>
+:root{
+ --page:#eef0f5;--ink:#11141b;--ink2:#4a5162;--ink3:#7a8193;--card:#ffffff;--line:#0000000f;--frame-shadow:0 30px 80px #1b234022;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+ --page:#07080c;--ink:#eef1f6;--ink2:#aab3c5;--ink3:#7d879b;--card:#11141c;--line:#ffffff12;--frame-shadow:0 30px 80px #0009;
+}}
+:root[data-theme="dark"]{
+ --page:#07080c;--ink:#eef1f6;--ink2:#aab3c5;--ink3:#7d879b;--card:#11141c;--line:#ffffff12;--frame-shadow:0 30px 80px #0009;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{overflow-x:hidden}
+body{background:var(--page);color:var(--ink);font:15px/1.55 "Segoe UI Variable Text","Segoe UI",system-ui,-apple-system,sans-serif;-webkit-font-smoothing:antialiased}
+.page{max-width:1560px;margin:0 auto;padding:56px 16px 80px}
+@media (min-width:720px){.page{padding:72px 40px 96px}}
+header h1{font:600 clamp(30px,4.4vw,48px)/1.08 "Segoe UI Variable Display","Segoe UI",system-ui,sans-serif;letter-spacing:-.02em}
+header p{color:var(--ink2);max-width:760px;margin-top:14px;font-size:16px}
+.picks{display:flex;flex-wrap:wrap;gap:8px;margin-top:22px}
+.picks a{color:var(--ink);text-decoration:none;border:1px solid var(--line);background:var(--card);border-radius:999px;padding:7px 15px;font-size:13px;font-weight:600}
+.concept{margin-top:72px}
+.concept .lab{font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3);font-weight:600}
+.concept h2{font:600 clamp(22px,2.6vw,30px)/1.2 "Segoe UI Variable Display","Segoe UI",system-ui,sans-serif;letter-spacing:-.01em;margin-top:6px}
+.concept .why{color:var(--ink2);max-width:820px;margin-top:10px}
+.concept .why b{color:var(--ink);font-weight:600}
+.badge{display:inline-block;vertical-align:middle;margin-left:10px;font:600 11px/1 "Segoe UI",sans-serif;letter-spacing:.06em;text-transform:uppercase;padding:6px 10px;border-radius:999px;background:var(--ink);color:var(--page)}
+.frame{position:relative;width:100%;aspect-ratio:16/9;border-radius:clamp(12px,1.6vw,24px);overflow:hidden;margin-top:22px;box-shadow:var(--frame-shadow);background:#0a0d18}
+.cap{color:var(--ink3);font-size:13px;margin-top:12px}
+footer{margin-top:72px;color:var(--ink3);font-size:13px;border-top:1px solid var(--line);padding-top:20px}
+
+/* ---------- scene: a 1920x1080 desktop, scaled to the frame ---------- */
+.stage{position:absolute;left:0;top:0;width:1920px;height:1080px;transform-origin:0 0;overflow:hidden;
+ font:14px "Segoe UI Variable Text","Segoe UI",system-ui,sans-serif;color:var(--t)}
+.dark{--t:#eef1f6;--mut:#aab3c5;--dim:#7d879b;--g:rgba(22,26,38,.58);--rim:#ffffff1f;--hi:#ffffff14;--sh:0 24px 60px #0008;
+ --soft:#ffffff0d;--softb:#ffffff12;--hover:#ffffff17;--sel:#f4f6fb;--selt:#0b0d12;--track:#ffffff1c;--sep:#ffffff14;
+ background:
+  radial-gradient(1000px 700px at 78% 12%,#2d6cff66,transparent 70%),
+  radial-gradient(900px 800px at 10% 90%,#ff4f8b55,transparent 70%),
+  radial-gradient(800px 600px at 55% 60%,#22d3a83d,transparent 70%),
+  linear-gradient(135deg,#0a0d18,#121627 60%,#0b0e1a)}
+.light{--t:#12151c;--mut:#4b5263;--dim:#7a8194;--g:rgba(255,255,255,.56);--rim:#ffffffb3;--hi:#ffffffcc;--sh:0 24px 60px #2a336633;
+ --soft:#0000000a;--softb:#0000000d;--hover:#0000000f;--sel:#0b0d12;--selt:#ffffff;--track:#00000014;--sep:#00000012;
+ background:
+  radial-gradient(1000px 700px at 78% 12%,#8fb4ff99,transparent 70%),
+  radial-gradient(900px 800px at 10% 90%,#ffb3cc99,transparent 70%),
+  radial-gradient(800px 600px at 55% 60%,#9ff0d677,transparent 70%),
+  linear-gradient(135deg,#eef1f8,#e5e8f3 60%,#eceef6)}
+.hills{position:absolute;left:0;right:0;bottom:0;width:1920px;height:520px;pointer-events:none}
+.glass{position:absolute;background:var(--g);backdrop-filter:blur(40px) saturate(1.5);-webkit-backdrop-filter:blur(40px) saturate(1.5);
+ border:1px solid var(--rim);box-shadow:var(--sh),inset 0 1px 0 var(--hi)}
+.rel{position:relative}
+.pill{border-radius:999px}.r{border-radius:22px}
+.row{display:flex;align-items:center;gap:10px}
+.mut{color:var(--mut)}.dim{color:var(--dim)}.b{font-weight:600}
+.sm{font-size:12px}
+.soft{background:var(--soft);border:1px solid var(--softb)}
+.chip{padding:5px 11px;border-radius:999px;font-size:12px}
+svg.i{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;flex:none}
+.app{width:46px;height:46px;border-radius:13px;display:grid;place-items:center;color:#fff;position:relative;flex:none}
+.app svg.i{width:24px;height:24px}
+.run:after{content:"";position:absolute;bottom:-9px;left:50%;width:4px;height:4px;margin-left:-2px;border-radius:50%;background:var(--t);opacity:.7}
+.note{position:absolute;font-size:12px;letter-spacing:.07em;text-transform:uppercase;color:var(--t);opacity:.66;text-shadow:0 1px 8px #0006}
+.light .note{text-shadow:none;opacity:.55}
+.th{border-radius:12px;flex:none}
+.t1{background:linear-gradient(135deg,#ff7a59,#ffcb6b)}.t2{background:linear-gradient(135deg,#5b8cff,#b06bff)}.t3{background:linear-gradient(135deg,#1fd1a5,#2f7bff)}
+.t4{background:linear-gradient(160deg,#111827,#6b7280)}.t5{background:linear-gradient(135deg,#f43f8e,#7c3aed)}.t6{background:linear-gradient(135deg,#0ea5e9,#22d3ee)}
+.doc{background:linear-gradient(#f6f7fb,#dfe4ee);position:relative}.doc:after{content:"";position:absolute;left:22%;right:22%;top:24%;height:52%;background:repeating-linear-gradient(#9aa4b8 0 2px,transparent 2px 7px);opacity:.75}
+.zip{background:linear-gradient(135deg,#a3a3a3,#e5e5e5);position:relative}.zip:after{content:"";position:absolute;left:46%;width:8%;top:8%;bottom:30%;background:repeating-linear-gradient(#444 0 3px,transparent 3px 6px)}
+.exe{background:linear-gradient(135deg,#fb923c,#f97316)}
+.bar{height:6px;border-radius:3px;background:var(--track);position:relative;overflow:hidden}.bar i{position:absolute;left:0;top:0;bottom:0;border-radius:3px;background:var(--t)}
+/* context menu */
+.menu{width:300px;padding:8px;border-radius:20px}
+.mi{display:flex;align-items:center;gap:12px;height:40px;padding:0 12px;border-radius:12px;font-size:14px}
+.mi .k{margin-left:auto;font-size:12px;color:var(--dim)}
+.mi svg.i{color:var(--mut)}
+.mi.hov{background:var(--hover)}
+.mi.hov svg.i{color:var(--t)}
+.msep{height:1px;background:var(--sep);margin:6px 12px}
+.mhead{font-size:12px;color:var(--dim);padding:8px 12px 4px}
+.sw{width:40px;height:24px;border-radius:12px;background:var(--sel);position:relative;flex:none}.sw:after{content:"";position:absolute;right:3px;top:3px;width:18px;height:18px;border-radius:50%;background:var(--selt)}
+.sw.off{background:var(--track)}.sw.off:after{right:auto;left:3px;background:#fff;box-shadow:0 1px 3px #0003}
+.seg{display:flex;padding:3px;border-radius:999px;background:var(--soft);border:1px solid var(--softb)}.seg span{padding:5px 14px;border-radius:999px;font-size:12px}.seg .on{background:var(--sel);color:var(--selt);font-weight:600}
+.srow{display:flex;align-items:center;gap:12px;height:46px;border-top:1px solid var(--sep)}
+.lab2{font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3);font-weight:600}
+.earlier{margin-top:96px;padding-top:28px;border-top:1px solid var(--line)}
+.earlier h2.q{font:600 clamp(18px,2vw,22px)/1.2 "Segoe UI Variable Display","Segoe UI",system-ui,sans-serif;margin-top:6px;color:var(--ink2)}
+</style>
+</head>
+<body>
+<div class="page">
+ <header>
+  <div class="lab" style="font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink3);font-weight:600">shellman · design</div>
+  <h1 style="margin-top:8px">The desktop, without the icon grid</h1>
+  <p>The chosen direction is Shelf + Widgets: the shelf owns the left edge for files, and a few calm widgets sit top right. Clean (wallpaper only) stays available as the other desktop style in Settings › Desktop. Each scene is the full desktop: wallpaper, the top bar's three islands, the dock, and what sits on the wallpaper. The three earlier concepts are kept below for reference.</p>
+  <nav class="picks"><a href="#mix">Shelf + Widgets</a><a href="#settings">The switch in Settings</a><a href="#a">A · Widgets</a><a href="#b">B · Shelf</a><a href="#c">C · Clean</a></nav>
+ </header>
+
+ <section class="concept" id="mix">
+  <div class="lab">Chosen direction</div>
+  <h2>Shelf + Widgets <span class="badge">Chosen</span></h2>
+  <p class="why">The shelf from B keeps the left edge: drop zone, then the Desktop, Downloads and Recent stacks, fanning out to the right. <b>Widgets move to the top right</b>, under the tray, and there are only two: Today (date, weather, next events) and Now playing. The centre of the wallpaper stays empty, and a fanned stack never reaches the widgets.</p>
+  <div class="frame"><div class="stage dark" data-scene="M"></div></div>
+  <p class="cap">Dark · resting state, which is how the desktop looks most of the time.</p>
+  <div class="frame"><div class="stage light" data-scene="M2"></div></div>
+  <p class="cap">Light · the Downloads stack fanned open next to the widgets, and the right-click menu. Edit desktop… puts both the shelf and the widgets into arrange mode.</p>
+ </section>
+
+ <section class="concept" id="settings">
+  <div class="lab">Where the switch lives</div>
+  <h2>Settings › Desktop</h2>
+  <p class="why">Right-click › Desktop settings opens this page. <b>Desktop style</b> picks between Shelf + widgets and Clean with two preview tiles. The rows below set the shelf (on or off, which edge, which stacks) and the widgets (on or off, which ones). With Clean chosen, the Shelf and Widgets groups grey out.</p>
+  <div class="frame"><div class="stage dark" data-scene="S"></div></div>
+ </section>
+
+ <div class="earlier">
+  <div class="lab2">Earlier concepts</div>
+  <h2 class="q">A, B and C as first proposed, kept for reference</h2>
+ </div>
+
+ <section class="concept" id="a" style="margin-top:40px">
+  <div class="lab">Concept A</div>
+  <h2>Widgets</h2>
+  <p class="why">A few glass islands sit on the wallpaper: today's date and next events, weather, the machine's vitals, what is playing. <b>For glancing</b>, not for files. You drag them where you want them and add or remove them from Edit widgets; the middle of the wallpaper stays empty.</p>
+  <div class="frame"><div class="stage dark" data-scene="A"></div></div>
+ </section>
+
+ <section class="concept" id="b">
+  <div class="lab">Concept B</div>
+  <h2>Shelf</h2>
+  <p class="why">No widgets. One slim island on the left edge does what a classic desktop is actually used for: <b>a place to drop things and find them again</b>. Drop a file on it to keep it; the stacks for Desktop, Downloads and Recent fan open on click, and the last row opens the folder in Files.</p>
+  <div class="frame"><div class="stage dark" data-scene="B"></div></div>
+  <p class="cap">Dark · Downloads stack fanned open.</p>
+  <div class="frame"><div class="stage light" data-scene="B2"></div></div>
+  <p class="cap">Light · a file dropped on the shelf, and the desktop right-click menu with New open.</p>
+ </section>
+
+ <section class="concept" id="c">
+  <div class="lab">Concept C</div>
+  <h2>Clean</h2>
+  <p class="why">Wallpaper only; nothing stays on screen. <b>Everything starts from right-click</b>. While you drag a file anywhere, a drop pill slides in under the clock so you can save it to Desktop, Downloads or Documents, share it, or open it, and it leaves when the drag ends.</p>
+  <div class="frame"><div class="stage dark" data-scene="C"></div></div>
+  <p class="cap">The other desktop style you can pick in Settings › Desktop. Shown: the right-click menu (hovered: Open Terminal here) and, separately, the drop pill as it looks mid-drag.</p>
+ </section>
+
+ <footer>Mockup for review, not a build. Colour is never the accent: selection and hover use the text colour, so it holds with a pure black accent.</footer>
+</div>
+
+<script>
+const P={
+ folder:'<path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H9l2 2h7.5A2.5 2.5 0 0 1 21 9.5v8a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5z"/>',
+ file:'<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/>',
+ plus:'<path d="M12 5v14M5 12h14"/>',
+ paste:'<rect x="9" y="3" width="6" height="4" rx="1.5"/><path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/>',
+ term:'<rect x="3" y="4" width="18" height="16" rx="3"/><path d="M7.5 9.5l3 2.5-3 2.5M13 15h4"/>',
+ image:'<rect x="3" y="4" width="18" height="16" rx="3"/><circle cx="9" cy="10" r="1.8"/><path d="M21 16l-5-5-9 9"/>',
+ grid:'<rect x="4" y="4" width="7" height="7" rx="2"/><rect x="13" y="4" width="7" height="7" rx="2"/><rect x="4" y="13" width="7" height="7" rx="2"/><rect x="13" y="13" width="7" height="7" rx="2"/>',
+ sliders:'<path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/>',
+ monitor:'<rect x="3" y="4" width="18" height="12" rx="2.5"/><path d="M8 20h8M12 16v4"/>',
+ chev:'<path d="M10 7l5 5-5 5"/>',
+ wifi:'<path d="M2.5 9a14 14 0 0 1 19 0M5.5 12.5a9.5 9.5 0 0 1 13 0M8.8 16a5 5 0 0 1 6.4 0"/><circle cx="12" cy="19.3" r=".9" fill="currentColor"/>',
+ vol:'<path d="M4 9.5v5h3.5L12 18V6L7.5 9.5z"/><path d="M15.5 9.5a3.5 3.5 0 0 1 0 5M18.5 7a7 7 0 0 1 0 10"/>',
+ batt:'<rect x="2.5" y="7" width="17" height="10" rx="3"/><path d="M22 10.5v3"/><rect x="5" y="9.5" width="9.5" height="5" rx="1.2" fill="currentColor" stroke="none"/>',
+ bell:'<path d="M6 16v-5a6 6 0 0 1 12 0v5l1.5 2h-15z"/><path d="M10 20.5a2 2 0 0 0 4 0"/>',
+ rain:'<path d="M7 15.5a4 4 0 0 1 .3-8 5.2 5.2 0 0 1 9.9 1.6A3.3 3.3 0 0 1 17 15.5z"/><path d="M8.5 18.5l-.8 1.8M12.5 18.5l-.8 1.8M16.5 18.5l-.8 1.8"/>',
+ cloud:'<path d="M7 18a4.5 4.5 0 0 1 .3-9 5.5 5.5 0 0 1 10.5 1.8A3.6 3.6 0 0 1 17.5 18z"/>',
+ sun:'<circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4M5.3 18.7l1.4-1.4M17.3 6.7l1.4-1.4"/>',
+ down:'<path d="M12 4v11M7 10.5l5 5 5-5M5 20h14"/>',
+ trash:'<path d="M4 7h16M9.5 7V4.5h5V7M6 7l1 13h10l1-13"/>',
+ globe:'<circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.6 2.6 2.6 14.4 0 17M12 3.5c-2.6 2.6-2.6 14.4 0 17"/>',
+ chat:'<path d="M4 6.5A2.5 2.5 0 0 1 6.5 4h11A2.5 2.5 0 0 1 20 6.5v7a2.5 2.5 0 0 1-2.5 2.5H10l-4.5 4v-4A2.5 2.5 0 0 1 4 13.5z"/>',
+ music:'<path d="M9 18V6l11-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="17.5" cy="16" r="2.5"/>',
+ gear:'<circle cx="12" cy="12" r="3"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M5.5 18.5l1.7-1.7M16.8 7.2l1.7-1.7"/>',
+ game:'<rect x="2.5" y="7" width="19" height="11" rx="5.5"/><path d="M7 10.5v4M5 12.5h4"/><circle cx="15.5" cy="11.5" r=".9" fill="currentColor"/><circle cx="17.5" cy="13.5" r=".9" fill="currentColor"/>',
+ share:'<circle cx="6" cy="12" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="18" cy="18" r="2.5"/><path d="M8.2 10.9l7.6-3.8M8.2 13.1l7.6 3.8"/>',
+ doc:'<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h4"/>',
+ open:'<path d="M14 4h6v6M20 4l-8 8"/><path d="M18 14v4a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4"/>',
+ cal:'<rect x="3.5" y="5" width="17" height="15.5" rx="3"/><path d="M3.5 10h17M8 3v4M16 3v4"/>',
+ link:'<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>',
+ clock:'<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>',
+ move:'<path d="M5 9l-3 3 3 3M9 5l3-3 3 3M15 19l-3 3-3-3M19 9l3 3-3 3M2 12h20M12 2v20"/>'
+};
+const I=(n,s)=>`<svg class="i" viewBox="0 0 24 24"${s?` style="width:${s}px;height:${s}px"`:''}>${P[n]}</svg>`;
+const play=(s=18)=>`<svg viewBox="0 0 24 24" style="width:${s}px;height:${s}px;fill:currentColor"><path d="M8 5.5v13l10.5-6.5z"/></svg>`;
+const pause=(s=18)=>`<svg viewBox="0 0 24 24" style="width:${s}px;height:${s}px;fill:currentColor"><rect x="6.5" y="5" width="4" height="14" rx="1.3"/><rect x="13.5" y="5" width="4" height="14" rx="1.3"/></svg>`;
+const skip=(s=16,back)=>`<svg viewBox="0 0 24 24" style="width:${s}px;height:${s}px;fill:currentColor;${back?'transform:scaleX(-1)':''}"><path d="M5 5.5v13l10-6.5z"/><rect x="16" y="5.5" width="3" height="13" rx="1"/></svg>`;
+const cursor=`<svg viewBox="0 0 24 24" style="width:26px;height:26px;filter:drop-shadow(0 2px 4px #0007)"><path d="M5 3l14 7.2-6.2 1.7L10 18z" fill="#fff" stroke="#111" stroke-width="1.3" stroke-linejoin="round"/></svg>`;
+
+function hills(light){
+ const a=light?['#ffffff','.35','.28','.22']:['#c9d6ff','.05','.07','.10'];
+ return `<svg class="hills" viewBox="0 0 1920 520" preserveAspectRatio="none">
+  <path d="M0 300 C 300 200 520 260 760 230 S 1240 140 1500 200 S 1800 250 1920 210 V520 H0z" fill="${a[0]}" opacity="${a[1]}"/>
+  <path d="M0 380 C 260 320 480 360 720 340 S 1180 270 1460 320 S 1780 360 1920 330 V520 H0z" fill="${a[0]}" opacity="${a[2]}"/>
+  <path d="M0 450 C 320 410 620 440 900 425 S 1500 390 1920 430 V520 H0z" fill="${light?'#ffffff':'#05060c'}" opacity="${light?a[3]:'.35'}"/>
+ </svg>`;
+}
+function topbar(name='Desktop'){
+ return `<div class="glass pill row" style="left:16px;top:12px;height:40px;padding:0 16px"><span style="width:14px;height:14px;border-radius:5px;background:var(--t)"></span><span class="b">${name}</span><span class="dim">shellman</span></div>
+ <div class="glass pill row" style="left:50%;transform:translateX(-50%);top:12px;height:40px;padding:0 18px"><span class="b">Thu 12 Nov</span><span class="mut">12:41</span></div>
+ <div class="glass pill row" style="right:16px;top:12px;height:40px;padding:0 8px 0 16px;gap:14px"><span class="mut row" style="gap:14px">${I('wifi')}${I('vol')}</span><span class="row mut" style="gap:6px">${I('batt',20)}<span>80%</span></span><span class="row" style="gap:6px">${I('bell')}<span class="chip b" style="padding:2px 8px;background:var(--sel);color:var(--selt)">3</span></span></div>`;
+}
+function dock(act){
+ const apps=[['folder','linear-gradient(160deg,#7db4ff,#3f7ff0)',1],['globe','linear-gradient(135deg,#f97316,#facc15)',1],['term','linear-gradient(160deg,#1f2937,#0b0f17)',1],['chat','linear-gradient(160deg,#818cf8,#4f46e5)',1],['music','linear-gradient(135deg,#f43f8e,#7c3aed)',0],['game','linear-gradient(160deg,#1e3a5f,#0f172a)',0],['gear','linear-gradient(160deg,#9ca3af,#4b5563)',0]];
+ let h=`<div class="glass row" style="left:50%;transform:translateX(-50%);bottom:18px;height:70px;border-radius:24px;padding:0 12px;gap:10px">${apps.map(([n,bg,r])=>`<div class="app${r?' run':''}" style="background:${bg};box-shadow:inset 0 1px 0 #ffffff33">${I(n)}</div>`).join('')}</div>
+ <div class="glass row" style="left:calc(50% + 232px);bottom:18px;height:70px;border-radius:24px;padding:0 12px"><div class="app" style="background:var(--soft);border:1px solid var(--softb);color:var(--mut)">${I('trash')}</div></div>`;
+ if(act) h+=`<div class="glass pill row" style="right:calc(50% + 232px);bottom:30px;height:46px;padding:0 18px 0 14px">${act}</div>`;
+ return h;
+}
+function menu(o){
+ const rows=[
+  ['New','plus','<span class="k">'+I('chev',16)+'</span>'],
+  ['Paste','paste','<span class="k">Ctrl V</span>'],'-',
+  ['Open in Files','folder',''],['Open Terminal here','term','<span class="k">Ctrl Alt T</span>'],'-',
+  ...(o.g3||[['Change wallpaper…','image',''],...(o.extra?[[o.extra,'grid','']]:[]),['Desktop settings','sliders',''],['Display settings','monitor','']])];
+ return `<div class="glass menu" style="left:${o.x}px;top:${o.y}px">${rows.map(r=>r==='-'?'<div class="msep"></div>':`<div class="mi${r[0]===o.hov?' hov':''}">${I(r[1])}<span>${r[0]}</span>${r[2]}</div>`).join('')}</div>`;
+}
+
+/* ---------- A: widgets ---------- */
+function sceneA(){
+ const ev=[['14:00','Design review','shellman · dock & desktop','in 1 h 19 min',1],['16:30','Dentist','Nørrebrogade 34',''],['19:00','Game night','with nix, Ana, Theo','']];
+ const hours=[['Now','rain','6°'],['14','rain','7°'],['15','cloud','7°'],['16','cloud','6°'],['17','sun','5°'],['18','cloud','4°']];
+ const spark='M0 30 L18 26 L36 28 L54 18 L72 22 L90 12 L108 20 L126 16 L144 24 L162 14 L180 19 L198 8 L216 16 L234 13 L252 20 L270 15';
+ return hills()+topbar()+`
+ <div class="glass r" style="left:96px;top:120px;width:380px;padding:24px 26px 18px">
+  <div class="row"><div><div class="mut">Thursday</div><div style="font:300 76px/1 'Segoe UI Variable Display','Segoe UI';letter-spacing:-.03em;margin-top:4px">12</div><div class="b" style="margin-top:4px">November</div></div><span style="flex:1"></span><span class="mut" style="align-self:flex-start">${I('cal')}</span></div>
+  <div style="margin-top:20px">${ev.map(([t,n,s,w,f])=>`<div class="row" style="align-items:flex-start;padding:11px 0;border-top:1px solid var(--sep);gap:14px"><span class="b" style="width:46px">${t}</span><div style="flex:1"><div class="${f?'b':''}">${n}</div><div class="dim sm" style="margin-top:2px">${s}</div></div>${w?`<span class="chip" style="background:var(--sel);color:var(--selt);font-weight:600">${w}</span>`:''}</div>`).join('')}</div>
+ </div>
+ <div class="glass r" style="left:96px;top:572px;width:380px;padding:20px 24px">
+  <div class="row"><span class="mut">${I('rain',30)}</span><span style="font:300 44px/1 'Segoe UI Variable Display','Segoe UI'">6°</span><div style="margin-left:6px"><div class="b">Copenhagen</div><div class="dim sm">Light rain · H 8° L 3°</div></div></div>
+  <div class="row" style="justify-content:space-between;margin-top:18px">${hours.map(([h,i,t])=>`<div style="text-align:center;width:44px"><div class="dim sm">${h}</div><div class="mut" style="margin:6px 0 4px;display:flex;justify-content:center">${I(i)}</div><div class="sm b">${t}</div></div>`).join('')}</div>
+ </div>
+ <div class="glass r" style="right:96px;top:120px;width:360px;padding:22px 24px">
+  <div class="row"><span class="b">This PC</span><span class="dim sm">up 3 d 4 h</span></div>
+  <div class="row" style="margin-top:16px;align-items:flex-end"><div><div class="dim sm">CPU</div><div style="font:300 34px/1.1 'Segoe UI Variable Display','Segoe UI'">14<span class="mut" style="font-size:18px">%</span></div></div><span style="flex:1"></span>
+   <svg viewBox="0 0 270 36" style="width:190px;height:40px"><path d="${spark} L270 36 L0 36z" fill="var(--t)" opacity=".08"/><path d="${spark}" fill="none" stroke="var(--t)" stroke-width="1.8" stroke-linejoin="round" opacity=".85"/></svg></div>
+  ${[['Memory','11.2 of 32 GB',35],['GPU','46 °C · 21%',21],['Windows (C:)','362 GB free',61]].map(([n,v,p])=>`<div style="margin-top:16px"><div class="row sm"><span class="mut">${n}</span><span style="flex:1"></span><span>${v}</span></div><div class="bar" style="margin-top:7px"><i style="width:${p}%"></i></div></div>`).join('')}
+ </div>
+ <div class="glass r" style="right:96px;top:470px;width:360px;padding:14px">
+  <div class="row" style="gap:14px"><div class="th t5" style="width:64px;height:64px;border-radius:16px"></div><div><div class="b">Midnight City</div><div class="mut sm" style="margin-top:3px">M83 · Hurry Up, We're Dreaming</div></div></div>
+  <div class="row sm dim" style="margin-top:14px;padding:0 4px"><span>1:52</span><div class="bar" style="flex:1"><i style="width:46%"></i></div><span>4:03</span></div>
+  <div class="row" style="justify-content:center;gap:30px;margin:12px 0 4px"><span class="mut">${skip(16,1)}</span><span style="width:40px;height:40px;border-radius:50%;display:grid;place-items:center;background:var(--sel);color:var(--selt)">${pause(16)}</span><span class="mut">${skip(16)}</span></div>
+ </div>
+ <div class="note" style="right:96px;top:690px;text-align:right">Widgets: drag to place · right-click › Edit widgets to add</div>
+ `+dock();
+}
+
+/* ---------- B: shelf ---------- */
+function stack(kind,label,n,active){
+ const k=kind;
+ return `<div style="padding:12px 0 10px;border-radius:18px;${active?'background:var(--hover);':''}display:flex;flex-direction:column;align-items:center">
+  <div style="position:relative;width:52px;height:52px">
+   <div class="th ${k[2]}" style="position:absolute;inset:6px;transform:translate(-7px,-3px) rotate(-12deg);opacity:.75;border-radius:11px;box-shadow:0 4px 10px #0003"></div>
+   <div class="th ${k[1]}" style="position:absolute;inset:6px;transform:translate(7px,-4px) rotate(10deg);opacity:.9;border-radius:11px;box-shadow:0 4px 10px #0003"></div>
+   <div class="th ${k[0]}" style="position:absolute;inset:2px;border-radius:12px;box-shadow:0 6px 14px #0004"></div></div>
+  <div class="sm b" style="margin-top:9px">${label}</div><div class="dim" style="font-size:11px">${n}</div></div>`;
+}
+function shelf(top,dropping){
+ return `<div class="glass" style="left:20px;top:${top}px;width:104px;padding:10px;border-radius:30px">
+  <div style="height:84px;border-radius:20px;border:1.5px dashed ${dropping?'var(--t)':'var(--dim)'};display:grid;place-items:center;text-align:center;${dropping?'background:var(--hover);':''}"><div><div class="${dropping?'':'mut'}" style="display:flex;justify-content:center">${I('down',22)}</div><div class="sm ${dropping?'b':'dim'}" style="margin-top:4px">${dropping?'Keep':'Drop'}</div></div></div>
+  ${stack(['t2','doc','t1'],'Desktop','12 items')}
+  ${stack(['exe','zip','t3'],'Downloads','20 items',!dropping)}
+  ${stack(['doc','t5','t4'],'Recent','today')}
+ </div>`;
+}
+function fan(){
+ const items=[['fontman-0.4.2-x64.exe','exe','3.1 MB · 2 min ago'],['Invoice_2026-11.pdf','doc','214 KB · 38 min ago'],['wallpaper-dunes-5k.jpg','t1','9.8 MB · 1 h ago'],['shellman-icons.zip','zip','1.2 MB · 2 h ago'],['boarding-pass-CPH-LIS.pdf','doc','96 KB · this morning'],['screenshot-glass-probe.png','t3','2.4 MB · yesterday']];
+ const cx=-150,cy=574,R=440,st=10.5; // fan along an arc whose centre is off-screen left
+ let fan='';
+ items.forEach((it,i)=>{const a=(-3*st+i*st)*Math.PI/180;const x=cx+R*Math.cos(a),y=cy+R*Math.sin(a);
+  fan+=`<div class="glass pill row" style="left:${Math.round(x)}px;top:${Math.round(y-31)}px;width:330px;height:62px;padding:0 22px 0 9px;gap:14px"><div class="th ${it[1]}" style="width:44px;height:44px;border-radius:50%"></div><div><div class="b">${it[0]}</div><div class="dim sm">${it[2]}</div></div></div>`;});
+ {const a=(3*st)*Math.PI/180;const x=cx+R*Math.cos(a),y=cy+R*Math.sin(a);
+  fan+=`<div class="glass pill row" style="left:${Math.round(x)}px;top:${Math.round(y-25)}px;width:330px;height:50px;padding:0 20px;gap:10px">${I('folder')}<span class="b">Open Downloads in Files</span><span class="dim sm">14 more</span></div>`;}
+ return fan;
+}
+function sceneB(){
+ return hills()+topbar()+shelf(328)+fan()+`
+ <div class="note" style="left:20px;top:296px">Shelf</div>
+ <div class="note" style="left:300px;top:250px">Downloads, fanned open · drag a file out to use it</div>`
+ +dock(`<span class="mut">${I('down')}</span><span class="mut">Downloading · 72%</span>`);
+}
+function sceneB2(){
+ const sub=['Folder','Text document','Markdown note','Shortcut…'];
+ return hills(1)+topbar()+shelf(328,1)+`
+ <div class="glass" style="left:84px;top:356px;width:180px;padding:9px;border-radius:18px;transform:rotate(-5deg);opacity:.94"><div class="th t3" style="height:90px;border-radius:12px"></div><div class="b sm" style="margin:8px 4px 2px">trip-photos-lisbon.zip</div><div class="dim" style="font-size:11px;margin:0 4px 2px">from Firefox</div></div>
+ <div style="position:absolute;left:80px;top:372px">${cursor}</div>
+ <div class="note" style="left:300px;top:380px;line-height:1.6">Drop on the shelf to keep it<br>the file is moved into Desktop</div>
+ <div style="position:absolute;left:1046px;top:270px">${cursor}</div>
+ ${menu({x:1056,y:282,hov:'New',extra:'Edit shelf'})}
+ <div class="glass menu" style="left:1364px;top:282px;width:240px"><div class="mhead">New on the desktop</div>${sub.map((s,i)=>`<div class="mi${i==0?' hov':''}">${I(i==0?'folder':i==3?'link':'doc')}<span>${s}</span></div>`).join('')}</div>
+ <div class="note" style="left:1056px;top:754px">Right-click the wallpaper · new items land in the Desktop stack</div>`
+ +dock();
+}
+
+/* ---------- C: clean ---------- */
+function sceneC(){
+ const targets=[['Desktop','folder',1],['Downloads','down'],['Documents','doc'],['Share','share'],['Open with Photos','open']];
+ return hills()+topbar()+`
+ <div style="position:absolute;left:520px;top:350px">${cursor}</div>
+ ${menu({x:530,y:362,hov:'Open Terminal here'})}
+ <div class="note" style="left:530px;top:318px">Right-click anywhere</div>
+ <div class="glass pill row" style="left:50%;transform:translateX(-50%);top:72px;height:64px;padding:0 9px;gap:6px">
+  <span class="dim sm" style="padding:0 10px 0 12px">Drop to</span>
+  ${targets.map(([n,i,h])=>`<span class="row pill" style="height:46px;padding:0 18px;gap:9px;${h?'background:var(--sel);color:var(--selt);font-weight:600':''}">${I(i)}${n}</span>`).join('')}
+ </div>
+ <div class="glass" style="left:716px;top:132px;width:170px;padding:8px;border-radius:18px;transform:rotate(4deg);opacity:.93"><div class="th t5" style="height:84px;border-radius:12px"></div><div class="b sm" style="margin:8px 4px 2px">IMG_4471.HEIC</div><div class="dim" style="font-size:11px;margin:0 4px 2px">from Firefox</div></div>
+ <div style="position:absolute;left:712px;top:106px">${cursor}</div>
+ <div class="note" style="left:930px;top:162px">Shows only while a file is being dragged</div>
+ `+dock();
+}
+
+function mixWidgets(){
+ const ev=[['14:00','Design review','shellman · dock & desktop','in 1 h 19 min',1],['16:30','Dentist','Nørrebrogade 34','']];
+ return `<div class="glass r" style="right:40px;top:76px;width:372px;padding:22px 24px 12px">
+  <div class="row" style="align-items:flex-start"><div><div class="mut">Thursday</div><div style="font:300 64px/1 'Segoe UI Variable Display','Segoe UI';letter-spacing:-.03em;margin-top:4px">12</div><div class="b" style="margin-top:4px">November</div></div><span style="flex:1"></span>
+   <div style="text-align:right"><div class="row" style="justify-content:flex-end;gap:8px"><span class="mut">${I('rain',26)}</span><span style="font:300 34px/1 'Segoe UI Variable Display','Segoe UI'">6°</span></div><div class="dim sm" style="margin-top:6px">Copenhagen · light rain</div><div class="dim sm">H 8° · L 3°</div></div></div>
+  <div style="margin-top:16px">${ev.map(([t,n,sb,w,f])=>`<div class="row" style="align-items:flex-start;padding:11px 0;border-top:1px solid var(--sep);gap:14px"><span class="b" style="width:46px">${t}</span><div style="flex:1"><div class="${f?'b':''}">${n}</div><div class="dim sm" style="margin-top:2px">${sb}</div></div>${w?`<span class="chip" style="background:var(--sel);color:var(--selt);font-weight:600">${w}</span>`:''}</div>`).join('')}</div>
+ </div>
+ <div class="glass r row" style="right:40px;top:410px;width:372px;padding:12px;gap:14px"><div class="th t5" style="width:54px;height:54px;border-radius:14px"></div><div style="flex:1;min-width:0"><div class="b">Midnight City</div><div class="mut sm" style="margin-top:3px">M83 · 1:52 / 4:03</div><div class="bar" style="margin-top:9px;height:4px"><i style="width:46%"></i></div></div>
+  <span class="mut">${skip(15,1)}</span><span style="width:36px;height:36px;border-radius:50%;display:grid;place-items:center;background:var(--sel);color:var(--selt);flex:none">${pause(14)}</span><span class="mut" style="margin-right:4px">${skip(15)}</span></div>`;
+}
+const MIXG3=[['Edit desktop…','grid',''],['Change wallpaper…','image',''],['Desktop settings','sliders',''],['Display settings','monitor','']];
+function sceneM(){ return hills()+topbar()+shelf(328)+mixWidgets()+dock(); }
+function sceneM2(){
+ return hills(1)+topbar()+shelf(328)+fan()+mixWidgets()+`
+ <div style="position:absolute;left:1000px;top:560px">${cursor}</div>
+ ${menu({x:1010,y:572,hov:'Edit desktop…',g3:MIXG3})}`+dock(`<span class="mut">${I('down')}</span><span class="mut">Downloading · 72%</span>`);
+}
+function mini(kind,on){
+ const wp='radial-gradient(60% 70% at 80% 10%,#2d6cff88,transparent 70%),radial-gradient(60% 80% at 5% 95%,#ff4f8b77,transparent 70%),radial-gradient(50% 50% at 55% 60%,#22d3a855,transparent 70%),linear-gradient(135deg,#0a0d18,#141a2e)';
+ const g='background:#ffffff26;border:1px solid #ffffff2e;position:absolute;';
+ let in_=`<div style="${g}left:6px;top:5px;width:34px;height:8px;border-radius:4px"></div><div style="${g}left:50%;margin-left:-18px;top:5px;width:36px;height:8px;border-radius:4px"></div><div style="${g}right:6px;top:5px;width:40px;height:8px;border-radius:4px"></div>
+  <div style="${g}left:50%;margin-left:-40px;bottom:6px;width:80px;height:12px;border-radius:5px"></div>`;
+ if(kind=='mix') in_+=`<div style="${g}left:5px;top:42px;width:20px;height:68px;border-radius:7px"></div><div style="${g}right:6px;top:19px;width:66px;height:52px;border-radius:7px"></div><div style="${g}right:6px;top:75px;width:66px;height:15px;border-radius:5px"></div>`;
+ return `<div style="flex:1;padding:10px;border-radius:20px;${on?'outline:2px solid var(--sel);outline-offset:-1px;background:var(--hover)':'background:var(--soft);border:1px solid var(--softb)'}">
+  <div style="position:relative;height:150px;border-radius:12px;background:${wp};overflow:hidden">${in_}</div>
+  <div class="row" style="margin:12px 4px 2px"><span class="b">${kind=='mix'?'Shelf + widgets':'Clean'}</span><span style="flex:1"></span>${on?`<span style="width:22px;height:22px;border-radius:50%;background:var(--sel);color:var(--selt);display:grid;place-items:center"><svg viewBox="0 0 24 24" style="width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:2.6;stroke-linecap:round;stroke-linejoin:round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>`:`<span style="width:22px;height:22px;border-radius:50%;border:1.5px solid var(--dim)"></span>`}</div>
+  <div class="dim sm" style="margin:2px 4px 4px">${kind=='mix'?'Files on the left edge, glanceable info top right':'Wallpaper only. Right-click, and a drop pill while dragging'}</div></div>`;
+}
+function sceneS(){
+ const rail=['monitor','image','vol','wifi','batt','bell','gear'];
+ const wl=[['Today','Date, weather and next events',1],['Now playing','Media from any app',1],['This PC','CPU, memory, disk',0],['Weather (large)','Hourly forecast',0]];
+ return hills()+topbar('Settings')+`
+ <div class="glass pill" style="left:90px;top:130px;width:60px;padding:12px 0;display:flex;flex-direction:column;align-items:center;gap:8px">${rail.map((n,i)=>`<div style="width:40px;height:40px;border-radius:14px;display:grid;place-items:center;${i==0?'background:var(--sel);color:var(--selt)':'color:var(--mut)'}">${I(n,20)}</div>`).join('')}</div>
+ <div class="glass pill row" style="left:170px;top:76px;width:820px;height:46px;padding:0 10px 0 20px"><span class="b">Settings</span><span class="dim">/</span><span class="chip b" style="background:var(--sel);color:var(--selt)">Desktop</span><span style="flex:1"></span><span class="mut">Search settings</span></div>
+ <div class="glass r" style="left:170px;top:134px;width:820px;padding:20px 22px">
+  <div class="dim sm">Desktop style</div>
+  <div class="row" style="gap:16px;margin-top:12px;align-items:stretch">${mini('mix',1)}${mini('clean',0)}</div>
+ </div>
+ <div class="glass r" style="left:170px;top:470px;width:402px;padding:18px 22px 6px">
+  <div class="dim sm" style="margin-bottom:10px">Shelf</div>
+  <div class="srow"><span>Show shelf</span><span style="flex:1"></span><div class="sw"></div></div>
+  <div class="srow"><span>Edge</span><span style="flex:1"></span><div class="seg"><span class="on">Left</span><span class="mut">Right</span></div></div>
+  <div class="srow"><span>Stacks</span><span style="flex:1"></span><span class="chip soft">Desktop</span><span class="chip soft">Downloads</span><span class="chip soft">Recent</span></div>
+  <div class="srow"><span>Dropped files go to</span><span style="flex:1"></span><span class="chip soft">Desktop ▾</span></div>
+ </div>
+ <div class="glass r" style="left:588px;top:470px;width:402px;padding:18px 22px 6px">
+  <div class="dim sm" style="margin-bottom:10px">Widgets</div>
+  <div class="srow"><span>Show widgets</span><span style="flex:1"></span><div class="sw"></div></div>
+  ${wl.map(([n,d,on])=>`<div class="srow" style="height:52px"><div><div>${n}</div><div class="dim sm">${d}</div></div><span style="flex:1"></span><div class="sw${on?'':' off'}"></div></div>`).join('')}
+ </div>
+ <div style="position:absolute;left:1240px;top:330px">${cursor}</div>
+ ${menu({x:1250,y:342,hov:'Desktop settings',g3:MIXG3})}
+ <div class="note" style="left:1250px;top:300px">Right-click › Desktop settings opens it</div>
+ `+dock();
+}
+const S={M:sceneM,M2:sceneM2,S:sceneS,A:sceneA,B:sceneB,B2:sceneB2,C:sceneC};
+document.querySelectorAll('.stage').forEach(s=>s.innerHTML=S[s.dataset.scene]());
+function fit(){document.querySelectorAll('.frame').forEach(f=>{const s=f.firstElementChild;s.style.transform=`scale(${f.clientWidth/1920})`;});}
+fit();
+if('ResizeObserver' in window){const ro=new ResizeObserver(fit);document.querySelectorAll('.frame').forEach(f=>ro.observe(f));}else addEventListener('resize',fit);
+</script>
+</body>
+</html>
