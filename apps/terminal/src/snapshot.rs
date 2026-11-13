@@ -85,11 +85,13 @@ pub fn take<T>(term: &Term<T>, look: &Look, frame: &mut Frame) {
     frame.cells.reserve(cols * rows);
     let colors = term.colors();
     // Bold is drawn with the bold face, not brightened (as Windows Terminal does by default).
-    let resolve = |c: Color| -> Rgb {
+    // `ground`: the colour is a background, or text on one (the palette's Campbell set), not text
+    // on the glass (the theme's set).
+    let resolve = |c: Color, ground: bool| -> Rgb {
         let rgb = |v: ansi::Rgb| [v.r, v.g, v.b];
         match c {
             Color::Spec(v) => rgb(v),
-            Color::Indexed(i) => colors[i as usize].map(rgb).unwrap_or_else(|| look.palette.indexed(i)),
+            Color::Indexed(i) => colors[i as usize].map(rgb).unwrap_or_else(|| if ground { look.palette.indexed_ground(i) } else { look.palette.indexed(i) }),
             Color::Named(n) => {
                 let set = colors[n].map(rgb);
                 set.unwrap_or_else(|| match n {
@@ -97,6 +99,7 @@ pub fn take<T>(term: &Term<T>, look: &Look, frame: &mut Frame) {
                     NamedColor::Background => look.palette.bg,
                     NamedColor::Cursor => look.cursor,
                     NamedColor::DimForeground => dim(look.palette.fg),
+                    n if (n as usize) < 16 && ground => look.palette.ground[n as usize],
                     n if (n as usize) < 16 => look.palette.ansi[n as usize],
                     // The dim colours (259..=266) are the eight base ones, faint.
                     n => dim(look.palette.ansi[(n as usize - NamedColor::DimBlack as usize) & 7]),
@@ -130,11 +133,13 @@ pub fn take<T>(term: &Term<T>, look: &Look, frame: &mut Frame) {
             let cell = &row[Column(col)];
             let f = cell.flags;
             let default_bg = cell.bg == Color::Named(NamedColor::Background) && colors[NamedColor::Background].is_none();
-            let mut fg = resolve(cell.fg);
+            // Text on a coloured background (or inverse, which makes its colour the background)
+            // takes the ground set: white on red stays white in the light theme.
+            let mut fg = resolve(cell.fg, !default_bg || f.contains(Flags::INVERSE));
             if f.contains(Flags::DIM) {
                 fg = dim(fg);
             }
-            let bg = resolve(cell.bg);
+            let bg = resolve(cell.bg, true);
             let (mut fg, mut bg) = ([fg[0], fg[1], fg[2], 255], [bg[0], bg[1], bg[2], if default_bg { 0 } else { 255 }]);
             if f.contains(Flags::INVERSE) {
                 std::mem::swap(&mut fg, &mut bg);
@@ -252,7 +257,54 @@ pub fn take<T>(term: &Term<T>, look: &Look, frame: &mut Frame) {
 
 #[cfg(test)]
 mod tests {
-    use super::compose;
+    use super::*;
+    use alacritty_terminal::event::VoidListener;
+    use alacritty_terminal::term::{test::TermSize, Config};
+
+    fn snap(text: &str, light: bool) -> Frame {
+        let mut t = Term::new(Config::default(), &TermSize::new(20, 2), VoidListener);
+        let mut p: ansi::Processor = ansi::Processor::new();
+        p.advance(&mut t, text.as_bytes());
+        let palette = Palette::new(light, [20, 20, 20], [240, 240, 240]);
+        let look = Look {
+            palette,
+            cursor: [0; 3],
+            on_cursor: [0; 3],
+            focused: false,
+            selection: [0; 3],
+            cursor_on: false,
+            hover: Hover::None,
+            find: None,
+        };
+        let mut frame = Frame { cols: 0, rows: 0, cells: Vec::new(), cursor: None, blinking: false, clusters: Default::default() };
+        take(&t, &look, &mut frame);
+        frame
+    }
+
+    #[test]
+    fn white_on_a_colour_stays_white_in_the_light_theme() {
+        // Bright white on red, white on blue: Campbell's white, not the light theme's grey.
+        let f = snap("\x1b[97;41mA\x1b[37;44mB\x1b[0m\x1b[97mC", true);
+        assert_eq!(&f.cells[0].fg[..3], &[242, 242, 242]);
+        assert_eq!(&f.cells[0].bg[..3], &[197, 15, 31]);
+        assert_eq!(&f.cells[1].fg[..3], &[204, 204, 204]);
+        // On the glass, "white" is the light theme's dark grey, so it still shows.
+        assert_eq!(&f.cells[2].fg[..3], &[60, 60, 60]);
+        assert_eq!(f.cells[2].bg[3], 0);
+    }
+
+    #[test]
+    fn dark_text_on_the_glass_is_lifted_but_backgrounds_are_campbell() {
+        let f = snap("\x1b[34mA\x1b[44mB", false);
+        assert_eq!(&f.cells[0].fg[..3], &[52, 100, 230]);
+        assert_eq!(&f.cells[1].bg[..3], &[0, 55, 218]);
+    }
+
+    #[test]
+    fn inverse_takes_the_ground_colours() {
+        let f = snap("\x1b[7;31mA", true);
+        assert_eq!(&f.cells[0].bg[..3], &[197, 15, 31]);
+    }
 
     #[test]
     fn combining_marks_compose_where_they_can() {

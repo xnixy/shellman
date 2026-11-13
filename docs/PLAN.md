@@ -643,6 +643,13 @@ entry points open it, and it can be Windows' default terminal (below).
   and the cells it took after them stay blank, as `wcwidth` terminals show it. Cells name a
   cluster by number (never reused, so row hashes stay true). No emoji on screen: no colour page,
   no draw, nothing rasterised. Flags stay text (Windows' emoji font has none). VS15 keeps text.
+- **Palette** (stage 3, `palette.rs`): the 16 ANSI colours come in two sets. Backgrounds, and
+  text on a coloured background (or inverse), use Campbell in both themes, so bright white on red
+  is white in the light theme too (it was the light set's dark grey, unreadable). Text on the
+  glass uses the theme's set, each colour at least 3:1 (WCAG) against its glass, tested: the
+  light set as before (3.2 to 17:1), the dark set Campbell with red, blue, magenta and bright
+  magenta lifted (they were 2.0 to 2.7:1 on the dark glass, now 3.2 to 3.9). Black on the dark
+  glass is left as it is (meant for light backgrounds).
 - **Glass and colour**: as stage 1: cells with the default background draw nothing, so the
   island is the shared glass and follows the slider live; the tab strip, window buttons, the
   profile menu and hover labels are islands too.
@@ -687,7 +694,7 @@ each; `SHELLMAN_TERMINAL_STATS=<file>` logs frame times):
   15 s, then none. A tab flooding output in the background: no frames.
 - Not yet: splits, a Settings page,
   OSC 10/11 answers through the system ConPTY (it does not forward the queries; the answering is
-  in place), a light palette that keeps bright white readable on coloured backgrounds.
+  in place).
 
 ## Session
 
