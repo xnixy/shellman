@@ -33,10 +33,14 @@ impl TopBar {
         let settings = *self.settings.get_or_insert_with(BarSettings::load);
         let mid = row.center().y;
 
-        // Status: network, volume, battery, with one soft highlight around the group.
-        let st = self.status();
+        // Status: network, volume, battery, with one soft highlight around the group. Only what
+        // the watchers already sent: nothing is read here.
+        if let Some(feed) = &mut self.status {
+            feed.take();
+        }
+        let st = self.status.as_ref().map(|f| f.now.clone()).unwrap_or_default();
         let mut items: Vec<(char, Option<String>)> = Vec::new();
-        items.push(match st.network {
+        items.push(match st.network_or_offline() {
             status::Network::Internet => (GLOBE, None),
             status::Network::Local => (LOCAL_NET, None),
             status::Network::Offline => (GLOBE, Some("offline".into())),
@@ -77,8 +81,10 @@ impl TopBar {
             let resp = resp.on_hover_text(format!("Volume {:.0}%", level * 100.0));
             let scroll = ui.input(|i| i.raw_scroll_delta.y);
             if resp.hovered() && scroll != 0.0 {
-                status::set_volume(level + scroll.signum() * 0.02);
-                self.status = None;
+                // Through the sound worker's kept endpoint, off this thread.
+                if let Some(feed) = &mut self.status {
+                    feed.scroll(scroll);
+                }
             }
         }
 

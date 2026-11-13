@@ -35,6 +35,29 @@ static REASSERT: AtomicBool = AtomicBool::new(false);
 static TASKBAR_CREATED: AtomicU32 = AtomicU32::new(0);
 /// The work-area timer's id on the host window.
 const WORK_AREA_TIMER: usize = 0x5741;
+/// Windows said the power status changed (on battery, charging, the level): the top bars read
+/// the battery again.
+static POWER: AtomicBool = AtomicBool::new(false);
+/// Repaints the top bars (set once at the start).
+static TOPS: OnceLock<Box<dyn Fn() + Send + Sync>> = OnceLock::new();
+const WM_POWERBROADCAST: u32 = 0x0218;
+const PBT_APMPOWERSTATUSCHANGE: usize = 0x000A;
+
+/// How the host repaints the top bars when Windows tells it something they show changed.
+pub fn set_wake_tops(wake: impl Fn() + Send + Sync + 'static) {
+    let _ = TOPS.set(Box::new(wake));
+}
+
+fn wake_tops() {
+    if let Some(wake) = TOPS.get() {
+        wake();
+    }
+}
+
+/// True once after the power status changed.
+pub fn take_power() -> bool {
+    POWER.swap(false, Ordering::AcqRel)
+}
 
 /// Make `hwnd`, eframe's main window, the host: never shown, never focused, and listening.
 pub fn start(hwnd: isize, ctx: egui::Context) {
@@ -129,6 +152,10 @@ unsafe extern "system" fn host_proc(
             crate::workarea::trace("work area changed");
             watch_work_area(hwnd, crate::workarea::QUIET);
             request_layout();
+        }
+        WM_POWERBROADCAST if wparam.0 == PBT_APMPOWERSTATUSCHANGE => {
+            POWER.store(true, Ordering::Release);
+            wake_tops();
         }
         WM_TIMER if wparam.0 == WORK_AREA_TIMER => {
             work_area_timer(hwnd);

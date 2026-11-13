@@ -9,31 +9,30 @@
 //! islands it is transparent, and a click there does nothing, except in the top-left corner,
 //! which opens the launcher as the corner always has.
 //!
-//! It repaints when the app in front changes, on its own input, and once a minute for the clock;
-//! otherwise it is idle.
+//! It repaints when the app in front changes, on its own input, when a status watcher hears a
+//! change (`status`), and once a minute for the clock; otherwise it is idle.
 
 mod clock;
 mod layout;
 mod left;
 mod right;
+mod status;
 
 pub use layout::{HEIGHT, ISLAND_H};
 
 use crate::tray::{demo, view::{Place, TrayTextures}, Tray, TrayIcon};
 use shellman_core::settings::bar::BarSettings;
-use shellman_core::system::{clock as system_clock, status};
+use shellman_core::system::clock as system_clock;
 use shellman_core::winlist::AppWindow;
 use shellman_ui::glass::{islands, Island};
 use shellman_ui::theme::{self, colors};
-use std::time::{Duration, Instant};
+use status::StatusFeed;
 use windows::Win32::UI::Input::KeyboardAndMouse::{keybd_event, KEYEVENTF_KEYUP, VK_LWIN};
-
-/// Status is read again after this long, or right after the user changes it.
-const STATUS_TTL: Duration = Duration::from_secs(30);
 
 #[derive(Default)]
 pub struct TopBar {
-    status: Option<(Instant, Status)>,
+    /// The status icons' readings, followed by watchers on their own threads.
+    status: Option<StatusFeed>,
     /// The tray, when shellman owns it (Explorer's taskbar is not running).
     tray: Option<Tray>,
     /// Stand-in icons for the test bar, which hosts no tray, so the look can be judged.
@@ -47,11 +46,6 @@ pub struct TopBar {
     badge_clicked: bool,
 }
 
-struct Status {
-    volume: Option<status::Volume>,
-    network: status::Network,
-    battery: Option<status::Battery>,
-}
 
 /// The app in front, as the left island shows it.
 pub struct Front<'a> {
@@ -62,8 +56,21 @@ pub struct Front<'a> {
 
 impl TopBar {
     /// `test` is the `--no-shell` bar: it has no tray, so it shows a few stand-in icons.
-    pub fn new(tray: Option<Tray>, test: bool) -> Self {
-        Self { tray, demo: if test { demo::icons() } else { Vec::new() }, ..Default::default() }
+    /// `wake` repaints the top bars, from any thread (the status watchers call it).
+    pub fn new(tray: Option<Tray>, test: bool, wake: std::sync::Arc<dyn Fn() + Send + Sync>) -> Self {
+        Self {
+            tray,
+            demo: if test { demo::icons() } else { Vec::new() },
+            status: Some(StatusFeed::start(wake)),
+            ..Default::default()
+        }
+    }
+
+    /// Windows said the power status changed, or the machine woke: read the battery again.
+    pub fn power_changed(&mut self) {
+        if let Some(s) = &mut self.status {
+            s.power_changed();
+        }
     }
 
     /// True once after the clock's island (the notifications) was clicked.
@@ -85,18 +92,6 @@ impl TopBar {
         islands
     }
 
-    fn status(&mut self) -> &Status {
-        let stale = self.status.as_ref().is_none_or(|(at, _)| at.elapsed() > STATUS_TTL);
-        if stale {
-            let fresh = Status {
-                volume: status::volume(),
-                network: status::network(),
-                battery: status::battery(),
-            };
-            self.status = Some((Instant::now(), fresh));
-        }
-        &self.status.as_ref().unwrap().1
-    }
 
     fn draw(&mut self, ctx: &egui::Context, front: Option<Front>, composed: bool, place: &Place) -> Vec<Island> {
         theme::set_light(crate::app::light(ctx));

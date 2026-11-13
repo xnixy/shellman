@@ -48,6 +48,9 @@ impl Shared {
         // The notifications list closes when another app comes forward.
         self.notify.front_is(front_hwnd);
         self.top.badge = self.notify.badge();
+        if host::take_power() {
+            self.top.power_changed();
+        }
         let front = front.as_ref().map(|window| topbar::Front { window, icon });
         let place = Place { device, primary, origin };
         let islands = self.top.frame(ctx, front, surface::composed(hwnd), &place);

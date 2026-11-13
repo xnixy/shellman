@@ -72,6 +72,10 @@ fn main() -> eframe::Result {
                 }
             }
             let wake = wake::Wake::new(cc.egui_ctx.clone());
+            {
+                let wake = wake.clone();
+                host::set_wake_tops(move || wake.tops());
+            }
             // Become the tray first: without Explorer, app-bar requests then come to shellman,
             // which declines them, and work areas are set directly instead.
             let tray = if test {
@@ -98,7 +102,10 @@ fn main() -> eframe::Result {
             }
             let shared = app::Shared {
                 dock: dock::Dock::new(cc.egui_ctx.clone(), glass, wake.clone()),
-                top: topbar::TopBar::new(tray, test),
+                top: topbar::TopBar::new(tray, test, {
+                    let wake = wake.clone();
+                    std::sync::Arc::new(move || wake.tops())
+                }),
                 bars: bars::Bars::new(mode),
                 preview: preview::Preview::new(cc.egui_ctx.clone()),
                 notify: notify::Notify::new(cc.egui_ctx.clone(), dnd_was_on()),
