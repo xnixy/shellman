@@ -21,12 +21,14 @@
 //! `glass::guard` before Windows sees it, and changes only when what shows does.
 //!
 //! Pieces: `feed` (what shows, and when), `layout` (geometry), `target` (which bar), `draw`
-//! (painting), `act` (doing what was clicked, off the UI thread), `window` (Win32).
+//! (painting), `act` (doing what was clicked, off the UI thread), `window` (Win32), `native`
+//! (Windows' own banner, hidden while shellman shows the toasts).
 
 mod act;
 mod draw;
 mod feed;
 pub(crate) mod layout;
+mod native;
 pub mod summon;
 pub mod target;
 pub(crate) mod window;
@@ -147,6 +149,7 @@ pub struct Notify {
 impl Notify {
     pub fn new(ctx: egui::Context, dnd: bool) -> Self {
         let source: Arc<dyn Source> = Arc::new(Platform::new());
+        native::start();
         let incoming: Incoming = Arc::default();
         let inbox = incoming.clone();
         let watch = Watch::start(
@@ -291,8 +294,14 @@ impl Notify {
         }
         let read = match read {
             Some(Ok(list)) => {
+                // shellman shows the store's toasts: Windows' own banner would be a second copy.
+                native::ensure();
                 self.store = list;
                 Some(Ok(self.with_balloons()))
+            }
+            Some(Err(e)) => {
+                native::release();
+                Some(Err(e))
             }
             None if !fresh.is_empty() => Some(Ok(self.with_balloons())),
             other => other,

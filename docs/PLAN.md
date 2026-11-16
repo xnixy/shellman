@@ -373,6 +373,15 @@ Rule: **the top bar is the system, the dock is apps.** Both are windows of one p
   sends `NIN_BALLOONUSERCLICK`); they live only in the bar process. Not captured: anything an app
   shows in its own window, toasts Windows itself suppresses (Focus, an app's notifications turned
   off in Windows), and toasts while the privacy switch is off.
+- Windows' own banner: while the modern-apps host runs, ShellExperienceHost draws its banner
+  beside shellman's toast (every notification showed twice, 15 Nov). It is one CoreWindow in the
+  notification band (`ZBID_IMMERSIVE_NOTIFICATION`, 4; `EnumWindows` does not list it,
+  `FindWindowEx` does), zero pixels tall at rest and grown and shown again for each toast.
+  `notify::native` hooks that process (`EVENT_OBJECT_SHOW`..`LOCATIONCHANGE`) and hides it as soon
+  as it has height; the toast still reaches the store. Looked for at each successful read of the
+  store, never polled; let go while the store cannot be read (privacy switch off), so Windows'
+  banner is then the only one. Tried with `examples/native_banner`: the banner hid on its first
+  move, within a millisecond.
 - Windows: the notifications and calendar panels are one window each, made on first use and
   kept, parked cloaked with no islands between uses, sized to their content (never to the
   monitor; through `glass::guard`), placed in physical pixels on the clicked bar's monitor. One
@@ -1169,7 +1178,7 @@ opens without Explorer (Bluetooth: `bthprops.cpl`; Sound: `mmsys.cpl`; also `mai
 `sysdm.cpl`). Never `ncpa.cpl`, `control.exe` or Power Options (they start Explorer) or
 `desk.cpl` (it opens Settings).
 
-Not yet tried with the host running: toasts, the touch keyboard, snap layouts, sleep and resume,
+Not yet tried with the host running: the touch keyboard, snap layouts, sleep and resume,
 display changes, long uptime.
 
 ### A host of shellman's own (tried; cannot work)
