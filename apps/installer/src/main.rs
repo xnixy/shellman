@@ -138,7 +138,7 @@ fn pack(from: &std::path::Path, out: Option<PathBuf>) -> i32 {
 
 fn quiet_install(a: &Args, p: payload::Payload, prefix: &std::path::Path) -> i32 {
     let was = work::current(prefix);
-    let choice = work::Choice { prefix: prefix.to_path_buf(), shortcuts: true, shell: a.shell || was.shell, terminal: a.terminal || was.terminal, hook: a.hook || was.hook };
+    let choice = work::Choice { prefix: prefix.to_path_buf(), shortcuts: true, shell: a.shell || was.shell, terminal: a.terminal || was.terminal, hook: a.hook || was.hook, firefox: false };
     let (tx, rx) = std::sync::mpsc::channel();
     work::install(p, choice, was, tx, || {});
     for m in rx {

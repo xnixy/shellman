@@ -56,6 +56,13 @@ struct App {
     wt: bool,
     plan: Option<UninstallPlan>,
     purge: bool,
+    /// Install: Firefox is there, so the wizard offers to style it.
+    firefox_here: bool,
+    /// Uninstall: the profiles with the look, whether to take it out, and whether Firefox was
+    /// found open when Uninstall was pressed.
+    ff_profiles: Vec<PathBuf>,
+    remove_firefox: bool,
+    ff_open: bool,
     log: Vec<String>,
     progress: Option<f32>,
     rx: Option<Receiver<Msg>>,
@@ -149,6 +156,11 @@ impl App {
             shell: was.shell,
             terminal: was.terminal,
             hook: was.hook,
+            firefox: false,
+        };
+        let (firefox_here, ff_profiles) = match mode {
+            Mode::Install(_) => (work::firefox_installed(), Vec::new()),
+            Mode::Uninstall => (false, work::firefox_profiles_with_look()),
         };
         App {
             mode,
@@ -160,6 +172,10 @@ impl App {
             wt: work::windows_terminal_installed(),
             plan,
             purge: false,
+            firefox_here,
+            remove_firefox: !ff_profiles.is_empty(),
+            ff_profiles,
+            ff_open: false,
             log: Vec::new(),
             progress: None,
             rx: None,
@@ -193,7 +209,15 @@ impl App {
                 self.choice.prefix = PathBuf::from(self.prefix.trim());
                 work::install(p.clone(), self.choice.clone(), self.was.clone(), tx, wake);
             }
-            Mode::Uninstall => work::uninstall(PathBuf::from(&self.prefix), self.purge, tx, wake),
+            Mode::Uninstall => {
+                let firefox = if self.remove_firefox { self.ff_profiles.clone() } else { Vec::new() };
+                // Once shellman is gone nothing is left to take the look out: wait for Firefox.
+                self.ff_open = work::firefox_open(&firefox);
+                if self.ff_open {
+                    return;
+                }
+                work::uninstall(PathBuf::from(&self.prefix), self.purge, firefox, tx, wake)
+            }
         }
         self.rx = Some(rx);
         self.page = Page::Working;
@@ -281,13 +305,23 @@ impl App {
                 "From the next sign-in, instead of Explorer. Hold Shift while signing in to get Explorer.",
                 &mut self.choice.shell,
             );
+            if self.firefox_here {
+                theme::setting_row(
+                    ui,
+                    "Also style Firefox",
+                    "The Islands look in Firefox's default profile, from its next start. Settings \u{203a} Appearance \u{203a} Firefox changes or removes it.",
+                    &mut self.choice.firefox,
+                );
+            }
         });
         vec![folder, options]
     }
 
     /// Uninstall: what will happen, then the one choice.
     fn choose_uninstall(&mut self, ui: &mut egui::Ui, area: Rect) -> Vec<Rect> {
-        let settings = Rect::from_min_max(pos2(area.left(), area.bottom() - 84.0), area.max);
+        let rows = if self.ff_profiles.is_empty() { 1.0 } else { 2.0 };
+        let extra = if self.ff_open { 24.0 } else { 0.0 };
+        let settings = Rect::from_min_max(pos2(area.left(), area.bottom() - 30.0 - 54.0 * rows - extra), area.max);
         let what = Rect::from_min_max(area.min, pos2(area.right(), settings.top() - GAP));
         let c = colors();
         let Some(p) = &self.plan else {
@@ -333,7 +367,18 @@ impl App {
             ui.add(egui::Label::new(RichText::new(format!("From {from}")).size(11.5).color(c.muted)).wrap());
         });
         inside(ui, settings, |ui| {
+            ui.spacing_mut().item_spacing.y = 14.0;
             theme::setting_row(ui, "Also remove my settings", "Your pins, look and app settings. Kept otherwise, for a later install.", &mut self.purge);
+            if !self.ff_profiles.is_empty() {
+                let n = self.ff_profiles.len();
+                let detail = if n == 1 { "From your Firefox profile; what it replaced is put back.".to_string() } else { format!("From {n} Firefox profiles; what it replaced is put back.") };
+                if theme::setting_row(ui, "Also remove the look from Firefox", &detail, &mut self.remove_firefox).changed() {
+                    self.ff_open = false;
+                }
+                if self.ff_open {
+                    ui.add(egui::Label::new(RichText::new("Firefox is open. Close it, then press Uninstall again.").size(12.0).color(c.danger_text)).wrap());
+                }
+            }
         });
         vec![what, settings]
     }

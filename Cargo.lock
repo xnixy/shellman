@@ -3009,6 +3009,7 @@ dependencies = [
  "flate2",
  "raw-window-handle",
  "shellman-buildinfo",
+ "shellman-core",
  "shellman-setup",
  "shellman-ui",
  "shellman-update-core",
