@@ -35,6 +35,8 @@ pub trait Registry {
     fn set_text(&self, hive: Hive, key: &str, name: &str, text: &str) -> Result<(), String>;
     /// Set a binary value, creating the key when it is missing.
     fn set_binary(&self, hive: Hive, key: &str, name: &str, data: &[u8]) -> Result<(), String>;
+    /// Set a REG_DWORD value, creating the key when it is missing.
+    fn set_dword(&self, hive: Hive, key: &str, name: &str, value: u32) -> Result<(), String>;
     fn delete(&self, hive: Hive, key: &str, name: &str) -> Result<(), String>;
     /// Create a key that disappears when the user logs off. `Ok(true)` when it was new.
     fn create_volatile(&self, hive: Hive, key: &str) -> Result<bool, String>;
@@ -176,6 +178,20 @@ mod real {
             r.ok().map_err(|e| e.to_string())
         }
 
+        fn set_dword(&self, hive: Hive, key: &str, name: &str, value: u32) -> Result<(), String> {
+            let mut hk = HKEY::default();
+            unsafe {
+                RegCreateKeyExW(root(hive), &HSTRING::from(key), None, PCWSTR::null(), REG_OPTION_NON_VOLATILE, KEY_SET_VALUE, None, &mut hk, None)
+            }
+            .ok()
+            .map_err(|e| format!("cannot open the key ({e})"))?;
+            let r = unsafe { RegSetValueExW(hk, &HSTRING::from(name), None, REG_DWORD, Some(&value.to_le_bytes())) };
+            unsafe {
+                let _ = RegCloseKey(hk);
+            }
+            r.ok().map_err(|e| e.to_string())
+        }
+
         fn delete(&self, hive: Hive, key: &str, name: &str) -> Result<(), String> {
             let hk = open(hive, key, KEY_SET_VALUE).ok_or("cannot open the key")?;
             let r = unsafe { RegDeleteValueW(hk, &HSTRING::from(name)) };
@@ -278,6 +294,15 @@ pub mod fake {
             }
             self.log.borrow_mut().push(format!("set {name}={data:02x?}"));
             self.put(hive, key, name, Value::Binary(data.to_vec()));
+            Ok(())
+        }
+
+        fn set_dword(&self, hive: Hive, key: &str, name: &str, value: u32) -> Result<(), String> {
+            if self.refuse.borrow().iter().any(|r| r.eq_ignore_ascii_case(name)) {
+                return Err("refused".into());
+            }
+            self.log.borrow_mut().push(format!("set {name}={value}"));
+            self.put(hive, key, name, Value::Dword(value));
             Ok(())
         }
 

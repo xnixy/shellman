@@ -1,6 +1,7 @@
 //! The pages of the window, one file each.
 
 mod about;
+mod accessibility;
 mod apps;
 mod appearance;
 mod bar;
@@ -24,6 +25,9 @@ mod storage;
 mod storage_rows;
 mod datetime;
 mod power;
+mod privacy;
+mod live;
+mod winlink;
 mod mouse;
 mod slider_row;
 mod sound;
@@ -34,6 +38,7 @@ mod terminal;
 mod updates;
 mod updates_rows;
 
+pub use accessibility::AccessView;
 pub use apps::AppsView;
 pub use desktop_widgets::WidgetsView;
 pub use display::DisplayView;
@@ -44,6 +49,7 @@ pub use default_apps::DefaultAppsView;
 pub use storage::StorageView;
 pub use datetime::DateTimeView;
 pub use power::PowerView;
+pub use privacy::PrivacyView;
 pub use sound::SoundView;
 pub use startup::StartupView;
 pub use terminal::TerminalView;
@@ -62,6 +68,8 @@ pub enum Section {
     DateTime,
     Storage,
     DefaultApps,
+    Accessibility,
+    Privacy,
     Updates,
     Apps,
     Startup,
@@ -74,7 +82,7 @@ pub enum Section {
 }
 
 impl Section {
-    pub const ALL: [Section; 18] = [
+    pub const ALL: [Section; 20] = [
         Section::Appearance,
         Section::Desktop,
         Section::Sound,
@@ -84,6 +92,8 @@ impl Section {
         Section::DateTime,
         Section::Storage,
         Section::DefaultApps,
+        Section::Accessibility,
+        Section::Privacy,
         Section::Updates,
         Section::Apps,
         Section::Startup,
@@ -106,6 +116,8 @@ impl Section {
             Section::DateTime => "Date, time & region",
             Section::Storage => "Storage",
             Section::DefaultApps => "Default apps",
+            Section::Accessibility => "Accessibility",
+            Section::Privacy => "Privacy & security",
             Section::Updates => "Windows Update",
             Section::Apps => "Apps",
             Section::Startup => "Startup apps",
@@ -131,6 +143,9 @@ impl Section {
             Section::DateTime => '\u{E823}',
             Section::Storage => glyph::DRIVE,
             Section::DefaultApps => '\u{E8E5}',
+            // Segoe Fluent Icons' EaseOfAccess and Lock, as Windows' own Settings shows them.
+            Section::Accessibility => '\u{E776}',
+            Section::Privacy => '\u{E72E}',
             // Segoe Fluent Icons' Sync glyph, as Windows' own Settings shows for Windows Update.
             Section::Updates => '\u{E895}',
             Section::Apps => '\u{E71D}',
@@ -157,6 +172,8 @@ impl Section {
             Section::DateTime => datetime::show(ui, state),
             Section::Storage => storage::show(ui, state),
             Section::DefaultApps => default_apps::show(ui, state),
+            Section::Accessibility => accessibility::show(ui, state),
+            Section::Privacy => privacy::show(ui, state),
             Section::Updates => updates::show(ui, state),
             Section::Apps => apps::show(ui, state),
             Section::Startup => startup::show(ui, state),
@@ -185,6 +202,8 @@ impl Section {
                 | Section::DateTime
                 | Section::Storage
                 | Section::DefaultApps
+                | Section::Accessibility
+                | Section::Privacy
                 | Section::Updates
                 | Section::Apps
                 | Section::Startup
@@ -209,6 +228,8 @@ impl Section {
             Section::DateTime => "datetime",
             Section::Storage => "storage",
             Section::DefaultApps => "default-apps",
+            Section::Accessibility => "accessibility",
+            Section::Privacy => "privacy",
             Section::Updates => "windows-update",
             Section::Apps => "apps",
             Section::Startup => "startup",

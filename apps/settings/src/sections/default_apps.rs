@@ -122,20 +122,7 @@ fn load(ctx: &egui::Context, item: usize, out: &Shared<Choices>) {
     });
 }
 
-/// Open an `ms-settings:` link from a thread of its own (ShellExecute may take a moment).
-fn open_link(link: String) {
-    use windows::core::HSTRING;
-    use windows::Win32::System::Com::{CoInitializeEx, COINIT_APARTMENTTHREADED};
-    use windows::Win32::UI::Shell::ShellExecuteW;
-    use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
-    std::thread::spawn(move || {
-        // SAFETY: COM initialised on this thread first; the strings outlive the call.
-        unsafe {
-            let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
-            ShellExecuteW(None, &HSTRING::from("open"), &HSTRING::from(link), None, None, SW_SHOWNORMAL);
-        }
-    });
-}
+use super::winlink::open_link;
 
 pub fn show(ui: &mut egui::Ui, st: &mut State) {
     page::heading(ui, "Default apps", "Which app opens each kind of file and link.");

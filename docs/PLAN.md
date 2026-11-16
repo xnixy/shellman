@@ -20,7 +20,7 @@ accent color, fast.
 | `apps/shelf` | desktop icons, the desktop's right-click menu | stage 1 working: the shelf on every monitor or the primary only (drop zone, Desktop / Downloads / Recent stacks that fan open, drag out, drop in), the right-click menu on every monitor, Settings › Desktop; stage 2 working: the Today and Now playing widgets top right (primary or every monitor); arrange mode (Edit desktop…: drag the shelf and each widget, snapping, saved per monitor) |
 | `apps/tasks` | Task Manager (Ctrl+Shift+Esc, through the switcher's hook) | working: Processes (apps and background, grouped, sort, search, End task / End process tree / details), Performance (CPU, memory, GPUs, disks, network), Services (read-only: status, startup type, PID, description, sort, search, go to process; read through the SCM in `crates/core/src/services`, off the UI thread, only while the page shows). End task / tree try unelevated first and, only when Windows refuses, go through `shellman-elevate`'s `end-processes <pid>:<start time>...` behind the UAC prompt (the helper rechecks start time and refuses critical processes); critical processes stay un-endable. Reads through `crates/core/src/procs` |
 | `apps/terminal` | Windows Terminal | stage 2: tabs, selection, mouse, profiles; `-d`/`-p`/`-e`/`--hold`; shellman's "Open Terminal here" opens it; can be Windows' default terminal (`--register-default-terminal`). Stage 3: find, split panes, colour schemes, Settings › Terminal, the UI language's names and focus. Next: the warning before a large paste, the wheel over an unfocused pane, splits kept across restarts |
-| `apps/settings` | Settings pages for the shell | working: Appearance, Desktop, Dock, Top bar, Launcher, About; rebuilt Windows pages: Sound, Display, Apps, Startup, Fonts, Mouse & keyboard, Power, Date, time & region, Storage, Default apps (changes through Windows Settings), Windows Update |
+| `apps/settings` | Settings pages for the shell | working: Appearance, Desktop, Dock, Top bar, Launcher, About; rebuilt Windows pages: Sound, Display, Apps, Startup, Fonts, Mouse & keyboard, Power, Date, time & region, Storage, Default apps (changes through Windows Settings), Accessibility, Privacy & security, Windows Update |
 | `apps/session` | the shell process itself | the shell: the per-user Winlogon `Shell` value points at it (in daily use since 2026-11-12). Starts and supervises the apps, runs startup items, safety net, `--install`/`--uninstall` |
 | `apps/setup` | the install engine | `shellman-setup`: `install`, `update [--restart]`, `status`, `uninstall [--revert]`; a library plus a console tool that also works from a release folder (see Install and update) |
 | `apps/installer` | the installer and uninstaller | `shellman-installer`: one packed exe with a glass wizard; Apps & features runs its `--uninstall` (see Install and update) |
@@ -1064,6 +1064,42 @@ tested), else the activation manager, else PowerShell.
   so there is no elevate op for it. "Update and restart" is `power::update_and_restart`
   (`InitiateShutdownW` restart + install updates; never run live); the Control Center's power
   menu can offer it on the same signal (`updates::Snapshot` says a restart is needed).
+- Accessibility and Privacy & security (15 Nov; `system::access`, `system::privacy`). Rule: write
+  only what Windows takes from a program and then honours; show the rest with "Open in Windows
+  Settings" (an `ms-settings:` link, off with a note and the host switch while the modern-apps host
+  is off, since Windows' Settings cannot open then). Changes run on one worker per page
+  (`sections::live`), which writes and then reads again; the page reads every 2 s (5 s for
+  privacy) so Narrator started by its shortcut shows. Measured unelevated on 26300, from a process
+  outside Claude's packaged registry view, every change put back:
+  - `SystemParametersInfoW` takes and reads back: animation effects (`SPI_SETCLIENTAREAANIMATION`),
+    text cursor thickness (`SPI_SETCARETWIDTH`), touch indicator (`SPI_SETCONTACTVISUALIZATION`,
+    value in the pointer argument), notification time (`SPI_SETMESSAGEDURATION`), underline access
+    keys (`SPI_SETKEYBOARDCUES`), sticky / filter / toggle / mouse keys and their shortcuts (struct
+    read, one bit flipped, written back whole), flash on sounds (`SPI_SETSOUNDSENTRY`; "off" clears
+    only `SSF_SOUNDSENTRYON` and keeps the effect, as the first version did not).
+  - Transparency effects: `EnableTransparency` plus `WM_SETTINGCHANGE` "ImmersiveColorSet";
+    shellman-session republishes DWM's WNF transparency state on it (stamp 7 → 8 → 9, off → on).
+  - Narrator, Magnifier, the on-screen keyboard and Live captions start through ShellExecute: their
+    manifests ask for UI access, which `CreateProcess` refuses. A uiAccess window cannot be closed
+    from a normal process (WM_CLOSE and termination refused), so the page offers Start only and
+    names each one's own off shortcut.
+  - Shown only: text size (`TextScaleFactor`), pointer size and style, colour filters, contrast
+    theme (`SPI_GETHIGHCONTRAST`), mono audio, always show scroll bars, caption style: Windows'
+    Settings applies these with calls of its own.
+  - App permissions are shown only: the consent store
+    (`CapabilityAccessManager\ConsentStore`, HKLM device switch, HKCU user / per-package /
+    `NonPackaged` switches, `AppPrivacy` policies) is kept by `camsvc`, which does not follow
+    registry writes: setting the user's or the desktop apps' microphone `Value` to `Deny` left
+    WinRT `AppCapability.CheckAccess("microphone")` at `Allowed`. Package names come from the
+    package manager.
+  - Written as HKCU values Windows reads where it uses them (read back, not checked against
+    Windows' Settings, which cannot open here): advertising ID (`AdvertisingInfo\Enabled`, locked
+    by `DisabledByGroupPolicy`), language list (`HttpAcceptLanguageOptOut`), app-launch tracking
+    (`Start_TrackProgs`), suggested content (three `SubscribedContent-*Enabled`), Settings
+    notifications, SafeSearch and cloud search / history / highlights (`SearchSettings`).
+  - Shown with their source: diagnostic data (`AllowTelemetry`, policy first), feedback
+    frequency (`Siuf\Rules`, or the `DoNotShowFeedbackNotifications` policy), activity history
+    (`PublishUserActivities` policy), online speech. Windows Security is links only.
 - Brightness (Display page and Control Center, one `brightness::BrightnessWatch`): a monitor with
   HDR on gets "Brightness (HDR)", Windows' SDR content brightness (`display::sdr`): read with the
   documented `GET_SDR_WHITE_LEVEL`, set with the private `DisplayConfigSetDeviceInfo` type -18

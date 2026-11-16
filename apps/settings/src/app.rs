@@ -272,6 +272,12 @@ impl SettingsApp {
                 if self.section != Section::Updates {
                     self.st.updates.stop();
                 }
+                if self.section != Section::Accessibility {
+                    self.st.access.stop();
+                }
+                if self.section != Section::Privacy {
+                    self.st.privacy.stop();
+                }
                 if self.section != Section::DefaultApps {
                     self.st.default_apps.stop();
                 }
