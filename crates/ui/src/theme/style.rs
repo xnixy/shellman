@@ -168,12 +168,12 @@ pub fn focus_ring(ui: &Ui, resp: &egui::Response, rect: egui::Rect, radius: f32)
 /// is listening (egui asks for widget info only then, or when the item gains focus), so a name
 /// that costs a format or a Windows call is fine.
 pub fn speak(resp: &egui::Response, role: egui::WidgetType, name: impl Fn() -> String) {
-    resp.widget_info(|| egui::WidgetInfo::labeled(role, resp.enabled(), name()));
+    crate::access::describe(&resp, || egui::WidgetInfo::labeled(role, resp.enabled(), name()));
 }
 
 /// [`speak`] for an item that can be chosen (a tile, a day, a row): also whether it is.
 pub fn speak_selected(resp: &egui::Response, role: egui::WidgetType, selected: bool, name: impl Fn() -> String) {
-    resp.widget_info(|| egui::WidgetInfo::selected(role, resp.enabled(), selected, name()));
+    crate::access::describe(&resp, || egui::WidgetInfo::selected(role, resp.enabled(), selected, name()));
 }
 
 /// High contrast's stand-in for a hover wash and a selected fill, which it does not allow (only
@@ -231,7 +231,7 @@ pub fn checkbox(ui: &mut Ui, checked: &mut bool, label: &str) -> egui::Response 
     let galley = ui.painter().layout_no_wrap(label.to_string(), egui::FontId::proportional(13.0), c.text);
     let size = Vec2::new(20.0 + 10.0 + galley.size().x, 22.0_f32.max(galley.size().y));
     let (rect, mut resp) = ui.allocate_exact_size(size, egui::Sense::click());
-    resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Checkbox, true, *checked, label));
+    crate::access::describe(&resp, || egui::WidgetInfo::selected(egui::WidgetType::Checkbox, true, *checked, label));
     focus_ring(ui, &resp, rect, 6.0);
     if resp.clicked() {
         *checked = !*checked;

@@ -245,7 +245,11 @@ pub fn declare(ctx: &Context) {
         .with_position([-30000.0, -30000.0])
         .with_inner_size([240.0, 200.0]);
     // Not under the lock: where viewports are embedded, egui runs the frame right here.
-    ctx.show_viewport_deferred(viewport_id(), builder, |ctx, _| frame(ctx));
+    ctx.show_viewport_deferred(viewport_id(), builder, |ctx, _| {
+        frame(ctx);
+        // The menu is never the root window: it names its rows to screen readers itself.
+        crate::access::publish(ctx);
+    });
     let mut core = lock();
     if core.hwnd.is_none() {
         match win::own_window(TITLE) {

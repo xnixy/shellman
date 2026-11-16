@@ -146,8 +146,8 @@ pub fn slider(ui: &mut Ui, id: egui::Id, value: f32, glyph: char, name: &str, gl
 pub fn round_button(ui: &mut Ui, glyph: char, size: f32, active: bool, tip: &str) -> Response {
     let c = colors();
     let (rect, resp) = ui.allocate_exact_size(Vec2::splat(size), Sense::click());
-    // "Selected" while what it opens is open (the power choices).
-    theme::speak_selected(&resp, egui::WidgetType::Button, active, || tip.to_owned());
+    // A plain button (Settings, Lock, Sleep invoke); the power one says when its choices show.
+    theme::speak(&resp, egui::WidgetType::Button, || if active { format!("{tip}, choices shown") } else { tip.to_owned() });
     theme::focus_ring(ui, &resp, rect, size / 2.0);
     let (on_fill, on_fg) = on_colors(&c);
     let (fill, fg) = match (active, resp.hovered()) {

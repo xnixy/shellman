@@ -100,7 +100,7 @@ pub fn flat_item(ui: &mut egui::Ui, icon: Icon, label: &str, shortcut: &str, che
     let width = ui.available_width().max(row::menu_width(ui.ctx(), std::slice::from_ref(&row)) - 2.0 * row::PAD);
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(width, ROW_H), if enabled { Sense::click() } else { Sense::hover() });
     let role = if checked { egui::WidgetType::Checkbox } else { egui::WidgetType::Button };
-    resp.widget_info(|| {
+    crate::access::describe(&resp, || {
         let mut info = egui::WidgetInfo::labeled(role, enabled, label);
         info.selected = checked.then_some(true);
         info

@@ -577,6 +577,9 @@ impl eframe::App for Shelf {
             ctx.show_viewport_immediate(id, builder, |ctx, _| {
                 self.view_frame(ctx, view);
                 shellman_ui::font_atlas::end_frame(ctx);
+                // The first shelf is the root window (eframe's own screen reader adapter); these
+                // others get theirs here.
+                shellman_ui::access::publish(ctx);
             });
         }
         if let Some(action) = self.bar.frame(ctx) {

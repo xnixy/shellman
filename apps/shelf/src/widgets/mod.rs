@@ -112,6 +112,7 @@ impl Widgets {
             ctx.show_viewport_deferred(id, builder, move |vctx, _| {
                 with_state(|s| s.frame_of(vctx, id));
                 shellman_ui::font_atlas::end_frame(vctx);
+                shellman_ui::access::publish(vctx);
             });
             ctx.request_repaint_of(id);
         }

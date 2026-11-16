@@ -30,7 +30,7 @@ impl Out {
     /// Say what the slider is to a screen reader: `name`, and its level as a percentage.
     pub fn named(self, name: &str) -> Self {
         let (enabled, value) = (self.response.enabled(), (self.shown * 100.0).round() as f64);
-        self.response.widget_info(|| egui::WidgetInfo::slider(enabled, value, name));
+        crate::access::describe(&self.response, || egui::WidgetInfo::slider(enabled, value, name));
         self
     }
 }

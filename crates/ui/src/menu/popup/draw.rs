@@ -163,8 +163,8 @@ pub fn spoken(r: &Row) -> Option<(egui::WidgetType, Option<bool>, String)> {
 }
 
 /// Name one level's visible rows for screen readers: a node over each, with its role and name,
-/// and the lit row as the selected one. The menu reads its own pointer and keys, so these only
-/// describe.
+/// the lit row holding the focus (so moving through the menu is read out). The menu reads its own
+/// pointer and keys; a screen reader's click lands on the row as a mouse click.
 pub fn speak(ui: &egui::Ui, origin: Pos2, level: &Level, rows: &[Row], hot: Option<usize>, scroll: f32, depth: usize) {
     let view = Rect::from_min_size(pos2(origin.x, origin.y + PAD), vec2(level.size.x, level.size.y - 2.0 * PAD));
     for (i, (r, &(top, h))) in rows.iter().zip(&level.rows).enumerate() {
@@ -176,9 +176,9 @@ pub fn speak(ui: &egui::Ui, origin: Pos2, level: &Level, rows: &[Row], hot: Opti
         let resp = ui.interact(rect.intersect(view), egui::Id::new(("menu row", depth, i)), egui::Sense::hover());
         let lit = hot == Some(i);
         let enabled = r.enabled;
-        resp.widget_info(|| {
+        crate::access::describe_focused(&resp, lit, || {
             let mut info = egui::WidgetInfo::labeled(role, enabled, name.clone());
-            info.selected = checked.or(lit.then_some(true));
+            info.selected = checked;
             info
         });
     }

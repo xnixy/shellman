@@ -291,7 +291,7 @@ pub fn draw(ui: &mut Ui, rect: Rect, view: &mut View, data: &Data) -> Option<Ask
             }
             for (n, e) in events.iter().take(EVENT_ROWS).enumerate() {
                 let row = Rect::from_min_size(pos2(list_area.left(), y + n as f32 * EVENT_H), vec2(list_area.width(), EVENT_H));
-                event_row(ui, row, e, data, view.selected);
+                event_row(ui, row, n, e, data, view.selected);
             }
             let more = events.len().saturating_sub(EVENT_ROWS);
             if more > 0 {
@@ -304,7 +304,7 @@ pub fn draw(ui: &mut Ui, rect: Rect, view: &mut View, data: &Data) -> Option<Ask
     asked
 }
 
-fn event_row(ui: &mut Ui, row: Rect, e: &Instance, data: &Data, day: i64) {
+fn event_row(ui: &mut Ui, row: Rect, n: usize, e: &Instance, data: &Data, day: i64) {
     let c = colors();
     let (first_day, _) = month::days_of(e, data.offset);
     let time = match e.days {
@@ -325,7 +325,7 @@ fn event_row(ui: &mut Ui, row: Rect, e: &Instance, data: &Data, day: i64) {
         e.location.clone()
     };
     // Painted text is not seen by a screen reader: the row says itself as a label.
-    let resp = ui.interact(row, egui::Id::new(("cal event", day, &e.title, e.start)), Sense::hover());
+    let resp = ui.interact(row, egui::Id::new(("cal event", n)), Sense::hover());
     shellman_ui::theme::speak(&resp, egui::WidgetType::Label, || {
         [time.as_str(), e.title.as_str(), detail.as_str()].iter().filter(|s| !s.is_empty()).copied().collect::<Vec<_>>().join(", ")
     });

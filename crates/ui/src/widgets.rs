@@ -56,7 +56,7 @@ pub fn round_button(ui: &mut Ui, g: char, enabled: bool, tip: &str) -> egui::Res
         Sense::hover()
     };
     let (rect, resp) = ui.allocate_exact_size(Vec2::splat(30.0), sense);
-    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, tip));
+    crate::access::describe(&resp, || egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, tip));
     theme::focus_ring(ui, &resp, rect, 15.0);
     if enabled && resp.hovered() {
         ui.painter()
@@ -144,7 +144,7 @@ pub fn switch(ui: &mut Ui, on: &mut bool, label: &str) -> egui::Response {
         .layout_no_wrap(label.to_owned(), FontId::proportional(13.5), c.text);
     let size = Vec2::new(36.0 + 10.0 + galley.size().x, 20.0_f32.max(galley.size().y));
     let (rect, mut resp) = ui.allocate_exact_size(size, Sense::click());
-    resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Checkbox, true, *on, label));
+    crate::access::describe(&resp, || egui::WidgetInfo::selected(egui::WidgetType::Checkbox, true, *on, label));
     if resp.clicked() {
         *on = !*on;
         resp.mark_changed();
@@ -167,7 +167,7 @@ pub fn window_name(title: &str) -> String {
 /// Give a text field a name a screen reader says (its hint is only a placeholder), with what is
 /// typed as its value; `None` for a password, whose text is never handed over.
 pub fn name_field(resp: &egui::Response, name: &str, typed: Option<&str>) {
-    resp.widget_info(|| egui::WidgetInfo {
+    crate::access::describe(&resp, || egui::WidgetInfo {
         label: Some(name.to_owned()),
         current_text_value: typed.map(str::to_owned),
         ..egui::WidgetInfo::new(egui::WidgetType::TextEdit)
@@ -178,7 +178,7 @@ pub fn name_field(resp: &egui::Response, name: &str, typed: Option<&str>) {
 /// screen reader calls it.
 pub fn toggle(ui: &mut Ui, on: &mut bool, name: &str) -> egui::Response {
     let (rect, mut resp) = ui.allocate_exact_size(Vec2::new(36.0, 20.0), Sense::click());
-    resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Checkbox, true, *on, name));
+    crate::access::describe(&resp, || egui::WidgetInfo::selected(egui::WidgetType::Checkbox, true, *on, name));
     if resp.clicked() {
         *on = !*on;
         resp.mark_changed();

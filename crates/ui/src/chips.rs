@@ -73,7 +73,8 @@ pub fn chip(
 ) -> egui::Response {
     let c = colors();
     let resp = ui.interact(rect, id, Sense::click());
-    resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, kind == Chip::Accent, label));
+    // A chip is an action ("Today", "Clear all", "Send"); the accent is its look, not a state.
+    crate::access::describe(&resp, || egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
     theme::focus_ring(ui, &resp, rect, rect.height() / 2.0);
     let hovered = resp.hovered();
     let (soft, soft_hover, line) = soft_colors(c.light);
@@ -153,7 +154,7 @@ pub fn round_icon(
         Sense::hover()
     };
     let resp = ui.interact(rect, id, sense);
-    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, name));
+    crate::access::describe(&resp, || egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, name));
     let radius = rect.width().min(rect.height()) / 2.0;
     theme::focus_ring(ui, &resp, rect, radius);
     let mut fg = if enabled {

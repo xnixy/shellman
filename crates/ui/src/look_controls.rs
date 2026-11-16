@@ -83,7 +83,7 @@ pub fn choice_chips<T: Copy + PartialEq>(ui: &mut Ui, current: T, options: &[(T,
             let w = chip_width(ui, label, false, Chip::Soft);
             let sense = if enabled { Sense::click() } else { Sense::hover() };
             let (rect, resp) = ui.allocate_exact_size(Vec2::new(w, CHIP_H), sense);
-            resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::RadioButton, enabled, selected, *label));
+            crate::access::describe(&resp, || egui::WidgetInfo::selected(egui::WidgetType::RadioButton, enabled, selected, *label));
             theme::focus_ring(ui, &resp, rect, rect.height() / 2.0);
             let (soft, soft_hover, line) = soft_colors(c.light);
             let hovered = enabled && resp.hovered();
@@ -145,7 +145,7 @@ enum Swatch {
 fn swatch(ui: &mut Ui, kind: Swatch, selected: bool, tip: &str) -> egui::Response {
     let c = colors();
     let (rect, resp) = ui.allocate_exact_size(Vec2::splat(32.0), Sense::click());
-    resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::RadioButton, true, selected, tip));
+    crate::access::describe(&resp, || egui::WidgetInfo::selected(egui::WidgetType::RadioButton, true, selected, tip));
     theme::focus_ring(ui, &resp, rect.shrink(1.0), 15.0);
     let center = rect.center();
     let radius = if resp.hovered() { 13.5 } else { 12.5 };

@@ -12,6 +12,9 @@ name = "shellman_ui"
 shellman-core.workspace = true
 shellman-icons.workspace = true
 egui.workspace = true
+# Screen readers for windows eframe does not give AccessKit (`access`): the versions eframe uses.
+accesskit = "0.17.1"
+accesskit_windows = "0.24.1"
 serde.workspace = true
 windows-core.workspace = true
 windows = { workspace = true, features = [

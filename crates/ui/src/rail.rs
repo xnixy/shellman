@@ -265,7 +265,7 @@ pub fn show(
         let cell = Rect::from_center_size(slot.center(), vec2(row_w, h));
         let resp = ui.interact(cell, Id::new(("rail", row.key.as_ref())), Sense::click());
         // A page: read as a selectable item, named by its label, with a ring under the keyboard.
-        resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, !row.dim, current, row.label.as_ref()));
+        crate::access::describe(&resp, || egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, !row.dim, current, row.label.as_ref()));
         crate::theme::focus_ring(ui, &resp, cell, 12.0);
         let (fill, fg) = if current {
             (c.accent_fill, c.on_accent)

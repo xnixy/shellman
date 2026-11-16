@@ -3082,6 +3082,8 @@ dependencies = [
 name = "shellman-ui"
 version = "0.1.0"
 dependencies = [
+ "accesskit",
+ "accesskit_windows",
  "eframe",
  "egui",
  "raw-window-handle",

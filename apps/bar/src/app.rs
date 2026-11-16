@@ -369,6 +369,8 @@ impl Host {
                 }
                 stress::glyphs(ctx);
                 font_atlas::end_frame(ctx);
+                // eframe gives only the root window to screen readers: each bar window gets its own.
+                shellman_ui::access::publish(ctx);
             });
         }
         // Each dock's preview panel, from its first preview on (see `preview`).
@@ -379,6 +381,7 @@ impl Host {
                 shared.lock().unwrap().preview_frame(ctx, &device);
                 stress::glyphs(ctx);
                 font_atlas::end_frame(ctx);
+                shellman_ui::access::publish(ctx);
             });
         }
         // So does the notifications window (see `notify`).
@@ -387,6 +390,7 @@ impl Host {
             ctx.show_viewport_deferred(notify::id(), notify::builder(), move |ctx, _| {
                 shared.lock().unwrap().notify_frame(ctx);
                 font_atlas::end_frame(ctx);
+                shellman_ui::access::publish(ctx);
             });
         }
         // And the calendar panel, from its first use on.
@@ -395,6 +399,7 @@ impl Host {
             ctx.show_viewport_deferred(calpanel::id(), calpanel::builder(), move |ctx, _| {
                 shared.lock().unwrap().calendar_frame(ctx);
                 font_atlas::end_frame(ctx);
+                shellman_ui::access::publish(ctx);
             });
         }
     }
