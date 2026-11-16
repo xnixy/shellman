@@ -65,7 +65,7 @@ mod tests {
 
     #[test]
     fn only_the_front_window_gets_the_accent() {
-        let on = FramesSettings::default();
+        let on = FramesSettings { accent_border: true, ..FramesSettings::default() };
         assert_eq!(border_for(true, &on), Border::Accent);
         assert_eq!(border_for(false, &on), Border::Dim);
         let off = FramesSettings { accent_border: false, ..on };

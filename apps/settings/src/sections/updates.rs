@@ -61,7 +61,7 @@ impl UpdatesView {
             ctx.request_repaint();
         }));
         self.rx = Some(rx);
-        self.settings_opens = shellman_core::app_host::modern_apps_available();
+        self.settings_opens = super::winlink::host();
     }
 
     fn poll(&mut self) {
@@ -275,23 +275,9 @@ fn pause_group(ui: &mut egui::Ui, v: &mut UpdatesView, snap: &Snapshot, now: i64
         if v.settings_opens {
             ui.add_space(14.0);
             if link_row(ui, "More options in Windows Settings").clicked() {
-                open_windows_settings();
+                // Starts Windows' host for Settings first when it is not running.
+                super::winlink::open_link(SETTINGS_URI.to_owned());
             }
-        }
-    });
-}
-
-/// Open Windows' own Windows Update page, from a thread of its own.
-fn open_windows_settings() {
-    use windows::core::HSTRING;
-    use windows::Win32::System::Com::{CoInitializeEx, COINIT_APARTMENTTHREADED};
-    use windows::Win32::UI::Shell::ShellExecuteW;
-    use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
-    std::thread::spawn(|| {
-        // SAFETY: COM is started on this thread first; the strings outlive the call.
-        unsafe {
-            let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
-            ShellExecuteW(None, &HSTRING::from("open"), &HSTRING::from(SETTINGS_URI), None, None, SW_SHOWNORMAL);
         }
     });
 }

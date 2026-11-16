@@ -1,7 +1,7 @@
 //! "Open in Windows Settings": for what Windows only changes in its own Settings, a row shows the
 //! value and a button opens Windows' Settings on that page (an `ms-settings:` link). Windows'
-//! Settings needs the host for modern apps; without it the buttons are off and the page says how
-//! to turn the host on.
+//! Settings needs the host for modern apps; when it is not running, the first click asks for it
+//! (`app_host::want_now`, for the rest of this sign-in) and opens the page once it is up.
 
 use crate::page;
 use crate::state::State;
@@ -10,13 +10,17 @@ use shellman_ui::theme::{self, colors};
 use shellman_ui::widgets::switch;
 
 /// Open a link (`ms-settings:`, `windowsdefender:`) from a thread of its own (ShellExecute may
-/// take a moment).
+/// take a moment). Windows' Settings needs the host for modern apps: when it is not running, it is
+/// asked for first (for the rest of this sign-in) and the link opens once it is up.
 pub fn open_link(link: String) {
     use windows::core::HSTRING;
     use windows::Win32::System::Com::{CoInitializeEx, COINIT_APARTMENTTHREADED};
     use windows::Win32::UI::Shell::ShellExecuteW;
     use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
     std::thread::spawn(move || {
+        if !shellman_core::app_host::want_now(std::time::Duration::from_secs(20)) {
+            return;
+        }
         // SAFETY: COM initialised on this thread first; the strings outlive the call.
         unsafe {
             let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
@@ -25,24 +29,26 @@ pub fn open_link(link: String) {
     });
 }
 
-/// Whether Windows' Settings can open now. `SHELLMAN_PRETEND_HOST=on|off` shows the page as it is
-/// with the host on or off, without changing it (for screenshots).
+/// Whether Windows' Settings can be opened: it can now, or its host can be started on demand.
+/// `SHELLMAN_PRETEND_HOST=on|off` shows the page as it is with or without it, without changing
+/// anything (for screenshots).
 pub fn host() -> bool {
     match std::env::var("SHELLMAN_PRETEND_HOST").as_deref() {
         Ok("on") => true,
         Ok("off") => false,
-        _ => shellman_core::app_host::modern_apps_available(),
+        _ => shellman_core::app_host::modern_apps_reachable(),
     }
 }
 
 /// The button: opens `uri` when Windows' Settings can open, dimmed with the reason when not.
 /// `name` is what a screen reader says, when the label alone would not tell the buttons apart.
 pub fn button(ui: &mut Ui, uri: &str, host: bool, label: &str, name: Option<&str>) {
-    let resp = ui.add_enabled(host, theme::secondary_button(label));
+    // Always clickable: without the host, a click starts it for this sign-in first.
+    let resp = ui.add(theme::secondary_button(label));
     if let Some(name) = name {
         theme::speak(&resp, egui::WidgetType::Button, || name.to_owned());
     }
-    let resp = if host { resp.on_hover_text(uri) } else { resp.on_disabled_hover_text("Windows Settings is not running: turn on the host for Settings at the top of this page.") };
+    let resp = if host { resp.on_hover_text(uri) } else { resp.on_hover_text("Starts Windows' host for Settings for this sign-in, then opens the page (a few seconds the first time).") };
     if resp.clicked() {
         open_link(uri.to_owned());
     }

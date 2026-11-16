@@ -9,7 +9,7 @@ pub const NAME: &str = "frames";
 pub struct FramesSettings {
     /// Style other apps' windows at all.
     pub enabled: bool,
-    /// Give the window in front an accent border (the others get a dim one).
+    /// Give the window in front an accent border (the others get a dim one). Off unless asked for.
     pub accent_border: bool,
     /// Programs to leave alone, by exe name (`notepad.exe` or just `notepad`, any case).
     pub exclude: Vec<String>,
@@ -17,7 +17,7 @@ pub struct FramesSettings {
 
 impl Default for FramesSettings {
     fn default() -> Self {
-        Self { enabled: true, accent_border: true, exclude: Vec::new() }
+        Self { enabled: true, accent_border: false, exclude: Vec::new() }
     }
 }
 
@@ -48,9 +48,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn defaults_are_on_and_empty() {
+    fn defaults_style_frames_without_an_accent_border() {
         let s = FramesSettings::default();
-        assert!(s.enabled && s.accent_border && s.exclude.is_empty());
+        assert!(s.enabled && !s.accent_border && s.exclude.is_empty());
         assert_eq!(serde_json::from_str::<FramesSettings>("{}").unwrap(), s);
     }
 

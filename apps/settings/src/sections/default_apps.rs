@@ -138,11 +138,8 @@ pub fn show(ui: &mut egui::Ui, st: &mut State) {
     // Settings is the only thing Windows takes a new default from, and it needs the host.
     // SHELLMAN_PRETEND_HOST=on|off: look at the page as it is with the host on or off, without
     // changing it (for screenshots).
-    let host = match std::env::var("SHELLMAN_PRETEND_HOST").as_deref() {
-        Ok("on") => true,
-        Ok("off") => false,
-        _ => shellman_core::app_host::modern_apps_available(),
-    };
+    // Reachable counts: a Change button starts the host on demand (`winlink::open_link`).
+    let host = super::winlink::host();
     if !host {
         st.default_apps.chooser = None;
         page::group(ui, "To change a default", |ui| {
