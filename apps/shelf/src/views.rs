@@ -11,7 +11,7 @@
 use crate::displays::{self, Placement};
 use crate::{drop, geometry, log, window};
 use shellman_core::monitors::Monitor;
-use shellman_core::settings::desktop::Edge;
+use shellman_core::settings::desktop::{Edge, Pin};
 use shellman_ui::glass::{GlassPanel, Style};
 use std::sync::{Arc, Mutex};
 use windows::Win32::Foundation::HWND;
@@ -32,8 +32,9 @@ pub struct View {
     ctx: Option<egui::Context>,
     /// The monitor it shows a shelf on now; None shows none.
     pub monitor: Option<Monitor>,
-    /// Where the window was put for that monitor.
+    /// Where the window was put for that monitor, and for which edge, stacks and shelf place.
     pub placed: Option<Placement>,
+    pub placed_for: Option<(Edge, usize, Option<Pin>)>,
     /// Shown after its first placing (the first window is shown at the start).
     shown: bool,
 }
@@ -51,6 +52,7 @@ impl View {
             ctx: None,
             monitor: None,
             placed: None,
+            placed_for: None,
             shown: true,
         }
     }
@@ -68,6 +70,7 @@ impl View {
             ctx: Some(ctx.clone()),
             monitor: None,
             placed: None,
+            placed_for: None,
             shown: false,
         }
     }
@@ -107,10 +110,12 @@ impl View {
         true
     }
 
-    /// Put the window on its monitor's edge, sized for its shelf; then shown, if not yet.
-    pub fn place(&mut self, edge: Edge, stacks: usize) {
+    /// Put the window on its monitor's edge, sized for its shelf at `pin` (None: centred); then
+    /// shown, if not yet.
+    pub fn place(&mut self, edge: Edge, stacks: usize, pin: Option<Pin>) {
         let Some(hwnd) = self.hwnd else { return };
-        let Some(placement) = self.monitor.as_ref().and_then(|m| displays::place(m, edge, stacks)) else {
+        self.placed_for = Some((edge, stacks, pin));
+        let Some(placement) = self.monitor.as_ref().and_then(|m| displays::place(m, edge, stacks, pin)) else {
             self.placed = None;
             return;
         };

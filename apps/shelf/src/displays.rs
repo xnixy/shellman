@@ -12,7 +12,7 @@
 use crate::geometry::{self, FAN_ITEMS, SHADOW};
 use egui::{pos2, Rect};
 use shellman_core::monitors::Monitor;
-use shellman_core::settings::desktop::{Edge, ShelfOn};
+use shellman_core::settings::desktop::{Edge, Pin, ShelfOn};
 use shellman_ui::glass::guard;
 use windows::Win32::Foundation::RECT;
 
@@ -94,13 +94,15 @@ pub struct Placement {
     pub area: Rect,
     /// The monitor's pixels per point.
     pub scale: f32,
+    /// The shelf's top in the window's points.
+    pub shelf_top: f32,
 }
 
 /// Everything the shelf and any fan of it may cover, in points from the monitor's top-left:
 /// the shelf in a window as tall as the monitor, and every fan of every stack at any point of
 /// opening, with any number of items.
-fn reach(window: Rect, area: Rect, edge: Edge, stacks: usize) -> Rect {
-    let layout = geometry::layout(window, area, edge, stacks);
+fn reach(window: Rect, area: Rect, edge: Edge, stacks: usize, top: f32) -> Rect {
+    let layout = geometry::layout_at(window, top, edge, stacks);
     let mut all = layout.shelf;
     for stack in &layout.stacks {
         for items in 0..=FAN_ITEMS {
@@ -114,10 +116,11 @@ fn reach(window: Rect, area: Rect, edge: Edge, stacks: usize) -> Rect {
     all
 }
 
-/// The shelf window for monitor `m` on `edge` with `stacks` stacks, or None when the monitor is
-/// not fit for one or the window would not be a sane size (it never is the monitor's size, and
-/// every side passes the glass's guard unchanged).
-pub fn place(m: &Monitor, edge: Edge, stacks: usize) -> Option<Placement> {
+/// The shelf window for monitor `m` on `edge` with `stacks` stacks, the shelf at `pin` (None:
+/// centred between the bars), or None when the monitor is not fit for one or the window would
+/// not be a sane size (it never is the monitor's size, and every side passes the glass's guard
+/// unchanged).
+pub fn place(m: &Monitor, edge: Edge, stacks: usize, pin: Option<Pin>) -> Option<Placement> {
     if !usable(m) {
         return None;
     }
@@ -129,7 +132,8 @@ pub fn place(m: &Monitor, edge: Edge, stacks: usize) -> Option<Placement> {
         pos2(0.0, pt(m.work.top - m.rect.top)),
         pos2(geometry::window_width(), pt(m.work.bottom - m.rect.top)),
     );
-    let need = reach(full, area, edge, stacks);
+    let shelf_top = crate::arrange::place::shelf_top(area, geometry::shelf_height(stacks), pin);
+    let need = reach(full, area, edge, stacks, shelf_top);
     let top_pt = (need.top() - SHADOW).max(0.0);
     let bottom_pt = (need.bottom() + SHADOW).min(full.bottom());
     let top = m.rect.top + (top_pt * scale).floor() as i32;
@@ -149,7 +153,7 @@ pub fn place(m: &Monitor, edge: Edge, stacks: usize) -> Option<Placement> {
     // The area in the window's points: from the window's top, not the monitor's.
     let shift = pt(top - m.rect.top);
     let area = area.translate(egui::vec2(0.0, -shift));
-    Some(Placement { rect, area, scale })
+    Some(Placement { rect, area, scale, shelf_top: shelf_top - shift })
 }
 
 #[cfg(test)]
@@ -211,7 +215,7 @@ mod tests {
         tiny[1].rect = rect(0, 0, 50, 2160);
         tiny[1].work = tiny[1].rect;
         assert_eq!(devices(&targets(ShelfOn::All, &tiny)), [r"\\.\DISPLAY2", r"\\.\DISPLAY3"]);
-        assert_eq!(place(&tiny[1], Edge::Left, 3), None);
+        assert_eq!(place(&tiny[1], Edge::Left, 3, None), None);
         // No primary in the list: the primary's shelf goes to no one.
         let (primary, others) = split(targets(ShelfOn::All, &tiny));
         assert!(primary.is_none());
@@ -238,7 +242,7 @@ mod tests {
     /// The window is on its monitor, on the edge, as wide as the shelf and its fan, far from
     /// the monitor's size, and the shelf and every fan fit inside it.
     fn check(m: &Monitor, edge: Edge) -> Placement {
-        let p = place(m, edge, 3).expect("a shelf");
+        let p = place(m, edge, 3, None).expect("a shelf");
         let r = p.rect;
         assert!(r.left >= m.rect.left && r.right <= m.rect.right && r.top >= m.rect.top && r.bottom <= m.rect.bottom, "{r:?}");
         match edge {
@@ -251,7 +255,8 @@ mod tests {
         assert_eq!(p.scale, m.scale);
         // Lay out as the frame does, in the window's points.
         let window = Rect::from_min_size(pos2(0.0, 0.0), egui::vec2(geometry::window_width(), height(&r) as f32 / m.scale));
-        let layout = geometry::layout(window, p.area, edge, 3);
+        let layout = geometry::layout_at(window, p.shelf_top, edge, 3);
+        assert!((layout.shelf.top() - geometry::layout(window, p.area, edge, 3).shelf.top()).abs() < 0.01);
         assert!(window.contains_rect(layout.shelf), "{:?} in {window:?}", layout.shelf);
         for s in &layout.stacks {
             for pill in geometry::fan(layout.shelf, s.center().y, FAN_ITEMS, edge, p.area) {
@@ -294,9 +299,36 @@ mod tests {
     }
 
     #[test]
+    fn a_shelf_moved_up_or_down_keeps_every_fan_in_its_window() {
+        use shellman_core::settings::desktop::Anchor;
+        let m = mon("P", 0, 0, 1.5, true);
+        for pin in [Pin { from: Anchor::Start, by: 0 }, Pin { from: Anchor::End, by: 0 }, Pin { from: Anchor::Start, by: 5000 }, Pin { from: Anchor::Middle, by: -200 }] {
+            for edge in [Edge::Left, Edge::Right] {
+                let p = place(&m, edge, 3, Some(pin)).expect("a shelf");
+                let r = p.rect;
+                assert!(r.top >= m.rect.top && r.bottom <= m.rect.bottom);
+                let window = Rect::from_min_size(pos2(0.0, 0.0), egui::vec2(geometry::window_width(), height(&r) as f32 / m.scale));
+                let layout = geometry::layout_at(window, p.shelf_top, edge, 3);
+                assert!(window.contains_rect(layout.shelf), "{pin:?}: {:?} in {window:?}", layout.shelf);
+                // Inside the work area.
+                assert!(layout.shelf.top() >= p.area.top() - 0.01 && layout.shelf.bottom() <= p.area.bottom() + 0.01, "{pin:?}");
+                for s in &layout.stacks {
+                    for pill in geometry::fan(layout.shelf, s.center().y, FAN_ITEMS, edge, p.area) {
+                        assert!(window.expand(0.01).contains_rect(pill), "{pin:?}: {pill:?} in {window:?}");
+                    }
+                }
+            }
+        }
+        // At the top of the work area: the window starts higher than when centred.
+        let top = place(&m, Edge::Left, 3, Some(Pin { from: Anchor::Start, by: 0 })).unwrap();
+        let mid = place(&m, Edge::Left, 3, None).unwrap();
+        assert!(top.rect.top < mid.rect.top);
+    }
+
+    #[test]
     fn no_shelf_where_it_would_fill_the_monitor() {
         // 1280x800 at 200%: 640 points wide, less than the shelf and its fan need.
         let m = Monitor { device: "x".into(), rect: rect(0, 0, 1280, 800), work: rect(0, 0, 1280, 800), scale: 2.0, primary: true };
-        assert_eq!(place(&m, Edge::Left, 3), None);
+        assert_eq!(place(&m, Edge::Left, 3, None), None);
     }
 }

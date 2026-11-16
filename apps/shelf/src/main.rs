@@ -12,10 +12,12 @@
 //! Windows' modern-app host and must not fall over), while this one loads egui, the GPU and the
 //! shell's thumbnail and drag-and-drop handlers, any of which can crash; the session restarts it.
 //!
-//! `--menu x y` opens the menu at a point as it starts (the desktop starts it so when none runs).
+//! `--menu x y` opens the menu at a point as it starts (the desktop starts it so when none runs);
+//! `--arrange` starts in arrange mode (Edit desktop…), for tests.
 
 mod actions;
 mod app;
+mod arrange;
 mod cards;
 mod displays;
 mod drag_image;
@@ -94,6 +96,7 @@ pub fn own_window(title: &str) -> Option<isize> {
 fn main() -> eframe::Result {
     let args: Vec<String> = std::env::args().collect();
     let menu_at = shellman_core::desktop_menu::parse_args(&args);
+    let arrange = args.iter().any(|a| a == "--arrange");
     // One shelf per session (per `SHELLMAN_INSTANCE` for a test copy). A second start with
     // `--menu` hands the request to the running one.
     let name = match std::env::var("SHELLMAN_INSTANCE").ok().filter(|i| !i.is_empty()) {
@@ -158,7 +161,7 @@ fn main() -> eframe::Result {
             if let Some(at) = menu_at {
                 window::ask_menu(at);
             }
-            Ok(Box::new(app::Shelf::new(&cc.egui_ctx, hwnd, panel, look, shared)))
+            Ok(Box::new(app::Shelf::new(&cc.egui_ctx, hwnd, panel, look, shared, arrange)))
         }),
     )
 }

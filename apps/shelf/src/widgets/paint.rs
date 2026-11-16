@@ -131,6 +131,19 @@ fn button(ui: &mut Ui, id: &str, center: egui::Pos2, hit: f32, enabled: bool) ->
     resp
 }
 
+/// Now playing while arranging with nothing playing: where it will be, and what it is.
+pub fn playing_stand_in(ui: &mut Ui, rect: Rect) {
+    let c = colors();
+    let p = ui.painter().clone();
+    let inner = rect.shrink(PLAY_PAD);
+    let art_rect = Rect::from_min_size(inner.min, vec2(ART, ART));
+    p.rect_filled(art_rect, CornerRadius::same(14), soft(14, 22));
+    p.text(art_rect.center(), Align2::CENTER_CENTER, theme::glyph::AUDIO, theme::icon_font(22.0), c.muted);
+    let x = art_rect.right() + 14.0;
+    p.text(pos2(x, inner.center().y - 10.0), Align2::LEFT_CENTER, "Now playing", theme::semibold_font(14.0), c.text);
+    p.text(pos2(x, inner.center().y + 11.0), Align2::LEFT_CENTER, "Shows when music or a video plays", egui::FontId::proportional(12.5), c.muted);
+}
+
 pub fn playing(ui: &mut Ui, rect: Rect, m: &NowModel, art: Option<&egui::TextureHandle>, icons: &mut Icons, events: &mut Vec<Event>) {
     let c = colors();
     let p = ui.painter().clone();
