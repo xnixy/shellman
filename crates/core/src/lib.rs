@@ -43,3 +43,18 @@ pub mod watch;
 pub mod weather;
 pub mod winlist;
 pub mod wsl;
+
+/// The temp folder in its long form, for comparing a path with one Windows returns (tests):
+/// `%TEMP%` can be a short 8.3 path (GitHub's runners: `C:\Users\RUNNER~1\...`), while the
+/// shell and file ids give back the long one.
+pub fn long_temp_dir() -> std::path::PathBuf {
+    use windows::core::HSTRING;
+    use windows::Win32::Storage::FileSystem::GetLongPathNameW;
+    let short = std::env::temp_dir();
+    let mut buf = vec![0u16; 1024];
+    let n = unsafe { GetLongPathNameW(&HSTRING::from(short.as_os_str()), Some(&mut buf)) } as usize;
+    if n == 0 || n > buf.len() {
+        return short;
+    }
+    std::path::PathBuf::from(String::from_utf16_lossy(&buf[..n]))
+}

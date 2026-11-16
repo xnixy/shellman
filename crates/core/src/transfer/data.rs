@@ -301,7 +301,7 @@ mod tests {
         unsafe {
             let _ = windows::Win32::System::Ole::OleInitialize(None);
         }
-        let dir = std::env::temp_dir().join(format!("shellman-data-{}", std::process::id()));
+        let dir = crate::long_temp_dir().join(format!("shellman-data-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("one")).unwrap();
         std::fs::create_dir_all(dir.join("two")).unwrap();

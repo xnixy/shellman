@@ -179,7 +179,7 @@ mod tests {
     #[test]
     fn on_the_real_disk() {
         use super::super::{now_secs, Store};
-        let dir = std::env::temp_dir().join(format!("files-tag-check-{}", std::process::id()));
+        let dir = shellman_core::long_temp_dir().join(format!("files-tag-check-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("sub")).unwrap();
         let (a, doc, folder) = (dir.join("a.txt"), dir.join("doc.txt"), dir.join("folder"));

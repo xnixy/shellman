@@ -49,7 +49,7 @@ mod tests {
 
     #[test]
     fn a_made_shortcut_points_back() {
-        let dir = std::env::temp_dir().join("shellman-link-test");
+        let dir = crate::long_temp_dir().join("shellman-link-test");
         let _ = std::fs::create_dir_all(&dir);
         let target = dir.join("t.txt");
         std::fs::write(&target, "x").unwrap();

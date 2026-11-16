@@ -285,7 +285,7 @@ mod tests {
 
     #[test]
     fn folders_are_read_newest_first_without_hidden_files() {
-        let root = std::env::temp_dir().join(format!("shellman-shelf-read-{}", std::process::id()));
+        let root = shellman_core::long_temp_dir().join(format!("shellman-shelf-read-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join("sub")).unwrap();
         std::fs::write(root.join("a.txt"), b"hello").unwrap();
@@ -300,7 +300,7 @@ mod tests {
 
     #[test]
     fn recent_items_resolve_and_skip_what_is_gone() {
-        let root = std::env::temp_dir().join(format!("shellman-shelf-recent-{}", std::process::id()));
+        let root = shellman_core::long_temp_dir().join(format!("shellman-shelf-recent-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         let (files, recent) = (root.join("files"), root.join("Recent"));
         std::fs::create_dir_all(&files).unwrap();
