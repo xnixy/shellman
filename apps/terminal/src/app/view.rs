@@ -1,7 +1,7 @@
 //! Taking the shown tab's snapshot when something changed, the cursor's blink, and zoom.
 
 use crate::config;
-use crate::palette::Palette;
+use crate::palette::{Palette, Scheme};
 use crate::session::Colours;
 use crate::snapshot::{self, Hover, Look};
 use shellman_ui::theme::colors;
@@ -11,13 +11,14 @@ use std::time::{Duration, Instant};
 /// window draws nothing, as Windows' own caret does.
 const BLINK_FOR: Duration = Duration::from_secs(15);
 
-/// What the last snapshot was taken with: when any of it changes, it is taken again.
+/// What a slot's last snapshot was taken with: when any of it changes, it is taken again.
 #[derive(Clone, PartialEq)]
-struct Drawn {
+pub struct Drawn {
     light: bool,
     accent: egui::Color32,
+    /// The window has the focus and this is the focused pane (a solid, blinking cursor).
     focused: bool,
-    tab: u64,
+    pane: u64,
     cursor_on: bool,
     hover: Hover,
     /// Find's state, as a count of its changes.
@@ -25,7 +26,6 @@ struct Drawn {
 }
 
 pub struct View {
-    drawn: Option<Drawn>,
     /// When the blink last started over (input, output, focus).
     blink_epoch: Instant,
     blink: Duration,
@@ -35,7 +35,7 @@ pub struct View {
 
 impl View {
     pub fn new() -> Self {
-        Self { drawn: None, blink_epoch: Instant::now(), blink: caret_blink(), hover: Hover::None }
+        Self { blink_epoch: Instant::now(), blink: caret_blink(), hover: Hover::None }
     }
 
     /// The cursor shows at once and blinks from now.
@@ -71,27 +71,35 @@ fn caret_blink() -> Duration {
 }
 
 impl super::TerminalApp {
-    /// Take a new snapshot and send what changed, if the grid, its size, the look, the blink or
-    /// the hover changed. Returns how many rows went to the GPU.
-    pub(super) fn redraw_if_changed(&mut self, ctx: &egui::Context) -> usize {
+    /// Take a new snapshot of the shown tab's pane `i` and send what changed to its slot, if
+    /// its grid, its size, the look, the blink or the hover changed. Only the focused pane has
+    /// a solid, blinking cursor, the hovered link and find's marks. Returns how many rows went
+    /// to the GPU.
+    pub(super) fn redraw_if_changed(&mut self, ctx: &egui::Context, i: usize) -> usize {
         let c = colors();
-        let focused = self.focused;
         let tab = self.tabs.current();
-        let dirty = tab.session.take_dirty();
-        if dirty {
+        let is_focus = i == tab.panes.focus();
+        let Some(pane) = tab.panes.get(i) else { return 0 };
+        let focused = self.focused && is_focus;
+        let dirty = pane.session.take_dirty();
+        if dirty && is_focus {
             // New output (or a selection): the cursor shows and blinks from now.
             self.view.restart_blink();
         }
-        let (cursor_on, next) = self.view.blink_phase(self.frame.blinking);
+        let slot = &mut self.slots[i];
+        let (cursor_on, next) = if is_focus { self.view.blink_phase(slot.frame.blinking) } else { (true, None) };
         if let Some(next) = next {
             ctx.request_repaint_after(next);
         }
-        let with = Drawn { light: c.light, accent: c.accent, focused, tab: tab.id, cursor_on, hover: self.view.hover.clone(), find: self.find.generation };
-        if !dirty && self.view.drawn.as_ref() == Some(&with) && self.frame.cols != 0 {
+        let hover = if is_focus { self.view.hover.clone() } else { Hover::None };
+        let find_gen = if is_focus { self.find.generation } else { 0 };
+        let with = Drawn { light: c.light, accent: c.accent, focused, pane: pane.id, cursor_on, hover: hover.clone(), find: find_gen };
+        if !dirty && slot.drawn.as_ref() == Some(&with) && slot.frame.cols != 0 {
             return 0;
         }
         let rgb = |c: egui::Color32| [c.r(), c.g(), c.b()];
-        let palette = Palette::new(c.light, rgb(c.text), rgb(c.bg));
+        let scheme = Scheme::from_name(&self.config.color_scheme);
+        let palette = Palette::scheme(scheme, c.light, rgb(c.text), rgb(c.bg));
         let mut look = Look {
             palette,
             cursor: rgb(c.accent_fill),
@@ -99,27 +107,29 @@ impl super::TerminalApp {
             focused,
             selection: rgb(c.accent_fill),
             cursor_on,
-            hover: self.view.hover.clone(),
+            hover,
             find: None,
         };
-        if self.view.drawn.as_ref().is_none_or(|d| d.light != with.light || d.accent != with.accent || d.tab != with.tab) {
-            tab.session.set_colours(Colours { palette, cursor: look.cursor });
+        if slot.drawn.as_ref().is_none_or(|d| d.light != with.light || d.accent != with.accent || d.pane != with.pane) {
+            pane.session.set_colours(Colours { palette, cursor: look.cursor });
         }
-        self.view.drawn = Some(with);
-        let was_blinking = self.frame.blinking;
+        slot.drawn = Some(with);
+        let was_blinking = slot.frame.blinking;
         let find = &mut self.find;
-        let frame = &mut self.frame;
-        tab.session.with_term(|term| {
-            look.find = find.highlight(term);
+        let frame = &mut slot.frame;
+        pane.session.with_term(|term| {
+            if is_focus {
+                look.find = find.highlight(term);
+            }
             snapshot::take(term, &look, frame)
         });
-        if self.frame.blinking && !was_blinking {
+        if is_focus && slot.frame.blinking && !was_blinking {
             // It just started to blink: the timer starts now.
             if let (_, Some(next)) = self.view.blink_phase(true) {
                 ctx.request_repaint_after(next);
             }
         }
-        self.renderer.prepare(&self.frame)
+        slot.renderer.prepare(&slot.frame)
     }
 
     /// Zoom by `steps` points (Ctrl and the wheel, Ctrl+plus/minus); None goes back to the
@@ -131,7 +141,7 @@ impl super::TerminalApp {
         };
         if pt != self.font_pt {
             self.font_pt = pt;
-            self.tabs.current().session.mark_dirty();
+            self.mark_shown_dirty();
         }
     }
 }

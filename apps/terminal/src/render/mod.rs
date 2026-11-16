@@ -229,6 +229,11 @@ impl Renderer {
         self.atlas.metrics
     }
 
+    /// The font size in pixels it draws at.
+    pub fn px(&self) -> f32 {
+        self.px
+    }
+
 
     /// Change the font size (zoom, or a move to a monitor of another scale). Every glyph is
     /// made again.

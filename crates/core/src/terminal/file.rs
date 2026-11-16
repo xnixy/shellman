@@ -65,6 +65,12 @@ impl File {
         (self.number("font_size", DEFAULT_FONT_PT as f64) as f32).clamp(MIN_PT, MAX_PT)
     }
 
+    /// The 16 colours' scheme (`terminal.json`'s `color_scheme`, one of [`COLOR_SCHEMES`]).
+    pub fn color_scheme(&self) -> String {
+        let name = self.text("color_scheme", COLOR_SCHEMES[0].0);
+        COLOR_SCHEMES.iter().find(|(n, _)| n.eq_ignore_ascii_case(name.trim())).map_or(COLOR_SCHEMES[0].0, |(n, _)| n).to_owned()
+    }
+
     pub fn scrollback(&self) -> u64 {
         (self.number("scrollback", DEFAULT_SCROLLBACK as f64).max(0.0) as u64).min(MAX_SCROLLBACK)
     }
@@ -91,6 +97,15 @@ impl File {
         }
     }
 }
+
+/// The terminal's colour schemes: the name `terminal.json` keeps, and what Settings calls it.
+/// The terminal's `palette::Scheme` has the same names (tested there).
+pub const COLOR_SCHEMES: [(&str, &str); 4] = [
+    ("shellman", "shellman (made for the glass)"),
+    ("campbell", "Campbell"),
+    ("one-half", "One Half"),
+    ("tango", "Tango"),
+];
 
 #[cfg(test)]
 mod tests {

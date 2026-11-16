@@ -58,8 +58,8 @@ impl super::TerminalApp {
     /// The cell under `pos` in the shown grid.
     fn spot(&self, ctx: &egui::Context, pos: Pos2) -> Spot {
         let ppp = ctx.pixels_per_point();
-        let m = self.renderer.metrics();
-        let size = self.tabs.current().session.size();
+        let m = self.metrics();
+        let size = self.tabs.current().pane().session.size();
         let x = ((pos.x - self.grid.left()) * ppp).max(0.0);
         let y = (pos.y - self.grid.top()) * ppp;
         let col = ((x / m.cell_w as f32) as usize).min(size.cols as usize - 1);
@@ -71,7 +71,7 @@ impl super::TerminalApp {
     }
 
     fn modes(&self) -> Modes {
-        let s = &self.tabs.current().session;
+        let s = &self.tabs.current().pane().session;
         let m = s.mode();
         Modes {
             x10: s.x10(),
@@ -87,7 +87,7 @@ impl super::TerminalApp {
         let modes = self.modes();
         if modes.wants(button, action, self.pointer.down.is_some()) {
             if let Some(bytes) = mouse::report(button, action, mods, spot.col, spot.row, &modes) {
-                self.tabs.current().session.report(&bytes);
+                self.tabs.current().pane().session.report(&bytes);
             }
         }
     }
@@ -137,7 +137,7 @@ impl super::TerminalApp {
                 let spot = self.spot(ctx, pos);
                 if spot.beyond != 0 {
                     let lines = -spot.beyond.signum() * (spot.beyond.abs().min(10));
-                    let s = &self.tabs.current().session;
+                    let s = &self.tabs.current().pane().session;
                     s.with_term_mut(|t| {
                         t.scroll_display(alacritty_terminal::grid::Scroll::Delta(lines));
                         let p = select::point_at(t, spot.col, spot.row);
@@ -164,7 +164,7 @@ impl super::TerminalApp {
             self.send_report(button, Action::Press, mods, &spot);
             return;
         }
-        let session = &self.tabs.current().session;
+        let session = &self.tabs.current().pane().session;
         match button {
             Button::Left => {
                 if mods.ctrl {
@@ -219,7 +219,7 @@ impl super::TerminalApp {
         if down.reported {
             self.send_report(button, Action::Release, mods, &spot);
         } else if down.selecting {
-            let s = &self.tabs.current().session;
+            let s = &self.tabs.current().pane().session;
             if s.with_term(select::has) {
                 if self.config.copy_on_select {
                     self.copy_selection(ctx);
@@ -243,7 +243,7 @@ impl super::TerminalApp {
             }
             Some(Down { selecting: true, .. }) => {
                 if spot.beyond == 0 {
-                    self.tabs.current().session.with_term_mut(|t| {
+                    self.tabs.current().pane().session.with_term_mut(|t| {
                         let p = select::point_at(t, spot.col, spot.row);
                         select::extend(t, p, spot.side);
                     });
@@ -260,7 +260,7 @@ impl super::TerminalApp {
     }
 
     fn wheel(&mut self, ctx: &egui::Context, unit: egui::MouseWheelUnit, delta: egui::Vec2, m: egui::Modifiers, pos: Pos2, modes: &Modes) {
-        let cell_h = self.renderer.metrics().cell_h as f32 / ctx.pixels_per_point();
+        let cell_h = self.metrics().cell_h as f32 / ctx.pixels_per_point();
         // A notch is three lines, as in Windows.
         let lines = match unit {
             egui::MouseWheelUnit::Line => delta.y * 3.0,
@@ -283,7 +283,7 @@ impl super::TerminalApp {
         if whole == 0 {
             return;
         }
-        let session = &self.tabs.current().session;
+        let session = &self.tabs.current().pane().session;
         let mode = session.mode();
         let mods = Mods { shift: m.shift, ctrl: m.ctrl, alt: m.alt };
         if modes.tracking() && !m.shift {
@@ -314,7 +314,7 @@ impl super::TerminalApp {
         let mut label = None;
         if let (Some(pos), None) = (on_grid, self.pointer.down) {
             let spot = self.spot(ctx, pos);
-            let session = &self.tabs.current().session;
+            let session = &self.tabs.current().pane().session;
             let found = session.with_term(|t| {
                 let p = select::point_at(t, spot.col, spot.row);
                 if let Some((id, uri)) = select::hyperlink_at(t, p) {
@@ -330,7 +330,7 @@ impl super::TerminalApp {
                 // An OSC 8 link's text can say anything: a label shows where it really goes.
                 if matches!(h, Hover::Link(_)) {
                     let ppp = ctx.pixels_per_point();
-                    let m = self.renderer.metrics();
+                    let m = self.metrics();
                     let min = egui::pos2(self.grid.left() + (spot.col as i32 * m.cell_w) as f32 / ppp, self.grid.top() + (spot.row as i32 * m.cell_h) as f32 / ppp);
                     let cell = Rect::from_min_size(min, egui::vec2(m.cell_w as f32 / ppp, m.cell_h as f32 / ppp));
                     let id = egui::Id::new(("terminal-link-label", &uri));
@@ -347,7 +347,7 @@ impl super::TerminalApp {
         self.pointer.label = label;
         if hover != self.view.hover {
             self.view.hover = hover;
-            self.tabs.current().session.mark_dirty();
+            self.tabs.current().pane().session.mark_dirty();
         }
         self.pointer.link = link;
         if let Some(pos) = pos.filter(|p| island.contains(*p)) {

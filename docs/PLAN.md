@@ -19,7 +19,7 @@ accent color, fast.
 | `apps/desktop` | wallpaper window | working: wallpaper per monitor; keeps Windows' modern-app host running; hands a right-click to the shelf |
 | `apps/shelf` | desktop icons, the desktop's right-click menu | stage 1 working: the shelf on every monitor or the primary only (drop zone, Desktop / Downloads / Recent stacks that fan open, drag out, drop in), the right-click menu on every monitor, Settings › Desktop; stage 2 working: the Today and Now playing widgets top right (primary or every monitor); arrange mode (Edit desktop…: drag the shelf and each widget, snapping, saved per monitor) |
 | `apps/tasks` | Task Manager (Ctrl+Shift+Esc, through the switcher's hook) | working: Processes (apps and background, grouped, sort, search, End task / End process tree / details), Performance (CPU, memory, GPUs, disks, network), Services (read-only: status, startup type, PID, description, sort, search, go to process; read through the SCM in `crates/core/src/services`, off the UI thread, only while the page shows). End task / tree try unelevated first and, only when Windows refuses, go through `shellman-elevate`'s `end-processes <pid>:<start time>...` behind the UAC prompt (the helper rechecks start time and refuses critical processes); critical processes stay un-endable. Reads through `crates/core/src/procs` |
-| `apps/terminal` | Windows Terminal | stage 2: tabs, selection, mouse, profiles; `-d`/`-p`/`-e`/`--hold`; shellman's "Open Terminal here" opens it; can be Windows' default terminal (`--register-default-terminal`). Next: Settings controls, find, splits |
+| `apps/terminal` | Windows Terminal | stage 2: tabs, selection, mouse, profiles; `-d`/`-p`/`-e`/`--hold`; shellman's "Open Terminal here" opens it; can be Windows' default terminal (`--register-default-terminal`). Stage 3: find, split panes, colour schemes, Settings › Terminal, the UI language's names and focus. Next: the warning before a large paste, the wheel over an unfocused pane, splits kept across restarts |
 | `apps/settings` | Settings pages for the shell | working: Appearance, Desktop, Dock, Top bar, Launcher, About; rebuilt Windows pages: Sound, Display, Apps, Startup, Fonts, Mouse & keyboard, Power, Date, time & region, Storage, Default apps (changes through Windows Settings), Windows Update |
 | `apps/session` | the shell process itself | the shell: the per-user Winlogon `Shell` value points at it (in daily use since 2026-11-12). Starts and supervises the apps, runs startup items, safety net, `--install`/`--uninstall` |
 | `apps/setup` | the install engine | `shellman-setup`: `install`, `update [--restart]`, `status`, `uninstall [--revert]`; a library plus a console tool that also works from a release folder (see Install and update) |
@@ -125,8 +125,16 @@ what each still needs:
 - **Task Manager**: already header pill, rail and islands. Its own painted rows (process list,
   column headers, graphs) need names and a high contrast outline for the selected row (31
   unnamed painted elements, the search field unnamed). It already follows the Window choice.
-- **Files, Terminal**: tab strips instead of a header pill; check the 12 gaps, narrow widths
-  (one pane at a time below 620), names for list rows, tabs and the path bar.
+- **Files**: a tab strip instead of a header pill; check the 12 gaps, narrow widths (one pane
+  at a time below 620), names for list rows, tabs and the path bar.
+- **Terminal** (done 15 Nov, see its section): tabs (`tab_strip::tab` now names each tab and its
+  ×, rings them, and outlines the shown one in high contrast), panes, the find field and its
+  case toggle are named; the page colour paints under the gaps in a solid window; the focused
+  pane holds the keyboard (Ctrl+F6 to the tabs and buttons). UI Automation, two panes and find
+  open: every control named but two `Custom` nodes, egui's root and the window's drag area
+  (`islands::drag_gaps`, shared). Edge resize is Windows' own (`WM_NCHITTEST` in
+  `window::frameless`), so the cursor over the edge is Windows' too. Its Settings page (a combo
+  box and a field) is still to name.
 - **All windowed apps**: Settings, Files, Task Manager, Terminal and the installer attach with
   `attach_window` and paint `islands::under`, so they follow the Window choice and get the solid
   page and Windows 11 corners in the solid look. Still to check in each: edge resize with the
@@ -1083,7 +1091,8 @@ entry points open it, and it can be Windows' default terminal (below).
   activation manager), Command Prompt in a new console. Settings › Terminal sets it (below).
 - **Settings › Terminal** (stage 3, `apps/settings/src/sections/terminal.rs`; rail entry and
   search words): default profile (the names from `shellman_core::terminal::profiles`, which the
-  terminal now builds its profiles from too), font family and size, lines of history,
+  terminal now builds its profiles from too), font family and size, colours (`color_scheme`,
+  below), lines of history,
   copy-on-select, "New terminal opens in" (`new_instance`), "Open Terminal here uses"
   (`default_terminal`, `custom_terminal`), and "Use shellman Terminal for all console programs".
   `terminal.json` is read and written whole through `shellman_core::terminal::file::File`, so
@@ -1221,7 +1230,41 @@ entry points open it, and it can be Windows' default terminal (below).
   inside the cells (so they ride the row hashes like the selection). The count walks the whole
   history bottom-up in 2 000-line slices, 4 ms a frame, so 100 000 lines never stall the window
   (tested: 100k lines counted in slices); the screen's matches are searched afresh per snapshot,
-  and the count starts over when output came (at most every 0.4 s), keeping to the view.
+  and the count starts over when output came (at most every 0.4 s), keeping to the view. Stage
+  3: it searches the focused pane; a frame is asked for when the count changed or a recount is
+  due (the pill had drawn the old count, so "No results" could stay beside a match on screen
+  while nothing else drew). In a narrow row the pill takes room from the tabs down to 300
+  points, then the whole row while open (the tabs come back when it closes); inside, the count
+  goes first, then the case toggle (`find::pill_width`, `find::parts`, tested). The field is
+  named with the count ("Find in the terminal, 3 of 120") and "Aa" is a named check box with a
+  ring.
+- **Split panes** (stage 3, `splits.rs` pure and tested, `app/mod.rs`): each tab is a tree of
+  panes, each an island of its own, 12 apart. Alt+Shift+plus splits the focused pane with the new
+  one to the right, Alt+Shift+minus below, Alt+Shift+D whichever suits its shape (Windows
+  Terminal's keys); the new pane runs the default profile in the focused pane's directory and
+  takes the focus. A split that would leave a pane under 120×60 points is refused. Alt+arrows
+  move the focus to the pane that way (the nearest, then the one overlapping most), Alt+Shift+
+  arrows move the divider beside it, and dragging the gap between two panes moves it (resize
+  cursor); a press on a pane focuses it. Ctrl+Shift+W closes the focused pane (the tab with its
+  last), and a pane whose shell exits closes the same way; the other half of its split takes
+  the room. Alt+arrows are the terminal's only in a tab of several panes (in a tab of one they
+  stay the shell's word moves), also with whole key events (`input::keeps`). The focused pane is
+  outlined in the accent (highlight in high contrast) and has the solid, blinking cursor, the
+  hovered link and find's marks; the others a hollow cursor. The tab's title is the focused
+  pane's; a tab not shown is marked when any pane had output or a bell. Drawing: a small pool of
+  renderers, one per shown pane, reused whichever tab is shown (each keeps its own atlas and
+  GPU buffers; a slot's last snapshot names its pane, so a new pane in it draws afresh). Not
+  done: the wheel over a pane without the focus scrolls nothing (press it first); panes do not
+  move between tabs; splits are not kept across restarts.
+- **Keyboard focus** (stage 3): the focused pane holds egui's focus with Tab, the arrows and Esc
+  locked to it. Before, Tab with nothing focused gave egui's focus to the first tab or button,
+  and the next Enter pressed it, in any console not sent whole keys. Ctrl+F6 moves the keyboard
+  to the shown tab in the strip (Tab goes on to the buttons, Enter presses, Esc comes back);
+  keys then go to egui, never the shell. A click elsewhere gives the pane the focus back.
+- **Preview** (`SHELLMAN_TERMINAL_SCRIPT`, `app/script.rs`): steps run one a frame once laid out
+  (`split-across`, `focus-left`, `resize-right`, `close-pane`, `new-tab`, `find:<text>`,
+  `type:<text>`, `focus-chrome`...), so the window's states can be looked at without sending
+  keys to the desktop (synthetic keys go to whichever window has the foreground).
 - **Mouse to programs**: X10 (9), 1000, 1002, 1003 tracking; normal, UTF-8 (1005) and SGR
   (1006) encodings; focus (1004, also on tab switches); wheel as buttons 64/65 when tracking,
   arrows on the alternate screen with 1007, else scrollback. Shift takes the mouse back.
@@ -1275,8 +1318,15 @@ entry points open it, and it can be Windows' default terminal (below).
   each WSL distribution (registry `Lxss`, default first, Docker's skipped), Git Bash. The
   terminal's own `terminal.json` in the shellman config folder (`SHELLMAN_CONFIG_DIR` aware,
   written with defaults the first time): `default_profile`, `font_family`, `font_size` (12),
-  `scrollback` (10 000), `copy_on_select` (false), `new_instance` and `default_terminal` (above).
-  Zoom: Ctrl+wheel, Ctrl+plus/minus, Ctrl+0.
+  `scrollback` (10 000), `copy_on_select` (false), `color_scheme` ("shellman"), `new_instance`
+  and `default_terminal` (above). Zoom: Ctrl+wheel, Ctrl+plus/minus, Ctrl+0.
+- **Colour schemes** (stage 3, `palette::Scheme`, Settings › Terminal › Colours): shellman's own
+  (hand-tuned for the glass, as before), or Windows Terminal's Campbell, One Half (Dark) or Tango
+  (Dark). A scheme's colours are kept as they are for backgrounds; as text on the glass each is
+  moved towards white (dark glass) or black (light) just enough for 3:1, so no scheme hides
+  text (tested for every scheme on both glasses; black on the dark glass stays black). Settings
+  lists `shellman_core::terminal::file::COLOR_SCHEMES`, tested to be the terminal's names. A
+  running window follows a change.
 - **Keyboard**: text comes as Windows composed it (dead keys, AltGr, IME commits), so layouts
   are not assumed; AltGr reaches egui without Ctrl and Alt and its characters go as text.
 - **win32-input-mode** (stage 3; `keys.rs` `Win32Key`/`Composer`, `app/win32_input.rs`): ConPTY

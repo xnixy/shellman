@@ -21,6 +21,37 @@ use std::time::{Duration, Instant};
 
 /// The pill's width (narrower when the window is).
 pub const WIDTH: f32 = 440.0;
+/// The room the tabs keep beside the pill: one tab and the + and profile buttons.
+const TABS_MIN: f32 = 170.0;
+/// Narrower than this, the pill takes the whole row (the tabs give way while it is open).
+const PILL_MIN: f32 = 300.0;
+/// The pill's parts, in points: the search glyph, the field at its smallest, the count, the
+/// case toggle, and the up, down and close buttons.
+const GLYPH_W: f32 = 36.0;
+const FIELD_MIN: f32 = 80.0;
+const COUNT_W: f32 = 86.0;
+const CASE_W: f32 = 36.0;
+const BUTTONS_W: f32 = 3.0 * 32.0 + 6.0;
+
+/// The pill's width in a row `row` wide (beside the tabs, `gap` from them), and whether it
+/// takes the whole row.
+pub fn pill_width(row: f32, gap: f32) -> (f32, bool) {
+    let beside = (row - gap - TABS_MIN).min(WIDTH);
+    if beside >= PILL_MIN { (beside, false) } else { (row.max(0.0), true) }
+}
+
+/// Which of the optional parts fit a pill `w` wide: the count goes first, then the case
+/// toggle; the field always keeps its smallest width.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Parts {
+    pub count: bool,
+    pub case: bool,
+}
+
+pub fn parts(w: f32) -> Parts {
+    let base = GLYPH_W + FIELD_MIN + BUTTONS_W;
+    Parts { count: w >= base + CASE_W + COUNT_W, case: w >= base + CASE_W }
+}
 /// Lines searched per slice of the count.
 const CHUNK: i32 = 2000;
 /// Time given to counting per frame.
@@ -75,6 +106,11 @@ impl Find {
         self.generation += 1;
     }
 
+    /// The query was set from outside the pill (`SHELLMAN_TERMINAL_SCRIPT`): count afresh.
+    pub fn changed_by_script(&mut self) {
+        self.tab = None;
+    }
+
     pub fn close(&mut self) {
         *self = Find { generation: self.generation + 1, case: self.case, query: std::mem::take(&mut self.query), ..Find::default() };
     }
@@ -93,6 +129,14 @@ impl Find {
         self.owed = 0;
         self.jump = jump;
         self.generation += 1;
+    }
+
+    /// When the count, behind output that came since it started (`seq` is the output count
+    /// now), is due to start over: a frame must come then, or a window with nothing else to
+    /// draw would keep showing the old count ("No results" beside a match on screen).
+    pub fn recount_due(&self, seq: u64) -> Option<Duration> {
+        let since = self.counted_at.1?;
+        (self.open && self.regex.is_some() && seq != self.counted_at.0).then(|| RECOUNT.saturating_sub(since.elapsed()))
     }
 
     /// Count on for a few milliseconds; start over when the query, the tab or the output
@@ -225,6 +269,8 @@ pub fn pill(ui: &mut egui::Ui, rect: Rect, find: &mut Find) -> PillOut {
         ui.painter().rect_stroke(rect.shrink(1.0), egui::CornerRadius::same((rect.height() / 2.0) as u8), Stroke::new(1.0_f32, theme::with_alpha(c.accent_fill, 190)), egui::StrokeKind::Inside);
     }
     ui.painter().text(egui::pos2(rect.left() + 18.0, rect.center().y), Align2::LEFT_CENTER, glyph::SEARCH, icon_font(12.0), c.muted);
+    let show = parts(rect.width());
+    let label = find.count_label();
     // From the right: close, down, up, case, the count.
     let b = 30.0;
     let mut x = rect.right() - 6.0;
@@ -244,26 +290,39 @@ pub fn pill(ui: &mut egui::Ui, rect: Rect, find: &mut Find) -> PillOut {
     if button(ui, glyph::SORT_UP, "up", "Next up (Enter)", false) {
         out.go = Some(true);
     }
-    // The case toggle: "Aa", lit with the accent when on.
-    let r = Rect::from_center_size(egui::pos2(x - b / 2.0, rect.center().y), egui::vec2(b, b));
-    x -= b + 6.0;
-    let resp = ui.interact(r, Id::new(("find", "case")), egui::Sense::click());
-    if find.case {
-        ui.painter().circle_filled(r.center(), b / 2.0, c.accent_fill);
-    } else if resp.hovered() {
-        ui.painter().circle_filled(r.center(), b / 2.0, shellman_ui::chips::soft_colors(c.light).1);
+    // The case toggle: "Aa", lit with the accent when on (in high contrast, outlined).
+    if show.case {
+        let r = Rect::from_center_size(egui::pos2(x - b / 2.0, rect.center().y), egui::vec2(b, b));
+        x -= b + 6.0;
+        let resp = ui.interact(r, Id::new(("find", "case")), egui::Sense::click());
+        if find.case {
+            ui.painter().circle_filled(r.center(), b / 2.0, c.accent_fill);
+        } else if resp.hovered() && !c.high_contrast {
+            ui.painter().circle_filled(r.center(), b / 2.0, shellman_ui::chips::soft_colors(c.light).1);
+        }
+        if c.high_contrast {
+            ui.painter().circle_stroke(r.center(), b / 2.0 - 0.5, Stroke::new(1.0_f32, c.text));
+        }
+        let fg = if find.case { c.on_accent } else { c.muted };
+        ui.painter().text(r.center(), Align2::CENTER_CENTER, "Aa", egui::FontId::proportional(12.5), fg);
+        shellman_ui::hover::label(ui, &resp, if find.case { "Match case: on" } else { "Match case: off" });
+        resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Checkbox, true, find.case, "Match case"));
+        theme::focus_ring(ui, &resp, r, b / 2.0);
+        if resp.clicked() {
+            find.case = !find.case;
+            out.changed = true;
+        }
     }
-    let fg = if find.case { c.on_accent } else { c.muted };
-    ui.painter().text(r.center(), Align2::CENTER_CENTER, "Aa", egui::FontId::proportional(12.5), fg);
-    shellman_ui::hover::label(ui, &resp, if find.case { "Match case: on" } else { "Match case: off" });
-    if resp.clicked() {
-        find.case = !find.case;
-        out.changed = true;
+    if show.count {
+        ui.painter().text(egui::pos2(x - 4.0, rect.center().y), Align2::RIGHT_CENTER, &label, egui::FontId::proportional(12.5), c.muted);
+        x -= COUNT_W;
     }
-    let label = find.count_label();
-    let label_w = 86.0;
-    ui.painter().text(egui::pos2(x - 4.0, rect.center().y), Align2::RIGHT_CENTER, &label, egui::FontId::proportional(12.5), c.muted);
-    let inner = Rect::from_min_max(egui::pos2(rect.left() + 36.0, rect.top()), egui::pos2((x - label_w).max(rect.left() + 60.0), rect.bottom()));
+    // The field's name for a screen reader, with the count (which may not show).
+    let name = if label.is_empty() { "Find in the terminal".to_owned() } else { format!("Find in the terminal, {label}") };
+    let glyph_r = Rect::from_min_size(rect.min, egui::vec2(GLYPH_W, rect.height()));
+    let name_resp = ui.interact(glyph_r, Id::new(("find", "name")), egui::Sense::hover());
+    name_resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, &name));
+    let inner = Rect::from_min_max(egui::pos2(rect.left() + GLYPH_W, rect.top()), egui::pos2(x.max(rect.left() + GLYPH_W), rect.bottom()));
     let edit = ui.put(
         inner,
         egui::TextEdit::singleline(&mut find.query)
@@ -273,7 +332,8 @@ pub fn pill(ui: &mut egui::Ui, rect: Rect, find: &mut Find) -> PillOut {
             .vertical_align(egui::Align::Center)
             .margin(egui::vec2(2.0, 0.0))
             .desired_width(inner.width()),
-    );
+    )
+    .labelled_by(name_resp.id);
     if std::mem::take(&mut find.focus) {
         edit.request_focus();
     }
@@ -301,6 +361,26 @@ mod tests {
     use alacritty_terminal::event::VoidListener;
     use alacritty_terminal::term::{test::TermSize, Config};
     use alacritty_terminal::vte::ansi::Processor;
+
+    #[test]
+    fn the_pill_never_overflows_its_row() {
+        // Wide: the full pill beside the tabs.
+        assert_eq!(pill_width(1200.0, 12.0), (WIDTH, false));
+        // Narrower: it gives way, keeping the tabs their room, down to its smallest.
+        let (w, alone) = pill_width(560.0, 12.0);
+        assert!(!alone && w + 12.0 + TABS_MIN <= 560.0 + 0.01 && w >= PILL_MIN);
+        // The narrowest window (420 wide leaves a 274 row): the whole row.
+        assert_eq!(pill_width(274.0, 12.0), (274.0, true));
+        // Parts drop out in order, the field always keeps its smallest width.
+        assert_eq!(parts(WIDTH), Parts { count: true, case: true });
+        assert_eq!(parts(274.0), Parts { count: false, case: true });
+        assert_eq!(parts(200.0), Parts { count: false, case: false });
+        for w in [200.0, 254.0, 274.0, 300.0, 340.0, WIDTH] {
+            let p = parts(w);
+            let used = GLYPH_W + FIELD_MIN + BUTTONS_W + if p.case { CASE_W } else { 0.0 } + if p.count { COUNT_W } else { 0.0 };
+            assert!(used <= w.max(GLYPH_W + FIELD_MIN + BUTTONS_W), "{w}: {used}");
+        }
+    }
 
     #[test]
     fn queries_are_taken_literally() {
@@ -358,6 +438,22 @@ mod tests {
         assert!(f.matches[f.current.unwrap()].start().line < newest);
         // A frame's slice stays short (debug build: generous).
         assert!(longest < Duration::from_millis(250), "a slice took {longest:?}");
+    }
+
+    /// Output that came just after a count started is counted once the wait is over, even when
+    /// nothing else asks for a frame.
+    #[test]
+    fn a_count_behind_new_output_asks_for_a_frame() {
+        let mut t = term(1000, "nothing here
+
+");
+        let mut f = Find { query: "here".into(), open: true, ..Find::default() };
+        while f.step(&mut t, 0, 1, false) {}
+        assert_eq!(f.recount_due(1), None, "up to date");
+        let due = f.recount_due(2).expect("a frame is asked for");
+        assert!(due <= RECOUNT);
+        f.close();
+        assert_eq!(f.recount_due(3), None, "closed");
     }
 
     #[test]

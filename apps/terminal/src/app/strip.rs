@@ -15,8 +15,9 @@ const MENU_W: f32 = 260.0;
 #[derive(Default)]
 pub struct StripState {
     scroll: f32,
-    /// The active tab and count last frame: a change brings the active tab into view.
-    seen: (usize, usize),
+    /// The active tab, count and row width last frame: a change brings the active tab into
+    /// view (find opening narrows the row).
+    seen: (usize, usize, u32),
     /// The tab being dragged (by its id).
     dragging: Option<u64>,
     /// The profile menu, open under this button.
@@ -46,8 +47,9 @@ impl super::TerminalApp {
         let n = self.tabs.len();
         let active = self.tabs.active();
         let mut s = ts::strip(n, 2, row.width(), row.height(), self.strip.scroll);
-        if self.strip.seen != (active, n) {
-            self.strip.seen = (active, n);
+        let seen = (active, n, row.width().round() as u32);
+        if self.strip.seen != seen {
+            self.strip.seen = seen;
             s.offset = ts::reveal(&s, active);
         }
         let pill = Rect::from_min_size(row.min, egui::vec2(s.pill_w.min(row.width()), row.height()));
@@ -69,9 +71,10 @@ impl super::TerminalApp {
                 continue;
             }
             let tab = self.tabs.get(i).unwrap();
-            let title = tab_title(&tab.session);
+            let title = tab_title(&tab.pane().session);
             let shown = i == active;
-            let (activity, bell) = if shown { (false, false) } else { tab.session.marks() };
+            // A tab not shown is marked when any of its panes had output or a bell.
+            let (activity, bell) = if shown { (false, false) } else { tab.panes.iter().map(|p| p.session.marks()).fold((false, false), |a, m| (a.0 || m.0, a.1 || m.1)) };
             let mark = if bell { Mark::Bell } else if activity { Mark::Activity } else { Mark::None };
             let id = tab.id;
             let r = ts::tab(ui, rect, clip, &Tab { id: Id::new(("term-tab", id)), title: &title, icon: Some(TERMINAL), active: shown, closable: true, mark });
@@ -120,7 +123,7 @@ impl super::TerminalApp {
             Some(Do::Close(i)) => self.close_tab(ui.ctx(), i),
             Some(Do::Move(a, b)) => {
                 self.tabs.move_tab(a, b);
-                self.strip.seen = (self.tabs.active(), self.tabs.len());
+                self.strip.seen = (self.tabs.active(), self.tabs.len(), row.width().round() as u32);
             }
             None => {}
         }

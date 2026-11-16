@@ -83,6 +83,7 @@ const ENTRIES: &[Entry] = &[
     e(Section::Terminal, "", "console shell command prompt powershell cmd wsl"),
     e(Section::Terminal, "Default profile", "shell powershell cmd command prompt wsl bash tab"),
     e(Section::Terminal, "Font", "font family size cascadia consolas monospace zoom text"),
+    e(Section::Terminal, "Colours", "colors colours scheme palette campbell one half tango ansi theme"),
     e(Section::Terminal, "History and copying", "scrollback lines history buffer copy on select selection clipboard"),
     e(Section::Terminal, "New terminal opens in", "new window new tab instance second"),
     e(Section::Terminal, "Open Terminal here uses", "windows terminal wt custom command default terminal folder"),
