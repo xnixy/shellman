@@ -889,7 +889,7 @@ impl eframe::App for TerminalApp {
         self.run_script(ctx);
         shellman_ui::timing::content(ctx, "first frame", 0);
         // The shell's first bytes (its prompt) are drawn in this frame.
-        if self.tabs.current().session.output_seq() > 0 {
+        if self.tabs.current().pane().session.output_seq() > 0 {
             shellman_ui::timing::content(ctx, "shell prompt", 0);
         }
     }
