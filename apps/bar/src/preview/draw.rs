@@ -56,9 +56,12 @@ pub fn draw(ctx: &Context, view: &View, icons: Icons) -> Option<Action> {
             let outer = at(tile.outer);
             let over = ui.rect_contains_pointer(outer);
             let resp = ui.interact(outer, egui::Id::new(("preview tile", window.hwnd)), egui::Sense::click());
-            if over {
+            shellman_ui::theme::speak(&resp, egui::WidgetType::Button, || shellman_ui::widgets::window_name(&window.title));
+            shellman_ui::theme::focus_ring(ui, &resp, outer, TILE_RADIUS as f32);
+            if over && !c.high_contrast {
                 ui.painter().rect_filled(outer, tile_radius, hover);
             }
+            shellman_ui::theme::contrast_outline(ui, outer, TILE_RADIUS as f32, over, false);
             let icon = window.icon_source().and_then(|p| icons(ui.ctx(), &p));
             let picture = at(tile.preview);
             if !view.live.get(i).copied().unwrap_or(false) {
@@ -78,8 +81,13 @@ pub fn draw(ctx: &Context, view: &View, icons: Icons) -> Option<Action> {
             let mut close_clicked = false;
             if over {
                 let button = ui.interact(close, egui::Id::new(("preview close", window.hwnd)), egui::Sense::click());
+                shellman_ui::theme::speak(&button, egui::WidgetType::Button, || format!("Close {}", shellman_ui::widgets::window_name(&window.title)));
                 if button.hovered() {
-                    ui.painter().circle_filled(close.center(), close.width() / 2.0, pressable);
+                    if c.high_contrast {
+                        ui.painter().circle_stroke(close.center(), close.width() / 2.0 - 0.5, egui::Stroke::new(1.0_f32, c.text));
+                    } else {
+                        ui.painter().circle_filled(close.center(), close.width() / 2.0, pressable);
+                    }
                 }
                 ui.painter().text(
                     close.center(),

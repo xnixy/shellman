@@ -22,18 +22,34 @@ pub enum Event {
 /// The design's dimmer grey (`--dim`), under the muted one.
 fn dim() -> Color32 {
     let c = colors();
+    if c.high_contrast {
+        return c.muted;
+    }
     theme::mix(c.muted, if c.light { Color32::WHITE } else { Color32::BLACK }, 0.22)
 }
 
 fn hairline() -> Color32 {
     let c = colors();
+    if c.high_contrast {
+        return c.text;
+    }
     theme::with_alpha(c.text, if c.light { 18 } else { 20 })
 }
 
 /// The text colour's faint wash, for hover.
 fn soft(light: u8, dark: u8) -> Color32 {
     let c = colors();
+    if c.high_contrast {
+        // No washes in high contrast (hovered buttons are outlined).
+        return Color32::TRANSPARENT;
+    }
     shows_as(theme::with_alpha(c.text, if c.light { light } else { dark }))
+}
+
+/// Painted text a screen reader should read: a label node over `rect`.
+fn label(ui: &Ui, rect: Rect, id: impl std::hash::Hash, text: impl Fn() -> String) {
+    let resp = ui.interact(rect, ui.id().with(("label", id)), Sense::hover());
+    theme::speak(&resp, egui::WidgetType::Label, text);
 }
 
 pub fn today(ui: &mut Ui, rect: Rect, m: &TodayModel, icons: &mut Icons, events: &mut Vec<Event>) {
@@ -41,6 +57,15 @@ pub fn today(ui: &mut Ui, rect: Rect, m: &TodayModel, icons: &mut Icons, events:
     let p = ui.painter().clone();
     let (left, right) = (rect.left() + PAD_X, rect.right() - PAD_X);
     let top = rect.top() + PAD_TOP;
+    // The date and weather block as one label: "Sunday, 15, November, 12°, Cloudy, 8° to 13°".
+    let head = Rect::from_min_max(pos2(left, top), pos2(right, top + place::HEADER_H));
+    label(ui, head, "today head", || {
+        let mut parts = vec![m.weekday.as_str(), m.day.as_str(), m.month.as_str()];
+        if let Some(w) = &m.weather {
+            parts.extend([w.temp.as_str(), w.line.as_str(), w.range.as_str()]);
+        }
+        crate::text::spoken(&parts)
+    });
     // The date.
     p.text(pos2(left, top + 11.0), Align2::LEFT_CENTER, &m.weekday, FontId::proportional(14.0), c.muted);
     p.text(pos2(left - 3.0, top + 26.0 + 32.0), Align2::LEFT_CENTER, &m.day, light_font(64.0), c.text);
@@ -57,6 +82,7 @@ pub fn today(ui: &mut Ui, rect: Rect, m: &TodayModel, icons: &mut Icons, events:
     if let Some(h) = &m.heading {
         p.hline(left..=right, y, Stroke::new(1.0_f32, hairline()));
         p.text(pos2(left, y + place::HEADING_H / 2.0 + 1.0), Align2::LEFT_CENTER, h, semibold_font(12.0), dim());
+        label(ui, Rect::from_min_max(pos2(left, y), pos2(right, y + place::HEADING_H)), "today heading", || h.clone());
         y += place::HEADING_H;
     }
     // The times' column: the design's 46 pt, wider for "10:05 PM" on a 12-hour clock.
@@ -65,7 +91,10 @@ pub fn today(ui: &mut Ui, rect: Rect, m: &TodayModel, icons: &mut Icons, events:
         .iter()
         .map(|r| ui.fonts(|f| f.layout_no_wrap(r.time.clone(), semibold_font(14.0), c.text).size().x))
         .fold(46.0_f32, f32::max);
-    for row in &m.rows {
+    for (n, row) in m.rows.iter().enumerate() {
+        label(ui, Rect::from_min_max(pos2(left, y), pos2(right, y + ROW_H)), ("today row", n), || {
+            crate::text::spoken(&[&row.time, &row.title, row.chip.as_deref().unwrap_or(""), &row.detail])
+        });
         p.hline(left..=right, y, Stroke::new(1.0_f32, hairline()));
         let line1 = y + 11.0 + 11.0;
         let line2 = y + 11.0 + 22.0 + 2.0 + 9.0;
@@ -94,6 +123,10 @@ pub fn today(ui: &mut Ui, rect: Rect, m: &TodayModel, icons: &mut Icons, events:
         let h = if note.detail.is_some() { NOTE_H } else { place::NOTE_ONE_H };
         let r = Rect::from_min_max(pos2(rect.left(), y), pos2(rect.right(), y + h));
         let resp = ui.interact(r, ui.id().with("today-note"), if note.settings { Sense::click() } else { Sense::hover() });
+        // A note that opens Settings is a button; otherwise a line to read.
+        let role = if note.settings { egui::WidgetType::Button } else { egui::WidgetType::Label };
+        theme::speak(&resp, role, || crate::text::spoken(&[&note.title, note.detail.as_deref().unwrap_or("")]));
+        theme::focus_ring(ui, &resp, r, 8.0);
         p.hline(left..=right, y, Stroke::new(1.0_f32, hairline()));
         let line1 = if note.detail.is_some() { y + 22.0 } else { y + h / 2.0 + 1.0 };
         let line2 = y + 11.0 + 22.0 + 2.0 + 9.0;
@@ -121,12 +154,17 @@ pub fn clock(secs: f64) -> String {
     }
 }
 
-/// A round button: a glyph, a hover wash, and a click.
-fn button(ui: &mut Ui, id: &str, center: egui::Pos2, hit: f32, enabled: bool) -> egui::Response {
+/// A round button: a glyph, a hover wash, and a click. `name` is what a screen reader says.
+fn button(ui: &mut Ui, id: &str, name: &str, center: egui::Pos2, hit: f32, enabled: bool) -> egui::Response {
     let r = Rect::from_center_size(center, vec2(hit, hit));
     let resp = ui.interact(r, ui.id().with(id), if enabled { Sense::click() } else { Sense::hover() });
+    theme::speak(&resp, egui::WidgetType::Button, || name.to_owned());
+    theme::focus_ring(ui, &resp, r, hit / 2.0);
     if enabled && resp.hovered() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        if colors().high_contrast {
+            ui.painter().circle_stroke(center, hit / 2.0 - 0.5, Stroke::new(1.0_f32, colors().text));
+        }
     }
     resp
 }
@@ -142,6 +180,7 @@ pub fn playing_stand_in(ui: &mut Ui, rect: Rect) {
     let x = art_rect.right() + 14.0;
     p.text(pos2(x, inner.center().y - 10.0), Align2::LEFT_CENTER, "Now playing", theme::semibold_font(14.0), c.text);
     p.text(pos2(x, inner.center().y + 11.0), Align2::LEFT_CENTER, "Shows when music or a video plays", egui::FontId::proportional(12.5), c.muted);
+    label(ui, inner, "now playing stand-in", || "Now playing, shows when music or a video plays".to_owned());
 }
 
 pub fn playing(ui: &mut Ui, rect: Rect, m: &NowModel, art: Option<&egui::TextureHandle>, icons: &mut Icons, events: &mut Vec<Event>) {
@@ -167,7 +206,7 @@ pub fn playing(ui: &mut Ui, rect: Rect, m: &NowModel, art: Option<&egui::Texture
     let play_c = pos2(right - 15.0 - 14.0 - 18.0, cy);
     let prev_c = pos2(play_c.x - 18.0 - 14.0 - 7.5, cy);
     let quiet = |on: bool| if on { c.muted } else { theme::with_alpha(c.muted, 90) };
-    let r = button(ui, "prev", prev_c, 28.0, m.can_previous);
+    let r = button(ui, "prev", "Previous", prev_c, 28.0, m.can_previous);
     if r.hovered() && m.can_previous {
         p.circle_filled(prev_c, 14.0, soft(14, 22));
     }
@@ -175,8 +214,8 @@ pub fn playing(ui: &mut Ui, rect: Rect, m: &NowModel, art: Option<&egui::Texture
     if r.clicked() {
         events.push(Event::Media(Action::Previous));
     }
-    let r = button(ui, "play", play_c, 36.0, m.can_toggle);
-    let fill = if r.hovered() && m.can_toggle { theme::mix(c.text, c.bg, 0.12) } else { c.text };
+    let r = button(ui, "play", if m.playing { "Pause" } else { "Play" }, play_c, 36.0, m.can_toggle);
+    let fill = if r.hovered() && m.can_toggle && !c.high_contrast { theme::mix(c.text, c.bg, 0.12) } else { c.text };
     p.circle_filled(play_c, 18.0, if m.can_toggle { fill } else { theme::with_alpha(c.text, 120) });
     let glyph = if m.playing { Pic::Pause } else { Pic::Play };
     let nudge = if m.playing { 0.0 } else { 1.0 };
@@ -184,7 +223,7 @@ pub fn playing(ui: &mut Ui, rect: Rect, m: &NowModel, art: Option<&egui::Texture
     if r.clicked() {
         events.push(Event::Media(Action::PlayPause));
     }
-    let r = button(ui, "next", next_c, 28.0, m.can_next);
+    let r = button(ui, "next", "Next", next_c, 28.0, m.can_next);
     if r.hovered() && m.can_next {
         p.circle_filled(next_c, 14.0, soft(14, 22));
     }
@@ -199,10 +238,12 @@ pub fn playing(ui: &mut Ui, rect: Rect, m: &NowModel, art: Option<&egui::Texture
     let block = 20.0 + 3.0 + 18.0 + if has_bar { 9.0 + 4.0 } else { 0.0 };
     let y0 = cy - block / 2.0;
     draw_text(ui, Rect::from_min_size(pos2(x, y0), vec2(room, 20.0)), &m.title, semibold_font(14.0), c.text, false);
+    label(ui, Rect::from_min_size(pos2(x, y0), vec2(room, block)), "now playing", || crate::text::spoken(&["Now playing", &m.title, &m.line]));
     draw_text(ui, Rect::from_min_size(pos2(x, y0 + 23.0), vec2(room, 18.0)), &m.line, FontId::proportional(12.0), c.muted, false);
     if has_bar {
         let bar = Rect::from_min_size(pos2(x, y0 + 20.0 + 3.0 + 18.0 + 9.0), vec2(room, 4.0));
-        p.rect_filled(bar, CornerRadius::same(2), theme::with_alpha(c.text, if c.light { 22 } else { 30 }));
+        let track = if c.high_contrast { c.muted } else { theme::with_alpha(c.text, if c.light { 22 } else { 30 }) };
+        p.rect_filled(bar, CornerRadius::same(2), track);
         let f = (m.position / m.duration).clamp(0.0, 1.0) as f32;
         if f > 0.0 {
             let done = Rect::from_min_size(bar.min, vec2((bar.width() * f).max(4.0), 4.0));

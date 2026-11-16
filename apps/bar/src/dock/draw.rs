@@ -8,6 +8,7 @@
 
 use super::items::{Item, Section};
 use super::metrics::{self, Metrics};
+use shellman_core::taskbar_list::Progress;
 use egui::{Color32, Id, Pos2, Rect, Vec2};
 use shellman_core::thumbs::Thumbs;
 use shellman_ui::app_icon::{self, Kind};
@@ -100,6 +101,22 @@ struct Ink {
 
 fn ink(tint: Color32) -> Ink {
     let c = colors();
+    if c.high_contrast {
+        // Windows' own colours: marks in the text colour, no hover or press wash (hovered icons
+        // are outlined instead), a drop target ringed in highlight.
+        let none = Color32::TRANSPARENT;
+        return Ink {
+            text: c.text,
+            hover: none,
+            press: none,
+            dot: c.text,
+            front: c.text,
+            divider: c.text,
+            plate: c.bg,
+            drop_fill: c.bg,
+            drop_ring: c.accent_fill,
+        };
+    }
     let base = tint.to_opaque();
     let toward = |t: f32, alpha: u8| with_alpha(mix(base, c.text, t), alpha);
     Ink {
@@ -164,6 +181,12 @@ pub fn paint(ui: &mut egui::Ui, scene: &Scene, thumbs: &mut Thumbs) -> Events {
         let cell = Rect::from_x_y_ranges(icon.x_range().expand(4.0), glass.y_range());
         let id = Id::new(("dock icon", scene.salt, &item.app_id));
         let resp = ui.interact(cell, id, egui::Sense::click_and_drag());
+        let front_app = scene.front.is_some_and(|f| item.windows.contains(&f));
+        shellman_ui::theme::speak_selected(&resp, egui::WidgetType::Button, front_app, || {
+            let st = scene.status.get(i);
+            spoken(&item.name(), item.section, item.windows.len(), st.is_some_and(|s| s.attention.is_some()), st.and_then(|s| s.progress))
+        });
+        shellman_ui::theme::focus_ring(ui, &resp, icon.expand(5.0), m.icon * 0.22 + 5.0);
         let appear = appear(&ctx, id.with("appear"), fresh[i]);
         // In hand: the icon rides the pointer; its place stays as a faint plate. Let go (or
         // cancelled), it eases back from where it was. Both ride one offset from its place.
@@ -191,6 +214,9 @@ pub fn paint(ui: &mut egui::Ui, scene: &Scene, thumbs: &mut Thumbs) -> Events {
             let (fill, ring) = if ok { (ink.drop_fill, ink.drop_ring) } else { (ink.hover, ink.hover) };
             ui.painter().rect_filled(plate, r, fill.gamma_multiply(aimed_t));
             ui.painter().rect_stroke(plate, r, egui::Stroke::new(2.0_f32, ring.gamma_multiply(aimed_t)), egui::StrokeKind::Inside);
+        }
+        if colors().high_contrast {
+            shellman_ui::theme::contrast_outline(ui, icon.expand(5.0), m.icon * 0.22 + 5.0, resp.hovered() && calm, false);
         }
         let lifted = carried.abs() > 0.5;
         if in_hand.is_some() {
@@ -267,6 +293,31 @@ pub fn paint(ui: &mut egui::Ui, scene: &Scene, thumbs: &mut Thumbs) -> Events {
     let named = events.hovered.filter(|&(i, _)| scene.items[i].windows.is_empty());
     events.label = paint_label(ui, scene, named.map(|(i, x)| (scene.items[i].name(), x)), &ink);
     events
+}
+
+/// What a screen reader reads for a dock icon: the app's name, then whether it is pinned and
+/// how many windows it has, then what it asked for (attention, progress).
+pub fn spoken(name: &str, section: Section, windows: usize, attention: bool, progress: Option<(Progress, f32)>) -> String {
+    let mut s = name.to_owned();
+    if section == Section::Pinned {
+        s.push_str(", pinned");
+    }
+    match windows {
+        0 => {}
+        1 => s.push_str(", 1 window"),
+        n => s.push_str(&format!(", {n} windows")),
+    }
+    if attention {
+        s.push_str(", needs attention");
+    }
+    match progress {
+        Some((Progress::Normal, k)) => s.push_str(&format!(", {:.0}% done", (k * 100.0).clamp(0.0, 100.0))),
+        Some((Progress::Paused, k)) => s.push_str(&format!(", paused at {:.0}%", (k * 100.0).clamp(0.0, 100.0))),
+        Some((Progress::Error, _)) => s.push_str(", stopped with an error"),
+        Some((Progress::Indeterminate, _)) => s.push_str(", working"),
+        Some((Progress::None, _)) | None => {}
+    }
+    s
 }
 
 /// 0 for an icon that was not there last frame, easing to 1: new icons fade in.
@@ -427,4 +478,18 @@ fn paint_label(ui: &egui::Ui, scene: &Scene, named: Option<(String, f32)>, ink: 
     let at = rect.center() - galley.size() / 2.0;
     ui.painter().galley(at, galley, ink.text);
     Some(rect)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_dock_icon_reads_its_app_windows_and_state() {
+        assert_eq!(spoken("Files", Section::Files, 0, false, None), "Files");
+        assert_eq!(spoken("Notes", Section::Pinned, 2, false, None), "Notes, pinned, 2 windows");
+        assert_eq!(spoken("Mail", Section::Running, 1, true, None), "Mail, 1 window, needs attention");
+        assert_eq!(spoken("Copy", Section::Running, 1, false, Some((Progress::Normal, 0.427))), "Copy, 1 window, 43% done");
+        assert_eq!(spoken("Copy", Section::Running, 1, false, Some((Progress::Error, 0.4))), "Copy, 1 window, stopped with an error");
+    }
 }

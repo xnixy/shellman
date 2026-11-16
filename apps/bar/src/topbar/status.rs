@@ -35,6 +35,27 @@ impl Status {
     pub fn network_or_offline(&self) -> Network {
         self.network.unwrap_or(Network::Offline)
     }
+
+    /// What a screen reader reads for the status group, a button that opens quick controls:
+    /// every icon in words, in the order they are drawn.
+    pub fn spoken(&self) -> String {
+        let mut parts = vec!["Quick controls".to_owned()];
+        parts.push(
+            match self.network_or_offline() {
+                Network::Internet => "connected to the internet",
+                Network::Local => "connected, no internet",
+                Network::Offline => "offline",
+            }
+            .to_owned(),
+        );
+        if let Some(v) = self.volume {
+            parts.push(if v.muted { "sound muted".to_owned() } else { format!("volume {:.0}%", v.level * 100.0) });
+        }
+        if let Some(b) = self.battery {
+            parts.push(format!("battery {}%{}", b.percent, if b.charging { ", charging" } else { "" }));
+        }
+        parts.join(", ")
+    }
 }
 
 /// The level after one wheel step of `scroll` (any amount; only its sign counts) from `level`.
@@ -110,6 +131,20 @@ mod tests {
         // A reading without an output (unplugged) takes the icon away.
         s.sound(&Sound::default());
         assert_eq!(s.volume, None);
+    }
+
+    #[test]
+    fn the_status_group_reads_as_words() {
+        let mut s = Status::default();
+        assert_eq!(s.spoken(), "Quick controls, offline");
+        s.network = Some(Network::Internet);
+        s.volume = Some(Volume { level: 0.4, muted: false });
+        s.battery = Some(Battery { percent: 81, charging: true });
+        assert_eq!(s.spoken(), "Quick controls, connected to the internet, volume 40%, battery 81%, charging");
+        s.network = Some(Network::Local);
+        s.volume = Some(Volume { level: 0.4, muted: true });
+        s.battery = None;
+        assert_eq!(s.spoken(), "Quick controls, connected, no internet, sound muted");
     }
 
     #[test]

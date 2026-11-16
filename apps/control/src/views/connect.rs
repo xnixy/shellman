@@ -132,9 +132,19 @@ fn tile(ui: &mut Ui, rect: Rect, t: &Tile, links: bool) -> Option<Asked> {
     let c = colors();
     let id = egui::Id::new(("connect", t.title));
     let body = ui.interact(rect, id, if links { Sense::click() } else { Sense::hover() });
+    // The tile opens its Settings page (a link-like button); without a page it is a label.
+    let role = if links { egui::WidgetType::Button } else { egui::WidgetType::Label };
+    theme::speak(&body, role, || tile_name(t, links));
+    theme::focus_ring(ui, &body, rect, TILE_RADIUS as f32);
     let chip_center = Pos2::new(rect.left() + TILE_INSET + CHIP / 2.0, rect.center().y);
     let chip_rect = Rect::from_center_size(chip_center, Vec2::splat(CHIP));
-    let chip_resp = ui.interact(chip_rect, id.with("chip"), Sense::click());
+    let chip_sense = if t.toggle.is_some() { Sense::click() } else { Sense::hover() };
+    let chip_resp = ui.interact(chip_rect, id.with("chip"), chip_sense);
+    if t.toggle.is_some() {
+        // A switch: a checkbox stands in.
+        theme::speak_selected(&chip_resp, egui::WidgetType::Checkbox, t.on, || t.title.to_owned());
+        theme::focus_ring(ui, &chip_resp, chip_rect, CHIP / 2.0);
+    }
     let chip_hover = chip_resp.hovered() && t.toggle.is_some();
     // On: the accent fills the tile. Off: a soft tile with a hairline.
     let (on_fill, on_fg) = kit::on_colors(&c);
@@ -153,7 +163,14 @@ fn tile(ui: &mut Ui, rect: Rect, t: &Tile, links: bool) -> Option<Asked> {
         (true, false) => 40,
         (false, false) => 22,
     });
-    ui.painter().circle_filled(chip_center, CHIP / 2.0, veil);
+    if c.high_contrast {
+        ui.painter().circle_stroke(chip_center, CHIP / 2.0 - 0.5, egui::Stroke::new(if chip_hover { 2.0_f32 } else { 1.0 }, ink));
+    } else {
+        ui.painter().circle_filled(chip_center, CHIP / 2.0, veil);
+    }
+    if body_hover && !t.on {
+        theme::contrast_outline(ui, rect, TILE_RADIUS as f32, true, false);
+    }
     ui.painter().text(chip_center, Align2::CENTER_CENTER, t.glyph, icon_font(kit::GLYPH), ink);
     let text_left = chip_rect.right() + 10.0;
     let text_width = rect.right() - 26.0 - text_left;
@@ -172,6 +189,19 @@ fn tile(ui: &mut Ui, rect: Rect, t: &Tile, links: bool) -> Option<Asked> {
     None
 }
 
+/// What a screen reader reads for a tile's body: its title and state line, and that it opens
+/// Settings when it does.
+fn tile_name(t: &Tile, links: bool) -> String {
+    let mut s = t.title.to_owned();
+    if !t.detail.is_empty() {
+        s = format!("{s}, {}", t.detail);
+    }
+    if links {
+        s.push_str(", open settings");
+    }
+    s
+}
+
 /// Show a switch the user flipped at once, before the radio's own event confirms it.
 pub fn assume(n: &mut Connectivity, toggle: Toggle) {
     let to = |on: bool| if on { Switch::On } else { Switch::Off };
@@ -185,6 +215,16 @@ pub fn assume(n: &mut Connectivity, toggle: Toggle) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_tile_reads_its_title_state_and_link() {
+        let n = Connectivity { network: Some(Network::Internet), ..Default::default() };
+        let list = tiles(&n);
+        let name = tile_name(&list[0], true);
+        assert!(name.starts_with("Ethernet"), "{name}");
+        assert!(name.ends_with(", open settings"), "{name}");
+        assert!(!tile_name(&list[0], false).contains("settings"));
+    }
 
     #[test]
     fn missing_radios_have_no_tiles() {

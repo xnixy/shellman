@@ -49,18 +49,28 @@ pub fn draw(ctx: &egui::Context, view: &View, icons: &mut Thumbs) -> Option<usiz
         for (i, (window, tile)) in view.windows.iter().zip(&view.layout.tiles).enumerate() {
             let outer = at(tile.outer);
             let resp = ui.interact(outer, egui::Id::new(("tile", window.hwnd)), egui::Sense::click());
+            // The switcher never takes the keyboard (Alt+Tab is read by its hook): the selection
+            // is the tile's selected state.
+            shellman_ui::theme::speak_selected(&resp, egui::WidgetType::SelectableLabel, i == view.sel, || {
+                shellman_ui::widgets::window_name(&window.title)
+            });
             let tile_radius = egui::CornerRadius::same(TILE_RADIUS);
             if i == view.sel {
+                // In high contrast `control_hover` is the window colour and the outline highlight.
                 ui.painter().rect_filled(outer, tile_radius, c.control_hover);
                 ui.painter().rect_stroke(outer, tile_radius, egui::Stroke::new(2.0_f32, c.accent_fill), egui::StrokeKind::Inside);
             } else if resp.hovered() {
                 ui.painter().rect_filled(outer, tile_radius, c.control);
+                shellman_ui::theme::contrast_outline(ui, outer, TILE_RADIUS as f32, true, false);
             }
             let icon = window.icon_source().and_then(|p| shellman_ui::app_icon::get(ui.ctx(), &p, true, icons));
             let preview = at(tile.preview);
             if !view.live.get(i).copied().unwrap_or(false) {
                 // Minimized, or not previewable: the app's icon on a plate.
                 ui.painter().rect_filled(preview, tile_radius, c.control);
+                if c.high_contrast {
+                    ui.painter().rect_stroke(preview, tile_radius, egui::Stroke::new(1.0_f32, c.muted), egui::StrokeKind::Inside);
+                }
                 paint_icon(ui, icon, preview.center(), BIG_ICON.min(preview.height() * 0.6));
             }
             let label = at(tile.label);

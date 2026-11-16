@@ -715,7 +715,9 @@ fn frame(ctx: &Context) {
                 open: open.nav.chain.get(l).copied(),
             };
             let scroll = open.scroll.get(l).copied().unwrap_or(0.0);
+            let hot = lit.hot;
             draw::paint(painter, at[l], &levels[l], rows, lit, scroll);
+            draw::speak(ui, at[l], &levels[l], rows, hot, scroll, l);
         }
     });
 

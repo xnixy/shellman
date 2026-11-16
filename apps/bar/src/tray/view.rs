@@ -33,6 +33,7 @@ pub fn draw(ui: &mut egui::Ui, icons: &[TrayIcon], tex: &mut TrayTextures, bar: 
         x -= PITCH;
         let cell = egui::Rect::from_center_size(egui::pos2(x + PITCH / 2.0, bar.center().y), egui::Vec2::splat(PITCH));
         let resp = ui.interact(cell, egui::Id::new(("tray", icon.hwnd, icon.uid)), egui::Sense::click());
+        shellman_ui::theme::speak(&resp, egui::WidgetType::Button, || spoken(&icon.tip));
         highlight(ui, cell, &resp, RADIUS);
         let rect = at.origin.map(|o| phys_rect(o, cell, ui.ctx().pixels_per_point()));
         if let Some(rect) = rect {
@@ -69,6 +70,17 @@ pub fn draw(ui: &mut egui::Ui, icons: &[TrayIcon], tex: &mut TrayTextures, bar: 
     x
 }
 
+/// What a screen reader calls a tray icon: its tooltip's lines joined into one, or a plain
+/// "Notification icon" for one that gives no tooltip (never nothing: an unnamed button).
+pub fn spoken(tip: &str) -> String {
+    let lines: Vec<&str> = tip.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
+    if lines.is_empty() {
+        "Notification icon".to_owned()
+    } else {
+        lines.join(", ")
+    }
+}
+
 /// `cell` (points, in the window) as left, top, right, bottom in physical screen pixels, given
 /// the window's client origin in physical pixels and its own scale. Each monitor's window has its
 /// own scale (150%, 300%), so this is never done with another window's.
@@ -80,6 +92,14 @@ fn phys_rect(origin: (i32, i32), cell: egui::Rect, ppp: f32) -> [i32; 4] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_tray_icon_is_never_unnamed() {
+        assert_eq!(spoken(""), "Notification icon");
+        assert_eq!(spoken("  \n "), "Notification icon");
+        assert_eq!(spoken("Volume"), "Volume");
+        assert_eq!(spoken("Backup\r\n  3 files left\n"), "Backup, 3 files left");
+    }
 
     #[test]
     fn rects_are_physical_per_window_scale() {

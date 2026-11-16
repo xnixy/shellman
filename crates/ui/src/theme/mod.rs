@@ -11,7 +11,7 @@ mod style;
 
 pub use icons::{glyph, icon, icon_font, install_fonts, light_font, semibold_font};
 pub(crate) use icons::mark_text_font_installed;
-pub use style::{apply, checkbox, danger_button, dialog, focus_ring, muted, primary_button, secondary_button, setting_row, trailing};
+pub use style::{apply, checkbox, contrast_outline, danger_button, dialog, focus_ring, muted, primary_button, secondary_button, setting_row, speak, speak_selected, trailing};
 
 use egui::Color32;
 use serde::{Deserialize, Serialize};

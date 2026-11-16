@@ -157,6 +157,13 @@ pub fn switch(ui: &mut Ui, on: &mut bool, label: &str) -> egui::Response {
     resp
 }
 
+/// What a screen reader calls a window's tile or preview: its title, or "Untitled window" for
+/// one without (never an unnamed item).
+pub fn window_name(title: &str) -> String {
+    let title = title.trim();
+    if title.is_empty() { "Untitled window".to_owned() } else { title.to_owned() }
+}
+
 /// Give a text field a name a screen reader says (its hint is only a placeholder), with what is
 /// typed as its value; `None` for a password, whose text is never handed over.
 pub fn name_field(resp: &egui::Response, name: &str, typed: Option<&str>) {
@@ -243,4 +250,15 @@ pub fn select_range(ctx: &egui::Context, id: Id, from: usize, to: usize) {
 
 pub fn select_all(ctx: &egui::Context, id: Id, len: usize) {
     select_range(ctx, id, 0, len);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_window_is_never_unnamed() {
+        assert_eq!(window_name("  "), "Untitled window");
+        assert_eq!(window_name(" Notes "), "Notes");
+    }
 }

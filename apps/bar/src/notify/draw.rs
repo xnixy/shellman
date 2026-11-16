@@ -8,7 +8,7 @@ use egui::{pos2, vec2, Align2, Color32, FontId, Rect, Sense, TextureId, Ui, Vec2
 use shellman_core::notify::Toast;
 use shellman_ui::chips::{chip, chip_width, round_icon, soft_colors, Chip};
 use shellman_ui::glass::{islands, Island};
-use shellman_ui::theme::{colors, glyph, icon_font, mix, semibold_font, with_alpha};
+use shellman_ui::theme::{self, colors, glyph, icon_font, mix, semibold_font, with_alpha};
 use shellman_ui::widgets::draw_text;
 use std::collections::HashMap;
 use std::path::Path;
@@ -131,6 +131,11 @@ fn draw_card(ui: &mut Ui, card: &Card, replies: &mut HashMap<u32, String>, icons
     let at = |r: Rect| r.translate(card.rect.min.to_vec2());
     // The whole island opens the toast; the controls on it are added later, so they win.
     let open = ui.interact(card.rect, egui::Id::new(("toast", t.id)), Sense::click());
+    theme::speak(&open, egui::WidgetType::Button, || {
+        let secs = SystemTime::now().duration_since(t.time).map_or(0, |d| d.as_secs());
+        layout::spoken(&t.app_name, &t.title, &layout::body_text(t), &layout::ago(secs))
+    });
+    theme::focus_ring(ui, &open, card.rect, RADIUS);
     if open.clicked() {
         out.events.push(Event::Open(t.id));
     }
@@ -195,6 +200,8 @@ fn draw_card(ui: &mut Ui, card: &Card, replies: &mut HashMap<u32, String>, icons
             let w = text_width(ui, label, FontId::proportional(12.0)) + 4.0;
             let link = Rect::from_min_max(pos2(r.right() - w, r.top()), r.max);
             let resp = ui.interact(link, egui::Id::new(("toast expand", t.id)), Sense::click());
+            theme::speak(&resp, egui::WidgetType::Button, || label.to_owned());
+            theme::focus_ring(ui, &resp, link, 4.0);
             let color = if resp.hovered() { c.text } else { c.accent_text };
             draw_text(ui, link, label, FontId::proportional(12.0), color, true);
             if resp.clicked() {
@@ -239,6 +246,7 @@ fn draw_card(ui: &mut Ui, card: &Card, replies: &mut HashMap<u32, String>, icons
             .desired_width(field.width() - 2.0 * (PAD_X - 2.0));
         let inner = field.shrink2(vec2(PAD_X - 2.0, 2.0));
         let resp = ui.put(inner, edit);
+        shellman_ui::widgets::name_field(&resp, &format!("Reply to {}", t.app_name), Some(text.as_str()));
         if resp.clicked() || resp.gained_focus() {
             out.events.push(Event::Focus);
         }
@@ -270,13 +278,24 @@ fn controls(ui: &mut Ui, rect: Rect, view: &View, events: &mut Vec<Event>) {
     // The switch, as in the mockup (38 by 22).
     let track = Rect::from_min_size(pos2(right - 38.0, mid - 11.0), vec2(38.0, 22.0));
     let resp = ui.interact(track.expand(4.0), egui::Id::new("notifications dnd"), Sense::click());
+    // A switch: egui 0.31 has no Switch role, a checkbox stands in.
+    theme::speak_selected(&resp, egui::WidgetType::Checkbox, view.dnd, || "Do not disturb".to_owned());
+    theme::focus_ring(ui, &resp, track, 11.0);
     let t = ui.ctx().animate_bool(resp.id, view.dnd);
-    // Off: the mockup's faint white track (#ffffff22), with a hairline so it reads on any glass.
-    let (_, off, line) = soft_colors(c.light);
-    let line = egui::Stroke::new(line.width, with_alpha(line.color, (line.color.a() as f32 * (1.0 - t)) as u8));
-    ui.painter().rect(track, 11, mix(off, c.accent_fill, t), line, egui::StrokeKind::Inside);
     let knob = pos2(track.left() + 11.0 + 16.0 * t, mid);
-    ui.painter().circle_filled(knob, 8.0, Color32::WHITE);
+    if c.high_contrast {
+        // Outlined; on is highlight with a highlight-text knob, off the window with a text knob.
+        let (fill, dot) = if view.dnd { (c.accent_fill, c.on_accent) } else { (c.bg, c.text) };
+        ui.painter().rect(track, 11, fill, egui::Stroke::new(1.0_f32, c.text), egui::StrokeKind::Inside);
+        ui.painter().circle_filled(knob, 7.0, dot);
+    } else {
+        // Off: the mockup's faint white track (#ffffff22), with a hairline so it reads on any glass.
+        let (_, off, line) = soft_colors(c.light);
+        let line = egui::Stroke::new(line.width, with_alpha(line.color, (line.color.a() as f32 * (1.0 - t)) as u8));
+        ui.painter().rect(track, 11, mix(off, c.accent_fill, t), line, egui::StrokeKind::Inside);
+        // The knob is `on_accent` when on: a white one vanished on a light accent.
+        ui.painter().circle_filled(knob, 8.0, mix(Color32::WHITE, c.on_accent, t));
+    }
     if resp.on_hover_text(if view.dnd { "Turn do not disturb off" } else { "Do not disturb: notifications are listed, not shown" }).clicked() {
         events.push(Event::ToggleDnd);
     }

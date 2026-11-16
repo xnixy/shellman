@@ -119,6 +119,28 @@ pub enum Asked {
     Connect,
 }
 
+/// Painted text a screen reader should read: a label node over `rect`.
+fn label_for(ui: &Ui, rect: Rect, id: &str, text: &str) {
+    let resp = ui.interact(rect, egui::Id::new(id), Sense::hover());
+    shellman_ui::theme::speak(&resp, egui::WidgetType::Label, || text.to_owned());
+}
+
+/// What a screen reader reads for a day of the grid: its full date (in the region's words),
+/// then "today", "has events" and "next or last month" where they apply.
+pub fn spoken_day(date: &str, today: bool, has_events: bool, in_month: bool) -> String {
+    let mut s = date.to_owned();
+    if today {
+        s.push_str(", today");
+    }
+    if has_events {
+        s.push_str(", has events");
+    }
+    if !in_month {
+        s.push_str(", another month");
+    }
+    s
+}
+
 fn rgb(c: Option<[u8; 3]>, fallback: Color32) -> Color32 {
     c.map_or(fallback, |[r, g, b]| Color32::from_rgb(r, g, b))
 }
@@ -153,13 +175,15 @@ pub fn draw(ui: &mut Ui, rect: Rect, view: &mut View, data: &Data) -> Option<Ask
     }
     let title = Rect::from_min_max(pos2(head.left() + 4.0, head.top()), pos2(title_end, head.bottom()));
     draw_text(ui, title, &labels.month, semibold_font(15.0), c.text, false);
+    label_for(ui, title, "cal month", &labels.month);
 
     // Weekday names, and the week-number column's heading.
     let week_col = if data.weeks { WEEK_COL } else { 0.0 };
     let cell_w = (inner.width() - week_col) / 7.0;
     let dow_top = head.bottom() + DOW_GAP;
     let small = FontId::proportional(12.0);
-    let dim = mix(c.muted, c.bg, 0.35);
+    // Grey text in high contrast: a mix is not one of Windows' colours.
+    let dim = if c.high_contrast { c.muted } else { mix(c.muted, c.bg, 0.35) };
     for (i, name) in labels.weekdays.iter().enumerate() {
         let x = inner.left() + week_col + cell_w * (i as f32 + 0.5);
         ui.painter().text(pos2(x, dow_top + DOW_H / 2.0), Align2::CENTER_CENTER, name, small.clone(), c.muted);
@@ -179,11 +203,27 @@ pub fn draw(ui: &mut Ui, rect: Rect, view: &mut View, data: &Data) -> Option<Ask
             let resp = ui.interact(cell, egui::Id::new(("cal day", day)), Sense::click());
             let today = day == data.today;
             let chosen = day == view.selected;
+            let has_events = busy.contains(&day);
+            let in_month = grid.in_month(day);
+            shellman_ui::theme::speak_selected(&resp, egui::WidgetType::SelectableLabel, chosen, || {
+                spoken_day(&region::format_day(day, "dddd d MMMM yyyy"), today, has_events, in_month)
+            });
+            shellman_ui::theme::focus_ring(ui, &resp, round, 15.0);
             let (soft, soft_hover, line) = soft_colors(c.light);
+            let hc = c.high_contrast;
             if today {
-                ui.painter().circle_filled(round.center(), 15.0, if resp.hovered() { mix(c.accent_fill, Color32::WHITE, 0.12) } else { c.accent_fill });
+                let fill = if resp.hovered() && !hc { mix(c.accent_fill, Color32::WHITE, 0.12) } else { c.accent_fill };
+                ui.painter().circle_filled(round.center(), 15.0, fill);
+                if hc && chosen {
+                    // Highlight under highlight text already; the chosen ring sits outside it.
+                    ui.painter().circle_stroke(round.center(), 16.5, egui::Stroke::new(2.0_f32, c.text));
+                }
+            } else if chosen && hc {
+                ui.painter().circle_stroke(round.center(), 14.0, egui::Stroke::new(2.0_f32, c.row_selected));
             } else if chosen {
                 ui.painter().circle(round.center(), 15.0, soft_hover, line);
+            } else if resp.hovered() && hc {
+                ui.painter().circle_stroke(round.center(), 14.5, egui::Stroke::new(1.0_f32, c.text));
             } else if resp.hovered() {
                 ui.painter().circle_filled(round.center(), 15.0, soft);
             }
@@ -197,7 +237,7 @@ pub fn draw(ui: &mut Ui, rect: Rect, view: &mut View, data: &Data) -> Option<Ask
             };
             let font = if today || chosen { semibold_font(13.5) } else { FontId::proportional(13.5) };
             ui.painter().text(round.center(), Align2::CENTER_CENTER, d.to_string(), font, color);
-            if busy.contains(&day) {
+            if has_events {
                 let dot = if today { with_alpha(c.on_accent, 230) } else { with_alpha(c.accent_text, if grid.in_month(day) { 255 } else { 120 }) };
                 ui.painter().circle_filled(pos2(round.center().x, round.bottom() - 4.5), 2.0, dot);
             }
@@ -212,6 +252,7 @@ pub fn draw(ui: &mut Ui, rect: Rect, view: &mut View, data: &Data) -> Option<Ask
     ui.painter().hline(inner.x_range(), y - SEP / 2.0, egui::Stroke::new(1.0_f32, c.separator));
     let heading = Rect::from_min_size(pos2(inner.left() + 4.0, y), vec2(inner.width() - 4.0, DAY_HEAD));
     draw_text(ui, heading, &labels.day, semibold_font(13.0), c.text, false);
+    label_for(ui, heading, "cal day heading", &labels.day);
     y += DAY_HEAD;
     let list_area = Rect::from_min_size(pos2(inner.left(), y), vec2(inner.width(), EVENT_ROWS as f32 * EVENT_H + MORE_H));
     let quiet = |ui: &mut Ui, text: &str, link: bool| {
@@ -222,6 +263,7 @@ pub fn draw(ui: &mut Ui, rect: Rect, view: &mut View, data: &Data) -> Option<Ask
             chip(ui, r, egui::Id::new("cal connect"), text, None, Chip::Soft).clicked()
         } else {
             draw_text(ui, r, text, FontId::proportional(13.0), c.muted, false);
+            label_for(ui, r, "cal quiet", text);
             false
         }
     };
@@ -255,6 +297,7 @@ pub fn draw(ui: &mut Ui, rect: Rect, view: &mut View, data: &Data) -> Option<Ask
             if more > 0 {
                 let r = Rect::from_min_size(pos2(list_area.left() + TIME_COL, y + EVENT_ROWS as f32 * EVENT_H), vec2(list_area.width() - TIME_COL, MORE_H));
                 draw_text(ui, r, &format!("{more} more"), FontId::proportional(12.0), dim, false);
+                label_for(ui, r, "cal more", &format!("{more} more"));
             }
         }
     }
@@ -281,6 +324,11 @@ fn event_row(ui: &mut Ui, row: Rect, e: &Instance, data: &Data, day: i64) {
     } else {
         e.location.clone()
     };
+    // Painted text is not seen by a screen reader: the row says itself as a label.
+    let resp = ui.interact(row, egui::Id::new(("cal event", day, &e.title, e.start)), Sense::hover());
+    shellman_ui::theme::speak(&resp, egui::WidgetType::Label, || {
+        [time.as_str(), e.title.as_str(), detail.as_str()].iter().filter(|s| !s.is_empty()).copied().collect::<Vec<_>>().join(", ")
+    });
     let title_rect = Rect::from_min_max(pos2(text_left, row.top() + 3.0), pos2(row.right(), mid + 1.0));
     draw_text(ui, title_rect, &e.title, semibold_font(13.5), c.text, false);
     if !detail.is_empty() {
@@ -306,6 +354,12 @@ mod tests {
         let r = rect(10.0, crate::notify::layout::COLUMN_W);
         assert_eq!(r.left(), crate::notify::layout::EDGE);
         assert_eq!(r.height(), HEIGHT);
+    }
+
+    #[test]
+    fn a_day_reads_its_date_and_marks() {
+        assert_eq!(spoken_day("Sunday 15 November 2026", true, true, true), "Sunday 15 November 2026, today, has events");
+        assert_eq!(spoken_day("Monday 30 November 2026", false, false, false), "Monday 30 November 2026, another month");
     }
 
     #[test]

@@ -309,6 +309,7 @@ impl Launcher {
             .hint_text(egui::RichText::new("Search apps, files, settings").color(c.muted))
             .desired_width(edit_rect.width());
         let resp = ui.put(edit_rect, edit);
+        shellman_ui::widgets::name_field(&resp, "Search apps, files, settings", Some(&self.query));
         // The box owns the keyboard whenever the launcher is showing.
         resp.request_focus();
         if resp.changed() {
@@ -319,7 +320,11 @@ impl Launcher {
                 egui::pos2(bar.right() - PILL_PAD - 17.0, bar.center().y),
                 egui::vec2(34.0, 22.0),
             );
-            ui.painter().rect_filled(chip, 7.0, c.text.gamma_multiply(0.08));
+            if c.high_contrast {
+                ui.painter().rect_stroke(chip, 7.0, egui::Stroke::new(1.0_f32, c.muted), egui::StrokeKind::Inside);
+            } else {
+                ui.painter().rect_filled(chip, 7.0, c.text.gamma_multiply(0.08));
+            }
             ui.painter().text(
                 chip.center(),
                 egui::Align2::CENTER_CENTER,

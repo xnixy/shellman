@@ -78,6 +78,8 @@ pub fn draw(ui: &mut egui::Ui, mid: f32, right: f32, badge: Badge) -> (egui::Rec
     let width = if chip.is_some() { PAD + ICON + CHIP_GAP + chip_w + (H - CHIP_H) / 2.0 } else { H };
     let rect = egui::Rect::from_min_max(egui::pos2(right - width, mid - H / 2.0), egui::pos2(right, mid + H / 2.0));
     let resp = ui.interact(rect, egui::Id::new("notifications bell"), egui::Sense::click());
+    // "Selected" while the list is open.
+    shellman_ui::theme::speak_selected(&resp, egui::WidgetType::Button, badge.open, || format!("Notifications, {}", tip(badge)));
     highlight(ui, rect, &resp, (H / 2.0) as u8);
     let glyph = if badge.dnd { BELL_OFF } else { BELL };
     let icon_x = if chip.is_some() { rect.left() + PAD + ICON / 2.0 } else { rect.center().x };

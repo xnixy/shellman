@@ -175,6 +175,10 @@ pub(crate) fn scrim(tint: egui::Color32) -> egui::Color32 {
 /// A soft highlight behind a bar item while it is hovered or pressed.
 pub fn highlight(ui: &egui::Ui, rect: egui::Rect, resp: &egui::Response, radius: u8) {
     let c = colors();
+    // The keyboard's ring (where the bar has focus) and, in high contrast, an outline for the
+    // hover wash it has no colour for.
+    shellman_ui::theme::focus_ring(ui, resp, rect, radius as f32);
+    shellman_ui::theme::contrast_outline(ui, rect, radius as f32, resp.hovered() || resp.is_pointer_button_down_on(), false);
     let fill = if resp.is_pointer_button_down_on() {
         c.press_soft
     } else if resp.hovered() {

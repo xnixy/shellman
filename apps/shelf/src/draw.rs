@@ -54,6 +54,10 @@ pub enum Event {
 /// The text colour, faint, as hover and the open stack's backing.
 fn soft(alpha_light: u8, alpha_dark: u8) -> Color32 {
     let c = colors();
+    if c.high_contrast {
+        // No washes: hovered and open things are outlined instead (`theme::contrast_outline`).
+        return Color32::TRANSPARENT;
+    }
     shows_as(theme::with_alpha(c.text, if c.light { alpha_light } else { alpha_dark }))
 }
 
@@ -82,9 +86,14 @@ pub fn paint(ui: &mut Ui, scene: &Scene, thumbs: &mut Thumbs) -> Vec<Event> {
     for (view, rect) in scene.stacks.iter().zip(&scene.layout.stacks) {
         let active = scene.fan.as_ref().is_some_and(|f| f.kind == view.kind && f.t > 0.5);
         let resp = ui.interact(*rect, ui.id().with(("stack", view.kind.label())), Sense::click());
+        // A button that opens the stack's fan: "selected" while it is open.
+        theme::speak_selected(&resp, egui::WidgetType::Button, active, || text::spoken(&[view.kind.label(), &stack_line(view, scene)]));
+        let back = rect.shrink2(vec2(0.0, 2.0));
+        theme::focus_ring(ui, &resp, back, geometry::STACK_RADIUS);
         if resp.hovered() || active {
-            ui.painter().rect_filled(rect.shrink2(vec2(0.0, 2.0)), CornerRadius::same(geometry::STACK_RADIUS as u8), hover_fill());
+            ui.painter().rect_filled(back, CornerRadius::same(geometry::STACK_RADIUS as u8), hover_fill());
         }
+        theme::contrast_outline(ui, back, geometry::STACK_RADIUS, resp.hovered(), active);
         if resp.hovered() {
             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
         }
@@ -122,6 +131,8 @@ fn drop_zone(ui: &Ui, rect: Rect, keep: bool) {
         ("Drop", FontId::proportional(12.0), c.muted)
     };
     p.text(pos2(rect.center().x, top + 35.0), Align2::CENTER_CENTER, word, font, col);
+    let resp = ui.interact(rect, egui::Id::new("shelf drop zone"), Sense::hover());
+    theme::speak(&resp, egui::WidgetType::Label, || if keep { "Drop here to keep it on the shelf".to_owned() } else { "Drop files here".to_owned() });
 }
 
 /// A stack: three overlapped cards of its newest items, its name and its count.
@@ -146,11 +157,16 @@ fn stack(ui: &Ui, rect: Rect, view: &StackView, scene: &Scene, thumbs: &mut Thum
     }
     let label_y = rect.top() + 12.0 + geometry::CARDS + 9.0 + 9.0;
     p.text(pos2(rect.center().x, label_y), Align2::CENTER_CENTER, view.kind.label(), semibold_font(12.0), c.text);
-    let line = match view.kind {
+    let line = stack_line(view, scene);
+    p.text(pos2(rect.center().x, label_y + 17.0), Align2::CENTER_CENTER, line, FontId::proportional(11.0), c.muted);
+}
+
+/// The muted line under a stack's name: when the newest came (Recent) or how many it holds.
+fn stack_line(view: &StackView, scene: &Scene) -> String {
+    match view.kind {
         Stack::Recent => view.items.first().map_or_else(|| "Nothing yet".to_owned(), |i| text::day(i.time + scene.offset, scene.now)),
         _ => text::count(view.items.len()),
-    };
-    p.text(pos2(rect.center().x, label_y + 17.0), Align2::CENTER_CENTER, line, FontId::proportional(11.0), c.muted);
+    }
 }
 
 /// One card: the item's preview filling it, or its icon on paper.
@@ -181,8 +197,17 @@ fn fan_pills(ui: &Ui, fan: &FanView, scene: &Scene, thumbs: &mut Thumbs, events:
     let n = fan.items.len();
     for (i, rect) in fan.pills.iter().enumerate() {
         let resp = ui.interact(*rect, ui.id().with(("pill", fan.kind.label(), i)), Sense::click_and_drag());
+        theme::speak(&resp, egui::WidgetType::Button, || match fan.items.get(i) {
+            Some(item) => text::spoken(&[&item.name, &text::item_line(item.size, item.time + scene.offset, scene.now)]),
+            None => {
+                let (open, more) = text::open_in_files(fan.kind.label(), fan.more);
+                text::spoken(&[&open, more.as_deref().unwrap_or("")])
+            }
+        });
+        theme::focus_ring(ui, &resp, *rect, rect.height() / 2.0);
         if resp.hovered() && fan.t >= 1.0 {
             p.rect_filled(*rect, CornerRadius::same((rect.height() / 2.0) as u8), soft(12, 18));
+            theme::contrast_outline(ui, *rect, rect.height() / 2.0, true, false);
             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
         }
         if let Some(item) = fan.items.get(i) {

@@ -139,6 +139,51 @@ pub struct Lit {
     pub open: Option<usize>,
 }
 
+/// What a screen reader is told about a row: its role, whether it is checked (for a row that
+/// can be), and its name. None for what is not read on its own (separators). Headings and notes
+/// are labels; a submenu says so after its name; a hint (a shortcut, a folder) follows the name.
+pub fn spoken(r: &Row) -> Option<(egui::WidgetType, Option<bool>, String)> {
+    let name = |extra: &str| {
+        let mut s = r.label.clone();
+        if s.trim().is_empty() {
+            s = "Picture".to_owned();
+        }
+        if !r.hint.is_empty() {
+            s = format!("{s}, {}", r.hint);
+        }
+        s + extra
+    };
+    match &r.kind {
+        RowKind::Separator => None,
+        RowKind::Heading | RowKind::Note => Some((egui::WidgetType::Label, None, r.label.clone())),
+        RowKind::Submenu(_) => Some((egui::WidgetType::Button, None, name(", submenu"))),
+        RowKind::Item(_) | RowKind::Picture(..) if r.checked => Some((egui::WidgetType::Checkbox, Some(true), name(""))),
+        RowKind::Item(_) | RowKind::Picture(..) => Some((egui::WidgetType::Button, None, name(""))),
+    }
+}
+
+/// Name one level's visible rows for screen readers: a node over each, with its role and name,
+/// and the lit row as the selected one. The menu reads its own pointer and keys, so these only
+/// describe.
+pub fn speak(ui: &egui::Ui, origin: Pos2, level: &Level, rows: &[Row], hot: Option<usize>, scroll: f32, depth: usize) {
+    let view = Rect::from_min_size(pos2(origin.x, origin.y + PAD), vec2(level.size.x, level.size.y - 2.0 * PAD));
+    for (i, (r, &(top, h))) in rows.iter().zip(&level.rows).enumerate() {
+        let rect = Rect::from_min_size(pos2(origin.x + PAD, origin.y + top - scroll), vec2(level.size.x - 2.0 * PAD, h));
+        if !rect.intersects(view) {
+            continue;
+        }
+        let Some((role, checked, name)) = spoken(r) else { continue };
+        let resp = ui.interact(rect.intersect(view), egui::Id::new(("menu row", depth, i)), egui::Sense::hover());
+        let lit = hot == Some(i);
+        let enabled = r.enabled;
+        resp.widget_info(|| {
+            let mut info = egui::WidgetInfo::labeled(role, enabled, name.clone());
+            info.selected = checked.or(lit.then_some(true));
+            info
+        });
+    }
+}
+
 /// Paint one level's rows, scrolled by `scroll` (the glass under them is the panel's, or the
 /// caller's fallback).
 pub fn paint(painter: &Painter, origin: Pos2, level: &Level, rows: &[Row], lit: Lit, scroll: f32) {
@@ -158,7 +203,7 @@ pub fn paint(painter: &Painter, origin: Pos2, level: &Level, rows: &[Row], lit: 
                 let y = cy.round() + 0.5;
                 // The mockup's 8 % line, as it shows over glass (see `islands::shows_as`).
                 let line = if c.light { Color32::from_black_alpha(18) } else { Color32::from_white_alpha(22) };
-                let line = crate::glass::islands::shows_as(line);
+                let line = if c.high_contrast { c.text } else { crate::glass::islands::shows_as(line) };
                 painter.hline(rect.x_range().shrink(SIDE - 4.0), y, Stroke::new(1.0_f32, line));
                 continue;
             }
@@ -178,7 +223,11 @@ pub fn paint(painter: &Painter, origin: Pos2, level: &Level, rows: &[Row], lit: 
         }
         let open = lit.open == Some(i);
         let hot = lit.hot == Some(i) || open;
-        if hot && r.enabled {
+        // High contrast: the lit row is highlight under highlight text, as Windows' menus are.
+        let hc_lit = c.high_contrast && hot && r.enabled;
+        if hc_lit {
+            painter.rect_filled(rect, CornerRadius::same(ROW_RADIUS), c.accent_fill);
+        } else if hot && r.enabled && !c.high_contrast {
             // The mockup's quiet hover (--hover: 9 % white, 6 % black), as it shows over glass.
             // The accent is for what is checked, not for where the pointer is.
             let hover = if c.light { Color32::from_black_alpha(15) } else { Color32::from_white_alpha(23) };
@@ -190,20 +239,27 @@ pub fn paint(painter: &Painter, origin: Pos2, level: &Level, rows: &[Row], lit: 
             continue;
         }
         let fg = match () {
+            _ if hc_lit => c.on_accent,
+            _ if !r.enabled && c.high_contrast => c.muted,
             _ if !r.enabled => theme::with_alpha(c.muted, if c.light { 190 } else { 140 }),
             _ if r.danger => c.danger_text,
             _ => c.text,
         };
         let icon_fg = match () {
-            _ if !r.enabled || r.danger => fg,
-            _ if hot => c.text,
+            _ if hc_lit || !r.enabled || r.danger => fg,
+            _ if hot || c.high_contrast => c.text,
             _ => c.muted,
         };
         if level.icons {
             let at = pos2(rect.left() + SIDE + ICON_W / 2.0, cy);
             if r.checked && (r.icon.is_some() || r.image.is_some()) {
                 let well = Rect::from_center_size(at, Vec2::splat(26.0));
-                painter.rect_filled(well, CornerRadius::same(7), c.row_selected);
+                if c.high_contrast {
+                    // An outline: highlight would sit under ordinary text.
+                    painter.rect_stroke(well, CornerRadius::same(7), Stroke::new(1.5_f32, fg), egui::StrokeKind::Inside);
+                } else {
+                    painter.rect_filled(well, CornerRadius::same(7), c.row_selected);
+                }
             }
             match (r.image, r.icon, r.checked) {
                 (Some(tex), _, _) => image(&painter, tex, Rect::from_center_size(at, Vec2::splat(IMAGE)), r.enabled),
@@ -219,13 +275,14 @@ pub fn paint(painter: &Painter, origin: Pos2, level: &Level, rows: &[Row], lit: 
         let mut right_w = 0.0;
         let right_x = rect.right() - SIDE;
         if let RowKind::Submenu(_) = r.kind {
-            let col = if open || hot { c.text } else { c.muted };
+            let col = if hc_lit { c.on_accent } else if open || hot { c.text } else { c.muted };
             painter.text(pos2(right_x, cy), Align2::RIGHT_CENTER, glyph::CHEVRON, icon_font(10.0), col);
             right_w = CHEVRON_W + GAP;
         } else if !r.hint.is_empty() {
             // A long hint (a folder's path) gets at most half the row, cut with an ellipsis.
             let room = (rect.width() - label_x - SIDE) * 0.5;
-            right_w = label(&painter, pos2(right_x, cy), room, &r.hint, HINT_SIZE, c.muted, Align2::RIGHT_CENTER) + GAP * 2.0;
+            let col = if hc_lit { c.on_accent } else { c.muted };
+            right_w = label(&painter, pos2(right_x, cy), room, &r.hint, HINT_SIZE, col, Align2::RIGHT_CENTER) + GAP * 2.0;
         }
         let room = rect.width() - label_x - SIDE - right_w;
         label(&painter, pos2(rect.left() + label_x, cy), room, &r.label, LABEL_SIZE, fg, Align2::LEFT_CENTER);
@@ -272,6 +329,23 @@ fn label(painter: &Painter, at: Pos2, room: f32, text: &str, size: f32, color: C
 mod tests {
     use super::super::model::{flatten, Entry};
     use super::*;
+
+    #[test]
+    fn rows_say_what_they_are() {
+        let rows = flatten(vec![
+            Entry::item(0, "&Open").hint("Enter"),
+            Entry::separator(),
+            Entry::heading("Recent"),
+            Entry::item(1, "Pinned").checked(true),
+            Entry::submenu("Sort by", vec![Entry::item(2, "Name")]),
+        ], &mut Vec::new(), 0);
+        let said: Vec<_> = rows.iter().map(spoken).collect();
+        assert_eq!(said[0], Some((egui::WidgetType::Button, None, "Open, Enter".to_owned())));
+        assert_eq!(said[1], None);
+        assert_eq!(said[2], Some((egui::WidgetType::Label, None, "Recent".to_owned())));
+        assert_eq!(said[3], Some((egui::WidgetType::Checkbox, Some(true), "Pinned".to_owned())));
+        assert_eq!(said[4], Some((egui::WidgetType::Button, None, "Sort by, submenu".to_owned())));
+    }
 
     /// Every character 7 points wide.
     fn w(text: &str, _size: f32) -> f32 {

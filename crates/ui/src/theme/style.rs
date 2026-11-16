@@ -164,6 +164,33 @@ pub fn focus_ring(ui: &Ui, resp: &egui::Response, rect: egui::Rect, radius: f32)
     }
 }
 
+/// Tell a screen reader what a painted item is: its role and name. `name` runs only while one
+/// is listening (egui asks for widget info only then, or when the item gains focus), so a name
+/// that costs a format or a Windows call is fine.
+pub fn speak(resp: &egui::Response, role: egui::WidgetType, name: impl Fn() -> String) {
+    resp.widget_info(|| egui::WidgetInfo::labeled(role, resp.enabled(), name()));
+}
+
+/// [`speak`] for an item that can be chosen (a tile, a day, a row): also whether it is.
+pub fn speak_selected(resp: &egui::Response, role: egui::WidgetType, selected: bool, name: impl Fn() -> String) {
+    resp.widget_info(|| egui::WidgetInfo::selected(role, resp.enabled(), selected, name()));
+}
+
+/// High contrast's stand-in for a hover wash and a selected fill, which it does not allow (only
+/// highlight text goes on highlight): a selected item is outlined 2 px in the highlight colour, a
+/// hovered one 1 px in the text colour. Draws nothing outside high contrast.
+pub fn contrast_outline(ui: &Ui, rect: egui::Rect, radius: f32, hovered: bool, selected: bool) {
+    let c = colors();
+    if !c.high_contrast {
+        return;
+    }
+    if selected {
+        ui.painter().rect_stroke(rect, radius, Stroke::new(2.0_f32, c.row_selected), egui::StrokeKind::Inside);
+    } else if hovered {
+        ui.painter().rect_stroke(rect, radius, Stroke::new(1.0_f32, c.text), egui::StrokeKind::Inside);
+    }
+}
+
 /// A row with `control` at its right and `body` in the rest. The control is laid out first, so
 /// the body wraps before it rather than running underneath it in a narrow window.
 pub fn trailing<R>(ui: &mut Ui, control: impl FnOnce(&mut Ui) -> R, body: impl FnOnce(&mut Ui)) -> R {

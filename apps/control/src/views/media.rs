@@ -57,8 +57,17 @@ impl MediaView {
                 let r = Rect::from_center_size(Pos2::new(x - size / 2.0, rect.center().y), Vec2::splat(size));
                 x -= size + 2.0;
                 let resp = ui.interact(r, egui::Id::new(("media", g)), if enabled { Sense::click() } else { Sense::hover() });
+                let name = match action {
+                    Action::Next => "Next",
+                    Action::Previous => "Previous",
+                    _ if now.playing => "Pause",
+                    _ => "Play",
+                };
+                shellman_ui::theme::speak(&resp, egui::WidgetType::Button, || name.to_owned());
+                shellman_ui::theme::focus_ring(ui, &resp, r, size / 2.0);
                 if enabled && resp.hovered() {
                     ui.painter().circle_filled(r.center(), size / 2.0, kit::well(false));
+                    kit::outline_circle(ui, r.center(), size / 2.0, true);
                 }
                 let fg = if enabled { c.text } else { with_alpha(c.muted, 110) };
                 ui.painter().text(r.center(), Align2::CENTER_CENTER, g, icon_font(14.0), fg);
@@ -72,6 +81,11 @@ impl MediaView {
             let title = if now.title.is_empty() { "Playing" } else { now.title.as_str() };
             clipped_text(ui, Pos2::new(left, mid - 1.0), Align2::LEFT_BOTTOM, title, label_font(), c.text, width);
             clipped_text(ui, Pos2::new(left, mid + 1.0), Align2::LEFT_TOP, &now.artist, small_font(), c.muted, width);
+            let text = Rect::from_min_max(Pos2::new(left, rect.top()), Pos2::new(left + width.max(1.0), rect.bottom()));
+            let resp = ui.interact(text, egui::Id::new("media text"), Sense::hover());
+            shellman_ui::theme::speak(&resp, egui::WidgetType::Label, || {
+                if now.artist.is_empty() { format!("Now playing, {title}") } else { format!("Now playing, {title}, {}", now.artist) }
+            });
             if let (Some(action), Some(w)) = (asked, watch) {
                 w.act(action);
                 if action == Action::PlayPause {

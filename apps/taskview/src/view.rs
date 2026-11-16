@@ -62,6 +62,7 @@ pub fn draw(ui: &mut egui::Ui, view: &View, icons: &mut Thumbs) -> Option<Action
     let mut action = None;
     // Beside the tiles: a click there leaves, as with Windows' own. Not a Tab stop.
     let back = ui.interact(ui.max_rect(), egui::Id::new("taskview backdrop"), egui::Sense::CLICK);
+    theme::speak(&back, egui::WidgetType::Other, || "Task View".to_owned());
     if back.clicked() {
         action = Some(Action::Dismiss);
     }
@@ -71,7 +72,8 @@ pub fn draw(ui: &mut egui::Ui, view: &View, icons: &mut Thumbs) -> Option<Action
     if view.windows.is_empty() {
         let mid = ui.max_rect().center();
         ui.painter().text(mid - egui::vec2(0.0, 20.0), egui::Align2::CENTER_CENTER, glyph::APP, icon_font(34.0), c.muted);
-        ui.painter().text(mid + egui::vec2(0.0, 18.0), egui::Align2::CENTER_CENTER, "No windows are open", egui::FontId::proportional(14.0), c.muted);
+        let line = ui.painter().text(mid + egui::vec2(0.0, 18.0), egui::Align2::CENTER_CENTER, "No windows are open", egui::FontId::proportional(14.0), c.muted);
+        label_over(ui, line, "taskview empty", "No windows are open");
         return action;
     }
     for (i, (window, tile)) in view.windows.iter().zip(&view.layout.tiles).enumerate() {
@@ -95,6 +97,7 @@ fn header(ui: &mut egui::Ui, view: &View) -> bool {
     pill(ui, r, radius, false, false);
     let name_at = egui::pos2(r.left() + 20.0, r.center().y);
     let name = ui.painter().text(name_at, egui::Align2::LEFT_CENTER, "Task View", semibold_font(17.0), c.text);
+    label_over(ui, name, "taskview title", "Task View");
     let count = match (view.windows.len(), view.more) {
         (0, _) => String::new(),
         (1, 0) => "1 window".to_owned(),
@@ -103,7 +106,8 @@ fn header(ui: &mut egui::Ui, view: &View) -> bool {
     };
     if !count.is_empty() {
         let at = egui::pos2(name.right() + 12.0, r.center().y);
-        ui.painter().text(at, egui::Align2::LEFT_CENTER, count, egui::FontId::proportional(13.0), c.muted);
+        let r = ui.painter().text(at, egui::Align2::LEFT_CENTER, &count, egui::FontId::proportional(13.0), c.muted);
+        label_over(ui, r, "taskview count", &count);
     }
     let close = egui::Rect::from_center_size(egui::pos2(r.right() - 8.0 - 15.0, r.center().y), egui::vec2(30.0, 30.0));
     let resp = chips::round_icon(ui, close, egui::Id::new("taskview leave"), glyph::CLOSE, true, false, "Close Task View");
@@ -177,6 +181,12 @@ fn pill(ui: &egui::Ui, r: egui::Rect, radius: f32, selected: bool, hovered: bool
         }
         p.rect_stroke(r, radius, egui::Stroke::new(1.0_f32, c.hairline), egui::StrokeKind::Inside);
     }
+}
+
+/// Painted text a screen reader should read: a label node over where it was drawn.
+fn label_over(ui: &egui::Ui, rect: egui::Rect, id: &str, text: &str) {
+    let resp = ui.interact(rect, egui::Id::new(id), egui::Sense::hover());
+    theme::speak(&resp, egui::WidgetType::Label, || text.to_owned());
 }
 
 /// Arrow keys are Task View's own (moving between tiles), not egui's focus moves; Esc too.

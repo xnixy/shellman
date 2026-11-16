@@ -33,6 +33,9 @@ pub fn draw(ui: &mut egui::Ui, bar: egui::Rect, row: egui::Rect, right_starts: f
     let island = egui::Rect::from_x_y_ranges(left..=left + width, row.y_range());
 
     let resp = ui.interact(island, egui::Id::new("clock calendar"), egui::Sense::click());
+    // A button that opens the calendar, read with the full date and the time; "selected" while
+    // the calendar is open.
+    shellman_ui::theme::speak_selected(&resp, egui::WidgetType::Button, open, || format!("Calendar, {}, {time}", region::long_date_now()));
     let radius = ((layout::ISLAND_H - 2.0 * INSET) / 2.0) as u8;
     if open && !resp.hovered() {
         // Marked faintly, so the muted time stays legible on it.

@@ -33,6 +33,7 @@ pub fn draw(ui: &mut egui::Ui, bar: egui::Rect, row: egui::Rect, front: Option<F
     let resp = ui
         .interact(button, egui::Id::new("launcher"), egui::Sense::click())
         .on_hover_text("Start (right-click for settings)");
+    shellman_ui::theme::speak(&resp, egui::WidgetType::Button, || "Start".to_owned());
     if resp.hovered() || resp.is_pointer_button_down_on() {
         let round = egui::Rect::from_center_size(center, egui::Vec2::splat(ROUND));
         highlight(ui, round, &resp, (ROUND / 2.0) as u8);

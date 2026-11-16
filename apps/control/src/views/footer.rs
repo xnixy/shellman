@@ -30,6 +30,8 @@ pub fn battery(ui: &mut Ui, b: Battery) {
         clipped_text(ui, Pos2::new(left, rect.center().y - 1.0), Align2::LEFT_BOTTOM, "Battery", label_font(), c.text, width);
         let detail = format!("{}%{}", b.percent, if b.charging { " · Charging" } else { "" });
         clipped_text(ui, Pos2::new(left, rect.center().y + 1.0), Align2::LEFT_TOP, &detail, small_font(), c.muted, width);
+        let resp = ui.interact(rect, egui::Id::new("battery"), Sense::hover());
+        shellman_ui::theme::speak(&resp, egui::WidgetType::Label, || format!("Battery, {}%{}", b.percent, if b.charging { ", charging" } else { "" }));
     });
 }
 
@@ -95,13 +97,24 @@ fn choice(ui: &mut Ui, menu: &mut PowerMenu, action: Action, r: Rect, slot: usiz
     let c = colors();
     let resp = ui.interact(r, egui::Id::new(("power", slot)), Sense::click());
     let armed = menu.armed() == Some(action);
+    // The label says what a click does now ("Click again to restart" once armed).
+    shellman_ui::theme::speak(&resp, egui::WidgetType::Button, || power_menu::label(action, armed).to_string());
+    let radius = CHOICE_HEIGHT / 2.0;
+    shellman_ui::theme::focus_ring(ui, &resp, r, radius);
     let fill = match (armed, resp.hovered()) {
         (true, _) => c.danger,
         (false, true) => kit::well(true),
         (false, false) => kit::tile_fill(false),
     };
-    let fg = if armed { egui::Color32::WHITE } else { c.text };
-    ui.painter().rect_filled(r, CornerRadius::same((CHOICE_HEIGHT / 2.0) as u8), fill);
+    // High contrast: armed is highlight under highlight text (`danger` is highlight there).
+    let fg = if armed && c.high_contrast { c.on_accent } else if armed { egui::Color32::WHITE } else { c.text };
+    ui.painter().rect_filled(r, CornerRadius::same(radius as u8), fill);
+    if !armed {
+        shellman_ui::theme::contrast_outline(ui, r, radius, true, false);
+        if c.high_contrast && !resp.hovered() {
+            ui.painter().rect_stroke(r, radius, egui::Stroke::new(1.0_f32, c.text), egui::StrokeKind::Inside);
+        }
+    }
     ui.painter().text(r.center(), Align2::CENTER_CENTER, power_menu::label(action, armed), small_font(), fg);
     if resp.clicked() {
         return menu.press(action, now);
