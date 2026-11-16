@@ -70,9 +70,9 @@ It only changes things for your own Windows account. Other accounts on the PC ke
 
 ## Install
 
-Downloads will be on the [Releases page](https://github.com/xnixy/shellman/releases). I
-haven't published the first one yet, so until then you build it yourself (see below). Either
-way you end up with one file, `shellman-<version>-setup.exe`. Run it:
+Download `shellman-<version>-setup.exe` from the
+[latest release](https://github.com/xnixy/shellman/releases/latest), or build it yourself (see
+below). Run it:
 
 - Pick a folder. The default is `%LOCALAPPDATA%\Programs\shellman`, no admin rights needed.
 - Three optional switches, all off by default: make shellman your shell from the next sign-in,
@@ -84,7 +84,7 @@ Running a newer setup over an existing install updates it and keeps your setting
 
 ### Updates
 
-Once there are releases, an installed shellman updates itself. About 5 minutes after you sign
+An installed shellman updates itself. About 5 minutes after you sign
 in, and then once a day, it asks GitHub whether there's a newer release. If there is, it
 downloads the setup file and checks it before running anything: every release comes with a
 signature made with my release key, and shellman has the public half of that key built in, so a
