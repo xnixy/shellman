@@ -10,7 +10,8 @@ accent color, fast.
 | `apps/files` | File Explorer windows | working: tabs, list/grid, thumbnails, shell menu, auto-refresh, Ctrl+H hides or shows hidden files, the Recycle Bin as a place (`--recycle-bin`). No settings UI |
 | `apps/bar` | taskbar, tray, clock, Start button (as a top bar and a dock) | working: a top bar and a dock on every monitor, tray, pins, fullscreen step-aside. Next: hover previews, Win keys |
 | `apps/launcher` | Start menu and search | working: Spotlight-style panel, app grid, ranked search, most used, the Win key (through the switcher's hook) |
-| `apps/switcher` | Alt+Tab, Task View | working: Alt+Tab with live previews. Next: Task View (Win+Tab) |
+| `apps/switcher` | Alt+Tab; its hook also takes Win, Win+Tab, Win+N, Ctrl+Shift+Esc | working: Alt+Tab with live previews |
+| `apps/taskview` | Task View (Win+Tab) | working: every window as a live preview over the monitor in front, keyboard and mouse, close from the tile |
 | `apps/desktop` | wallpaper window | working: wallpaper per monitor; keeps Windows' modern-app host running; hands a right-click to the shelf |
 | `apps/shelf` | desktop icons, the desktop's right-click menu | stage 1 working: the shelf on every monitor or the primary only (drop zone, Desktop / Downloads / Recent stacks that fan open, drag out, drop in), the right-click menu on every monitor, Settings › Desktop; stage 2 working: the Today and Now playing widgets top right (primary or every monitor), Edit desktop…. Next: arrange mode |
 | `apps/tasks` | Task Manager (Ctrl+Shift+Esc, through the switcher's hook) | working: Processes (apps and background, grouped, sort, search, End task / End process tree / details), Performance (CPU, memory, GPUs, disks, network), Services (read-only: status, startup type, PID, description, sort, search, go to process; read through the SCM in `crates/core/src/services`, off the UI thread, only while the page shows). End task / tree try unelevated first and, only when Windows refuses, go through `shellman-elevate`'s `end-processes <pid>:<start time>...` behind the UAC prompt (the helper rechecks start time and refuses critical processes); critical processes stay un-endable. Reads through `crates/core/src/procs` |
@@ -361,6 +362,53 @@ Rule: **the top bar is the system, the dock is apps.** Both are windows of one p
 - One press of an unused key (0xE8) wins the foreground and stops apps from opening their menu
   bar.
 - Known limits: elevated windows; always-on-top windows sort first.
+
+## Task View (15 Nov)
+
+`apps/taskview` (`shellman-taskview.exe`), a resident process like the launcher: Win+Tab
+(the switcher's hook, `taskviewkey`: Win+Tab with no other modifier, only while shellman is the
+shell and the exe is there; the Tab and its release are swallowed and the mask key keeps Win's
+release from opening Start) signals `Local\shellman-taskview-summon<instance>`, or starts it;
+running the exe again does the same. Each signal toggles it. The session starts it with
+`--background`.
+
+- **Where**: one overlay on the monitor of the window in front (with the desktop in front, the
+  one under the pointer), listing every app window from every monitor. One window has one DPI
+  scale and the previews are drawn into one window, so a window per monitor would mean a
+  process-wide second viewport for little gain. It covers the monitor one pixel short of its
+  height: a window exactly covering a monitor counts as a full-screen app (the bar's check, and
+  Windows draws a title strip over one).
+- **Unlike the switcher it takes the foreground** while showing, so its keys come to it (no
+  hook changes beyond Win+Tab) and screen readers follow its focus. Esc gives the foreground back
+  to the window that was in front; losing the foreground closes it.
+- **Layout** (`layout.rs`, tested): the header pill (46, "Task View", how many windows, a close
+  button) and under it one tile per window in balanced rows, as large as they fit up to a 480
+  wide preview, centred, 12 apart. A tile is a title row (icon, title, close button) over a 16:10
+  frame the live preview is fitted into. The compositor paints previews above everything, so the
+  tests hold the close button, the selection and the focus ring out of every preview. Tiles
+  shrink to a 150 wide preview; past that the windows used longest ago are left out and the
+  header says "N of M windows". Nothing scrolls (a preview can't be clipped).
+- **Keys**: arrows move between tiles (left and right in order, wrapping; up and down to the
+  nearest tile across), Tab and Shift+Tab go through tiles and close buttons, Enter or Space
+  switches, Delete closes the selected window, Esc leaves. **Mouse**: click switches, middle
+  click or the tile's close button closes the window (WM_CLOSE, posted; the tile goes when the
+  window does, so a "Save changes?" window stays), a click beside the tiles leaves.
+- **Accessibility**: tiles are focusable egui widgets named "title, app" (", minimized"), close
+  buttons "Close <title>", the header's "Close Task View"; the selection is the focused tile and
+  has a focus ring. Arrows are Task View's (`set_focus_lock_filter`), not egui's focus moves. High
+  contrast: a solid page in Windows' colours, tiles outlined in the text colour, the selection a
+  3 px highlight outline. No glass (`SHELLMAN_SOLID`, Remote Desktop): a solid page.
+- **Look**: the window's own acrylic with the shared tint (`Colors::shell`), not the floating
+  glass of the other apps (its window would be larger than the monitor); a light page is shaded
+  a little so white cards stand out. Minimized windows show their icon on a plate.
+- Checked by hand in a test copy (`SHELLMAN_INSTANCE`, summoned by running the exe again):
+  dark, light, high contrast, solid; keyboard, click, middle click, Delete, Esc, toggling, a
+  minimized window restored on pick, the monitor of the window in front; UI Automation: every
+  element named. Not checked: Win+Tab itself (a test copy installs no hook; `taskviewkey` is unit
+  tested), Remote Desktop, the text size (geometry is in points and does not follow it yet).
+- Known limits: the first showing after the process starts can show a Windows title strip
+  across the top for about a second (seen right after a fresh start; later showings did not);
+  elevated windows can't be closed from it; no virtual desktops.
 
 ## Desktop
 
@@ -1427,6 +1475,6 @@ images, and the shell and default terminal state.)
 4. Top bar: "now" pill, notifications and calendar: done (12 Nov); next: copy progress and
    attention in the pill, once the dock has them.
 5. Desktop: arrange mode (drag the shelf and widgets about); widgets done (Today, Now playing).
-6. Task View.
+6. Task View: done (15 Nov).
 7. `session`: done, and it is the real shell (the swap is made; `--uninstall` puts the previous
    value back).

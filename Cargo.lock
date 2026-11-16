@@ -3042,6 +3042,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "shellman-taskview"
+version = "0.1.0"
+dependencies = [
+ "eframe",
+ "egui",
+ "raw-window-handle",
+ "shellman-buildinfo",
+ "shellman-core",
+ "shellman-ui",
+ "windows 0.61.3",
+ "winresource",
+]
+
+[[package]]
 name = "shellman-terminal"
 version = "0.1.0"
 dependencies = [

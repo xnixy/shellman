@@ -77,6 +77,7 @@ fn own_app_name(exe: &Path) -> Option<&'static str> {
         "bar" => "Bar",
         "session" => "Shellman",
         "tasks" => "Task Manager",
+        "taskview" => "Task View",
         _ => return None,
     })
 }
