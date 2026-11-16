@@ -17,6 +17,8 @@ pub struct Window {
     pub badge: Option<(u64, Arc<egui::ColorImage>)>,
     /// Since when it asks for attention (flashing).
     pub attention: Option<Instant>,
+    /// Since when it shows progress (the top bar's pill keeps to the first one).
+    pub progress_since: Option<Instant>,
 }
 
 /// What a dock icon shows for its app.

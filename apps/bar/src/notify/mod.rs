@@ -29,7 +29,7 @@ mod feed;
 pub(crate) mod layout;
 pub mod summon;
 pub mod target;
-mod window;
+pub(crate) mod window;
 
 use crate::shape::surface;
 use crate::{host, place, shape};

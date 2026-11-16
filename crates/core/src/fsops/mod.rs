@@ -3,6 +3,7 @@
 //! Copy, move, and delete go through `SHFileOperationW`, so Windows supplies its own progress,
 //! conflict, and undo handling. They run on a worker thread so the window never blocks.
 
+pub mod busy;
 mod drives;
 pub mod identity;
 mod link;

@@ -140,8 +140,48 @@ Rule: **the top bar is the system, the dock is apps.** Both are windows of one p
   Things cross-fade (220 ms); the glass snaps to the new width once per change, never animated;
   long text is cut with an ellipsis, the full text in the tip. Nothing ticks at rest (the
   countdown moves with the clock's minute repaint; the track's progress is not shown). Settings
-  › Top bar: the pill on/off, events, media. Copy progress and "an app asking for attention"
-  are not in it yet (the dock owns those signals; not built).
+  › Top bar: the pill on/off, events, media.
+- **Progress and attention in the pill** (15 Nov, `now::pick`, `now::feed`, `core::fsops::busy`):
+  the pill also shows what apps tell the taskbar, from the dock's own record (`dock::tasks`, the
+  same signals as the dock icons' bars and amber pulse, nothing read twice):
+  - Progress: "Copying · 64%" with a ring filling in the accent; "64% · paused" amber with a
+    pause mark, "64% · stopped" red with "!", "in progress" a still quarter ring when the app
+    gives no amount. The percentage is whole and never 100 before it is; the glass is measured
+    for "100%", so it keeps one width while counting (a change of words, not of thing: no
+    cross-fade). Several: a stopped, then a paused one, else the one that started first, with
+    "+N more". Click: its window comes forward (for a copy, Windows' progress dialog).
+  - How a copy is named: shellman Files hands copies, moves and deletes to `SHFileOperationW`, so
+    the progress is Windows' own dialog (`OperationStatusWindow`, an unowned titled window of the
+    copying process, so the dock lists it and, as the shell, announces its button), whose
+    taskbar progress arrives like any app's. Its title says only "64% complete", so while
+    `fsops::shell_op_mapped` runs, the window that started it carries a property
+    (`ShellmanFileWork`: counts by kind, a plain number another process reads with `GetPropW`);
+    the bar sums it over all top-level windows of the dialog's process and says "Copying",
+    "Moving" or "Deleting" (mixed work, or a dialog of another app such as Explorer: the app's
+    name, "File Explorer · 64%"). Any other app's progress: "Edge · 40%". The shelf passes no
+    window to its copies yet, so its copies show as "Shelf · 64%".
+  - Attention: an app whose window flashes, "Teams · asks for attention" with an amber dot (in
+    high contrast also a ring), the newest call first, "+N more". It stays until that window
+    comes forward (a click on the pill brings it, through `notify::window::raise`, which
+    answers it); the dock keeps its steady amber dot meanwhile.
+  - **Priority**, first that applies: (1) a call for attention in its first 10 minutes,
+    something waiting on you now; (2) an event starting within 15 minutes; (3) progress;
+    (4) an event under way; (5) a call for attention older than 10 minutes (still shown until
+    answered, but no longer above the calendar or a copy, so one ignored flash cannot hide
+    everything for hours); (6) what is playing; else nothing. Tested pair by pair in `pick`.
+  - Settings: `now.progress` and `now.attention` in `bar.json` (both on); the switches in
+    Settings › Top bar are not added yet (the Settings app is being reworked elsewhere).
+  - Screen readers: the pill names itself as a button with what it shows and what a click does
+    ("Copying, 64%. Show the progress"), with a focus ring. Not yet heard: the bar's monitor
+    windows (deferred viewports) expose no accessibility tree at all (UI Automation finds no
+    children under any top bar or dock, the clock and bell included); fixing that is bar-wide.
+  - Checked 15 Nov in a `--no-shell` test bar: a real shell copy's dialog in a scratch process
+    whose window carried the property, its progress handed to the test bar's hook window, read
+    "Copying · 29%"; the paused, stopped, in-progress and none states; a flashing window's call,
+    "+1 more", and a click that brought that window forward and cleared it; high contrast
+    (`SHELLMAN_HIGH_CONTRAST`). Not checked end to end: a copy started in Files reaching a bar
+    that is the shell (a test bar is not the task window, so it hears progress only as a test
+    sends it).
 - **Calendar** (`calpanel`): clicking the clock opens one glass island under it: the month (the
   region's first weekday and `iFirstWeekOfYear`; week numbers as the region does, or on/off in
   Settings › Top bar), today on the accent, a dot under days with events, the chosen day's
@@ -247,7 +287,8 @@ Rule: **the top bar is the system, the dock is apps.** Both are windows of one p
   pins (or after Files or the last pin) are pinned there; a pinned folder opens in Files. The
   aimed icon gets an accent plate and ring, a pin boundary an accent bar. Opening and recycling
   run on threads of their own; the dock never takes the focus.
-- Slots for progress and overlay badges; Files reports its copy progress directly.
+- Slots for progress and overlay badges; Files' copies show through Windows' progress dialog
+  (see the now pill, which names them from `fsops::busy`).
   Done (13 Nov, `dock::tasks`, `dock::status`, `core::taskbar_list`): `ITaskbarList3` runs inside
   the calling app (explorerframe.dll) and sends window messages to the shell's taskbar window:
   `WM_USER+64` progress value (0..65534), `+65` progress state (`TBPFLAG`), `+79` overlay
@@ -1424,8 +1465,9 @@ images, and the shell and default terminal state.)
    Left open: the design's live-activity pill beside the dock ("Copying · 64%"): this plan gives
    copy progress and attention to the top bar's "now" pill, so what the dock's pill would show
    besides it is undecided; not built.
-4. Top bar: "now" pill, notifications and calendar: done (12 Nov); next: copy progress and
-   attention in the pill, once the dock has them.
+4. Top bar: "now" pill, notifications and calendar: done (12 Nov); copy progress and attention
+   in the pill: done (15 Nov); left: their switches in Settings › Top bar, and the bar's
+   screen-reader tree.
 5. Desktop: arrange mode (drag the shelf and widgets about); widgets done (Today, Now playing).
 6. Task View.
 7. `session`: done, and it is the real shell (the swap is made; `--uninstall` puts the previous

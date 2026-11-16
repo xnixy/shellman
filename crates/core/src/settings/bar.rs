@@ -77,11 +77,15 @@ pub struct NowSettings {
     pub events: bool,
     /// What is playing.
     pub media: bool,
+    /// Copies and other work an app shows progress for on its taskbar button.
+    pub progress: bool,
+    /// An app asking for attention (its window flashes), until it is brought forward.
+    pub attention: bool,
 }
 
 impl Default for NowSettings {
     fn default() -> Self {
-        Self { on: true, events: true, media: true }
+        Self { on: true, events: true, media: true, progress: true, attention: true }
     }
 }
 

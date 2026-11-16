@@ -76,6 +76,13 @@ pub fn shell_op_mapped(
         fFlags: flags,
         ..Default::default()
     };
+    // The top bar names the work from this mark while Windows' dialog shows its progress.
+    let work = match op {
+        Op::Move => super::busy::Work::Move,
+        Op::Copy | Op::Duplicate => super::busy::Work::Copy,
+        Op::Recycle | Op::RecycleOrDelete => super::busy::Work::Delete,
+    };
+    let _busy = super::busy::start(hwnd, work);
     let code = unsafe { SHFileOperationW(&mut info) };
     let renamed = unsafe { take_mappings(info.hNameMappings) };
     if code != 0 {

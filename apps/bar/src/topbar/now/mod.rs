@@ -8,15 +8,24 @@
 //! minute repaint, and the track's progress is not shown here). Long titles are cut with an
 //! ellipsis; the whole text is in the hover tip.
 //!
-//! A click on an event opens the calendar on its day; on a track it plays or pauses. The wheel
-//! over a track goes to the next (down) or previous (up) one.
+//! It also shows work an app reports on its taskbar button ("Copying · 64%", a ring filling in
+//! the accent; amber and a pause mark when paused, red and "!" when stopped) and an app asking
+//! for attention (its name, an amber dot), as `pick` orders them. The percentage changes the
+//! words only: the glass keeps the width of "100%".
+//!
+//! A click on an event opens the calendar on its day; on a track it plays or pauses; on progress
+//! or a call for attention it brings that window (the copy dialog, the app) forward. The wheel
+//! over a track goes to the next (down) or previous (up) one. Screen readers hear what shows and
+//! what a click does (`Shown::spoken`); a focus ring shows when it has the keyboard focus.
 
+pub mod feed;
 pub mod pick;
 
 use super::{highlight, layout};
 use egui::text::{LayoutJob, TextFormat, TextWrapping};
 use egui::{pos2, vec2, Color32, FontId, Rect};
 use pick::{Fade, Kind, Shown};
+use shellman_core::taskbar_list::Progress;
 use shellman_core::system::media::Action;
 use shellman_ui::theme::{colors, icon_font, semibold_font};
 use std::time::{Duration, Instant};
@@ -41,6 +50,8 @@ pub enum Asked {
     /// Open the calendar on this day.
     Day(i64),
     Media(Action),
+    /// Bring this window forward (progress, a call for attention).
+    Window(isize),
 }
 
 #[derive(Default)]
@@ -62,10 +73,12 @@ fn width_of(ui: &egui::Ui, text: &str, font: FontId) -> f32 {
     ui.fonts(|f| f.layout_no_wrap(text.to_owned(), font, Color32::WHITE)).size().x
 }
 
-/// The title's and the detail's widths as drawn, cut so the pill stays within `max`.
+/// The title's and the detail's widths as drawn, cut so the pill stays within `max`. The detail
+/// is measured at its widest (progress: "100%"), so the glass does not move as it counts.
 fn widths(ui: &egui::Ui, s: &Shown, max: f32) -> (f32, f32) {
     let title = width_of(ui, &s.title, title_font()).ceil();
-    let detail = if s.detail.is_empty() { 0.0 } else { width_of(ui, &format!("{SEP}{}", s.detail), detail_font()).ceil() };
+    let widest = s.widest_detail();
+    let detail = if widest.is_empty() { 0.0 } else { width_of(ui, &format!("{SEP}{widest}"), detail_font()).ceil() };
     let room = (max - 2.0 * PAD - MARK - MARK_GAP).max(0.0);
     // The title gives way first (down to a fair share), then the detail.
     let detail = detail.min((room - title.min(room * 0.5)).max(0.0));
@@ -82,6 +95,45 @@ fn cut(text: &str, font: FontId, color: Color32, width: f32) -> LayoutJob {
     let mut job = LayoutJob::single_section(text.to_owned(), TextFormat { font_id: font, color, ..Default::default() });
     job.wrap = TextWrapping::truncate_at_width(width.max(1.0));
     job
+}
+
+/// The progress mark: a ring filling clockwise from the top. Indeterminate: a still quarter (at
+/// rest nothing moves). Paused: amber with a pause mark; stopped: red with "!" (shapes as well as
+/// colours, for high contrast, where the colours are Windows' own).
+fn paint_ring(p: &egui::Painter, at: egui::Pos2, s: &Shown) {
+    let c = colors();
+    let r = 6.0;
+    let (color, glyph) = match s.progress {
+        Progress::Paused => (c.warn, Some(PAUSE)),
+        Progress::Error => (c.danger, Some('!')),
+        _ => (c.accent_fill, None),
+    };
+    let track = if c.high_contrast { c.muted } else { c.track };
+    p.circle_stroke(at, r, egui::Stroke::new(2.0_f32, track));
+    let len = match s.progress {
+        Progress::Indeterminate => 0.25,
+        _ => s.done.clamp(0.0, 1.0),
+    };
+    if len > 0.0 {
+        let steps = ((len * 32.0).ceil() as usize).max(2);
+        let top = -std::f32::consts::FRAC_PI_2;
+        let pts: Vec<egui::Pos2> = (0..=steps)
+            .map(|i| {
+                let a = top + std::f32::consts::TAU * len * i as f32 / steps as f32;
+                at + vec2(a.cos(), a.sin()) * r
+            })
+            .collect();
+        p.add(egui::Shape::line(pts, egui::Stroke::new(2.0_f32, color)));
+    }
+    match glyph {
+        Some('!') => {
+            p.text(at, egui::Align2::CENTER_CENTER, "!", semibold_font(10.0), color);
+        }
+        Some(g) => {
+            p.text(at, egui::Align2::CENTER_CENTER, g, icon_font(7.0), color);
+        }
+        None => {}
+    }
 }
 
 /// Paint one thing in `rect` at `alpha`.
@@ -111,6 +163,15 @@ fn paint(ui: &egui::Ui, rect: Rect, s: &Shown, alpha: f32, hovered: bool) {
             // Paused, or hovered while playing: what a click does.
             let g = if s.playing { PAUSE } else { '\u{E768}' };
             p.text(mark, egui::Align2::CENTER_CENTER, g, icon_font(12.0), c.text);
+        }
+        Kind::Progress => paint_ring(&p, mark, s),
+        Kind::Attention => {
+            // Amber, as the dock's icon glows; in high contrast also a ring in the text colour,
+            // so it is a shape and not only a colour (the words say it too).
+            p.circle_filled(mark, 4.5, c.warn);
+            if c.high_contrast {
+                p.circle_stroke(mark, 6.5, egui::Stroke::new(1.0_f32, c.text));
+            }
         }
     }
     let (tw, dw) = widths(ui, s, rect.width());
@@ -167,12 +228,18 @@ impl Pill {
             let tip = match s.kind {
                 Kind::Event => format!("{}{SEP}{}\nClick to open the calendar", s.title, s.detail),
                 Kind::Media => format!("{}{SEP}{}\nClick to play or pause · scroll for the next or previous track", s.title, s.detail),
+                Kind::Progress => format!("{}{SEP}{}\nClick to show the progress", s.title, s.detail),
+                Kind::Attention => format!("{}{SEP}{}\nClick to bring it forward", s.title, s.detail),
             };
+            let spoken = s.spoken();
+            resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &spoken));
+            shellman_ui::theme::focus_ring(ui, &resp, island.shrink(inset), (layout::ISLAND_H - 2.0 * inset) / 2.0);
             let resp = resp.on_hover_text(tip);
             if resp.clicked() {
                 asked = Some(match s.kind {
                     Kind::Event => Asked::Day(s.day),
                     Kind::Media => Asked::Media(Action::PlayPause),
+                    Kind::Progress | Kind::Attention => Asked::Window(s.hwnd),
                 });
             }
             if s.kind == Kind::Media && resp.hovered() {
