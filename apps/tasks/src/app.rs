@@ -342,5 +342,10 @@ impl eframe::App for TasksApp {
             self.st.services.tick(ctx, &self.query, self.sampler.interval(), minimised);
         }
         self.layout(ctx);
+        shellman_ui::timing::content(ctx, "first frame", 0);
+        // The first reading in: the process list is filled.
+        if self.st.took != Duration::ZERO {
+            shellman_ui::timing::content(ctx, "process list", 0);
+        }
     }
 }

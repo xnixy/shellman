@@ -15,16 +15,11 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
-use windows::core::HSTRING;
-use windows::Win32::Foundation::CloseHandle;
-use windows::Win32::System::Threading::{OpenEventW, SetEvent, EVENT_MODIFY_STATE};
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetAsyncKeyState, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_EXTENDEDKEY,
     KEYEVENTF_KEYUP, VIRTUAL_KEY, VK_LWIN, VK_RWIN,
 };
-use windows::Win32::UI::WindowsAndMessaging::{
-    AllowSetForegroundWindow, ASFW_ANY, KBDLLHOOKSTRUCT, LLKHF_EXTENDED, LLKHF_UP,
-};
+use windows::Win32::UI::WindowsAndMessaging::{KBDLLHOOKSTRUCT, LLKHF_EXTENDED, LLKHF_UP};
 
 /// Marks the keys shellman sends, so hooks let them by (the switcher's `keys` uses the same).
 pub const OURS: usize = 0x5348_4D4E; // "SHMN"
@@ -133,19 +128,8 @@ pub fn summon() {
     if BUSY.swap(true, Ordering::AcqRel) {
         return;
     }
-    // The hook just sent input, so this process may hand the foreground on.
-    let _ = unsafe { AllowSetForegroundWindow(ASFW_ANY) };
-    let instance = std::env::var("SHELLMAN_INSTANCE").unwrap_or_default();
-    let name = HSTRING::from(format!("Local\\shellman-launcher-summon{instance}"));
-    match unsafe { OpenEventW(EVENT_MODIFY_STATE, false, &name) } {
-        Ok(event) => unsafe {
-            let _ = SetEvent(event);
-            let _ = CloseHandle(event);
-        },
-        Err(_) => {
-            shellman_core::sibling::start("launcher");
-        }
-    }
+    // The hook just sent input, so this process may hand the foreground on (done there).
+    shellman_core::summon::launcher();
     BUSY.store(false, Ordering::Release);
 }
 

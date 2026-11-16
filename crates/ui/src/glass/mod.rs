@@ -219,6 +219,7 @@ impl GlassPanel {
     }
 
     fn make(hwnd: isize, style: Style, window: bool) -> Self {
+        let _timing = shellman_core::timing::span("glass attach");
         let target = HWND(hwnd as *mut _);
         let look = if window { window_style::window_look() } else { WindowLook::Glass };
         dress(target, look);

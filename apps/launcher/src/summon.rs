@@ -140,6 +140,7 @@ impl Instance {
             let hwnd = HWND(hwnd as *mut _);
             // The event wakes this thread, so nothing polls while the launcher is hidden.
             while unsafe { WaitForSingleObject(event, INFINITE) }.0 == 0 {
+                shellman_core::timing::mark_mem("summon received");
                 // Toggle on what this launcher last did, not on `IsWindowVisible`: after a
                 // `--background` start the window library shows the window once by itself.
                 if shared.showing.load(Ordering::Acquire) {
@@ -149,6 +150,7 @@ impl Instance {
                     shared.showing.store(true, Ordering::Release);
                     shared.shown.fetch_add(1, Ordering::AcqRel);
                     show(hwnd);
+                    shellman_core::timing::mark("window shown");
                 }
                 ctx.request_repaint();
             }

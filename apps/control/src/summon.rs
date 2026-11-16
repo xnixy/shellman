@@ -152,6 +152,7 @@ impl Instance {
             let hwnd = HWND(hwnd as *mut _);
             // The event wakes this thread, so nothing polls while the panel is hidden.
             while unsafe { WaitForSingleObject(event, INFINITE) }.0 == 0 {
+                shellman_core::timing::mark_mem("summon received");
                 let just_closed = shared
                     .closed_by_click
                     .lock()
@@ -162,6 +163,7 @@ impl Instance {
                     shared.hide_requested.store(true, Ordering::Release);
                 } else if !just_closed {
                     show(hwnd, &shared);
+                    shellman_core::timing::mark("window shown (cloaked)");
                     shared.shown.fetch_add(1, Ordering::AcqRel);
                 }
                 ctx.request_repaint();
@@ -220,6 +222,10 @@ fn show(hwnd: HWND, shared: &Shared) {
     unsafe {
         let mut at = POINT::default();
         let _ = GetCursorPos(&mut at);
+        let test = test_point();
+        if let Some(p) = test {
+            at = p;
+        }
         let monitor = MonitorFromPoint(at, MONITOR_DEFAULTTONEAREST);
         let mut info = MONITORINFO { cbSize: size_of::<MONITORINFO>() as u32, ..Default::default() };
         if !GetMonitorInfoW(monitor, &mut info).as_bool() {
@@ -248,7 +254,9 @@ fn show(hwnd: HWND, shared: &Shared) {
         shared.reveal.store(REVEAL_AFTER, Ordering::Release);
         shared.showing.store(true, Ordering::Release);
         outside::set_rect(r.x, r.y, r.w, r.h);
-        take_foreground(hwnd);
+        if test.is_none() {
+            take_foreground(hwnd);
+        }
     }
 }
 
@@ -294,6 +302,8 @@ pub fn fit(hwnd: isize, shared: &Shared, height: f32, ctx: &egui::Context) {
         shared.reveal.store(waiting - 1, Ordering::Release);
         if waiting == 1 {
             glass::cloak(hwnd.0 as isize, false);
+            shellman_core::timing::mark("uncloaked");
+            shellman_ui::timing::content(ctx, "control centre", shared.shown_count().into());
         }
         ctx.request_repaint();
     }
@@ -350,4 +360,14 @@ mod tests {
         let (event, mutex) = names(Some("test"));
         assert!(event.ends_with("-summon-test") && mutex.ends_with("-resident-test"));
     }
+}
+
+/// A test copy (`SHELLMAN_INSTANCE` set) can be shown on a chosen monitor with
+/// `SHELLMAN_TEST_AT=x,y` (a point in screen pixels), as the launcher can; it then never takes the
+/// keyboard (no synthesised key), so it can be measured beside someone's work.
+fn test_point() -> Option<POINT> {
+    std::env::var(INSTANCE_VAR).ok().filter(|i| !i.is_empty())?;
+    let at = std::env::var("SHELLMAN_TEST_AT").ok()?;
+    let (x, y) = at.split_once(',')?;
+    Some(POINT { x: x.trim().parse().ok()?, y: y.trim().parse().ok()? })
 }

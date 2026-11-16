@@ -168,11 +168,14 @@ const ICON_FILES: [&str; 2] = [r"C:\Windows\Fonts\SegoeIcons.ttf", r"C:\Windows\
 /// cannot be read, the default is loaded, and when even that fails egui keeps its own fonts.
 pub fn apply(ctx: &egui::Context, choice: FontChoice) {
     let exists = |p: &Path| p.exists();
+    let planning = shellman_core::timing::span("fonts: installed list and plan");
     let plan = resolve(choice, source::installed(), &source::fonts_dir(), &exists);
+    drop(planning);
     let id = egui::Id::new("shellman font plan");
     if ctx.data(|d| d.get_temp::<Plan>(id)).as_ref() == Some(&plan) {
         return;
     }
+    let _reading = shellman_core::timing::span("fonts: read files");
     let fonts = build(&plan, &ICON_FILES)
         .or_else(|| build(&segoe_plan(&source::fonts_dir(), &exists), &ICON_FILES));
     if let Some(fonts) = fonts {

@@ -79,10 +79,10 @@ impl TopBar {
             }
             x += w + ICON_GAP;
         }
-        // Click opens the control centre (running its exe toggles the resident one); scroll
+        // Click opens the control centre (its event toggles the resident one); scroll
         // changes the volume.
         if resp.clicked() {
-            shellman_core::sibling::start("control");
+            shellman_core::summon::control();
         }
         if let Some((level, _)) = vol {
             let resp = resp.on_hover_text(format!("Volume {:.0}%", level * 100.0));

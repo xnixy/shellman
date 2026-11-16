@@ -22,6 +22,14 @@ pub fn cache_dir() -> Option<PathBuf> {
     }
 }
 
+/// Where the window library keeps an app's window state (`NativeOptions::persistence_path`):
+/// beside the settings in the `SHELLMAN_CONFIG_DIR` folder when it is set, so a test copy never
+/// writes the real `%APPDATA%\shellman-<app>`; None (the library's own place) otherwise.
+pub fn ui_state_override(app: &str) -> Option<PathBuf> {
+    let dir = std::env::var_os(DIR_OVERRIDE).filter(|o| !o.is_empty())?;
+    Some(PathBuf::from(dir).join(format!("{app}-ui.ron")))
+}
+
 /// The override when it is set and not empty, else the standard folder's `shellman`.
 fn pick_dir(over: Option<std::ffi::OsString>, base: Option<PathBuf>) -> Option<PathBuf> {
     match over.filter(|o| !o.is_empty()) {

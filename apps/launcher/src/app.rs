@@ -373,6 +373,10 @@ impl Launcher {
             return Vec::new();
         }
         self.keys(ctx);
+        // Opening speed (SHELLMAN_TIMING=1): a showing with the apps listed.
+        if !self.apps.is_empty() {
+            shellman_ui::timing::content(ctx, "launcher", self.shared.shown_count().into());
+        }
 
         // SHELLMAN_FORCE_LIGHT: look at the light palette without changing Windows' setting.
         let force_light = std::env::var_os("SHELLMAN_FORCE_LIGHT").is_some();

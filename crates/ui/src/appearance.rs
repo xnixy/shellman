@@ -122,6 +122,7 @@ impl Appearance {
 
     /// Make the theme use this look.
     pub fn apply(&self, ctx: &egui::Context) {
+        let _timing = shellman_core::timing::span("look: apply");
         window_style::set_window_style(self.window);
         window_style::set_theme_choice(self.theme);
         // The preview overrides (`SHELLMAN_THEME`) still win; see `env::preference`.

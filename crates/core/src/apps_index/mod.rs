@@ -96,7 +96,9 @@ impl AppIndex {
         }
         let inner = self.inner.clone();
         std::thread::spawn(move || {
+            let timing = crate::timing::span("apps index: enumerate (background)");
             let apps = enumerate();
+            drop(timing);
             {
                 let mut s = inner.lock().unwrap();
                 // A failed enumeration keeps the older list rather than emptying it.

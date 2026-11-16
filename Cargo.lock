@@ -3084,6 +3084,7 @@ version = "0.1.0"
 dependencies = [
  "eframe",
  "egui",
+ "egui_glow",
  "raw-window-handle",
  "serde",
  "serde_json",

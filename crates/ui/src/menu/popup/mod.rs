@@ -373,6 +373,10 @@ fn open_rows(ctx: &Context, at: Anchor, rows: Vec<Row>) -> u64 {
         None => 0,
     };
     let token = core.next_token;
+    let first = core.hwnd.is_none();
+    shellman_core::timing::mark_with("menu: open", || {
+        format!("{token}{}", if first { " (first: its window is made now)" } else { "" })
+    });
     core.next_token += 1;
     core.started = true;
     core.ctx = Some(ctx.clone());
@@ -430,6 +434,7 @@ fn lay_out(at: Anchor, work: Px, scale: f32, levels: &[&draw::Level], tops: &[f3
 
 /// The window was found: make it a tool window and give it its glass, once, while hidden.
 fn adopt(core: &mut Core, hwnd: isize) {
+    let _timing = shellman_core::timing::span("menu: window found, glass attached");
     win::prepare(hwnd);
     glass::cloak(hwnd, true);
     PANEL.with(|p| {
@@ -723,6 +728,8 @@ fn frame(ctx: &Context) {
     if let Some(n) = open.warm {
         if n + 1 >= WARM_FRAMES && (scaled || n >= WARM_CAP) {
             glass::cloak(hwnd, false);
+            shellman_core::timing::mark("menu: uncloaked");
+            crate::timing::content(ctx, "menu", open.token);
             open.warm = None;
         } else {
             open.warm = Some(n + 1);

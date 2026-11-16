@@ -36,6 +36,7 @@ fn main() -> eframe::Result {
     if shellman_core::warm::asked() {
         return Ok(());
     }
+    shellman_core::timing::init("terminal");
     let line = command_line().unwrap_or_default();
     let mut launch = match cli::parse(&line) {
         Ok(cli::Mode::Window(l)) => l,
@@ -124,12 +125,16 @@ fn run_window(launch: cli::Launch, handoff: Option<defterm::server::Arrived>) ->
         centered: position.is_none(),
         // The grid is redrawn only when something changed; vsync caps a flood of output.
         vsync: true,
+        // A test copy (SHELLMAN_CONFIG_DIR) keeps its window state beside its settings.
+        persistence_path: shellman_core::config::ui_state_override("terminal"),
         ..Default::default()
     };
+    shellman_core::timing::mark("eframe start (window, GL context)");
     eframe::run_native(
         "shellman-terminal",
         options,
         Box::new(move |cc| {
+            shellman_ui::timing::gl_ready(cc.gl.as_deref());
             theme::install_fonts(&cc.egui_ctx);
             // SHELLMAN_FORCE_LIGHT: look at the light look without changing Windows' setting.
             cc.egui_ctx.set_theme(theme::env::preference());

@@ -22,6 +22,7 @@ fn main() -> eframe::Result {
     if shellman_core::warm::asked() {
         return Ok(());
     }
+    shellman_core::timing::init("settings");
     // `--page sound` opens on that page; a window already open is brought to it.
     let mut page = std::env::args()
         .skip_while(|a| a != "--page")
@@ -50,12 +51,16 @@ fn main() -> eframe::Result {
             .with_decorations(false),
         // Without this Windows picks the spot, and it cascades the window down under the dock.
         centered: true,
+        // A test copy (SHELLMAN_CONFIG_DIR) keeps its window state beside its settings.
+        persistence_path: shellman_core::config::ui_state_override("settings"),
         ..Default::default()
     };
+    shellman_core::timing::mark("eframe start (window, GL context)");
     eframe::run_native(
         "shellman-settings",
         options,
         Box::new(move |cc| {
+            shellman_ui::timing::gl_ready(cc.gl.as_deref());
             theme::install_fonts(&cc.egui_ctx);
             // SHELLMAN_FORCE_LIGHT: look at the light look without changing Windows' setting.
             // Otherwise follow Windows: the preference is saved with the window's state, so a

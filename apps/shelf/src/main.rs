@@ -94,6 +94,7 @@ pub fn own_window(title: &str) -> Option<isize> {
 }
 
 fn main() -> eframe::Result {
+    shellman_core::timing::init("shelf");
     let args: Vec<String> = std::env::args().collect();
     let menu_at = shellman_core::desktop_menu::parse_args(&args);
     let arrange = args.iter().any(|a| a == "--arrange");

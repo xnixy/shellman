@@ -119,6 +119,11 @@ impl ContextMenu {
         self.menu.is_open()
     }
 
+    /// Close the right-click menu without a pick (a test copy's own request).
+    pub(super) fn close(&self) {
+        self.menu.close();
+    }
+
     /// Start reading the menu for `target` now: the right button just went down.
     pub(super) fn warm(&mut self, target: &Target) {
         self.loader.want(target);

@@ -362,5 +362,7 @@ impl eframe::App for SettingsApp {
         self.follow_files(ctx);
         self.follow_requests();
         self.layout(ctx);
+        // The page is drawn from settings read at start, so the first frame is the page.
+        shellman_ui::timing::content(ctx, "page", 0);
     }
 }
