@@ -14,6 +14,7 @@ mod select;
 mod shape;
 mod switcher;
 mod taskkey;
+mod taskviewkey;
 mod winkey;
 
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};

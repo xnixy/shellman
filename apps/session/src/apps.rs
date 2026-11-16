@@ -39,6 +39,7 @@ pub fn defaults(dir: &Path) -> Vec<App> {
         one("switcher", &[]),
         one("launcher", &["--background"]),
         one("control", &["--background"]),
+        one("taskview", &["--background"]),
     ]
 }
 
@@ -70,7 +71,7 @@ mod tests {
     fn defaults_are_in_start_order_beside_the_exe() {
         let apps = defaults(Path::new("C:\\s"));
         let names: Vec<_> = apps.iter().map(|a| a.name.as_str()).collect();
-        assert_eq!(names, ["desktop", "bar", "shelf", "switcher", "launcher", "control"]);
+        assert_eq!(names, ["desktop", "bar", "shelf", "switcher", "launcher", "control", "taskview"]);
         assert_eq!(apps[4].args, ["--background"]);
         assert!(apps[1].is_bar());
         assert_eq!(apps[0].exe, Path::new("C:\\s\\shellman-desktop.exe"));

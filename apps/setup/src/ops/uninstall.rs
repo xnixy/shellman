@@ -266,7 +266,7 @@ fn remove_shortcuts(env: &Env, dry: bool) -> Result<(), String> {
 }
 
 /// The folders eframe keeps the apps' window state in, under `%APPDATA%` (their app ids).
-pub const STATE_IDS: [&str; 10] = [
+pub const STATE_IDS: [&str; 11] = [
     "shellman-bar",
     "shellman-control",
     "shellman-files",
@@ -275,6 +275,7 @@ pub const STATE_IDS: [&str; 10] = [
     "shellman-settings",
     "shellman-shelf",
     "shellman-switcher",
+    "shellman-taskview",
     "shellman-tasks",
     "shellman-terminal",
 ];
