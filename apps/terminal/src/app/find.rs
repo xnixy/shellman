@@ -231,7 +231,7 @@ pub fn pill(ui: &mut egui::Ui, rect: Rect, find: &mut Find) -> PillOut {
     let mut button = |ui: &mut egui::Ui, g: char, name: &str, tip: &str, on: bool| {
         let r = Rect::from_center_size(egui::pos2(x - b / 2.0, rect.center().y), egui::vec2(b, b));
         x -= b + 2.0;
-        let resp = round_icon(ui, r, Id::new(("find", name)), g, true, on);
+        let resp = round_icon(ui, r, Id::new(("find", name)), g, true, on, tip);
         shellman_ui::hover::label(ui, &resp, tip);
         resp.clicked()
     };

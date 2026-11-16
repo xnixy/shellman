@@ -43,6 +43,9 @@ pub mod glyph {
     pub const VIEW_GRID: char = '\u{F0E2}';
     pub const PIN: char = '\u{E718}';
     pub const UNPIN: char = '\u{E77A}';
+    pub const ADMIN: char = '\u{E7EF}';
+    /// A console prompt: what stands for a Linux distribution.
+    pub const LINUX: char = '\u{E756}';
     pub const FOLDER_FILL: char = '\u{E8D5}';
     pub const IMAGE: char = '\u{EB9F}';
     pub const VIDEO: char = '\u{E714}';

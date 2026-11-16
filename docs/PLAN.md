@@ -17,7 +17,8 @@ accent color, fast.
 | `apps/terminal` | Windows Terminal | stage 2: tabs, selection, mouse, profiles; `-d`/`-p`/`-e`/`--hold`; shellman's "Open Terminal here" opens it; can be Windows' default terminal (`--register-default-terminal`). Next: Settings controls, find, splits |
 | `apps/settings` | Settings pages for the shell | working: Appearance, Desktop, Dock, Top bar, Launcher, About; rebuilt Windows pages: Sound, Display, Apps, Startup, Fonts, Mouse & keyboard, Power, Date, time & region, Storage, Default apps (changes through Windows Settings), Windows Update |
 | `apps/session` | the shell process itself | the shell: the per-user Winlogon `Shell` value points at it (in daily use since 2026-11-12). Starts and supervises the apps, runs startup items, safety net, `--install`/`--uninstall` |
-| `apps/setup` | the installer | `shellman-setup`: `install`, `update [--restart]`, `status`, `uninstall`; a console tool that also works from a release folder (see Install and update) |
+| `apps/setup` | the install engine | `shellman-setup`: `install`, `update [--restart]`, `status`, `uninstall [--revert]`; a library plus a console tool that also works from a release folder (see Install and update) |
+| `apps/installer` | the installer and uninstaller | `shellman-installer`: one packed exe with a glass wizard; Apps & features runs its `--uninstall` (see Install and update) |
 
 Shared code:
 
@@ -47,6 +48,55 @@ and restarts the others.
 - Small, readable files: one concern each, a few hundred lines at most.
 - Everything is built and tested **next to** the real Explorer. Only the last step, `session`,
   swaps the shell, and that swap is a single registry value that can be set back.
+
+## UI language (15 Nov)
+
+shellman follows the islands language as Espalier carries it on (the `espalier-ui` skill):
+frameless windows, a 46 high header pill as the title bar, islands of radius 22 on glass, 12
+apart, the accent only where it stands out. What lives in `crates/ui` so every app gets it:
+
+- **Colours** (`theme::Colors`): muted light text 84 (small grey text paled over glass at 110);
+  danger text red in dark mode (255,69,58), not pink; a selected row falls back to a text wash
+  when the accent fell back or is very light on dark. `Colors::high_contrast()` is Windows' own
+  colours (window, text, highlight, grey text, hot light), no washes or shadows, and `colors()`
+  returns it while high contrast is on.
+- **Controls**: `primary_button` / `secondary_button` / `danger_button` are 30 high pills;
+  `widgets::switch` and `toggle` have an `on_accent` knob (a white one vanished on a light
+  accent); `theme::checkbox`, `theme::setting_row` and `theme::trailing` (control laid out first,
+  text wraps beside it); `chips::round_icon` takes the name a screen reader reads; painted
+  controls draw `theme::focus_ring` under the keyboard.
+- **Screen readers**: eframe's `accesskit` feature is on. Painted controls (switches, checkboxes,
+  round icons, chips, rail pages) say what they are with `widget_info` (egui 0.31 has no Switch,
+  Tab or ListItem roles: Checkbox and SelectableLabel stand in). Do not call
+  `Context::accesskit_node_builder` while building a frame: in egui 0.31 it kept the installer's
+  window from ever painting; name a field with `Response::labelled_by` instead.
+- **Environment** (`theme::env`): high contrast, a Remote Desktop session and Windows' text size
+  are read from Windows. Over Remote Desktop there is no blur but the island look stays: each
+  island painted nearly opaque (alpha 242) with its hairline, the window invisible around them,
+  with no Windows corners or border (`bare`). Only high contrast or `SHELLMAN_SOLID` make a plain
+  solid window: `glass::islands::solid_window` paints the page and `solid_shapes` opaque cards.
+  Windowed apps follow the text size (`env::follow_text_scale`). Previews that leave Windows alone:
+  `SHELLMAN_HIGH_CONTRAST`, `SHELLMAN_SOLID`, `SHELLMAN_REMOTE`, `SHELLMAN_TEXT_SCALE=150`,
+  `SHELLMAN_THEME=light|dark`.
+
+The installer is the first window built wholly to it. The other apps pick up the shared parts;
+what each still needs:
+
+- **Settings, Task Manager**: already header pill, rail and islands. Their own painted rows
+  (process list, column headers, graphs, settings lists) need names and a high contrast outline
+  for the selected row (Task Manager: 31 unnamed painted elements, the search field unnamed).
+  Settings › Appearance: the Window choice (Invisible / Frosted / No transparency) and a Theme
+  override, beside today's glass amount.
+- **Files, Terminal**: tab strips instead of a header pill; check the 12 gaps, narrow widths
+  (one pane at a time below 620), names for list rows, tabs and the path bar.
+- **All windowed apps**: the page colour under the gaps in a solid window (`solid_window`, as the
+  installer does), edge resize with the cursor set back to Default, Windows 11 rounded corners
+  in the solid mode.
+- **Bar, dock, launcher, switcher, shelf, quick controls**: shared colours and controls only so
+  far. They need names for their painted items (pins, tray icons, tiles, thumbnails), focus rings,
+  and the solid / high contrast paths checked (the switcher and desktop have no glass panel).
+  They do not follow the text size yet: their geometry is computed in pixels and needs checking
+  first.
 
 ## Bar plan: a top bar and a dock
 
@@ -123,7 +173,14 @@ Rule: **the top bar is the system, the dock is apps.** Both are windows of one p
   user's "let apps read notifications" privacy switch; no package identity, no modern host
   needed), noticed through the platform's event log; dismissing removes them from the store;
   clicks, buttons and replies go to the app's COM toast activator, which packaged apps do not
-  offer (they are brought forward or started instead). Tray apps' balloons (`NIF_INFO`), which
+  offer (they are brought forward or started instead). An app that took the click but did not
+  come forward within 250 ms has its window raised too (many only open the right page; Windows
+  raises them). Its window is the one the dock groups under the toast's app id, else one whose
+  program lives where the app's Start menu shortcut points (Discord: toasts as
+  `com.squirrel.Discord.Discord`, windows without an id, grouped by their
+  program's path under `Discord\`; before 13 Nov nothing matched and a click did nothing). The foreground grant
+  (`core::foreground::allow_foreground`, then `CoAllowSetForegroundWindow` on the activator)
+  sends one unused key press when Windows refuses it. Not seen yet with a real toast. Tray apps' balloons (`NIF_INFO`), which
   Explorer turns into toasts, now become shellman notifications too (`tray::balloon`; a click
   sends `NIN_BALLOONUSERCLICK`); they live only in the bar process. Not captured: anything an app
   shows in its own window, toasts Windows itself suppresses (Focus, an app's notifications turned
@@ -164,7 +221,8 @@ Rule: **the top bar is the system, the dock is apps.** Both are windows of one p
   than 64 x 48 px gives the app icon on a plate instead. No peek (Aero Peek needs the
   undocumented `DwmpActivateLivePreview`). `SHELLMAN_PREVIEW_LOG=<file>` traces the panels.
 - Right-click on an icon: shellman's glass popup menu (see the desktop's right-click menu) with
-  Pin / Unpin and Close. On the Launcher
+  Run as administrator (see "Run as administrator" under the launcher), Pin / Unpin and Close.
+  Ctrl+Shift+click starts a new instance as administrator, as on Windows' taskbar. On the Launcher
   icon: Settings. On the Recycle Bin: Open (in Files, never Explorer), what is in it ("6 items,
   7.3 MB") and Empty Recycle Bin… (red; grey when empty), whose second step, in the menu itself,
   names what goes ("Delete 6 items, 7.3 MB for good?", red Empty Recycle Bin, Cancel nearest the
@@ -184,7 +242,7 @@ Rule: **the top bar is the system, the dock is apps.** Both are windows of one p
   an app opens the files with it where that is well defined (`core::open_with`: an app known by
   its exe path gets the paths as arguments, a Store app goes through `ActivateForFile`; other
   AppUserModelIDs, whose exe may be a helper, only spring-load); on Files a folder opens there,
-  a file opens its folder (Files cannot select a file from its command line yet); on the bin the
+  a file opens its folder with the file selected (`shellman-files --select <file>`); on the bin the
   files go to the Recycle Bin. Folders, programs and shortcuts dragged near the edge between two
   pins (or after Files or the last pin) are pinned there; a pinned folder opens in Files. The
   aimed icon gets an accent plate and ring, a pin boundary an accent bar. Opening and recycling
@@ -251,6 +309,44 @@ Rule: **the top bar is the system, the dock is apps.** Both are windows of one p
   Settings, Task Manager, Terminal: the `shellman-*.exe` beside the running binary, when present)
   are built in, rank before a same-named Windows app, are also found by "shellman", and the
   Windows namesake is labelled "Windows".
+
+### Run as administrator (13 Nov)
+
+- Where: the launcher, Ctrl+Shift+Enter or Ctrl+Shift+click on an app or the "Run" row, as in
+  Windows' Start (the selected row's hint says "Run as administrator" while both keys are
+  held); the dock, "Run as administrator" first in an app icon's menu (Files too) and
+  Ctrl+Shift+click; the launcher's right-click menu (below); in Files, "Run as administrator"
+  under "Open" for one program, script or shortcut (told by its name, `admin::by_name`; the
+  shell's own entry stays in "More options").
+- The launcher's right-click menu (`apps/launcher/src/menu.rs`), on an app in the grid or the
+  results: Open, Run as administrator, Pin to dock / Unpin from dock, Open file location (Files
+  with the program selected); on the "Run" row: Run, Run as administrator. It is the glass
+  popup menu, a window of its own that takes the focus, so the launcher does not count the
+  focus as lost while it is open (nor for 400 ms after, while it comes back); a click elsewhere
+  closes both. The menu opens at once with Open and "Looking…"; what only the shell and the
+  disk know (can it elevate, which pin, is it pinned, where is its program) is read on a worker
+  and put in when it comes. Pinning writes `dock.json`, which the dock follows; the launcher
+  stays open. The pin is made the way the dock groups windows (`core::apps_index::pin`): a
+  Store app's id, an id a shortcut names, else the program's path. An app whose shortcut names
+  an id its windows do not carry (Discord) gets a second icon while it runs: not solved.
+- Seen 13 Nov in a test instance: the launcher's menu on Firefox (Open, Run as administrator,
+  Unpin from dock, Open file location; Esc gives the launcher the focus back, a second Esc
+  closes it) and Files' entry on `notepad.exe`. Not clicked: the entries themselves.
+- How (`core::apps_index::admin`), always on a worker, which waits for the UAC prompt:
+  a classic app (program, shortcut, classic Apps folder entry) through the shell's `runas`, so
+  the prompt names the program; measured to work without Explorer. A Store app has no `runas`
+  without Explorer ("class not registered", as `open`), but a desktop program in a package
+  (Terminal, Notepad) started by the activation manager from an elevated process runs elevated
+  (measured), so it goes through `shellman-elevate`'s `launch-app <Family>!<App>` (an app id
+  and nothing else; the prompt then names shellman's helper). A sandboxed Store app (Calculator)
+  cannot be elevated: not offered, and Ctrl+Shift starts it as usual. Saying no at the prompt
+  starts nothing.
+- Which Store apps: the package's `AppxManifest.xml` (`EntryPoint="Windows.FullTrustApplication"`
+  or trust level `mediumIL` on that `<Application>`), read off the UI thread and remembered;
+  the dock's menu opens at once and gets the row when the answer comes (`can_elevate_soon`).
+  Folders, documents and the bin are told by name alone and never offer it.
+- Not seen yet: the prompt itself from an unelevated shellman (built and tested from an elevated
+  console, where no prompt shows).
 
 ## Switcher
 
@@ -331,6 +427,13 @@ of the Control Center).
 - Idle: no repaint loop. Frames come from the pointer, folder changes (a folder watch per folder,
   reads on worker threads), thumbnails arriving, the settings file, and the menu request; the fan's
   160 ms open/close animation is the only animation. Measured: 0.016 s of CPU in 10 s at rest.
+- The fan's animation and the window's region: only the islands show and take clicks, so the
+  window's region is cut around them, and until 13 Nov it was cut anew around every moving pill
+  on every frame (`SetWindowRgn` with a redraw, on a GL window): slow, and the pills tore.
+  Now, while a fan is on its way, the part of the window it moves in (`geometry::swept`, both
+  ends of its path plus 8 pt) shows as a whole, and the glass leaves a region alone that
+  comes out equal to the one the window has (`EqualRgn`), so the region is set when the fan
+  starts and when it has arrived, not per frame. Not seen yet on screen.
 - Stacks: Desktop (the user's and the common Desktop), Downloads, Recent (the Recent folder's
   shortcuts resolved, files that still exist, each once). Newest first by the later of created
   and modified; hidden/system files and partial downloads left out. A fan shows the six newest and
@@ -516,6 +619,26 @@ monitor-sized glass popups, no glass made per click or per frame.
 "Open Terminal here" is one function (`shelf::terminal`), to be replaced by shellman's own
 terminal: Windows Terminal through its app alias `wt.exe -d <folder>` (starts without Explorer,
 tested), else the activation manager, else PowerShell.
+
+## Files: Linux (WSL) and `--select` (13 Nov)
+
+- WSL's distributions are places: a "Linux" group at the foot of the sidebar and a "Linux"
+  section on This PC, one row / card per distribution, opening `\\wsl.localhost\<name>\`
+  (`core::wsl`). Which there are comes from the registry (`HKCU\...\Lxss`, the default first,
+  Docker Desktop's own left out, none without `wsl.exe`), read with the drives on their worker;
+  never from `wsl.exe` or from `\\wsl.localhost` itself, because touching a distribution's files
+  starts it (1.8 s for a stopped Debian here). So the cards show no space, a saved tab inside a
+  distribution is not checked at start, and only opening one starts it, on the listing's worker.
+  The path bar calls the root "Debian (Linux)", also for a typed `\\wsl$\Debian`. Rows take
+  drops and have "Open in new tab".
+- Known limits there: Windows sends no change notifications for these folders, so a tab does not
+  refresh by itself (F5); there is no Recycle Bin, so Del asks "Delete permanently?" as for any
+  network share. Not seen in the window yet (built and tested, the path listed from a console).
+- `shellman-files --select <path>` opens the folder the item is in and selects it once listed
+  (nothing is looked at before the window shows). Used by the dock (a file dropped on Files),
+  Task Manager's "Open location" and a file path clicked in the terminal.
+- Still missing in Files: a settings UI, a Network place (shares are reached by typing
+  `\\server\share`), real blur behind its dialogs.
 
 ## Files: what it never does silently
 
@@ -1072,9 +1195,20 @@ beside Explorer for tests.
     `Winlogon\Userinit` runs before any shell (Winlogon's own); `HKCU\...\Windows\Load`/`Run`
     (win.ini era) are honoured by Explorer only on old builds; scheduled tasks "at log on" are
     started by Task Scheduler, not the shell, so they run without Explorer already.
+- **Background tasks (`ready.rs`)**: the Background Tasks Infrastructure service buffers a new
+  session's work (packaged apps' background tasks and app services) until the shell calls
+  `BiNotifyNewSessionComplete` (twinapi.appcore.dll, no arguments; Explorer and ShellAppRuntime
+  both do). The session calls it at its start, on a thread, retried up to five times over 52 s,
+  each answer logged. Found through Dolby Access OEM: its `SessionConnected` and device-watcher
+  tasks never ran under shellman, so Atmos outputs had no licence. Where the shell already made
+  the call it answers 0x8007054F (measured beside Explorer). Still to be seen: the answer at a
+  fresh shellman sign-in.
 - **Safety net**: if Shift is held at the session's start, or the bar's exe is missing, or the bar
   was given up on (crash budget spent) or ended with exit code 0, or a running bar has no
   `Shell_TrayWnd` 20 s after its own latest (re)start, the session falls back to Explorer. A bar
+  asked to close for a restart (`shellman-setup update --restart`) counts as pending from the
+  asking on: on 13 Nov its tray window, gone while it closed, read as "running, no tray" and
+  handed the session to Explorer. A bar
   whose restart is pending is never "lost" (a single crash after 80 minutes used to hand the
   session to Explorer, because the 20 s were counted from the session's start), and nothing is
   decided while Windows is asking to end the session. Shift also skips every shellman app.
@@ -1093,6 +1227,12 @@ beside Explorer for tests.
     is logged loudly. (3) Start `explorer.exe` (without `SHELLMAN_SESSION`). (4) Wait up to 15 s
     for a `Shell_TrayWnd` owned by explorer.exe. Not there: the second attempt does (1) to (4)
     again; still not: logged as an ERROR.
+  - Once Explorer is the shell (already, or its taskbar came up) the session tells the desktop
+    process to hide its wallpaper windows (`core::desktop_aside`, a registered message to its
+    controller; windows made later stay hidden too). On 13 Nov they stayed up, one per monitor
+    and as large as it, over Explorer's desktop, and Explorer's taskbars on two of three
+    monitors sat under them: nothing on them could be clicked. The shelves and widgets are
+    left where they are.
   - After it: no Explorer taskbar after both attempts -> supervising resumes once per session,
     with a fresh crash budget (never after Shift); anything else (taskbar, Explorer already the
     shell, or a second failure) -> parked under the watchdog.
@@ -1173,6 +1313,14 @@ aside is renamed back. A named mutex per install folder stops two setups interle
 `shellman-install.txt` record in the install folder lists what setup put there (uninstall removes
 exactly that, and its asides).
 
+**First start after an install or update** (`core::warm`): Windows Defender scans an exe the
+first time it runs after it was written. Measured 13 Nov with never-seen copies of
+`shellman-files.exe`: 1.25 s to the window (2.3 s for a run that exits at once), then 0.2 s
+every time; the process uses no CPU meanwhile. So Files, Settings, Task Manager and the terminal
+answer `--warm` by returning from `main` first thing, and are run so once each: by setup after
+an update wrote them, and by the session 4 s after its start (`session/src/warm.rs`, logged
+with each one's time). The residents need none; the session starts them anyway.
+
 **Updating a running app**: the file differs by SHA-256; a running exe goes aside and the report
 says "replaced (running: takes effect when the app restarts)". Without `--restart` nothing is
 closed or restarted. With `--restart` setup asks the session (see Session, Restart requests)
@@ -1181,11 +1329,55 @@ at next sign-in"); apps the session does not supervise are never closed: setup l
 windows as still on the old build. The session clears leftovers at its start; setup also removes
 the ones whose process has ended.
 
-**Not done by setup**: making shellman the Windows shell (`shellman-session --install`, an explicit
-separate step that setup only tells you about), registering the terminal as the default
-(`shellman-terminal --register-default-terminal`), registering the picker hook (`register.ps1`).
-`uninstall` refuses while shellman is the Winlogon shell or the default terminal, and while a
-process runs from the install folder.
+**Integrations** (`integrate.rs`, all HKCU, all through the `reg::Registry` trait; with
+`SHELLMAN_SETUP_REGISTRY=<file>` a text file stands in for HKCU, so a test install writes no real
+registry): every install and update writes the Apps & features entry
+(`...\CurrentVersion\Uninstall\shellman`; its uninstall command is the installed
+`shellman-installer.exe --uninstall --prefix <dir>`, plus `--quiet` for the quiet one). Opt-in,
+with `--shell`, `--default-terminal`, `--picker-hook` (the wizard's switches): the shell runs
+`shellman-session --install`, the terminal `shellman-terminal --register-default-terminal`, and the
+picker hook writes the two dialog CLSIDs `apps/pickhook/register.ps1` writes (refusing over a
+registration that is not the hook's). Each is checked by reading the value back; the stand-in
+gets the same values written directly.
+
+**Uninstall** without `--revert` refuses while shellman is the Winlogon shell or the default
+terminal, and while a process runs from the install folder. With `--revert` (what the uninstaller
+does), in order: the dialog hook and the "shellman font check" Run value go; the default terminal
+and the shell are put back by the apps' own `--unregister-default-terminal` / `--uninstall` (from
+the values they saved; if the exe is gone, setup restores them itself). Then, if shellman is the
+shell running right now (its session runs from the folder and Explorer has no taskbar), nothing
+is closed: a RunOnce value runs the uninstall again at the next sign-in, under Explorer. Otherwise
+the processes are ended (session first, so it restarts nothing), the files removed (one in use,
+such as the hook dll loaded in some app, is moved to `%TEMP%` instead), the shortcuts, with
+`--purge-config` the settings folders and each app's eframe state (`%APPDATA%\shellman-<app>`),
+and the Apps & features entry last.
+
+**The installer** (`apps/installer`): the built `shellman-installer.exe` is a stub; it is installed
+like any `shellman-*.exe` and serves as the uninstaller. `--pack <folder> [--out <file>]` appends
+the files: deflate of (name, size, bytes) entries at their install paths, plus a generated
+`install-manifest` for the non-`shellman-*` ones, then a footer with the length, SHA-256 and a
+magic. The wizard checks the hash, unpacks to `%TEMP%\shellman-install-<pid>`, runs the library's
+`install` (or `update --restart` when a record exists) from there, then matches the integrations
+to the switches (on what was asked, off what was turned off). `--uninstall` started from the
+install folder copies itself to `%TEMP%\shellman-uninstall-<pid>` and runs the copy, which waits
+for the first to end and removes its own folder when done. `--quiet` installs or uninstalls with
+no window. Nothing needs admin rights or is written machine-wide.
+
+A RunOnce command may be at most 260 characters; a longer finish command goes into `finish.cmd`
+beside the temp copy and RunOnce runs that. A trailing `\` is dropped from the install folder
+(`"C:\x\"` would end a quoted argument). For tests, `SHELLMAN_SETUP_EXPLORER=none` acts as if
+Explorer had no taskbar (the deferred path), and `SHELLMAN_INSTALLER_TEST_START=1` presses the
+wizard's Install / Uninstall at once.
+
+Tested 15 Nov with everything redirected (prefix, Start Menu, config, the stand-in registry):
+pack, quiet install with all three integrations, re-run as an update (0 changed), uninstall from
+the installed stub with `--purge-config` (nothing left: files, shortcuts, settings, eframe
+folders, temp copies; shell and terminal values back); the deferred uninstall with a stand-in
+session (a renamed `ping.exe`) and `SHELLMAN_SETUP_EXPLORER=none`, then its RunOnce command run by
+hand (all gone, temp copy too); the real-registry code on a throwaway HKCU key (a unit test).
+The wizard's install, uninstall and done pages were looked at. Not yet run: the apps' own
+`--install` / `--register-default-terminal` against the real registry, a real sign-out, and a
+real RunOnce at sign-in.
 
 (a) Installing from a release folder (unzipped anywhere):
 

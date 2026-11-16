@@ -18,6 +18,10 @@ use shellman_ui::glass::{GlassPanel, Style};
 use shellman_ui::{theme, window};
 
 fn main() -> eframe::Result {
+    // A warming run (see `core::warm`): nothing to do but have run.
+    if shellman_core::warm::asked() {
+        return Ok(());
+    }
     // `--page sound` opens on that page; a window already open is brought to it.
     let mut page = std::env::args()
         .skip_while(|a| a != "--page")
@@ -54,11 +58,9 @@ fn main() -> eframe::Result {
             // SHELLMAN_FORCE_LIGHT: look at the light look without changing Windows' setting.
             // Otherwise follow Windows: the preference is saved with the window's state, so a
             // forced run would leave the app light for good.
-            cc.egui_ctx.set_theme(if std::env::var_os("SHELLMAN_FORCE_LIGHT").is_some() {
-                egui::ThemePreference::Light
-            } else {
-                egui::ThemePreference::System
-            });
+            cc.egui_ctx.set_theme(theme::env::preference());
+            // Windows' text size makes everything larger.
+            theme::env::follow_text_scale(&cc.egui_ctx);
             theme::set_light(cc.egui_ctx.theme() == egui::Theme::Light);
             let look = Appearance::load_or(Appearance::default());
             look.apply(&cc.egui_ctx);

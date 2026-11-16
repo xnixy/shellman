@@ -37,6 +37,7 @@ mod toolbar;
 
 use actions::{Dialog, Rename};
 use shellman_core::fsops::{self, Drive, Entry, Op};
+use shellman_core::wsl::Distro;
 use shellman_core::recycle_bin::{BinItem, BinState};
 use shellman_core::thumbs::Thumbs;
 use shellman_ui::theme::{self, AccentChoice};
@@ -69,7 +70,8 @@ enum Msg {
     BinState(Option<BinState>),
     /// A restore, delete or empty finished: the message to show, or why it failed.
     BinDone(Result<String, String>),
-    Drives(Vec<Drive>),
+    /// The drives, and WSL's Linux distributions.
+    Drives(Vec<Drive>, Vec<Distro>),
     /// A tag place's items, and what checking the tagged items found.
     Tagged {
         tab: u64,
@@ -205,6 +207,8 @@ pub(crate) struct FileMan {
     tx: Sender<Msg>,
     rx: Receiver<Msg>,
     drives: Vec<Drive>,
+    /// WSL's Linux distributions, shown after the drives.
+    linux: Vec<Distro>,
     /// The Windows clipboard, as far as files go.
     clip: clip::Clip,
     /// Dragging out, and the window as a drop target.
@@ -280,15 +284,25 @@ impl FileMan {
             }
             picker::Picker::new(session)
         });
+        // `--select`: the item to select in the first tab once it is listed.
+        let mut select = None;
         let mut locs: Vec<Loc> = settings
             .tabs
             .iter()
-            .filter(|p| p.is_dir())
+            // A tab left in a Linux distribution is not looked at: asking would start the
+            // distribution before the window shows. Its listing says if the folder is gone.
+            .filter(|p| shellman_core::wsl::distro_of(p).is_some() || p.is_dir())
             .map(|p| Loc::Dir(p.clone()))
             .collect();
         match start {
             crate::args::Start::Saved => {}
             crate::args::Start::Folder(dir) => locs = vec![Loc::Dir(dir)],
+            crate::args::Start::Select(path) => {
+                if let Some(dir) = path.parent() {
+                    locs = vec![Loc::Dir(dir.to_path_buf())];
+                    select = Some(path);
+                }
+            }
             crate::args::Start::RecycleBin => locs = vec![Loc::Bin],
             // Only the one place the picker opens on (below).
             crate::args::Start::Pick(_) => {}
@@ -323,6 +337,7 @@ impl FileMan {
             tx,
             rx,
             drives: Vec::new(),
+            linux: Vec::new(),
             clip: clip::Clip::new(&ctx_for_apps),
             dnd: dnd::Dnd::new(&ctx_for_apps, hwnd, picking),
             tag_check: tag_ui::Checking::default(),
@@ -359,6 +374,9 @@ impl FileMan {
             app.push_tab(loc);
         }
         app.active = 0;
+        if let Some(path) = select {
+            app.tabs[0].select_after_load = Some((path, false));
+        }
         app.pick_apply_filter();
         app.load_drives();
         // Learn the tagged items' identities, and find any renamed or moved while Files was closed.
@@ -379,7 +397,7 @@ impl FileMan {
     fn load_drives(&self) {
         let (tx, ctx) = (self.tx.clone(), self.ctx.clone());
         std::thread::spawn(move || {
-            let _ = tx.send(Msg::Drives(fsops::drives()));
+            let _ = tx.send(Msg::Drives(fsops::drives(), shellman_core::wsl::distros()));
             ctx.request_repaint();
         });
     }
@@ -611,7 +629,10 @@ impl FileMan {
                     }
                     self.reload_bins();
                 }
-                Msg::Drives(d) => self.drives = d,
+                Msg::Drives(d, linux) => {
+                    self.drives = d;
+                    self.linux = linux;
+                }
                 Msg::Tagged {
                     tab,
                     gen,
@@ -731,17 +752,13 @@ impl FileMan {
                 look.apply(ctx);
             }
         }
-        let forced = std::env::var_os("SHELLMAN_FORCE_LIGHT").is_some();
-        // Forced light: egui's own popups and fields take the light look too.
-        if forced && ctx.theme() != egui::Theme::Light {
-            ctx.set_theme(egui::ThemePreference::Light);
+        // SHELLMAN_THEME / SHELLMAN_FORCE_LIGHT, else Windows. Set every frame: the preference is
+        // saved with the window's state, so a forced run would otherwise leave Files that way.
+        let want = theme::env::preference();
+        if ctx.options(|o| o.theme_preference) != want {
+            ctx.set_theme(want);
         }
-        // The preference is saved with the window's state: without this a forced run would
-        // leave Files light for good.
-        if !forced && ctx.options(|o| o.theme_preference) != egui::ThemePreference::System {
-            ctx.set_theme(egui::ThemePreference::System);
-        }
-        theme::set_light(forced || ctx.theme() == egui::Theme::Light);
+        theme::set_light(want == egui::ThemePreference::Light || ctx.theme() == egui::Theme::Light);
         let now = ctx.input(|i| i.time);
         if self.look.accent == AccentChoice::System && now - self.last_accent_check > 2.0 {
             self.last_accent_check = now;

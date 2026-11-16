@@ -24,8 +24,9 @@
 //! about one capture in forty showed them one step apart.
 //!
 //! When transparency effects are off, the tree fills the shape with a solid colour instead of the
-//! blur (rounded corners and shadow stay). When composition is not available at all (or
-//! `SHELLMAN_NO_COMPOSITION` is set, to see this path), the window paints its own rounded surface
+//! blur (rounded corners and shadow stay). When composition is not available at all, over Remote
+//! Desktop, in high contrast (or `SHELLMAN_SOLID` / `SHELLMAN_NO_COMPOSITION` is set, to see this
+//! path), the window paints its own rounded surface
 //! with [`content_frame`], without blur or shadow.
 //!
 //! DWM serves the host backdrop as a flat colour while a session WNF state says transparency is
@@ -91,7 +92,7 @@ use windows::Win32::Graphics::Dwm::{
     DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DONOTROUND, DWMWINDOWATTRIBUTE,
 };
 use windows::Win32::Graphics::Gdi::{
-    CombineRgn, CreateRectRgn, CreateRoundRectRgn, DeleteObject, SetWindowRgn, RGN_OR,
+    CombineRgn, CreateRectRgn, CreateRoundRectRgn, DeleteObject, EqualRgn, GetWindowRgn, SetWindowRgn, RGN_ERROR, RGN_OR,
 };
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::Shell::{DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass};
@@ -335,7 +336,9 @@ enum Refused {
 
 /// The backdrop window and its visuals, if Windows can compose them.
 fn compose(hwnd: isize) -> Result<Composed, Refused> {
-    if std::env::var_os("SHELLMAN_NO_COMPOSITION").is_some() {
+    // No glass over Remote Desktop, in high contrast, or when asked (`SHELLMAN_SOLID`,
+    // `SHELLMAN_NO_COMPOSITION`): the window paints its islands itself (`islands::solid_shapes`).
+    if std::env::var_os("SHELLMAN_NO_COMPOSITION").is_some() || crate::theme::env::no_glass() {
         return Err(Refused::Unavailable);
     }
     let compositor = tree::compositor().ok_or(Refused::Unavailable)?;
@@ -604,7 +607,17 @@ impl Inner {
                         CombineRgn(Some(region), Some(region), Some(piece), RGN_OR);
                         let _ = DeleteObject(piece.into());
                     }
-                    SetWindowRgn(self.target, Some(region), true);
+                    // Islands that moved inside the extra part (the shelf's fan, opening) leave
+                    // the region as it was: setting it again makes Windows clip and redraw the
+                    // window in the middle of an animation, once per frame.
+                    let current = CreateRectRgn(0, 0, 0, 0);
+                    let same = GetWindowRgn(self.target, current) != RGN_ERROR && EqualRgn(current, region).as_bool();
+                    let _ = DeleteObject(current.into());
+                    if same {
+                        let _ = DeleteObject(region.into());
+                    } else {
+                        SetWindowRgn(self.target, Some(region), true);
+                    }
                 } else if key.is_some() {
                     // A window that only now takes all of itself again needs its region reset.
                     let same = before.is_some_and(|b| b.islands.is_some() && b.window == window && !b.cut);

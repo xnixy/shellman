@@ -168,7 +168,7 @@ fn draw_card(ui: &mut Ui, card: &Card, replies: &mut HashMap<u32, String>, icons
     let secs = SystemTime::now().duration_since(t.time).map_or(0, |d| d.as_secs());
     let when = Rect::from_min_max(pos2(name.right() + 8.0, header.top()), pos2(right_end, header.bottom()));
     draw_text(ui, when, &layout::ago(secs), FontId::proportional(12.0), dim(), false);
-    if round_icon(ui, close, egui::Id::new(("toast close", t.id)), glyph::CLOSE, true, false).on_hover_text("Dismiss").clicked() {
+    if round_icon(ui, close, egui::Id::new(("toast close", t.id)), glyph::CLOSE, true, false, "Dismiss").on_hover_text("Dismiss").clicked() {
         out.events.push(Event::Dismiss(t.id));
     }
 

@@ -247,7 +247,7 @@ impl super::FileMan {
                     [e] => e.path.display().to_string(),
                     _ => value.clone(),
                 };
-                if shellman_ui::chips::round_icon(ui, b, Id::new(("details-copy", label)), glyph::COPY, true, false)
+                if shellman_ui::chips::round_icon(ui, b, Id::new(("details-copy", label)), glyph::COPY, true, false, "Copy the path")
                     .on_hover_text("Copy the path")
                     .clicked()
                 {

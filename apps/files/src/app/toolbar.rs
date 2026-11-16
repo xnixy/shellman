@@ -44,7 +44,7 @@ impl super::FileMan {
                 egui::pos2(x + BUTTON / 2.0, bar.center().y),
                 Vec2::splat(BUTTON),
             );
-            if round_icon(ui, r, Id::new(("nav", tip)), g, on, false)
+            if round_icon(ui, r, Id::new(("nav", tip)), g, on, false, tip)
                 .on_hover_text(tip)
                 .clicked()
             {
@@ -78,7 +78,7 @@ impl super::FileMan {
             ui.painter().circle_filled(info.center(), BUTTON / 2.0, soft_colors(c.light).1);
         }
         let tip = if on { "Hide details" } else { "Show details" };
-        if round_icon(ui, info, Id::new("details-toggle"), glyph::INFO, true, false)
+        if round_icon(ui, info, Id::new("details-toggle"), glyph::INFO, true, false, tip)
             .on_hover_text(tip)
             .clicked()
         {
@@ -346,7 +346,10 @@ impl super::FileMan {
                         .drives
                         .iter()
                         .find(|d| d.root.as_path() == p)
-                        .map_or_else(|| p.display().to_string(), Drive::title),
+                        .map(Drive::title)
+                        // A Linux distribution's root, listed or typed (`\\wsl$\Debian`).
+                        .or_else(|| shellman_core::wsl::distro_of(p).map(|name| format!("{name} (Linux)")))
+                        .unwrap_or_else(|| p.display().to_string()),
                 };
                 crumbs.push((name, Loc::Dir(p.to_path_buf())));
             }

@@ -97,13 +97,13 @@ impl super::TerminalApp {
             }
         }
         ts::edges(ui, &s, view);
-        let plus = round_icon(ui, ts::button_rect(&s, pill, 0), Id::new("new-tab"), glyph::ADD, true, false);
+        let plus = round_icon(ui, ts::button_rect(&s, pill, 0), Id::new("new-tab"), glyph::ADD, true, false, "New tab");
         shellman_ui::hover::label(ui, &plus, "New tab\nCtrl+Shift+T");
         if plus.clicked() {
             self.new_tab(None);
         }
         let more = ts::button_rect(&s, pill, 1);
-        let profiles = round_icon(ui, more, Id::new("profiles"), glyph::SORT_DOWN, true, false);
+        let profiles = round_icon(ui, more, Id::new("profiles"), glyph::SORT_DOWN, true, false, "Open a profile");
         if self.strip.menu.is_none() {
             shellman_ui::hover::label(ui, &profiles, "Open a profile");
         }

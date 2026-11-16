@@ -4,12 +4,13 @@
 //! Windows accent, a preset, or a custom color. Neutrals carry a faint tint of the accent, the
 //! way Blurman's plum shell carries its rose. Dark and light follow the Windows app mode.
 
+pub mod env;
 mod icons;
 mod style;
 
 pub use icons::{glyph, icon, icon_font, install_fonts, light_font, semibold_font};
 pub(crate) use icons::mark_text_font_installed;
-pub use style::{apply, danger_button, dialog, muted, primary_button};
+pub use style::{apply, checkbox, danger_button, dialog, focus_ring, muted, primary_button, secondary_button, setting_row, trailing};
 
 use egui::Color32;
 use serde::{Deserialize, Serialize};
@@ -126,6 +127,9 @@ pub fn legible(color: Color32, surface: Color32, fallback: Color32, min: f32) ->
 #[derive(Clone, Copy)]
 pub struct Colors {
     pub light: bool,
+    /// Windows' high contrast theme: Windows' own colours, every island and control outlined in
+    /// the text colour, no tints or washes; a selected row is a highlight outline.
+    pub high_contrast: bool,
     /// The accent as picked. Neutrals are tinted with it and the app icons are drawn from it.
     pub accent: Color32,
     /// The accent where it fills something or marks a state (selection, toggles, primary buttons,
@@ -187,7 +191,10 @@ impl Colors {
         };
         let accent_fill = legible(accent, bg, text, FILL_CONTRAST);
         // The text colour is far brighter than a dim accent, so its wash is fainter.
-        let fell_back = accent_fill != accent;
+        // A selected row is a wash of the accent under ordinary text: of the text colour instead
+        // where the accent fell back, or is so light (a yellow on dark) that light text on its
+        // wash would fade.
+        let fell_back = accent_fill != accent || (!light && luminance(accent_fill) > 0.5);
         let accent_text = legible(text_base, bg, text, TEXT_CONTRAST);
         let on_accent = if luminance(accent_fill) > 0.4 {
             Color32::from_rgb(20, 16, 20)
@@ -197,6 +204,7 @@ impl Colors {
         if light {
             Self {
                 light,
+                high_contrast: false,
                 accent,
                 accent_fill,
                 on_accent,
@@ -204,15 +212,16 @@ impl Colors {
                 bg,
                 popup: tint(252, 0.02),
                 text,
-                muted: tint(110, 0.08),
+                // Small grey text over a see-through window renders lighter than its colour.
+                muted: tint(84, 0.08),
                 warn: Color32::from_rgb(160, 96, 0),
                 row_hover: Color32::from_black_alpha(14),
-                row_selected: with_alpha(accent_fill, if fell_back { 10 } else { 48 }),
+                row_selected: if fell_back { with_alpha(text, 22) } else { with_alpha(accent_fill, 48) },
                 hairline: Color32::from_black_alpha(16),
                 well: Color32::from_black_alpha(12),
                 track: tint(188, 0.06),
                 danger: Color32::from_rgb(196, 43, 28),
-                danger_text: Color32::from_rgb(150, 24, 28),
+                danger_text: Color32::from_rgb(215, 0, 21),
                 card: with_alpha(tint(255, 0.02), 200),
                 shadow: Color32::from_black_alpha(20),
                 sidebar_glass: with_alpha(tint(230, 0.05), 170),
@@ -233,6 +242,7 @@ impl Colors {
         } else {
             Self {
                 light,
+                high_contrast: false,
                 accent,
                 accent_fill,
                 on_accent,
@@ -243,12 +253,13 @@ impl Colors {
                 muted: tint(150, 0.08),
                 warn: Color32::from_rgb(230, 186, 120),
                 row_hover: Color32::from_rgba_unmultiplied(255, 255, 255, 14),
-                row_selected: with_alpha(accent_fill, if fell_back { 8 } else { 64 }),
+                row_selected: if fell_back { with_alpha(text, 34) } else { with_alpha(accent_fill, 64) },
                 hairline: Color32::from_rgba_unmultiplied(255, 255, 255, 16),
                 well: Color32::from_rgba_unmultiplied(255, 255, 255, 12),
                 track: tint(66, 0.1),
                 danger: Color32::from_rgb(196, 43, 28),
-                danger_text: Color32::from_rgb(255, 160, 164),
+                // Red, not pale pink: it has to read as danger on grey glass.
+                danger_text: Color32::from_rgb(255, 69, 58),
                 card: with_alpha(tint(34, 0.08), 214),
                 shadow: Color32::from_black_alpha(60),
                 sidebar_glass: with_alpha(tint(10, 0.06), 178),
@@ -267,6 +278,59 @@ impl Colors {
                 press_soft: with_alpha(text, 38),
                 separator: with_alpha(text, 26),
             }
+        }
+    }
+}
+
+impl Colors {
+    /// Windows' high contrast theme: its own colours throughout (window, text, highlight, grey
+    /// text, hyperlink), no tints or washes. Highlight only ever pairs with highlight text.
+    pub fn high_contrast() -> Self {
+        use windows::Win32::Graphics::Gdi::{GetSysColor, COLOR_GRAYTEXT, COLOR_HIGHLIGHT, COLOR_HIGHLIGHTTEXT, COLOR_HOTLIGHT, COLOR_WINDOW, COLOR_WINDOWTEXT};
+        let sys = |i| {
+            // SAFETY: a plain read of a system colour (0x00BBGGRR).
+            let c = unsafe { GetSysColor(i) };
+            Color32::from_rgb((c & 0xff) as u8, (c >> 8 & 0xff) as u8, (c >> 16 & 0xff) as u8)
+        };
+        let (window, text, highlight, on_highlight, grey, link) =
+            (sys(COLOR_WINDOW), sys(COLOR_WINDOWTEXT), sys(COLOR_HIGHLIGHT), sys(COLOR_HIGHLIGHTTEXT), sys(COLOR_GRAYTEXT), sys(COLOR_HOTLIGHT));
+        let none = Color32::TRANSPARENT;
+        Self {
+            light: luminance(window) > 0.5,
+            high_contrast: true,
+            accent: highlight,
+            accent_fill: highlight,
+            on_accent: on_highlight,
+            accent_text: link,
+            bg: window,
+            popup: window,
+            text,
+            muted: grey,
+            warn: text,
+            // No hover wash: ordinary text on a highlight wash is not a pair Windows allows.
+            row_hover: none,
+            // Painted as an outline by the rows that know (`row_selected` is the outline colour).
+            row_selected: highlight,
+            hairline: text,
+            well: window,
+            track: grey,
+            danger: highlight,
+            danger_text: text,
+            card: window,
+            shadow: none,
+            sidebar_glass: window,
+            sidebar_solid: window,
+            page_glass: window,
+            shell: window,
+            sheet: window,
+            control: window,
+            control_hover: highlight,
+            control_active: highlight,
+            bar: window,
+            bar_edge: text,
+            hover_soft: none,
+            press_soft: none,
+            separator: text,
         }
     }
 }
@@ -309,8 +373,11 @@ fn accent() -> Color32 {
     Color32::from_rgb((v >> 16) as u8, (v >> 8) as u8, v as u8)
 }
 
-/// The colors for the mode and accent the window has now.
+/// The colors for the mode and accent the window has now (Windows' own in high contrast).
 pub fn colors() -> Colors {
+    if env::high_contrast() {
+        return Colors::high_contrast();
+    }
     Colors::new(LIGHT.load(Ordering::Relaxed), accent())
 }
 

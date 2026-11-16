@@ -67,6 +67,8 @@ pub fn chip(
 ) -> egui::Response {
     let c = colors();
     let resp = ui.interact(rect, id, Sense::click());
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, kind == Chip::Accent, label));
+    theme::focus_ring(ui, &resp, rect, rect.height() / 2.0);
     let hovered = resp.hovered();
     let (soft, soft_hover, line) = soft_colors(c.light);
     let (fill, stroke, text) = match kind {
@@ -124,8 +126,8 @@ pub fn chip(
     resp
 }
 
-/// A round icon button of `size` points centred in `rect`. `danger` turns it red when hovered
-/// (a close button).
+/// A round icon button centred in `rect`. `danger` turns it red when hovered (a close button).
+/// `name` is what a screen reader calls it (the caller shows its own tooltip).
 pub fn round_icon(
     ui: &mut Ui,
     rect: Rect,
@@ -133,6 +135,7 @@ pub fn round_icon(
     g: char,
     enabled: bool,
     danger: bool,
+    name: &str,
 ) -> egui::Response {
     let c = colors();
     let sense = if enabled {
@@ -141,7 +144,9 @@ pub fn round_icon(
         Sense::hover()
     };
     let resp = ui.interact(rect, id, sense);
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, name));
     let radius = rect.width().min(rect.height()) / 2.0;
+    theme::focus_ring(ui, &resp, rect, radius);
     let mut fg = if enabled {
         c.text
     } else {
@@ -159,7 +164,7 @@ pub fn round_icon(
         ui.painter().circle_filled(rect.center(), radius, fill);
     }
     ui.painter()
-        .text(rect.center(), Align2::CENTER_CENTER, g, icon_font(12.0), fg);
+        .text(rect.center(), Align2::CENTER_CENTER, g, icon_font(11.0), fg);
     resp
 }
 
@@ -187,6 +192,7 @@ pub fn window_buttons(ui: &mut Ui, rect: Rect) {
         glyph::CHROME_CLOSE,
         true,
         true,
+        "Close",
     )
     .on_hover_text("Close")
     .clicked()
@@ -194,7 +200,7 @@ pub fn window_buttons(ui: &mut Ui, rect: Rect) {
         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
     }
     let tip = if maximized { "Restore" } else { "Maximize" };
-    if round_icon(ui, at(1.0), egui::Id::new("window-max"), size, true, false)
+    if round_icon(ui, at(1.0), egui::Id::new("window-max"), size, true, false, tip)
         .on_hover_text(tip)
         .clicked()
     {
@@ -207,6 +213,7 @@ pub fn window_buttons(ui: &mut Ui, rect: Rect) {
         glyph::MINIMIZE,
         true,
         false,
+        "Minimize",
     )
     .on_hover_text("Minimize")
     .clicked()

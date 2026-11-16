@@ -17,6 +17,10 @@ use std::sync::atomic::{AtomicI32, Ordering};
 use std::sync::Arc;
 
 fn main() {
+    // A warming run (see `core::warm`): nothing to do but have run.
+    if shellman_core::warm::asked() {
+        return;
+    }
     let start = args::parse(std::env::args_os().skip(1));
     let session = match &start {
         args::Start::Pick(path) => match shellman_pick::read_request(path) {
@@ -93,6 +97,8 @@ fn run(start: args::Start, session: Option<pick::Session>) -> eframe::Result {
             let look = shellman_ui::appearance::Appearance::load_or(Default::default());
             look.apply(&cc.egui_ctx);
             theme::apply(&cc.egui_ctx);
+            // Windows' text size makes everything larger.
+            theme::env::follow_text_scale(&cc.egui_ctx);
             let mut hwnd = 0isize;
             let mut panel = None;
             if let Ok(handle) = cc.window_handle() {

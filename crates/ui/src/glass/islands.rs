@@ -84,26 +84,48 @@ pub fn shows_as(css: egui::Color32) -> egui::Color32 {
     egui::Color32::from_rgba_unmultiplied(channel(r), channel(g), channel(b), a)
 }
 
+/// The page under the islands of a solid window (high contrast, `SHELLMAN_SOLID`): the whole
+/// client area in the page colour, so the window is plainly solid rather than islands over the
+/// desktop. `None` otherwise, Remote Desktop included (the window stays invisible around its
+/// islands there). Paint it first, under [`solid_shapes`].
+pub fn solid_window(screen: egui::Rect) -> Option<egui::Shape> {
+    theme::env::solid().then(|| egui::Shape::rect_filled(screen, 0.0, theme::colors().bg))
+}
+
 /// The islands as egui shapes, for a window without composed glass: each a nearly solid rounded
 /// fill with a faint rim (see [`content_frame`]). Paint them under the content, e.g. into a
 /// `Shape::Noop` reserved at the start of the frame (`painter.set(idx, Shape::Vec(..))`).
 pub fn solid_shapes(islands: &[Island], style: &Style) -> Vec<egui::Shape> {
     let frame = content_frame(false, style);
+    // High contrast: the window colour, opaque, outlined in the text colour. A solid window
+    // (`SHELLMAN_SOLID`): opaque cards on the page colour (see [`solid_window`]). Over Remote
+    // Desktop: the island look kept, each nearly opaque with its hairline, nothing around them.
+    let c = theme::colors();
+    let (fill, stroke) = if c.high_contrast {
+        (c.bg, egui::Stroke::new(1.0_f32, c.text))
+    } else if theme::env::solid() {
+        (theme::with_alpha(c.card, 255), egui::Stroke::new(1.0_f32, c.hairline))
+    } else if theme::env::remote_session() {
+        (theme::with_alpha(c.card, 242), egui::Stroke::new(1.0_f32, c.hairline))
+    } else {
+        (frame.fill, frame.stroke)
+    };
     islands
         .iter()
         .map(|island| {
             let radius = island
                 .radius
                 .min(island.rect.height().min(island.rect.width()) / 2.0);
-            let fill = theme::with_alpha(
-                frame.fill,
-                (frame.fill.a() as f32 * island.opacity.clamp(0.0, 1.0)).round() as u8,
-            );
+            let fill = if c.high_contrast {
+                fill
+            } else {
+                theme::with_alpha(fill, (fill.a() as f32 * island.opacity.clamp(0.0, 1.0)).round() as u8)
+            };
             egui::Shape::Rect(egui::epaint::RectShape::new(
                 island.rect,
                 radius.round().clamp(0.0, 255.0) as u8,
                 fill,
-                frame.stroke,
+                stroke,
                 egui::StrokeKind::Inside,
             ))
         })

@@ -202,7 +202,7 @@ impl super::FileMan {
             egui::pos2(view.right() + TAB_GAP, pill.top() + PAD),
             Vec2::splat(h),
         );
-        if round_icon(ui, plus, Id::new("new-tab"), glyph::ADD, true, false)
+        if round_icon(ui, plus, Id::new("new-tab"), glyph::ADD, true, false, "New tab")
             .on_hover_text("New tab (Ctrl+T)")
             .clicked()
         {

@@ -135,10 +135,10 @@ pub fn draw(ui: &mut Ui, rect: Rect, view: &mut View, data: &Data) -> Option<Ask
     let head = Rect::from_min_size(inner.min, vec2(inner.width(), HEADER_H));
     let next = Rect::from_center_size(pos2(head.right() - 14.0, head.center().y), vec2(28.0, 28.0));
     let prev = next.translate(vec2(-32.0, 0.0));
-    if round_icon(ui, next, egui::Id::new("cal next"), glyph::FORWARD, true, false).on_hover_text("Next month").clicked() {
+    if round_icon(ui, next, egui::Id::new("cal next"), glyph::FORWARD, true, false, "Next month").on_hover_text("Next month").clicked() {
         asked = Some(Asked::Step(1));
     }
-    if round_icon(ui, prev, egui::Id::new("cal prev"), glyph::BACK, true, false).on_hover_text("Previous month").clicked() {
+    if round_icon(ui, prev, egui::Id::new("cal prev"), glyph::BACK, true, false, "Previous month").on_hover_text("Previous month").clicked() {
         asked = Some(Asked::Step(-1));
     }
     let mut title_end = prev.left() - 8.0;

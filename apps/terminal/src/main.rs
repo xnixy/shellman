@@ -31,6 +31,10 @@ use shellman_ui::glass::{GlassPanel, Style};
 use shellman_ui::{theme, window};
 
 fn main() -> eframe::Result {
+    // A warming run (see `core::warm`): nothing to do but have run.
+    if shellman_core::warm::asked() {
+        return Ok(());
+    }
     let line = command_line().unwrap_or_default();
     let mut launch = match cli::parse(&line) {
         Ok(cli::Mode::Window(l)) => l,
@@ -127,11 +131,9 @@ fn run_window(launch: cli::Launch, handoff: Option<defterm::server::Arrived>) ->
         Box::new(move |cc| {
             theme::install_fonts(&cc.egui_ctx);
             // SHELLMAN_FORCE_LIGHT: look at the light look without changing Windows' setting.
-            cc.egui_ctx.set_theme(if std::env::var_os("SHELLMAN_FORCE_LIGHT").is_some() {
-                egui::ThemePreference::Light
-            } else {
-                egui::ThemePreference::System
-            });
+            cc.egui_ctx.set_theme(theme::env::preference());
+            // Windows' text size makes everything larger.
+            theme::env::follow_text_scale(&cc.egui_ctx);
             theme::set_light(cc.egui_ctx.theme() == egui::Theme::Light);
             let look = Appearance::load_or(Appearance::default());
             look.apply(&cc.egui_ctx);

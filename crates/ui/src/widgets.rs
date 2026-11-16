@@ -55,10 +55,12 @@ pub fn round_button(ui: &mut Ui, g: char, enabled: bool, tip: &str) -> egui::Res
     } else {
         Sense::hover()
     };
-    let (rect, resp) = ui.allocate_exact_size(Vec2::splat(32.0), sense);
+    let (rect, resp) = ui.allocate_exact_size(Vec2::splat(30.0), sense);
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, tip));
+    theme::focus_ring(ui, &resp, rect, 15.0);
     if enabled && resp.hovered() {
         ui.painter()
-            .circle_filled(rect.center(), 16.0, c.control_hover);
+            .circle_filled(rect.center(), 15.0, c.control_hover);
     }
     let col = if enabled {
         c.text
@@ -137,32 +139,52 @@ pub fn switch(ui: &mut Ui, on: &mut bool, label: &str) -> egui::Response {
     let galley = ui
         .painter()
         .layout_no_wrap(label.to_owned(), FontId::proportional(13.5), c.text);
-    let size = Vec2::new(36.0 + 10.0 + galley.size().x, 20.0);
+    let size = Vec2::new(36.0 + 10.0 + galley.size().x, 20.0_f32.max(galley.size().y));
     let (rect, mut resp) = ui.allocate_exact_size(size, Sense::click());
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Checkbox, true, *on, label));
     if resp.clicked() {
         *on = !*on;
         resp.mark_changed();
     }
-    let t = ui.ctx().animate_bool(resp.id, *on);
-    let track = Rect::from_min_size(rect.min, Vec2::new(36.0, 20.0));
-    let p = ui.painter();
-    p.rect_filled(
-        track,
-        CornerRadius::same(10),
-        theme::mix(c.track, c.accent_fill, t),
-    );
-    let knob_x = track.left() + 10.0 + 16.0 * t;
-    p.circle_filled(
-        egui::pos2(knob_x, track.center().y),
-        7.0,
-        theme::mix(c.muted, Color32::WHITE, t),
-    );
-    let pos = egui::pos2(
-        track.right() + 10.0,
-        rect.center().y - galley.size().y / 2.0,
-    );
-    p.galley(pos, galley, c.text);
+    let track = Rect::from_min_size(egui::pos2(rect.left(), rect.center().y - 10.0), Vec2::new(36.0, 20.0));
+    theme::focus_ring(ui, &resp, track, 10.0);
+    paint_switch(ui, track, resp.id, *on, resp.hovered());
+    let pos = egui::pos2(track.right() + 10.0, rect.center().y - galley.size().y / 2.0);
+    ui.painter().galley(pos, galley, c.text);
     resp
+}
+
+/// A switch alone (its label is beside it in the row, see `theme::setting_row`); `name` is what a
+/// screen reader calls it.
+pub fn toggle(ui: &mut Ui, on: &mut bool, name: &str) -> egui::Response {
+    let (rect, mut resp) = ui.allocate_exact_size(Vec2::new(36.0, 20.0), Sense::click());
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Checkbox, true, *on, name));
+    if resp.clicked() {
+        *on = !*on;
+        resp.mark_changed();
+    }
+    theme::focus_ring(ui, &resp, rect, 10.0);
+    paint_switch(ui, rect, resp.id, *on, resp.hovered());
+    resp
+}
+
+/// The track turns to the accent as the knob slides over; the knob turns `on_accent` (a white
+/// knob would vanish on a light accent). In high contrast: outlined, Windows' own pairs.
+fn paint_switch(ui: &Ui, track: Rect, id: Id, on: bool, hovered: bool) {
+    let c = colors();
+    let t = ui.ctx().animate_bool_responsive(id, on);
+    let p = ui.painter();
+    let x = track.left() + 10.0 + 16.0 * t;
+    let r = if hovered { 7.5 } else { 7.0 };
+    if c.high_contrast {
+        let (fill, knob) = if on { (c.accent_fill, c.on_accent) } else { (c.bg, c.text) };
+        p.rect_filled(track, CornerRadius::same(10), fill);
+        p.rect_stroke(track, CornerRadius::same(10), egui::Stroke::new(1.0_f32, c.text), egui::StrokeKind::Inside);
+        p.circle_filled(egui::pos2(x, track.center().y), r - 1.0, knob);
+        return;
+    }
+    p.rect_filled(track, CornerRadius::same(10), theme::mix(c.track, c.accent_fill, t));
+    p.circle_filled(egui::pos2(x, track.center().y), r, theme::mix(c.muted, c.on_accent, t));
 }
 
 /// One line of text in a box, cut with an ellipsis when it does not fit.
