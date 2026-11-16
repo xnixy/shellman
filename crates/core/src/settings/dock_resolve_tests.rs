@@ -358,6 +358,52 @@ fn programs_are_never_taken_for_a_shortcut_in_a_folder_above_them() {
     assert_ne!(odd.launch, Some(Launch::Open { path: p(&format!(r"{START}\Windows Kits\SDK.lnk")) }));
 }
 
+/// Seen on this machine: `explorer.exe` was taken for the Windows SDK, whose shortcut starts
+/// `explorer.exe "<the SDK's folder>"`. A shortcut with arguments is not the program.
+#[test]
+fn a_shortcut_with_arguments_is_not_its_program() {
+    let explorer = r"C:\Windows\explorer.exe";
+    let tool = r"D:\Apps\tool.exe";
+    let with_args = |name: &str, target: &str, args: &str| Shortcut {
+        path: p(&format!(r"{START}\{name}.lnk")),
+        name: name.into(),
+        target: Some(p(target)),
+        args: args.into(),
+        ..Default::default()
+    };
+    let w = Fake::default()
+        .file(explorer)
+        .file(tool)
+        .desc(explorer, "Windows Explorer")
+        .shortcut(with_args("SDK", explorer, r#""C:\Program Files (x86)\Windows Kits\10\""#))
+        .shortcut(with_args("Tool safe mode", tool, "--safe"))
+        .shortcut(with_args("Tool", tool, ""));
+    let e = resolve(&Pin::new(explorer.to_lowercase(), Some(p(explorer))), None, &w);
+    assert_eq!(e.launch, Some(Launch::Exe { path: p(explorer), args: String::new() }));
+    // The plain shortcut, whichever comes first.
+    let t = resolve(&Pin::new(tool.to_lowercase(), Some(p(tool))), None, &w);
+    assert_eq!(t.launch, Some(Launch::Open { path: p(&format!(r"{START}\Tool.lnk")) }));
+}
+
+/// The bar saves a pin whenever working it out changes it, so working out a worked-out pin must
+/// change nothing.
+#[test]
+fn working_a_pin_out_twice_changes_nothing() {
+    let w = steam_machine();
+    let pins = [
+        (Pin::new("Valve.Steam.Client", Some(p(HELPER))), Some(steam_relaunch())),
+        (Pin::new("Valve.Steam.Client", Some(p(HELPER))), None),
+        (Pin::new(COD.to_lowercase(), Some(p(COD))), None),
+        (Pin::new(STEAM.to_lowercase(), Some(p(STEAM))), None),
+        (Pin::new(r"c:\gone\x.exe", Some(p(r"C:\Gone\x.exe"))), None),
+    ];
+    for (pin, relaunch) in pins {
+        let once = resolve(&pin, relaunch.as_ref(), &w);
+        assert_eq!(resolve(&once, relaunch.as_ref(), &w), once, "{}", pin.app_id);
+        assert_eq!(resolve(&once, None, &w), once, "{} with its window gone", pin.app_id);
+    }
+}
+
 /// Steam pinned by an older bar (its id and helper program only), with Steam's window closed:
 /// the Start menu's Steam shortcut, a folder above the helper.
 #[test]

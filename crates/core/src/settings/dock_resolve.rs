@@ -436,7 +436,7 @@ pub fn steam_id(url: &str) -> Option<u64> {
 }
 
 /// The Start menu shortcut that starts this app: one carrying its id, else one whose target is
-/// its program, else (for a helper program such as `steamwebhelper.exe`) the closest one whose
+/// its program with no arguments, else (for a helper program such as `steamwebhelper.exe`) the closest one whose
 /// program sits in a folder above it that is the app's own. That last guess is made only for an
 /// app known by an id its window declared (`Valve.Steam.Client`): a pin known by its program's
 /// path is that program, and starts as itself. And never in Windows' own folders, where unrelated
@@ -452,7 +452,9 @@ fn shortcut_for(app_id: &str, exe: &Path, w: &dyn World) -> Option<Shortcut> {
         return Some(s.clone());
     }
     let e = norm(exe);
-    if let Some(s) = shortcuts.iter().find(|s| s.target.as_deref().is_some_and(|t| norm(t) == e)) {
+    // Only one that starts the program as it is: a shortcut with arguments starts something else
+    // with it (the Windows SDK's is `explorer.exe "<its folder>"`).
+    if let Some(s) = shortcuts.iter().find(|s| s.args.trim().is_empty() && s.target.as_deref().is_some_and(|t| norm(t) == e)) {
         return Some(s.clone());
     }
     let places = w.places();
