@@ -624,6 +624,29 @@ impl FileMan {
         }
     }
 
+    /// Read the folder's background menu once, 1.5 s after start, and throw it away: the first
+    /// read loads the shell's menu handlers into the process (measured 320 ms, then 30 ms), and
+    /// this way that is not the first right-click's wait. After the popup's own window, which is
+    /// made at 1 s (`popup::declare`).
+    fn warm_shell_menu(&mut self, ctx: &egui::Context) {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        static DONE: AtomicBool = AtomicBool::new(false);
+        const AFTER: f64 = 1.5;
+        if DONE.load(Ordering::Relaxed) {
+            return;
+        }
+        let now = ctx.input(|i| i.time);
+        if now < AFTER {
+            ctx.request_repaint_after(std::time::Duration::from_secs_f64(AFTER - now));
+            return;
+        }
+        DONE.store(true, Ordering::Relaxed);
+        if let Some(t) = self.menu_target(None) {
+            shellman_core::timing::mark("shell menu: read ahead");
+            self.menu.warm(&t);
+        }
+    }
+
     /// Opening-speed milestones (`SHELLMAN_TIMING=1`): the first frame with the folder listed,
     /// and the first with every picture asked for so far in.
     fn timing_marks(&mut self, ctx: &egui::Context) {
@@ -898,6 +921,7 @@ impl eframe::App for FileMan {
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         shellman_ui::timing::content(ctx, "first frame", 0);
+        self.warm_shell_menu(ctx);
         if !self.grown {
             self.grown = shellman_ui::theme::env::grow_to(ctx, self.min_size);
         }

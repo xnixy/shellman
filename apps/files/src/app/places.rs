@@ -70,7 +70,8 @@ impl Registered {
                 Some(mut img) => Slot::Ready(ctx.load_texture(
                     format!("place:{id}:{px}"),
                     {
-                        mono(&mut img.pixels);
+                        let width = img.size[0];
+                        mono(&mut img.pixels, width);
                         img
                     },
                     TextureOptions::LINEAR,
@@ -108,33 +109,53 @@ impl Registered {
 
 /// `ids` with `id` added: the hidden list's only operations, kept apart so they can be tested.
 /// Turn an app's coloured icon into a one-colour mark, so it sits with the rail's glyphs: every
-/// pixel becomes white, and how solid it is follows how far its brightness stands out from the
-/// rest of the icon. The part that covers less of the icon is taken for the figure (iCloud's
-/// white cloud on its blue tile, a dark logo on a light tile). A flat icon keeps its outline.
-fn mono(pixels: &mut [egui::Color32]) {
-    let lum = |c: &egui::Color32| {
-        // Colours are stored premultiplied; undo that so a soft edge is not read as dark.
+/// pixel becomes white, and how solid it is follows how far its colour stands out from the
+/// tile's. The tile's colour is the most common one inside it; whatever differs from it is the
+/// figure: a white cloud on a blue tile, a blue cloud on a white one (iCloud Drive), a coloured
+/// flower on white (iCloud Photos), a dark logo on a light tile. The tile's own rim (a thin dark
+/// or light edge) is left out, so it never comes through as an empty square. A flat icon keeps
+/// its outline. `width`: pixels per row (the icon is `width` wide).
+fn mono(pixels: &mut [egui::Color32], width: usize) {
+    let width = width.max(1);
+    let height = pixels.len() / width;
+    // Colours are stored premultiplied; undo that so a soft edge is not read as dark.
+    let rgb = |c: &egui::Color32| {
         let a = c.a().max(1) as f32;
-        (0.2126 * c.r() as f32 + 0.7152 * c.g() as f32 + 0.0722 * c.b() as f32) / a
+        [c.r() as f32 / a, c.g() as f32 / a, c.b() as f32 / a]
     };
-    let solid: Vec<f32> = pixels.iter().filter(|c| c.a() > 24).map(lum).collect();
-    let (lo, hi) = solid.iter().fold((f32::MAX, f32::MIN), |(lo, hi), &l| (lo.min(l), hi.max(l)));
-    let flat = solid.is_empty() || hi - lo < 0.15;
-    // Steepened, so a tile's own shading (a gradient, a soft shadow) does not come through as a
-    // faint square round the figure.
-    let level = |l: f32| {
-        let t = (((l - lo) / (hi - lo) - 0.45) / 0.35).clamp(0.0, 1.0);
+    // Within `rim` pixels of the outside (a see-through pixel or the image's edge): the tile's rim.
+    let rim = (width / 24).max(1) as isize;
+    let near_edge = |i: usize| {
+        let (x, y) = ((i % width) as isize, (i / width) as isize);
+        (-rim..=rim).any(|dy| {
+            (-rim..=rim).any(|dx| {
+                let (nx, ny) = (x + dx, y + dy);
+                nx < 0 || ny < 0 || nx >= width as isize || ny >= height as isize || pixels[ny as usize * width + nx as usize].a() < 200
+            })
+        })
+    };
+    let inner: Vec<usize> = (0..pixels.len()).filter(|&i| pixels[i].a() >= 200 && !near_edge(i)).collect();
+    // The tile's colour: the per-channel median of the inside.
+    let median = |k: usize| {
+        let mut v: Vec<f32> = inner.iter().map(|&i| rgb(&pixels[i])[k]).collect();
+        v.sort_by(|a, b| a.total_cmp(b));
+        v.get(v.len() / 2).copied().unwrap_or(0.0)
+    };
+    let tile = [median(0), median(1), median(2)];
+    let dist = |c: &egui::Color32| {
+        let p = rgb(c);
+        ((p[0] - tile[0]).powi(2) + (p[1] - tile[1]).powi(2) + (p[2] - tile[2]).powi(2)).sqrt() / 3f32.sqrt()
+    };
+    let most = inner.iter().map(|&i| dist(&pixels[i])).fold(0.0f32, f32::max);
+    let flat = inner.is_empty() || most < 0.12;
+    let level = |d: f32| {
+        let t = ((d / most - 0.25) / 0.4).clamp(0.0, 1.0);
         t * t * (3.0 - 2.0 * t)
     };
-    // Mostly bright means the figure is the dark part.
-    let invert = !flat && solid.iter().map(|&l| (l - lo) / (hi - lo)).sum::<f32>() / solid.len() as f32 > 0.5;
-    for c in pixels.iter_mut() {
-        let part = if flat {
-            1.0
-        } else {
-            let l = lum(c);
-            level(if invert { lo + hi - l } else { l })
-        };
+    let parts: Vec<f32> = (0..pixels.len())
+        .map(|i| if flat { 1.0 } else if near_edge(i) { 0.0 } else { level(dist(&pixels[i])) })
+        .collect();
+    for (c, part) in pixels.iter_mut().zip(parts) {
         let a = (c.a() as f32 * part).round() as u8;
         *c = egui::Color32::from_rgba_premultiplied(a, a, a, a);
     }
@@ -227,27 +248,52 @@ fn hidden_entries(hidden: &[&Place]) -> Vec<Entry<Action>> {
 mod tests {
     use super::*;
 
+    /// An 8 x 8 icon: a `tile` square with a 1 px `rim`, and a 2 x 2 `figure` in the middle.
+    fn icon(tile: egui::Color32, rim: egui::Color32, figure: egui::Color32) -> Vec<egui::Color32> {
+        (0..64)
+            .map(|i| {
+                let (x, y) = (i % 8, i / 8);
+                if x == 0 || y == 0 || x == 7 || y == 7 {
+                    rim
+                } else if (3..5).contains(&x) && (3..5).contains(&y) {
+                    figure
+                } else {
+                    tile
+                }
+            })
+            .collect()
+    }
+
     #[test]
     fn a_coloured_icon_becomes_a_white_mark_of_its_figure() {
         use egui::Color32 as C;
-        // A blue tile with a small white figure: the figure stays, the tile goes.
-        let mut px = vec![C::from_rgb(20, 90, 230); 12];
-        px.extend([C::WHITE; 4]);
-        px.push(C::TRANSPARENT);
-        mono(&mut px);
-        assert_eq!(px[0].a(), 0);
-        assert_eq!(px[12], C::WHITE);
-        assert_eq!(px[16].a(), 0);
-        // A light tile with a small dark figure: the dark part is the figure.
-        let mut px = vec![C::WHITE; 12];
-        px.extend([C::from_rgb(10, 10, 10); 4]);
-        mono(&mut px);
-        assert_eq!(px[0].a(), 0);
-        assert_eq!(px[12], C::WHITE);
+        let (centre, tile) = (3 * 8 + 3, 2 * 8 + 2);
+        // A white figure on a blue tile: the figure stays, the tile goes.
+        let mut px = icon(C::from_rgb(20, 90, 230), C::from_rgb(20, 90, 230), C::WHITE);
+        mono(&mut px, 8);
+        assert_eq!(px[tile].a(), 0);
+        assert_eq!(px[centre], C::WHITE);
+        // A dark figure on a light tile.
+        let mut px = icon(C::WHITE, C::WHITE, C::from_rgb(10, 10, 10));
+        mono(&mut px, 8);
+        assert_eq!(px[tile].a(), 0);
+        assert_eq!(px[centre], C::WHITE);
         // One flat colour keeps its shape.
-        let mut px = vec![C::from_rgb(200, 30, 30); 4];
-        mono(&mut px);
+        let mut px = vec![C::from_rgb(200, 30, 30); 64];
+        mono(&mut px, 8);
         assert!(px.iter().all(|c| *c == C::WHITE));
+    }
+
+    /// iCloud Drive's icon: a blue cloud on a white tile with a thin near-black rim. The rim was
+    /// the darkest thing in it and swallowed the cloud: an empty square came out.
+    #[test]
+    fn a_dark_rim_is_not_the_figure() {
+        use egui::Color32 as C;
+        let mut px = icon(C::WHITE, C::from_rgb(5, 5, 5), C::from_rgb(70, 150, 235));
+        mono(&mut px, 8);
+        assert_eq!(px[3 * 8 + 3], C::WHITE, "the cloud stays");
+        assert_eq!(px[0].a(), 0, "the rim goes");
+        assert_eq!(px[2 * 8 + 2].a(), 0, "the tile goes");
     }
 
     #[test]

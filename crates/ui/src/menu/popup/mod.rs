@@ -30,7 +30,8 @@
 //! # The window
 //!
 //! One window per process, an egui viewport declared by [`declare`] from the first [`open`]
-//! on and never closed after: it is created once (lazily), and its glass panel is attached once
+//! (or a second after the app started, whichever comes first) on and never closed after: it is
+//! created once, ahead of the first menu, and its glass panel is attached once
 //! when it is first found, while it is still hidden. Opening a menu only gives it its size and
 //! place (while hidden and cloaked), lays the glass islands out, shows it and lets it out from
 //! behind the cloak once a couple of frames are drawn at the monitor's scale. Closing cloaks it
@@ -223,13 +224,26 @@ pub fn any_open() -> bool {
     lock().open.is_some()
 }
 
-/// Keep the menu window alive. Call in every frame of the app's root viewport; does nothing
-/// until the first menu opens.
+/// How long after the app starts the menu window is made, if no menu opened before: making it
+/// (a window, its drawing surface and its glass) is most of the first menu's wait, about a
+/// quarter of a second, so it is done ahead, once the app's first frames are out.
+const PREWARM_AFTER: f64 = 1.0;
+
+/// Keep the menu window alive. Call in every frame of the app's root viewport. The window is
+/// made by the first menu, or [`PREWARM_AFTER`] seconds after the app started, hidden, so the
+/// first menu opens as fast as the next ones.
 pub fn declare(ctx: &Context) {
     {
         let mut core = lock();
         if !core.started {
-            return;
+            let now = ctx.input(|i| i.time);
+            if now < PREWARM_AFTER {
+                // One wake-up for when it is time; frames before then ask again for free.
+                ctx.request_repaint_after(std::time::Duration::from_secs_f64(PREWARM_AFTER - now));
+                return;
+            }
+            shellman_core::timing::mark("menu: window made ahead");
+            core.started = true;
         }
         core.ctx = Some(ctx.clone());
     }
