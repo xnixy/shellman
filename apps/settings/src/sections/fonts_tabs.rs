@@ -121,7 +121,7 @@ fn slider_row(ui: &mut egui::Ui, id: &str, label: &str, t: f32, value: &str) -> 
     ui.horizontal(|ui| {
         ui.add_sized([150.0, 26.0], egui::Label::new(RichText::new(label).size(13.0).color(colors().text)));
         let width = (ui.available_width() - 70.0).max(120.0);
-        let s = slider::thin(ui, egui::Id::new(("fonts-slider", id)), t, Some(width), true);
+        let s = slider::thin(ui, egui::Id::new(("fonts-slider", id)), t, Some(width), true).named(label);
         out = (s.value, s.dragging());
         ui.label(theme::muted(value).size(12.5));
     });

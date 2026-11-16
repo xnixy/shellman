@@ -61,6 +61,9 @@ pub fn round_button(ui: &mut Ui, g: char, enabled: bool, tip: &str) -> egui::Res
     if enabled && resp.hovered() {
         ui.painter()
             .circle_filled(rect.center(), 15.0, c.control_hover);
+        if c.high_contrast {
+            ui.painter().circle_stroke(rect.center(), 14.5, egui::Stroke::new(1.0_f32, c.text));
+        }
     }
     let col = if enabled {
         c.text
@@ -152,6 +155,16 @@ pub fn switch(ui: &mut Ui, on: &mut bool, label: &str) -> egui::Response {
     let pos = egui::pos2(track.right() + 10.0, rect.center().y - galley.size().y / 2.0);
     ui.painter().galley(pos, galley, c.text);
     resp
+}
+
+/// Give a text field a name a screen reader says (its hint is only a placeholder), with what is
+/// typed as its value; `None` for a password, whose text is never handed over.
+pub fn name_field(resp: &egui::Response, name: &str, typed: Option<&str>) {
+    resp.widget_info(|| egui::WidgetInfo {
+        label: Some(name.to_owned()),
+        current_text_value: typed.map(str::to_owned),
+        ..egui::WidgetInfo::new(egui::WidgetType::TextEdit)
+    });
 }
 
 /// A switch alone (its label is beside it in the row, see `theme::setting_row`); `name` is what a

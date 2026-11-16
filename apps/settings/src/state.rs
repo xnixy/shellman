@@ -56,12 +56,10 @@ pub struct State {
     pub icons: IconsView,
     /// The Terminal page's state; read when the page is shown.
     pub terminal: TerminalView,
-    /// Whether the window has real acrylic; without it the glass slider has nothing to do.
-    pub glass: bool,
 }
 
 impl State {
-    pub fn new(ctx: &egui::Context, look: Appearance, glass: bool) -> Self {
+    pub fn new(ctx: &egui::Context, look: Appearance) -> Self {
         let mut state = Self {
             look,
             desktop: DesktopSettings::load(),
@@ -88,7 +86,6 @@ impl State {
             goto: None,
             icons: IconsView::default(),
             terminal: TerminalView::default(),
-            glass,
         };
         state.rebuild_names();
         state

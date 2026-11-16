@@ -102,7 +102,7 @@ impl super::FileMan {
                 list.extend(super::dialogs::island(ui.ctx()));
                 if !composed {
                     ui.painter()
-                        .set(under, Shape::Vec(islands::solid_shapes(&list, &style)));
+                        .set(under, Shape::Vec(islands::under(screen, &list, &style)));
                 }
             });
         if let Some(panel) = &self.panel {

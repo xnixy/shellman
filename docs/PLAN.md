@@ -81,22 +81,56 @@ apart, the accent only where it stands out. What lives in `crates/ui` so every a
   with no Windows corners or border (`bare`). Only high contrast or `SHELLMAN_SOLID` make a plain
   solid window: `glass::islands::solid_window` paints the page and `solid_shapes` opaque cards.
   Windowed apps follow the text size (`env::follow_text_scale`). Previews that leave Windows alone:
-  `SHELLMAN_HIGH_CONTRAST`, `SHELLMAN_SOLID`, `SHELLMAN_REMOTE`, `SHELLMAN_TEXT_SCALE=150`,
-  `SHELLMAN_THEME=light|dark`.
+  `SHELLMAN_HIGH_CONTRAST`, `SHELLMAN_SOLID`, `SHELLMAN_REMOTE`, `SHELLMAN_NO_TRANSPARENCY`,
+  `SHELLMAN_TEXT_SCALE=150`, `SHELLMAN_THEME=light|dark`.
+- **Window and Theme** (`theme::window_style`, saved in `appearance.json` as `"window"` and
+  `"theme"`, set by `Appearance::apply` so every app that applies the look follows them live).
+  Window: Invisible (default; each island on glass), Frosted (one piece of glass under the whole
+  client area, Windows 11 corners, with the even page tint `theme::frosted_tint`; the app paints
+  its islands over it as translucent cards), No transparency (no backdrop; Windows' own rounded
+  corners and border come back, and the app paints a solid page, `islands::under`).
+  `window_style::resolve` decides what a window gets: high contrast and transparency effects off
+  (`EnableTransparency` = 0) force No transparency, and Settings says why; over Remote Desktop
+  Invisible and Frosted become islands without blur. App windows attach with
+  `GlassPanel::attach_window`, which checks the look every frame (and on `WM_SETTINGCHANGE`) and
+  switches in place; `composed()` is now "each island is on glass", so Frosted apps paint their
+  islands like a window without glass. Shell surfaces (bars, dock, popups) keep `attach` and are
+  not affected. Theme: Windows, Light or Dark, read by `env::preference` (the preview variables
+  still win).
+- **Glass amount and the Window choice** are two dials: the choice says where the glass is, the
+  amount how much of it shows through its tint. The amount applies to Invisible and Frosted (the
+  frosted tint follows it, and is the look's 140 dark / 120 light at the default 0.72); with no
+  glass (No transparency, Remote Desktop, high contrast, transparency off) Settings greys the
+  slider out and says so.
+- **Shared pieces added**: `look_controls::choice_chips` (radio-button chips, accent-filled
+  choice, outlined in high contrast), `widgets::name_field` (names a text field for screen
+  readers, value withheld for passwords), `slider::Out::named` (sliders say their name and
+  percentage; arrow keys, Home and End move them; focus ring), accent swatches named and
+  outlined in high contrast, `env::scaled_window` / `grow_to` (a window and its minimum grow with
+  the text size within 90% of the screen, also when eframe restored a smaller size). High
+  contrast has no hover wash (`control_hover` is the window colour): highlight only under
+  highlight text.
 
 The installer is the first window built wholly to it. The other apps pick up the shared parts;
 what each still needs:
 
-- **Settings, Task Manager**: already header pill, rail and islands. Their own painted rows
-  (process list, column headers, graphs, settings lists) need names and a high contrast outline
-  for the selected row (Task Manager: 31 unnamed painted elements, the search field unnamed).
-  Settings › Appearance: the Window choice (Invisible / Frosted / No transparency) and a Theme
-  override, beside today's glass amount.
+- **Settings** (15 Nov): done. Appearance has Theme and Window chips; every page probed with UI
+  Automation has no unnamed controls (search field, sliders, combo boxes, segmented choices,
+  switches in Startup and Desktop rows, search results, font rows), except the Terminal page
+  (a combo box and a field), left to the Terminal work. The selected font row is a highlight
+  outline in high contrast. Edge resize gives the arrows and the cursor comes back to the arrow
+  inside, in the glass and solid looks. The rail is compact below 800 (`rail::NARROW_BELOW`,
+  which covers the language's 720; Files needs 800 for its tabs). Text size 150 grows the window
+  to 1050×810 points.
+- **Task Manager**: already header pill, rail and islands. Its own painted rows (process list,
+  column headers, graphs) need names and a high contrast outline for the selected row (31
+  unnamed painted elements, the search field unnamed). It already follows the Window choice.
 - **Files, Terminal**: tab strips instead of a header pill; check the 12 gaps, narrow widths
   (one pane at a time below 620), names for list rows, tabs and the path bar.
-- **All windowed apps**: the page colour under the gaps in a solid window (`solid_window`, as the
-  installer does), edge resize with the cursor set back to Default, Windows 11 rounded corners
-  in the solid mode.
+- **All windowed apps**: Settings, Files, Task Manager, Terminal and the installer attach with
+  `attach_window` and paint `islands::under`, so they follow the Window choice and get the solid
+  page and Windows 11 corners in the solid look. Still to check in each: edge resize with the
+  cursor set back to Default (Settings checked), and Frosted at a glance.
 - **Bar, dock, launcher, switcher, shelf, quick controls**: shared colours and controls only so
   far. They need names for their painted items (pins, tray icons, tiles, thumbnails), focus rings,
   and the solid / high contrast paths checked (the switcher and desktop have no glass panel).

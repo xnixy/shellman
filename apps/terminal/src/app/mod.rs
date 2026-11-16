@@ -392,7 +392,7 @@ impl TerminalApp {
             }
             list.extend(shellman_ui::hover::islands(ctx));
             if !self.panel.composed() {
-                ui.painter().set(under, egui::Shape::Vec(islands::solid_shapes(&list, &self.panel.style())));
+                ui.painter().set(under, egui::Shape::Vec(islands::under(screen, &list, &self.panel.style())));
             }
         });
         self.panel.set_islands(&list, ctx.pixels_per_point());

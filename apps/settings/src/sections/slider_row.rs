@@ -20,7 +20,7 @@ pub fn show(ui: &mut egui::Ui, id: egui::Id, title: &str, at: f32, shown: &str) 
     page::label(ui, title);
     ui.horizontal(|ui| {
         let width = (ui.available_width() - 130.0).clamp(120.0, 360.0);
-        let out = slider::thin(ui, id, at, Some(width), true);
+        let out = slider::thin(ui, id, at, Some(width), true).named(title);
         ui.label(theme::muted(shown).size(12.0));
         Moved { value: out.value, held: out.dragging() }
     })

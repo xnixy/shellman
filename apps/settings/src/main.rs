@@ -39,11 +39,13 @@ fn main() -> eframe::Result {
         instance::Claim::Signalled => return Ok(()),
         instance::Claim::First(first) => first,
     };
+    // Larger with Windows' text size, as far as the screen allows (egui's zoom does the rest).
+    let (size, min) = theme::env::scaled_window([960.0, 720.0], [700.0, 540.0], theme::env::text_scale(), theme::env::work_area_points());
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("shellman Settings")
-            .with_inner_size([960.0, 720.0])
-            .with_min_inner_size([700.0, 540.0])
+            .with_inner_size(size)
+            .with_min_inner_size(min)
             .with_transparent(true)
             .with_decorations(false),
         // Without this Windows picks the spot, and it cascades the window down under the dock.
@@ -72,12 +74,12 @@ fn main() -> eframe::Result {
                     hwnd = win32.hwnd.get();
                     // No frame of Windows' own; the glass pieces are laid out by the app.
                     window::frameless(hwnd);
-                    panel = Some(GlassPanel::attach(hwnd, Style::from_theme(page::GROUP_RADIUS)));
+                    panel = Some(GlassPanel::attach_window(hwnd, Style::from_theme(page::GROUP_RADIUS)));
                 }
             }
             first.serve(hwnd, cc.egui_ctx.clone());
             let panel = panel.ok_or("the window has no handle")?;
-            Ok(Box::new(app::SettingsApp::new(&cc.egui_ctx, look, panel, first, page)))
+            Ok(Box::new(app::SettingsApp::new(&cc.egui_ctx, look, panel, first, page, min)))
         }),
     )
 }

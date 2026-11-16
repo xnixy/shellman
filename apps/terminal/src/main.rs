@@ -144,7 +144,7 @@ fn run_window(launch: cli::Launch, handoff: Option<defterm::server::Arrived>) ->
                 if let RawWindowHandle::Win32(win32) = handle.as_raw() {
                     let h = win32.hwnd.get();
                     window::frameless(h);
-                    panel = Some(GlassPanel::attach(h, Style::from_theme(app::RADIUS)));
+                    panel = Some(GlassPanel::attach_window(h, Style::from_theme(app::RADIUS)));
                     hwnd = Some(h);
                 }
             }

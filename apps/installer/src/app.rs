@@ -102,7 +102,7 @@ pub fn run(mode: Mode, prefix: PathBuf) -> Ended {
             let RawWindowHandle::Win32(win32) = handle.as_raw() else { return Err("not a Win32 window".into()) };
             let hwnd = win32.hwnd.get();
             window::frameless(hwnd);
-            let panel = GlassPanel::attach(hwnd, Style::from_theme(RADIUS));
+            let panel = GlassPanel::attach_window(hwnd, Style::from_theme(RADIUS));
             Ok(Box::new(App::new(mode, prefix, panel, keep)))
         }),
     );

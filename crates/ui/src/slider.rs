@@ -18,13 +18,25 @@ pub struct Out {
     /// A new value, while the pointer presses or drags on it.
     pub value: Option<f32>,
     pub response: Response,
+    /// The level shown, 0 to 1.
+    pub shown: f32,
 }
 
 impl Out {
     pub fn dragging(&self) -> bool {
         self.response.is_pointer_button_down_on()
     }
+
+    /// Say what the slider is to a screen reader: `name`, and its level as a percentage.
+    pub fn named(self, name: &str) -> Self {
+        let (enabled, value) = (self.response.enabled(), (self.shown * 100.0).round() as f64);
+        self.response.widget_info(|| egui::WidgetInfo::slider(enabled, value, name));
+        self
+    }
 }
+
+/// How far an arrow key moves the knob.
+const STEP: f32 = 0.05;
 
 /// Where the knob's centre is for `value`: it travels between half a knob in from each end, so
 /// the knob never hangs over the track's ends.
@@ -60,6 +72,27 @@ pub fn thin_in(ui: &mut Ui, rect: Rect, id: Id, value: f32, enabled: bool) -> Ou
             picked = Some(value_at(p.x, rect.left(), rect.width()));
         }
     }
+    // The keyboard: Left / Right (and Down / Up) step it, Home and End go to the ends.
+    if enabled && response.has_focus() {
+        let step = ui.input(|i| {
+            let less = i.key_pressed(egui::Key::ArrowLeft) || i.key_pressed(egui::Key::ArrowDown);
+            let more = i.key_pressed(egui::Key::ArrowRight) || i.key_pressed(egui::Key::ArrowUp);
+            if i.key_pressed(egui::Key::Home) {
+                Some(-1.0)
+            } else if i.key_pressed(egui::Key::End) {
+                Some(1.0)
+            } else if less {
+                Some(-STEP)
+            } else if more {
+                Some(STEP)
+            } else {
+                None
+            }
+        });
+        if let Some(step) = step {
+            picked = Some((value + step).clamp(0.0, 1.0));
+        }
+    }
     let shown = picked.unwrap_or(value);
     let y = rect.center().y;
     let x = knob_x(shown, rect.left(), rect.width());
@@ -77,7 +110,8 @@ pub fn thin_in(ui: &mut Ui, rect: Rect, id: Id, value: f32, enabled: bool) -> Ou
     if enabled && response.hovered() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }
-    Out { value: picked, response }
+    crate::theme::focus_ring(ui, &response, rect.shrink2(vec2(0.0, 3.0)), (HEIGHT - 6.0) / 2.0);
+    Out { value: picked, response, shown }
 }
 
 /// A slider across `width` points (or what is left of the row when `None`), on a line of its

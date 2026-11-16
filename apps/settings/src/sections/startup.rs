@@ -9,7 +9,7 @@ use shellman_core::startup::rows::Row;
 use shellman_core::startup::worker::{Page, StartupPage};
 use shellman_core::thumbs::Thumbs;
 use shellman_ui::theme::{self, colors, glyph, icon_font};
-use shellman_ui::widgets::{draw_text, switch};
+use shellman_ui::widgets::{draw_text, toggle};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -122,6 +122,7 @@ fn row(ui: &mut egui::Ui, r: &Row, on: &mut bool, thumbs: &mut Thumbs) -> bool {
     draw_text(ui, line(rect.center().y, rect.bottom() - 7.0), &r.detail(), FontId::proportional(11.5), sub, false);
 
     let controls = egui::Rect::from_min_max(egui::pos2(rect.right() - switch_w - 8.0, rect.top()), egui::pos2(rect.right() - 8.0, rect.bottom()));
-    let mut child = ui.new_child(UiBuilder::new().max_rect(controls).layout(Layout::left_to_right(Align::Center)));
-    switch(&mut child, on, "").changed()
+    let mut child = ui.new_child(UiBuilder::new().max_rect(controls).layout(Layout::right_to_left(Align::Center)));
+    // Named by the item, so a screen reader says which program the switch starts.
+    toggle(&mut child, on, &r.title).changed()
 }

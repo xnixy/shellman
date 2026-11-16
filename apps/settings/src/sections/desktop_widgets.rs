@@ -13,7 +13,7 @@ use shellman_core::credentials;
 use shellman_core::settings::desktop::ShelfOn;
 use shellman_core::weather::{self, Place, Units};
 use shellman_ui::theme::{self, colors};
-use shellman_ui::widgets::switch;
+use shellman_ui::widgets::toggle;
 use std::sync::mpsc::{channel, Receiver};
 
 /// The page's own state: what is being typed, and the jobs running.
@@ -69,7 +69,9 @@ fn field(ui: &mut Ui, id: &str, text: &mut String, hint: &str, secret: bool) -> 
         .vertical_align(Align::Center)
         .hint_text(egui::RichText::new(hint).color(c.muted))
         .desired_width(inner.width());
-    ui.put(inner, edit)
+    let resp = ui.put(inner, edit);
+    shellman_ui::widgets::name_field(&resp, hint, (!secret).then_some(text.as_str()));
+    resp
 }
 
 /// A pill button in the control colour.
@@ -122,7 +124,7 @@ fn switch_row_dot(ui: &mut Ui, name: &str, about: &str, dot: Option<egui::Color3
     }
     let right = Rect::from_min_max(pos2(rect.right() - 60.0, rect.top()), rect.max);
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(right).layout(egui::Layout::right_to_left(Align::Center)));
-    switch(&mut child, on, "").changed()
+    toggle(&mut child, on, name).changed()
 }
 
 pub fn show(ui: &mut Ui, st: &mut State, clean: bool) {
@@ -136,7 +138,7 @@ pub fn show(ui: &mut Ui, st: &mut State, clean: bool) {
         }
         ui.add_enabled_ui(!clean, |ui| {
             let w = &mut st.desktop.widgets;
-            changed |= row(ui, "Show widgets", true, |ui| switch(ui, &mut w.show, "").changed());
+            changed |= row(ui, "Show widgets", true, |ui| toggle(ui, &mut w.show, "Show widgets").changed());
             changed |= row(ui, "Show widgets on", false, |ui| {
                 let options = ShelfOn::ALL.map(|o| (o, o.label()));
                 // Its own id: the shelf's row above has the same choices.
