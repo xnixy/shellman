@@ -1,18 +1,19 @@
 # shellman
 
-A replacement desktop shell for Windows 11, written in Rust. It takes the place of
-`explorer.exe` as the shell: its own top bar, dock, desktop, launcher, window switcher, file
-manager, terminal, settings and task manager, all drawn as floating islands of blurred glass.
+I wanted Windows 11 to look and feel the way I want, so I'm replacing the shell. shellman takes
+the place of `explorer.exe`: its own top bar, dock, desktop, launcher, Alt+Tab, file manager,
+terminal, settings and task manager. Everything is drawn as floating islands of blurred glass in
+one accent colour. It's written in Rust.
 
-It is a personal project and a work in progress. The plan, the state of every piece and the
-known gaps are in [docs/PLAN.md](docs/PLAN.md); the design mockups are in
-[docs/design](docs/design).
+I use it every day as my real shell. It's still a personal project and a lot is unfinished, so
+expect rough edges. What's done, what's not and why things work the way they do is in
+[docs/PLAN.md](docs/PLAN.md) (my working notes, long and detailed).
 
 ## Screenshots
 
 ### Files
 
-Tabs, a labelled sidebar that folds to icons, tags, and glass context menus.
+Tabs, a sidebar that folds down to icons, tags, and glass context menus.
 
 ![Files with an item's context menu](docs/screenshots/files.png)
 
@@ -24,8 +25,8 @@ Tabs, profiles, find, selection and mouse support, on a bundled ConPTY.
 
 ### Dock
 
-Live window previews on hover, drag to reorder, drop files onto icons, badges, progress bars
-and the Recycle Bin.
+Live window previews on hover, drag to reorder, drop files onto icons, badges, progress bars and
+the Recycle Bin.
 
 ![Dock with window previews](docs/screenshots/dock-previews.png)
 
@@ -33,7 +34,7 @@ and the Recycle Bin.
 
 ### Top bar
 
-A "now" pill for the next event or what is playing, the calendar under the clock, and
+A "now" pill with your next event or what's playing, the calendar under the clock, and
 notifications under the bell.
 
 ![The now pill beside the clock](docs/screenshots/now-pill.png)
@@ -44,7 +45,7 @@ notifications under the bell.
 
 ### Desktop widgets
 
-Today (calendar and weather) and Now playing, beside the tray.
+Today (calendar and weather) and Now playing, under the tray.
 
 ![The Today widget under the tray](docs/screenshots/widgets.png)
 
@@ -52,50 +53,88 @@ Today (calendar and weather) and Now playing, beside the tray.
 
 ![Settings, Terminal page](docs/screenshots/settings.png)
 
-## What is in the repository
+## Before you try it
 
-| Folder | What it is |
-|---|---|
-| `apps/session` | The shell process Windows starts at sign-in; starts and supervises the rest |
-| `apps/bar` | Top bar, tray, dock, notifications, calendar |
-| `apps/desktop`, `apps/shelf` | Wallpaper, the file shelf and the widgets |
-| `apps/launcher`, `apps/switcher` | App launcher and Alt+Tab |
-| `apps/files`, `apps/pickhook` | File manager, and its hook for other apps' Open and Save dialogs |
-| `apps/terminal` | Terminal |
-| `apps/settings`, `apps/control`, `apps/tasks` | Settings, quick controls, task manager |
-| `apps/setup`, `apps/installer` | The install engine and its command line; the one-exe installer and uninstaller |
-| `crates/core`, `crates/ui` | Shared system code, and the glass, rail and menu components |
+shellman really replaces your shell if you let it. Installing it doesn't do that on its own:
+making it the shell is a separate switch, off unless you turn it on. If you do turn it on and
+something goes wrong, here's how to get Explorer back:
 
-## Build and install
+- Hold **Shift** while you sign in. shellman steps aside and starts Explorer.
+- Or press Ctrl+Alt+Del, open Task Manager, Run new task, `explorer.exe`. Then uninstall
+  shellman from Settings > Apps, or run `shellman-session.exe --uninstall` from its folder.
+- Or from Run new task, `cmd`, then
+  `reg delete "HKCU\Software\Microsoft\Windows NT\CurrentVersion\Winlogon" /v Shell /f`
+  and sign out and back in.
 
-Windows 11 and a current Rust toolchain.
+It only changes things for your own Windows account. Other accounts on the PC keep Explorer.
+
+## Install
+
+There are no downloads yet, so for now you build it yourself (see below). That gives you one
+file, `shellman-<version>-setup.exe`. Run it:
+
+- Pick a folder. The default is `%LOCALAPPDATA%\Programs\shellman`, no admin rights needed.
+- Three optional switches, all off by default: make shellman your shell from the next sign-in,
+  make shellman Terminal the default terminal, and use shellman Files for other apps' Open and
+  Save dialogs.
+- Click Install.
+
+Running a newer setup over an existing install updates it and keeps your settings.
+
+## Uninstall
+
+Settings > Apps > Installed apps > shellman > Uninstall.
+
+It puts back everything it changed (the shell, the default terminal, the Open and Save dialogs),
+closes shellman's apps and removes its files and shortcuts. You can also tell it to remove your
+settings. If shellman is the shell running right then, it keeps running until you sign out and
+the files go when you sign back in.
+
+## Building
+
+You need Windows 11 and a current Rust toolchain.
 
 ```
 cargo build --release --workspace
 target\release\shellman-installer.exe --pack target\release
 ```
 
-That writes `target\dist\shellman-<version>-setup.exe`, one exe with every file inside. Run it:
-a window asks for the folder (default `%LOCALAPPDATA%\Programs\shellman`, no administrator
-rights) and offers, all off by default, to make shellman the Windows shell from the next sign-in,
-shellman Terminal the default terminal, and shellman Files the Open and Save dialogs of other
-apps. Holding Shift at sign-in still starts Explorer. Running a newer one over an install updates
-it (and sets those three to match its switches).
+The setup file ends up in `target\dist`.
 
-To remove it: Settings > Apps > Installed apps > shellman > Uninstall. That puts back the shell,
-the default terminal and the dialogs, closes shellman's apps and removes its files, shortcuts
-and (when asked) settings. If shellman is the shell running at that moment, it keeps running and
-its files go when you sign in again.
+While working on it I skip the setup file and use the command-line tool instead:
 
-The same from a terminal, for the developer loop: `target\release\shellman-setup.exe install
---from target\release` (or `update --restart`), and `shellman-setup uninstall --revert`; see
-`shellman-setup --help`.
+```
+target\release\shellman-setup.exe install --from target\release
+target\release\shellman-setup.exe update --from target\release --restart
+target\release\shellman-setup.exe uninstall --revert
+```
+
+`shellman-setup --help` lists everything it can do.
+
+## What's in here
+
+| Folder | What it is |
+|---|---|
+| `apps/session` | The shell process Windows starts at sign-in. Starts and watches over everything else |
+| `apps/bar` | Top bar, tray, dock, notifications, calendar |
+| `apps/desktop`, `apps/shelf` | Wallpaper, the file shelf and the widgets |
+| `apps/launcher`, `apps/switcher` | App launcher and Alt+Tab |
+| `apps/files`, `apps/pickhook` | File manager, and the hook that gives other apps its Open and Save dialogs |
+| `apps/terminal` | Terminal |
+| `apps/settings`, `apps/control`, `apps/tasks` | Settings, quick controls, task manager |
+| `apps/setup`, `apps/installer` | Install, update and uninstall, and the one-file setup |
+| `crates/core`, `crates/ui` | Shared Windows code, and the shared look (glass, colours, controls) |
+| `integrations/firefox` | Optional: makes Firefox match |
 
 ## Known problems
 
-- With shellman as the shell, Windows does not start packaged apps' background tasks at
-  sign-in (found with Dolby Access OEM, which stopped running). Not fixed.
-- A dock pin for an app whose window belongs to a helper process (Steam) shows the wrong icon
-  or does not start the app after a restart. Unfinished work is on the `wip/dock-pins` branch.
-- Opening shellman's own apps and panels is slow after a few idle minutes. Unfinished work is
-  on the `wip/open-speed` branch.
+- With shellman as the shell, Windows doesn't start packaged apps' background tasks at sign-in
+  (I noticed because Dolby Access stopped working). A fix is in progress.
+- A dock pin for an app whose window belongs to a helper process (Steam) can show the wrong icon
+  or not start the app after a restart.
+- shellman's own apps and panels open slowly after a few idle minutes.
+
+## Licence
+
+MIT, see [LICENSE](LICENSE). The bundled ConPTY is Microsoft's, also MIT: see
+[third_party/conpty](third_party/conpty).

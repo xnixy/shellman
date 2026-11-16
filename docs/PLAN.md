@@ -1,4 +1,8 @@
-# shellman
+# shellman: plan and notes
+
+These are my working notes: what each piece does, how it works, what I measured and what's left.
+They're long and written for me. For what shellman is and how to install it, see the
+[README](../README.md).
 
 A replacement for everything `explorer.exe` does, in one visual style: Windows 11 glass, one
 accent color, fast.
