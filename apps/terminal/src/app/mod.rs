@@ -721,6 +721,7 @@ impl TerminalApp {
         }
         let pane = self.tabs.current().pane();
         let (id, seq) = (pane.id, pane.session.output_seq());
+        let generation = self.find.generation;
         let find = &mut self.find;
         let more = pane.session.with_term_quiet(|t| {
             let more = find.step(t, id, seq, out.changed);
@@ -729,8 +730,11 @@ impl TerminalApp {
             }
             more
         });
-        if more {
+        // The pill drew the count before this step: one more frame shows what it found.
+        if more || self.find.generation != generation {
             ui.ctx().request_repaint();
+        } else if let Some(due) = self.find.recount_due(seq) {
+            ui.ctx().request_repaint_after(due);
         }
     }
 

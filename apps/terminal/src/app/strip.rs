@@ -15,8 +15,9 @@ const MENU_W: f32 = 260.0;
 #[derive(Default)]
 pub struct StripState {
     scroll: f32,
-    /// The active tab and count last frame: a change brings the active tab into view.
-    seen: (usize, usize),
+    /// The active tab, count and row width last frame: a change brings the active tab into
+    /// view (find opening narrows the row).
+    seen: (usize, usize, u32),
     /// The tab being dragged (by its id).
     dragging: Option<u64>,
     /// The profile menu, open under this button.
@@ -46,8 +47,9 @@ impl super::TerminalApp {
         let n = self.tabs.len();
         let active = self.tabs.active();
         let mut s = ts::strip(n, 2, row.width(), row.height(), self.strip.scroll);
-        if self.strip.seen != (active, n) {
-            self.strip.seen = (active, n);
+        let seen = (active, n, row.width().round() as u32);
+        if self.strip.seen != seen {
+            self.strip.seen = seen;
             s.offset = ts::reveal(&s, active);
         }
         let pill = Rect::from_min_size(row.min, egui::vec2(s.pill_w.min(row.width()), row.height()));
@@ -121,7 +123,7 @@ impl super::TerminalApp {
             Some(Do::Close(i)) => self.close_tab(ui.ctx(), i),
             Some(Do::Move(a, b)) => {
                 self.tabs.move_tab(a, b);
-                self.strip.seen = (self.tabs.active(), self.tabs.len());
+                self.strip.seen = (self.tabs.active(), self.tabs.len(), row.width().round() as u32);
             }
             None => {}
         }

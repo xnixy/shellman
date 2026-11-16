@@ -131,6 +131,14 @@ impl Find {
         self.generation += 1;
     }
 
+    /// When the count, behind output that came since it started (`seq` is the output count
+    /// now), is due to start over: a frame must come then, or a window with nothing else to
+    /// draw would keep showing the old count ("No results" beside a match on screen).
+    pub fn recount_due(&self, seq: u64) -> Option<Duration> {
+        let since = self.counted_at.1?;
+        (self.open && self.regex.is_some() && seq != self.counted_at.0).then(|| RECOUNT.saturating_sub(since.elapsed()))
+    }
+
     /// Count on for a few milliseconds; start over when the query, the tab or the output
     /// changed. `seq` is the tab's output count.
     pub fn step<T: alacritty_terminal::event::EventListener>(&mut self, term: &mut Term<T>, tab: u64, seq: u64, changed: bool) -> bool {
@@ -430,6 +438,22 @@ mod tests {
         assert!(f.matches[f.current.unwrap()].start().line < newest);
         // A frame's slice stays short (debug build: generous).
         assert!(longest < Duration::from_millis(250), "a slice took {longest:?}");
+    }
+
+    /// Output that came just after a count started is counted once the wait is over, even when
+    /// nothing else asks for a frame.
+    #[test]
+    fn a_count_behind_new_output_asks_for_a_frame() {
+        let mut t = term(1000, "nothing here
+
+");
+        let mut f = Find { query: "here".into(), open: true, ..Find::default() };
+        while f.step(&mut t, 0, 1, false) {}
+        assert_eq!(f.recount_due(1), None, "up to date");
+        let due = f.recount_due(2).expect("a frame is asked for");
+        assert!(due <= RECOUNT);
+        f.close();
+        assert_eq!(f.recount_due(3), None, "closed");
     }
 
     #[test]
