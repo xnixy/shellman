@@ -60,24 +60,22 @@ impl super::FileMan {
                 // that keeps them readable on any wallpaper.
                 self.content_island = plan.content;
                 let listed = self.listed();
-                let content = if plan.alone {
-                    // The details in the folder's place (below): no folder this frame.
-                    Rect::NOTHING
-                } else if listed {
-                    list.push(Island::new(plan.content, RADIUS));
-                    plan.content.shrink2(Vec2::new(10.0, 8.0))
-                } else {
-                    list.push(Island::new(plan.content, RADIUS).faint(BACKING));
-                    plan.content.shrink(10.0)
-                };
-                let mut child = ui.new_child(
-                    UiBuilder::new()
-                        .id_salt("folder")
-                        .max_rect(content)
-                        .layout(Layout::top_down(Align::Min)),
-                );
-                child.set_clip_rect(content);
+                // With the details in the folder's place (a narrow window), no folder this frame.
                 if !plan.alone {
+                    let content = if listed {
+                        list.push(Island::new(plan.content, RADIUS));
+                        plan.content.shrink2(Vec2::new(10.0, 8.0))
+                    } else {
+                        list.push(Island::new(plan.content, RADIUS).faint(BACKING));
+                        plan.content.shrink(10.0)
+                    };
+                    let mut child = ui.new_child(
+                        UiBuilder::new()
+                            .id_salt("folder")
+                            .max_rect(content)
+                            .layout(Layout::top_down(Align::Min)),
+                    );
+                    child.set_clip_rect(content);
                     self.folder_body(&mut child, actions);
                 }
 

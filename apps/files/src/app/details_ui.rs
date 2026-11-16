@@ -166,11 +166,14 @@ impl super::FileMan {
 
         // The preview.
         let well = CornerRadius::same(14);
-        let soft = if c.light {
+        let soft = if c.high_contrast {
+            c.bg
+        } else if c.light {
             Color32::from_black_alpha(10)
         } else {
             shows_as(Color32::from_rgba_unmultiplied(255, 255, 255, 10))
         };
+
         match sel.as_slice() {
             [] => {
                 ui.painter().rect_filled(preview, well, soft);
@@ -180,7 +183,8 @@ impl super::FileMan {
                     _ => glyph::FOLDER,
                 };
                 if matches!(loc, Loc::Dir(_)) {
-                    let w = preview.width() * 0.32;
+                    // A third of the well's width, but never taller than the well.
+                    let w = (preview.width() * 0.32).min(preview.height() * 0.7 / 0.74);
                     widgets::folder_icon(ui.painter(), Rect::from_center_size(preview.center(), Vec2::new(w, w * 0.74)), c.accent_text, |x| x);
                 } else {
                     ui.painter().text(preview.center(), Align2::CENTER_CENTER, g, icon_font(42.0), c.muted);
@@ -204,6 +208,10 @@ impl super::FileMan {
                     c.muted,
                 );
             }
+        }
+
+        if c.high_contrast {
+            ui.painter().rect_stroke(preview, well, egui::Stroke::new(1.0_f32, c.text), egui::StrokeKind::Inside);
         }
 
         // The name and what it is.
