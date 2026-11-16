@@ -26,7 +26,7 @@ const HEADER_H: f32 = 46.0;
 const FOOTER_H: f32 = 56.0;
 /// Inside a card island.
 const PAD: Margin = Margin { left: 22, right: 22, top: 16, bottom: 16 };
-const SIZE: [f32; 2] = [660.0, 620.0];
+const SIZE: [f32; 2] = [660.0, 660.0];
 
 pub enum Mode {
     Install(Payload),
@@ -63,6 +63,10 @@ struct App {
     ff_profiles: Vec<PathBuf>,
     remove_firefox: bool,
     ff_open: bool,
+    /// Blurman is installed: the wizard says so instead of offering it; the uninstall window
+    /// offers to remove it.
+    blurman_here: bool,
+    remove_blurman: bool,
     log: Vec<String>,
     progress: Option<f32>,
     rx: Option<Receiver<Msg>>,
@@ -157,7 +161,11 @@ impl App {
             terminal: was.terminal,
             hook: was.hook,
             firefox: false,
+            blurman: false,
         };
+        let blurman_here = crate::blurman::installed();
+        let mut choice = choice;
+        choice.blurman = matches!(mode, Mode::Install(_)) && !blurman_here;
         let (firefox_here, ff_profiles) = match mode {
             Mode::Install(_) => (work::firefox_installed(), Vec::new()),
             Mode::Uninstall => (false, work::firefox_profiles_with_look()),
@@ -176,6 +184,8 @@ impl App {
             remove_firefox: !ff_profiles.is_empty(),
             ff_profiles,
             ff_open: false,
+            blurman_here,
+            remove_blurman: false,
             log: Vec::new(),
             progress: None,
             rx: None,
@@ -216,7 +226,7 @@ impl App {
                 if self.ff_open {
                     return;
                 }
-                work::uninstall(PathBuf::from(&self.prefix), self.purge, firefox, tx, wake)
+                work::uninstall(PathBuf::from(&self.prefix), self.purge, firefox, self.remove_blurman, tx, wake)
             }
         }
         self.rx = Some(rx);
@@ -313,13 +323,23 @@ impl App {
                     &mut self.choice.firefox,
                 );
             }
+            if self.blurman_here {
+                ui.add(egui::Label::new(RichText::new("Blurman is already installed.").size(11.5).color(colors().muted)).wrap());
+            } else {
+                theme::setting_row(
+                    ui,
+                    "Also install Blurman",
+                    "Blur behind other apps' windows, from the Microsoft Store. An app of its own: uninstalling shellman keeps it.",
+                    &mut self.choice.blurman,
+                );
+            }
         });
         vec![folder, options]
     }
 
     /// Uninstall: what will happen, then the one choice.
     fn choose_uninstall(&mut self, ui: &mut egui::Ui, area: Rect) -> Vec<Rect> {
-        let rows = if self.ff_profiles.is_empty() { 1.0 } else { 2.0 };
+        let rows = 1.0 + f32::from(!self.ff_profiles.is_empty()) + f32::from(self.blurman_here);
         let extra = if self.ff_open { 24.0 } else { 0.0 };
         let settings = Rect::from_min_max(pos2(area.left(), area.bottom() - 30.0 - 54.0 * rows - extra), area.max);
         let what = Rect::from_min_max(area.min, pos2(area.right(), settings.top() - GAP));
@@ -378,6 +398,9 @@ impl App {
                 if self.ff_open {
                     ui.add(egui::Label::new(RichText::new("Firefox is open. Close it, then press Uninstall again.").size(12.0).color(c.danger_text)).wrap());
                 }
+            }
+            if self.blurman_here {
+                theme::setting_row(ui, "Also remove Blurman", "It is an app of its own, kept otherwise.", &mut self.remove_blurman);
             }
         });
         vec![what, settings]

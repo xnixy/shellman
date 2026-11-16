@@ -17,7 +17,12 @@ shellman-setup = { path = "../setup" }
 shellman-ui.workspace = true
 # The Firefox look (the wizard's "Also style Firefox", the uninstaller's removal); already built for shellman-ui.
 shellman-core.workspace = true
-windows.workspace = true
+# Blurman from the Store: its install service (generated bindings in `blurman/store_api.rs`) and
+# PackageManager, to see whether it is there.
+windows = { workspace = true, features = ["Foundation_Collections", "Management_Deployment", "System", "ApplicationModel"] }
+windows-collections = "0.2"
+windows-core.workspace = true
+windows-future.workspace = true
 
 [dev-dependencies]
 # The updater checks a downloaded installer's payload with its own copy of the footer reader.

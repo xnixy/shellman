@@ -75,8 +75,11 @@ pub struct Choice {
     pub shell: bool,
     pub terminal: bool,
     pub hook: bool,
-    /// Give Firefox's default profile the Islands look (CSS only; Settings adds the scripts).
+    /// Give Firefox's default profile the Islands look (with its scripts; CSS only when their
+    /// loader cannot go in).
     pub firefox: bool,
+    /// Install Blurman from the Microsoft Store (after shellman's files; never fails the install).
+    pub blurman: bool,
 }
 
 /// Whether Firefox is installed (the wizard offers to style it only then).
@@ -199,6 +202,11 @@ fn run_install(payload: &Payload, choice: &Choice, was: &Current, tx: &Sender<Ms
     if choice.firefox {
         style_firefox(tx, &env.prefix);
     }
+    if choice.blurman {
+        let t = tx.clone();
+        let line = crate::blurman::install(&move |l: &str| say(&t, l));
+        say(tx, &line);
+    }
     let _ = tx.send(Msg::Progress(Some(1.0)));
     Ok(Outcome { sign_out: choice.shell != was.shell, deferred: false })
 }
@@ -215,13 +223,16 @@ pub fn finish_command(prefix: &Path, purge: bool) -> Result<String, String> {
     ))
 }
 
-/// `firefox`: the profiles to take the look out of first.
-pub fn uninstall(prefix: PathBuf, purge: bool, firefox: Vec<PathBuf>, tx: Sender<Msg>, wake: impl Fn() + Send + Clone + 'static) {
+/// `firefox`: the profiles to take the look out of first; `blurman`: remove Blurman too.
+pub fn uninstall(prefix: PathBuf, purge: bool, firefox: Vec<PathBuf>, blurman: bool, tx: Sender<Msg>, wake: impl Fn() + Send + Clone + 'static) {
     std::thread::spawn(move || {
         sink(&tx, wake.clone());
         let _ = tx.send(Msg::Progress(None));
         let t = tx.clone();
         unstyle_firefox(&move |l: &str| say(&t, l), &firefox, &prefix);
+        if blurman {
+            say(&tx, &crate::blurman::remove());
+        }
         let r = run_uninstall(&prefix, purge);
         let _ = tx.send(Msg::Done(r));
         wake();

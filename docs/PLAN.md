@@ -1930,6 +1930,29 @@ elease\shellman-setup.exe update --restart
 elease`, which processes still run from old
 images, and the shell and default terminal state.)
 
+### Blurman from the Store (15 Nov)
+
+The wizard has "Also install Blurman" (on; replaced by "Blurman is already installed." when the
+package family `xnixy.Blurman_nz2sgw67tcfww` is there for the user, `PackageManager`), and
+`--quiet --blurman` does the same. It runs after shellman's files and integrations
+(`apps/installer/src/blurman`): Windows' Store install service, `AppInstallManager`
+(`GetIsAppAllowedToInstallAsync`, then `StartProductInstallAsync("9NQ3GQNBM4LK", client
+"shellman")`, its items polled every 0.5 s for state and percent, at most 15 minutes), which needs
+no Store window (the Store's UI cannot open under shellman without the modern-app host). If that
+fails, `winget install 9NQ3GQNBM4LK --source msstore --accept-package-agreements
+--accept-source-agreements --disable-interactivity`, no window. Either way the result is a log line
+and never fails the install. The `windows` crate leaves the Store namespaces out, so
+`store_api.rs` is generated with `windows-bindgen` 0.62.1 (command in its header). The uninstall
+window offers "Also remove Blurman" (off; `PackageManager.RemovePackageAsync`), since it is an
+app of its own; `--quiet` uninstalls keep it.
+
+Checked 15 Nov on this PC (Blurman 0.8.0.0 already installed from the Store): it is found, the
+wizard shows "already installed" and does nothing, the Store service answers
+`GetIsAppAllowedToInstallAsync` (true) without installing (`cargo test -p shellman-installer --
+--ignored`), and the uninstall window shows the row off. Not run: an actual install through the
+service or winget, and a removal. Unknown: whether the Store's automatic updates for Blurman run
+while shellman is the shell (they need the Store's update service, not its window; not checked).
+
 ### Automatic updates and signed releases (15 Nov)
 
 **Releases** are GitHub Releases of `xnixy/shellman`, tagged `vX.Y.Z` (no pre-release tags).

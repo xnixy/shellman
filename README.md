@@ -78,6 +78,9 @@ below). Run it:
 - Optional switches, all off by default: make shellman your shell from the next sign-in,
   make shellman Terminal the default terminal, use shellman Files for other apps' Open and
   Save dialogs, and, when Firefox is installed, give Firefox the Islands look (see below).
+- "Also install Blurman" (on unless it is already there) gets Blurman from the Microsoft Store
+  without opening the Store. It is an app of its own: uninstalling shellman keeps it unless you
+  tick "Also remove Blurman".
 - Click Install.
 
 Running a newer setup over an existing install updates it and keeps your settings.
