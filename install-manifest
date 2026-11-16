@@ -12,3 +12,24 @@
 # ? redist/OpenConsole.exe
 ? third_party/conpty/x64/conpty.dll
 ? third_party/conpty/x64/OpenConsole.exe
+
+# The Islands look for Firefox (Settings > Appearance > Firefox, the wizard's "Also style Firefox").
+# The whole integration, so the folder also works with its install.ps1 / uninstall.ps1. The glass
+# DLL (shellman-firefox-glass, real gaps) is not shipped: it stays a source-checkout option.
+integrations/firefox/chrome/userChrome.css -> firefox\chrome\userChrome.css
+integrations/firefox/chrome/userContent.css -> firefox\chrome\userContent.css
+integrations/firefox/chrome/shellman-look.css -> firefox\chrome\shellman-look.css
+integrations/firefox/chrome/shellman-islands.css -> firefox\chrome\shellman-islands.css
+integrations/firefox/chrome/shellman-popups.css -> firefox\chrome\shellman-popups.css
+integrations/firefox/chrome/shellman-scripts/shellman-live.sys.mjs -> firefox\chrome\shellman-scripts\shellman-live.sys.mjs
+integrations/firefox/chrome/shellman-scripts/shellman-pills.sys.mjs -> firefox\chrome\shellman-scripts\shellman-pills.sys.mjs
+integrations/firefox/chrome/shellman-scripts/shellman-window.sys.mjs -> firefox\chrome\shellman-scripts\shellman-window.sys.mjs
+integrations/firefox/chrome/shellman-scripts/shellman-glass.sys.mjs -> firefox\chrome\shellman-scripts\shellman-glass.sys.mjs
+integrations/firefox/chrome/shellman-scripts/shellman-watch.worker.js -> firefox\chrome\shellman-scripts\shellman-watch.worker.js
+integrations/firefox/user.js -> firefox\user.js
+integrations/firefox/autoconfig/config.js -> firefox\autoconfig\config.js
+integrations/firefox/autoconfig/config-prefs.js -> firefox\autoconfig\config-prefs.js
+integrations/firefox/install.ps1 -> firefox\install.ps1
+integrations/firefox/uninstall.ps1 -> firefox\uninstall.ps1
+integrations/firefox/common.ps1 -> firefox\common.ps1
+integrations/firefox/README.md -> firefox\README.md

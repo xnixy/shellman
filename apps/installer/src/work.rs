@@ -5,6 +5,8 @@ use crate::payload::{self, Payload};
 use shellman_setup::cli::Opts;
 use shellman_setup::ops::{self, Env};
 use shellman_setup::{integrate, out};
+use shellman_core::firefox::{self, actions, detect};
+use shellman_core::registry::Real;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::Sender;
 
@@ -73,6 +75,72 @@ pub struct Choice {
     pub shell: bool,
     pub terminal: bool,
     pub hook: bool,
+    /// Give Firefox's default profile the Islands look (with its scripts; CSS only when their
+    /// loader cannot go in).
+    pub firefox: bool,
+    /// Install Blurman from the Microsoft Store (after shellman's files; never fails the install).
+    pub blurman: bool,
+}
+
+/// Whether Firefox is installed (the wizard offers to style it only then).
+pub fn firefox_installed() -> bool {
+    !detect::installs(&Real).is_empty()
+}
+
+/// The Firefox profiles that have the look (the uninstaller offers to take it out).
+pub fn firefox_profiles_with_look() -> Vec<PathBuf> {
+    if detect::installs(&Real).is_empty() {
+        return Vec::new();
+    }
+    actions::profiles_with_look(&detect::Profiles::read())
+}
+
+/// Whether Firefox holds one of `profiles` (nothing can change in it then).
+pub fn firefox_open(profiles: &[PathBuf]) -> bool {
+    profiles.iter().any(|p| detect::in_use(p))
+}
+
+/// The look into the profile the first Firefox opens by default, from the install folder's copy.
+/// Says what happened; never fails the install.
+fn style_firefox(tx: &Sender<Msg>, prefix: &Path) {
+    let installs = detect::installs(&Real);
+    let profiles = detect::Profiles::read();
+    let Some((install, profile)) = installs.iter().find_map(|i| profiles.default_for(i).map(|p| (i, p))) else {
+        say(tx, "Firefox: no default profile found; choose one in Settings \u{203a} Appearance \u{203a} Firefox.");
+        return;
+    };
+    let Some(src) = firefox::Source::installed(prefix) else {
+        say(tx, "Firefox: the look's files are missing from the install folder.");
+        return;
+    };
+    // With the scripts (the default). Their loader may need the UAC prompt; declined, or another
+    // autoconfig in the way, the look still goes in, CSS only.
+    let later = "You can do it later in Settings \u{203a} Appearance \u{203a} Firefox.";
+    match actions::apply(&profile, &src, Some(install), &profiles, &installs, Some(prefix)) {
+        Ok(msg) => say(tx, &format!("Firefox: {msg}")),
+        Err(e) if detect::in_use(&profile) => say(tx, &format!("Firefox: {e} {later}")),
+        Err(e) => {
+            say(tx, &format!("Firefox: {e} Installing the look without scripts."));
+            match actions::apply(&profile, &src, None, &profiles, &installs, Some(prefix)) {
+                Ok(msg) => say(tx, &format!("Firefox: {msg} The scripts can be added in Settings \u{203a} Appearance \u{203a} Firefox.")),
+                Err(e) => say(tx, &format!("Firefox: {e} {later}")),
+            }
+        }
+    }
+}
+
+/// Take the look out of `profiles`, before shellman's files (with the administrator helper, for
+/// the scripts' loader) go.
+fn unstyle_firefox(say_line: &dyn Fn(&str), profiles: &[PathBuf], prefix: &Path) {
+    let installs = detect::installs(&Real);
+    let all = detect::Profiles::read();
+    for p in profiles {
+        let name = p.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        match actions::remove(p, &all, &installs, Some(prefix)) {
+            Ok(_) => say_line(&format!("Firefox: the look is removed from {name}.")),
+            Err(e) => say_line(&format!("Firefox ({name}): {e}")),
+        }
+    }
 }
 
 fn sink(tx: &Sender<Msg>, wake: impl Fn() + Send + Clone + 'static) {
@@ -131,6 +199,14 @@ fn run_install(payload: &Payload, choice: &Choice, was: &Current, tx: &Sender<Ms
         integrate::revert_shell(reg, &env.prefix)?;
         say(tx, "Explorer is the shell again from the next sign-in.");
     }
+    if choice.firefox {
+        style_firefox(tx, &env.prefix);
+    }
+    if choice.blurman {
+        let t = tx.clone();
+        let line = crate::blurman::install(&move |l: &str| say(&t, l));
+        say(tx, &line);
+    }
     let _ = tx.send(Msg::Progress(Some(1.0)));
     Ok(Outcome { sign_out: choice.shell != was.shell, deferred: false })
 }
@@ -147,10 +223,16 @@ pub fn finish_command(prefix: &Path, purge: bool) -> Result<String, String> {
     ))
 }
 
-pub fn uninstall(prefix: PathBuf, purge: bool, tx: Sender<Msg>, wake: impl Fn() + Send + Clone + 'static) {
+/// `firefox`: the profiles to take the look out of first; `blurman`: remove Blurman too.
+pub fn uninstall(prefix: PathBuf, purge: bool, firefox: Vec<PathBuf>, blurman: bool, tx: Sender<Msg>, wake: impl Fn() + Send + Clone + 'static) {
     std::thread::spawn(move || {
         sink(&tx, wake.clone());
         let _ = tx.send(Msg::Progress(None));
+        let t = tx.clone();
+        unstyle_firefox(&move |l: &str| say(&t, l), &firefox, &prefix);
+        if blurman {
+            say(&tx, &crate::blurman::remove());
+        }
         let r = run_uninstall(&prefix, purge);
         let _ = tx.send(Msg::Done(r));
         wake();

@@ -2,7 +2,7 @@
 //! Edits apply by saving the same files the other apps watch.
 
 use crate::saver::Saver;
-use crate::sections::{AccessView, PrivacyView, WidgetsView, AppsView, DisplayView, FontsView, IconsView, MouseView, PowerView, DateTimeView, StorageView, DefaultAppsView, Section, SoundView, StartupView, TerminalView, UpdatesView};
+use crate::sections::{AccessView, PrivacyView, WidgetsView, AppsView, DisplayView, FirefoxView, FontsView, IconsView, MouseView, PowerView, DateTimeView, StorageView, DefaultAppsView, Section, SoundView, StartupView, TerminalView, UpdatesView};
 use shellman_core::settings::bar::BarSettings;
 use shellman_core::settings::desktop::DesktopSettings;
 use shellman_core::settings::dock::DockSettings;
@@ -58,6 +58,8 @@ pub struct State {
     pub goto: Option<Section>,
     /// The icon pack group's live state (Appearance).
     pub icons: IconsView,
+    /// The Firefox group's live state (Appearance).
+    pub firefox: FirefoxView,
     /// The Terminal page's state; read when the page is shown.
     pub terminal: TerminalView,
 }
@@ -91,6 +93,7 @@ impl State {
             fonts: FontsView::default(),
             goto: None,
             icons: IconsView::default(),
+            firefox: FirefoxView::default(),
             terminal: TerminalView::default(),
         };
         state.rebuild_names();

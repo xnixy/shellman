@@ -2939,6 +2939,7 @@ dependencies = [
  "roxmltree 0.21.2",
  "serde",
  "serde_json",
+ "sha2",
  "windows 0.61.3",
  "windows-collections",
  "windows-core 0.61.2",
@@ -3008,10 +3009,14 @@ dependencies = [
  "flate2",
  "raw-window-handle",
  "shellman-buildinfo",
+ "shellman-core",
  "shellman-setup",
  "shellman-ui",
  "shellman-update-core",
  "windows 0.61.3",
+ "windows-collections",
+ "windows-core 0.61.2",
+ "windows-future",
  "winresource",
 ]
 

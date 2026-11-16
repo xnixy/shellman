@@ -13,9 +13,15 @@ const HELPER: &str = "shellman-elevate.exe";
 
 /// Run `op` in the helper as administrator (the standard UAC prompt) and wait for it.
 pub fn run(op: &Op) -> Outcome {
-    let Some(exe) = std::env::current_exe().ok().and_then(|e| e.parent().map(|d| d.join(HELPER))) else {
+    let Some(dir) = std::env::current_exe().ok().and_then(|e| e.parent().map(|d| d.to_path_buf())) else {
         return Outcome::HelperMissing;
     };
+    run_from(&dir, op)
+}
+
+/// `run`, with the helper in `dir` (the uninstaller runs from a copy of itself elsewhere).
+pub fn run_from(dir: &std::path::Path, op: &Op) -> Outcome {
+    let exe = dir.join(HELPER);
     if !exe.is_file() {
         return Outcome::HelperMissing;
     }

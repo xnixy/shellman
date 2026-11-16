@@ -1588,6 +1588,17 @@ beside Explorer for tests.
   the user Startup folders (via ShellExecute). First start 6 s after the session, then 1.5 s
   apart. `shellman-session --dry-run` prints the apps and each item with why it is enabled or
   disabled, and Windows' run marker (below), and changes nothing.
+  - Windows' restart entries: after a restart that restarts apps (Windows Update's), each app
+    that called `RegisterApplicationRestart` comes back as an `Application Restart #N` HKCU
+    RunOnce value holding its exe and its own restart line, and the shell runs it like any RunOnce
+    value (tested in `startup/items.rs`). Firefox's line is its original command line with
+    `-os-restarted` in front, `-profile` kept (measured 15 Nov with `GetApplicationRestartSettings`).
+    The "unskinned Firefox at sign-in" seen 13 Nov was such a restart of a second Firefox, a test
+    copy in `C:\Temp\ffscript\app` started without `-profile`, so it came back on its own
+    default profile (`compatibility.ini` `LastPlatformDir`), which never had the look. Not a
+    shellman bug; the session log of that day is gone, so the RunOnce step is inferred. Open: the
+    Program Files Firefox was also running at that shutdown (its session files stop at 16:42:22)
+    and did not come back; why one was restarted and not the other is not known.
   - Switched-off Run and folder items: `...\Explorer\StartupApproved\{Run,Run32,StartupFolder}`,
     read as the shell's own `shell\lib\runonce` code does (ShellAppRuntime.exe 10.0.26100.9818,
     which shares it with Explorer): only the low bit of the first DWORD counts (odd disabled,
@@ -1741,6 +1752,81 @@ Ctrl+Alt+Del, Task Manager, Run new task, `explorer.exe` (then `shellman-session
 from a terminal); or `reg delete "HKCU\Software\Microsoft\Windows NT\CurrentVersion\Winlogon" /v Shell /f`
 from Run new task with `cmd`. Signing in as another user is unaffected (the value is per user).
 
+## Firefox look (15 Nov)
+
+The Islands look for Firefox (`integrations/firefox`: CSS, `user.js` prefs, optional chrome
+scripts with an autoconfig loader) ships in the installer: `install-manifest` lists every file
+into `<install>\firefox\` (a test checks the list against `firefox::shipped_files`). The glass
+DLL (`shellman-firefox-glass`, real gaps) is not shipped and stays a source-checkout option.
+
+`shellman_core::firefox` does what `install.ps1` / `uninstall.ps1` do, in Rust:
+- `detect`: installations from `TaskBarIDs` (HKLM, then HKCU; folder as value name, the 16-hex
+  install id as data; kept when `firefox.exe` is there), the profiles folder, `in_use` (Firefox
+  holds `parent.lock` with no sharing). Tests redirect with `SHELLMAN_FIREFOX_ROOT` (folder of
+  `profiles.ini`), `SHELLMAN_FIREFOX_DIR` and `SHELLMAN_FIREFOX_ID`.
+- `profiles`: `profiles.ini` read only. The default profile is the installation's own
+  `[Install<id>]` `Default=`, never the stale `Default=1` flag (on this PC it points at an empty
+  profile); no such section, nothing preselected.
+- `look`: install (first time: backup of `chrome\` and `user.js` into
+  `<profile>\shellman-islands-backup\<yyyyMMdd-HHmmss>\`, `state.json` written before anything
+  changes), update (files again, backup kept), remove (exactly what was added, what the backup
+  holds of it put back, a `chrome\` or `user.js` it created deleted once empty, the backup folder
+  last), status (not installed / installed / outdated, by comparing bytes with the shipped files
+  and the loader). `state.json` is the scripts' own format (BOM tolerated, unknown fields kept)
+  plus `userJsBreak`, so either tool undoes the other; an install the scripts did with `-Force`
+  over another autoconfig is left to `uninstall.ps1`. Nothing changes while Firefox holds the
+  profile.
+- `userjs`: the marked block on bytes; the begin marker is matched by its start (the scripts used
+  a longer text). A line break install had to add after a `user.js` without one is taken out again
+  (`userJsBreak` in `state.json`; `install.ps1` / `uninstall.ps1` now record and honour it too:
+  before, the scripts left that line break behind).
+- `loader`: `config.js` and `defaults\pref\config-prefs.js`, their text built in
+  (`include_str!`). Ours = says "shellman Islands"; another setup's files are never replaced or
+  removed (the scripts are then not installed). Written directly when Firefox's folder is
+  writable, else by the administrator helper: `shellman-elevate firefox-loader <install|remove>
+  <id>`, which finds the folder of that id in HKLM `TaskBarIDs` only and writes only the built-in
+  text. The loader is written before the profile changes (a declined UAC prompt changes nothing)
+  and removed after, only when no profile in `profiles.ini` still has `chrome\shellman-scripts`.
+- `actions`: a button press put together (loader, then profile; messages).
+
+Settings › Appearance › Firefox (`apps/settings/src/sections/firefox.rs`): "Firefox is installed"
+with the folder, a profile list (default marked and preselected), the look's state, a red line
+while Firefox has the profile open (buttons off), "With scripts" (on by default where the look is
+not installed, else as installed; detail says the full-privilege trade-off and the one UAC
+prompt), Install, or Update (when outdated or the switch differs) and Remove; the result under
+them. Profiles are read every 4 s on a thread; the work runs on another.
+The wizard has "Also style Firefox" (off; shown only when Firefox is installed): with the scripts,
+into the first installation's default profile, after the install; when the loader cannot go in
+(UAC declined, another autoconfig) it installs CSS only and says so; a refusal (Firefox open) is a
+line in the log, never a failed install. The uninstaller has "Also remove the look from Firefox" (on when a
+profile has it); with Firefox open, Uninstall says so and waits. It runs in the interactive pass
+only, before shellman's files go (the loader through the helper in the install folder). `--quiet`
+uninstalls leave the look.
+
+Verified 15 Nov on Firefox 160 with a throwaway profile (`C:\Temp\fftest\prof`, with its own
+`userChrome.css`, another file in `chrome\` and a `user.js` without a final line break):
+install then remove with Firefox closed gives the same tree (all 455 entries); installed, Firefox
+started on it showed the islands; a changed CSS file read as outdated, Update fixed it and kept
+the backup; Remove gave `chrome\` and `user.js` back byte for byte and no backup folder (Firefox's
+own `prefs.js` keeps the prefs it copied, as documented). Settings (redirected root, driven
+through UI Automation): the default profile preselected, Install, the "Firefox is open" line with
+Remove off while the lock was held, Remove, byte-identical again. A packed debug installer, all
+redirected (setup variables, `SHELLMAN_SETUP_REGISTRY`, the Firefox root): "Also style Firefox"
+installed shellman with `firefox\` and the look (the Program Files loader not writable without a
+prompt there, so the CSS-only fallback, logged); the uninstaller showed "Also remove the look from
+Firefox" on, refused with "Firefox is open" while the lock was held, then removed shellman and gave
+the profile back byte for byte. With scripts, against a fake writable Firefox folder
+(`SHELLMAN_FIREFOX_DIR`): Settings' switch on by default, Install wrote the loader, switch off +
+Update removed it (and the switch stayed off, no Update button: the switch is set again only from a
+read that started after the work), on again + Update, Remove: loader gone, profile byte-identical;
+the wizard with "Also style Firefox" wrote the loader and the uninstaller removed it, profile
+byte-identical. Interop, each from a fresh profile with a `chrome\` and a `user.js` without a final
+line break: `install.ps1` → `uninstall.ps1`, Rust → `uninstall.ps1`, `install.ps1` → Rust, Rust →
+Rust, and a profile with no `user.js`: all byte-identical. Not run: the scripts through the UAC
+prompt into Program Files (the helper's op is unit-tested for its arguments only), and the
+wizard and uninstall window looked at on screen (screen capture failed; checked through UI
+Automation, and the window made 40 px taller, 660, for the Firefox and Blurman rows).
+
 ## Install and update
 
 `apps/setup` is `shellman-setup.exe`, a console tool with no UI. Everything it touches can be
@@ -1856,6 +1942,32 @@ elease\shellman-setup.exe update --restart
 (`status` shows each installed file against `target
 elease`, which processes still run from old
 images, and the shell and default terminal state.)
+
+### Blurman from the Store (15 Nov)
+
+The wizard has "Also install Blurman" (on; replaced by "Blurman is already installed." when the
+package family `xnixy.Blurman_nz2sgw67tcfww` is there for the user, `PackageManager`), and
+`--quiet --blurman` does the same. It runs after shellman's files and integrations
+(`apps/installer/src/blurman`): Windows' Store install service, `AppInstallManager`
+(`GetIsAppAllowedToInstallAsync`, then `StartProductInstallAsync("9NQ3GQNBM4LK", client
+"shellman")`, its items polled every 0.5 s for state and percent, for at most 5 minutes), which
+needs no Store window (the Store's UI cannot open under shellman without the modern-app host). Only
+when the service does not take the job (it fails, refuses, or returns no items) does `winget
+install 9NQ3GQNBM4LK --source msstore --accept-package-agreements --accept-source-agreements
+--disable-interactivity` run, no window; once the Store has the job, a failure, a pause or the
+5 minutes running out is reported and not tried again (a second install would race the Store's).
+Either way the result is a log line
+and never fails the install. The `windows` crate leaves the Store namespaces out, so
+`store_api.rs` is generated with `windows-bindgen` 0.62.1 (command in its header). The uninstall
+window offers "Also remove Blurman" (off; `PackageManager.RemovePackageAsync`), since it is an
+app of its own; `--quiet` uninstalls keep it.
+
+Checked 15 Nov on this PC (Blurman 0.8.0.0 already installed from the Store): it is found, the
+wizard shows "already installed" and does nothing, the Store service answers
+`GetIsAppAllowedToInstallAsync` (true) without installing (`cargo test -p shellman-installer --
+--ignored`), and the uninstall window shows the row off. Not run: an actual install through the
+service or winget, a removal, and the wizard with the Blurman row shown (only on a PC without it). Unknown: whether the Store's automatic updates for Blurman run
+while shellman is the shell (they need the Store's update service, not its window; not checked).
 
 ### Automatic updates and signed releases (15 Nov)
 

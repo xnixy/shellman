@@ -29,6 +29,11 @@ pub enum Op {
     /// package (`launch-app <Family>!<App>`). Only an app id of an installed package: never a
     /// path, a command line or arguments.
     LaunchApp { id: String },
+    /// Write or remove the Firefox look's script loader (`firefox-loader <install|remove> <id>`)
+    /// in the machine-wide Firefox installation with that 16-hex-digit id. The helper finds the
+    /// folder itself, in HKLM, and writes only the loader text built into it
+    /// (`firefox::loader`); never a path or a file it was handed.
+    FirefoxLoader { install: bool, id: String },
 }
 
 /// The most processes one `end-processes` may name (a big browser's tree is well under this).
@@ -128,6 +133,12 @@ pub fn parse(args: &[String]) -> Result<Op, BadArgs> {
         }
         ["launch-app", id] if is_app_id(id) => Ok(Op::LaunchApp { id: (*id).to_owned() }),
         ["launch-app", ..] => Err(BadArgs("launch-app takes exactly one Store app id")),
+        ["firefox-loader", what, id] if crate::firefox::profiles::is_install_id(id) => match *what {
+            "install" => Ok(Op::FirefoxLoader { install: true, id: (*id).to_owned() }),
+            "remove" => Ok(Op::FirefoxLoader { install: false, id: (*id).to_owned() }),
+            _ => Err(BadArgs("firefox-loader takes install or remove")),
+        },
+        ["firefox-loader", ..] => Err(BadArgs("firefox-loader takes install or remove and a Firefox installation id")),
         ["end-processes", ..] => Err(BadArgs("end-processes takes 1 to 256 targets")),
         ["sysfont-apply" | "sysfont-reuse", ..] => Err(BadArgs("takes exactly one generation id")),
         ["sysfont-restore", ..] => Err(BadArgs("sysfont-restore takes nothing")),
@@ -158,6 +169,9 @@ impl Op {
                 v
             }
             Op::LaunchApp { id } => vec!["launch-app".into(), id.clone()],
+            Op::FirefoxLoader { install, id } => {
+                vec!["firefox-loader".into(), if *install { "install" } else { "remove" }.into(), id.clone()]
+            }
         }
     }
 
@@ -195,6 +209,11 @@ impl Op {
         is_app_id(id).then(|| Op::LaunchApp { id: id.to_owned() })
     }
 
+    /// The operation for the Firefox look's loader, or None when `id` is not an installation id.
+    pub fn firefox_loader(install: bool, id: &str) -> Option<Op> {
+        crate::firefox::profiles::is_install_id(id).then(|| Op::FirefoxLoader { install, id: id.to_owned() })
+    }
+
     /// The operation for a sound device, or None when `id` is not an endpoint id.
     pub fn sound_device(enable: bool, id: &str) -> Option<Op> {
         is_endpoint_id(id).then(|| Op::SoundDevice { enable, id: id.to_owned() })
@@ -209,6 +228,17 @@ mod tests {
 
     fn args(v: &[&str]) -> Vec<String> {
         v.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn firefox_loader_takes_a_verb_and_an_installation_id_only() {
+        let op = Op::firefox_loader(true, "308046B0AF4A39CB").unwrap();
+        assert_eq!(parse(&op.to_args()), Ok(op));
+        assert_eq!(parse(&args(&["firefox-loader", "remove", "308046B0AF4A39CB"])), Ok(Op::FirefoxLoader { install: false, id: "308046B0AF4A39CB".into() }));
+        for bad in [&["firefox-loader", "install"][..], &["firefox-loader", "wipe", "308046B0AF4A39CB"], &["firefox-loader", "install", r"C:\x"], &["firefox-loader", "install", "308046B0AF4A39CB", "x"]] {
+            assert!(parse(&args(bad)).is_err(), "{bad:?}");
+        }
+        assert!(Op::firefox_loader(true, "..").is_none());
     }
 
     #[test]

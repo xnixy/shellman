@@ -6,7 +6,7 @@
 mod launch;
 pub mod ops;
 
-pub use launch::run;
+pub use launch::{run, run_from};
 
 /// The helper's exit codes. Zero is success; the rest say why nothing was done.
 pub mod exit {

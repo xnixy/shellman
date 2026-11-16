@@ -1,6 +1,9 @@
 # Shared helpers for install.ps1 / uninstall.ps1. Dot-sourced, not run directly.
 
-$script:BeginMark = '// >>> shellman-islands begin (managed by integrations/firefox/install.ps1, do not edit) >>>'
+$script:BeginMark = '// >>> shellman-islands begin (managed by shellman, do not edit) >>>'
+# Matched by this start only: older installs wrote a longer text after it, and shellman's Settings
+# (crates/core/src/firefox/userjs.rs) writes and removes the same block.
+$script:BeginPrefix = '// >>> shellman-islands begin'
 $script:EndMark   = '// <<< shellman-islands end <<<'
 $script:BackupRoot = 'shellman-islands-backup'
 $script:ChromeFiles = @('userChrome.css', 'userContent.css', 'shellman-look.css', 'shellman-islands.css', 'shellman-popups.css')
@@ -53,7 +56,7 @@ function Test-ProfileInUse([string]$Profile) {
 }
 
 function Remove-ManagedBlock([string]$Text) {
-    $pattern = '(?s)' + [regex]::Escape($script:BeginMark) + '.*?' + [regex]::Escape($script:EndMark) + '[ \t]*\r?\n?'
+    $pattern = '(?s)' + [regex]::Escape($script:BeginPrefix) + '.*?' + [regex]::Escape($script:EndMark) + '[ \t]*\r?\n?'
     return [regex]::Replace($Text, $pattern, '')
 }
 

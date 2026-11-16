@@ -302,6 +302,22 @@ mod tests {
         assert_eq!(by("P").area(), None);
     }
 
+    /// After a restart that restarts apps (Windows Update's), Windows leaves each app that called
+    /// RegisterApplicationRestart as an "Application Restart #N" RunOnce value: the exe and the
+    /// app's own restart line. It is started as it stands (Firefox's keeps its `-profile`), like
+    /// Explorer would, and removed first.
+    #[test]
+    fn windows_restart_entries_run_verbatim_and_once() {
+        let reg = Fake::default();
+        let line = "\"C:\\Program Files\\Mozilla Firefox\\firefox.exe\" -os-restarted -profile C:\\Temp\\fftest\\prof -no-remote about:blank";
+        reg.put(Hive::Hkcu, &format!("{CV}\\RunOnce"), "Application Restart #0", text(line));
+        let items = collect(&reg, &[], &|s| s.to_string(), false);
+        assert_eq!(items.len(), 1);
+        let i = &items[0];
+        assert_eq!((i.name.as_str(), i.command.as_str(), i.place.as_str()), ("Application Restart #0", line, "HKCU RunOnce"));
+        assert!(i.enabled && i.once && !i.delete_after);
+    }
+
     #[test]
     fn machine_runonce_needs_elevation() {
         let reg = Fake::default();

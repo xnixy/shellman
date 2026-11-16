@@ -1,5 +1,5 @@
 //! Appearance: the accent color, light or dark, how windows are drawn, the glass amount and the
-//! text font every shellman app shares.
+//! text font every shellman app shares, and the Islands look for Firefox (`firefox.rs`).
 //!
 //! The Window choice and the glass amount are two dials: the choice says where the glass is
 //! (under each island, one pane under the whole window, or none), the amount how much of it
@@ -63,6 +63,7 @@ pub fn show(ui: &mut egui::Ui, st: &mut State) {
     page::group(ui, "Sidebars", |ui| sidebars(ui, st));
     page::group(ui, "Icon pack", |ui| super::icon_pack::group(ui, st));
     page::group(ui, "Window frames", frames_group);
+    page::group(ui, "Firefox", |ui| super::firefox::group(ui, &mut st.firefox));
 }
 
 /// Light, dark, or as Windows is set. High contrast uses Windows' own colours whatever is chosen.

@@ -75,9 +75,12 @@ Download `shellman-<version>-setup.exe` from the
 below). Run it:
 
 - Pick a folder. The default is `%LOCALAPPDATA%\Programs\shellman`, no admin rights needed.
-- Three optional switches, all off by default: make shellman your shell from the next sign-in,
-  make shellman Terminal the default terminal, and use shellman Files for other apps' Open and
-  Save dialogs.
+- Optional switches, all off by default: make shellman your shell from the next sign-in,
+  make shellman Terminal the default terminal, use shellman Files for other apps' Open and
+  Save dialogs, and, when Firefox is installed, give Firefox the Islands look (see below).
+- "Also install Blurman" (on unless it is already there) gets Blurman from the Microsoft Store
+  without opening the Store. It is an app of its own: uninstalling shellman keeps it unless you
+  tick "Also remove Blurman".
 - Click Install.
 
 Running a newer setup over an existing install updates it and keeps your settings.
@@ -106,7 +109,22 @@ Settings > Apps > Installed apps > shellman > Uninstall.
 It puts back everything it changed (the shell, the default terminal, the Open and Save dialogs),
 closes shellman's apps and removes its files and shortcuts. You can also tell it to remove your
 settings. If shellman is the shell running right then, it keeps running until you sign out and
-the files go when you sign back in.
+the files go when you sign back in. If Firefox has the Islands look, it offers to take it out too
+(on by default) and puts back what it replaced; close Firefox first.
+
+## Firefox
+
+shellman can give Firefox its Islands look: floating glass pills and rounded islands, no window
+frame. Settings > Appearance > Firefox shows whether Firefox is installed, lets you pick the
+profile (the one Firefox opens by default is preselected), says whether the look is installed
+there, and has Install, Update and Remove. Close Firefox first; it is changed from its next start.
+Install backs up the profile's `chrome` folder and `user.js`, and Remove puts them back exactly.
+
+"With scripts" (on by default) adds the live look (accent and glass follow shellman without a restart) and more,
+smaller islands. Firefox then runs shellman's script files from your profile with full browser
+rights, and their small loader goes into Firefox's own folder, which asks for administrator rights
+once. Details, and the same thing as PowerShell scripts, in
+[integrations/firefox](integrations/firefox/README.md).
 
 ## Building
 
@@ -149,7 +167,7 @@ GitHub with `--publish`. The signing key is in my password manager, not in the r
 | `apps/update`, `crates/update` | Automatic updates: finding, checking and installing a new release |
 | `xtask` | The release command (`cargo xtask release`) |
 | `crates/core`, `crates/ui` | Shared Windows code, and the shared look (glass, colours, controls) |
-| `integrations/firefox` | Optional: makes Firefox match |
+| `integrations/firefox` | The Firefox look's files (shipped in the install folder's `firefox`); `crates/core/src/firefox` installs them |
 
 ## Known problems
 
