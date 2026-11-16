@@ -31,18 +31,9 @@ pub fn line(text: &str) {
     }
 }
 
-pub fn mutex_name(instance: &str) -> String {
-    if instance.is_empty() {
-        "Local\\shellman-update".to_string()
-    } else {
-        format!("Local\\shellman-update-{instance}")
-    }
-}
-
 /// Hold the one-check-at-a-time mutex; `None` when another check holds it.
 pub fn claim() -> Option<HANDLE> {
-    let instance = std::env::var("SHELLMAN_INSTANCE").unwrap_or_default();
-    let m = unsafe { CreateMutexW(None, false, &HSTRING::from(mutex_name(&instance))) }.ok()?;
+    let m = unsafe { CreateMutexW(None, false, &HSTRING::from(shellman_update_core::state::mutex_name())) }.ok()?;
     if unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
         return None;
     }
@@ -60,14 +51,5 @@ pub fn attach_console() {
                 let _ = SetStdHandle(STD_ERROR_HANDLE, con);
             }
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn instances_get_their_own_mutex() {
-        assert_eq!(super::mutex_name(""), "Local\\shellman-update");
-        assert_eq!(super::mutex_name("t1"), "Local\\shellman-update-t1");
     }
 }

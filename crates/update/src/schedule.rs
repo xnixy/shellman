@@ -39,6 +39,19 @@ pub fn next_check(uptime: Duration, now: u64, last_check: u64, outcome: Outcome)
     every.saturating_sub(since).max(first)
 }
 
+/// The least time between two checks the session starts, whatever `update.json` says. A helper
+/// that ends without recording a check (it found another check under way, it crashed, the file
+/// could not be written) would otherwise make `next_check` say "now" again at once.
+pub const MIN_GAP: Duration = Duration::from_secs(3600);
+
+/// [`next_check`]'s answer, held back to [`MIN_GAP`] after the last start (`None`: none yet).
+pub fn with_floor(next: Duration, since_last_start: Option<Duration>) -> Duration {
+    match since_last_start {
+        Some(since) => next.max(MIN_GAP.saturating_sub(since)),
+        None => next,
+    }
+}
+
 /// What is happening that a new release must not interrupt.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Busy {
@@ -99,6 +112,17 @@ mod tests {
     #[test]
     fn a_clock_that_went_back_does_not_wait_for_years() {
         assert_eq!(next_check(Duration::from_secs(3600), NOW, NOW + 365 * 24 * H, Outcome::UpToDate), Duration::ZERO);
+    }
+
+    #[test]
+    fn a_helper_that_records_nothing_is_not_restarted_at_once() {
+        // The state file still says "never checked" right after a start: wait out the gap.
+        let due = next_check(Duration::from_secs(600), NOW, 0, Outcome::Never);
+        assert_eq!(due, Duration::ZERO);
+        assert_eq!(with_floor(due, Some(Duration::from_secs(5))), MIN_GAP - Duration::from_secs(5));
+        assert_eq!(with_floor(due, None), Duration::ZERO, "the first start is not held back");
+        assert_eq!(with_floor(Duration::from_secs(20 * 3600), Some(Duration::ZERO)), Duration::from_secs(20 * 3600));
+        assert_eq!(with_floor(due, Some(2 * MIN_GAP)), Duration::ZERO);
     }
 
     #[test]

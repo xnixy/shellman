@@ -49,10 +49,11 @@ pub fn start(t0: Instant) {
 
 fn run(t0: Instant, dir: PathBuf, helper: PathBuf) {
     let mut said_off = false;
+    let mut last_start: Option<Instant> = None;
     loop {
         let st = State::load();
-        let wait = schedule::next_check(t0.elapsed(), shellman_update_core::state::now(), st.last_check, st.outcome);
-        std::thread::sleep(wait);
+        let due = schedule::next_check(t0.elapsed(), shellman_update_core::state::now(), st.last_check, st.outcome);
+        std::thread::sleep(schedule::with_floor(due, last_start.map(|t| t.elapsed())));
         let enabled = shellman_core::settings::shell::ShellSettings::load().auto_update;
         match decide(enabled, crate::shutdown::quiet(), crate::restart::parked()) {
             Due::NotNow => std::thread::sleep(NOT_NOW),
@@ -65,6 +66,7 @@ fn run(t0: Instant, dir: PathBuf, helper: PathBuf) {
             }
             Due::Start => {
                 said_off = false;
+                last_start = Some(Instant::now());
                 let p = dir.display().to_string();
                 match std::process::Command::new(&helper).args(["--auto", "--prefix", p.trim_end_matches('\\')]).spawn() {
                     // The helper logs its own steps; a crash shows as `Working` left behind,

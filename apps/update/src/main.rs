@@ -163,6 +163,9 @@ fn update(mode: Mode, prefix: &Path, installed: Version, st: &mut State) -> Step
     }
 
     // The signature first: nothing big is downloaded for a release that is not signed.
+    if !net::parse_url(&rel.sig_url).is_some_and(|u| allowed(&u)) {
+        return Err(failed("the signature's address must be HTTPS"));
+    }
     let s = net::send("GET", &rel.sig_url, &[("Accept", "application/octet-stream")], None).map_err(failed)?;
     let s = follow(s, &rel.sig_url)?;
     let statement = sig::verify(&s, &sig::trusted_keys()).map_err(failed)?;

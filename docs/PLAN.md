@@ -1819,7 +1819,21 @@ in the log. Refused, nothing run: the same release without the test key (not she
 the exe with one byte changed (SHA-256 differs), a feed over plain HTTP from another host, a
 feed whose newest is the installed version (up to date). A folder without setup's record is
 left alone; `--auto` with the switch off checks nothing; a feed with no release (404) is "no
-release is published yet".
+release is published yet". The release-built helper against the real GitHub API: "no release
+is published yet" over HTTPS; given a plain-HTTP feed it refuses. `net::download` (an ignored
+live test) fetched a public GitHub release asset through GitHub's redirect to its storage host,
+and refused it over the size cap or with a filter refusing that host, leaving no file.
+Settings > About in a debug copy with its own config folder, driven through UI Automation: the
+Updates group shows the version, the switch writes `auto_update` false and back, Check now ran
+the helper and showed "This copy was not installed by setup" and "Last checked just now", and a
+`working` left in `update.json` with no helper running reads "the check was interrupted" with
+Check now enabled (the helper's mutex tells a live check from a dead one).
+
+Known: a quiet update re-creates Start Menu shortcuts the user deleted (the installer's quiet
+path asks for shortcuts). After `--publish` the release command fetches the new tag, so builds
+here count from it; on another clone run `git fetch --tags`, or a developer build there still
+reads as the crate version and a release above that would replace it. The session never starts
+a check less than an hour after its last one (`schedule::MIN_GAP`), whatever `update.json` says.
 Not run: a real release (none is published), the real key through `op run` (the `op` CLI is not
 installed on this PC), the session's own timer at a real sign-in, and CI (nothing is pushed).
 

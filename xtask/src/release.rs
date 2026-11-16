@@ -239,6 +239,12 @@ fn release(a: &Args) -> Result<(), String> {
         return Err("gh release create failed".into());
     }
     println!("published {tag}: https://github.com/{}/releases/tag/{tag}", shellman_update_core::REPO);
+    // The tag was made on GitHub; fetch it, so builds here count from it (`version::from_stamp`)
+    // and an installed developer build is not taken for older than this release.
+    match out("git", &["fetch", "origin", "tag", &tag, "--no-tags"]) {
+        Ok(_) => println!("fetched tag {tag}"),
+        Err(e) => println!("could not fetch tag {tag} ({e}); run `git fetch --tags`"),
+    }
     Ok(())
 }
 

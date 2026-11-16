@@ -62,6 +62,16 @@ pub fn log_path() -> Option<PathBuf> {
     beside_config("-session.log", "session.log")
 }
 
+/// The named mutex a running `shellman-update` holds (one check at a time). With
+/// `SHELLMAN_INSTANCE` set, a test copy has its own. Settings opens it to tell a check under way
+/// from a `Working` left behind by a helper that was killed.
+pub fn mutex_name() -> String {
+    match std::env::var("SHELLMAN_INSTANCE").ok().filter(|i| !i.is_empty()) {
+        Some(i) => format!("Local\\shellman-update-{i}"),
+        None => "Local\\shellman-update".to_string(),
+    }
+}
+
 /// Unix seconds now.
 pub fn now() -> u64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
@@ -116,5 +126,14 @@ mod tests {
         assert_eq!((s.outcome, s.version.as_str(), s.last_check), (Outcome::Installed, "0.2.0", 0));
         assert_eq!(serde_json::from_str::<State>("{}").unwrap(), State::default());
         assert!(State { outcome: Outcome::Failed, detail: "offline".into(), ..Default::default() }.summary().contains("offline"));
+    }
+
+    #[test]
+    fn the_mutex_is_per_instance() {
+        let name = mutex_name();
+        match std::env::var("SHELLMAN_INSTANCE").ok().filter(|i| !i.is_empty()) {
+            Some(i) => assert_eq!(name, format!("Local\\shellman-update-{i}")),
+            None => assert_eq!(name, "Local\\shellman-update"),
+        }
     }
 }

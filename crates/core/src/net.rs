@@ -340,6 +340,26 @@ mod tests {
         }
     }
 
+    /// A real download of a public GitHub release asset: an absolute redirect to GitHub's
+    /// storage host with a signed query, followed through `allow`. Run with `--ignored`.
+    #[test]
+    #[ignore]
+    fn live_download() {
+        let dest = std::env::temp_dir().join(format!("shellman-net-live-{}.zip", std::process::id()));
+        let url = "https://github.com/BurntSushi/ripgrep/releases/download/14.1.1/ripgrep-14.1.1-x86_64-pc-windows-msvc.zip";
+        let r = download(url, &dest, 10 << 20, &|u| u.https, &mut |_| {});
+        let size = std::fs::metadata(&dest).map(|m| m.len());
+        println!("{r:?}, {size:?} bytes");
+        let _ = std::fs::remove_file(&dest);
+        assert!(r.is_ok() && size.unwrap_or(0) > 1 << 20);
+        // Over the cap: refused, and no file left.
+        assert!(download(url, &dest, 1000, &|u| u.https, &mut |_| {}).is_err());
+        assert!(!dest.exists());
+        // A filter that refuses the storage host stops at the redirect.
+        assert!(download(url, &dest, 10 << 20, &|u| u.host == "github.com", &mut |_| {}).is_err());
+        assert!(!dest.exists());
+    }
+
     #[test]
     fn encodings() {
         assert_eq!(encode("São Paulo"), "S%C3%A3o%20Paulo");

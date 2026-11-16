@@ -98,7 +98,15 @@ fn updates(ui: &mut egui::Ui, st: &mut State) {
     }
     ui.ctx().request_repaint_after(every);
     let state = c.seen.as_ref().map(|(_, s)| s.clone()).unwrap_or_default();
-    let busy = running || state.outcome == Outcome::Working;
+    // `Working` with no helper holding its mutex was left by one that was killed (at sign-out,
+    // say): not busy, and the line says what it was doing as if it had failed.
+    let live = running || (state.outcome == Outcome::Working && helper_running());
+    let busy = live;
+    let mut state = state;
+    if state.outcome == Outcome::Working && !live {
+        state.outcome = Outcome::Failed;
+        state.detail = "the check was interrupted".into();
+    }
 
     ui.horizontal(|ui| {
         if ui.add_enabled(!busy, egui::Button::new("Check now")).clicked() {
@@ -140,6 +148,22 @@ fn start_check() -> Result<std::process::Child, String> {
         return Err("shellman-update.exe is not next to Settings, so it cannot check.".into());
     }
     std::process::Command::new(&helper).arg("--now").spawn().map_err(|e| format!("Could not start the check: {e}"))
+}
+
+/// Whether a `shellman-update` is running (it holds its named mutex while it runs).
+fn helper_running() -> bool {
+    use windows::core::HSTRING;
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::System::Threading::{OpenMutexW, SYNCHRONIZATION_SYNCHRONIZE};
+    match unsafe { OpenMutexW(SYNCHRONIZATION_SYNCHRONIZE, false, &HSTRING::from(shellman_update_core::state::mutex_name())) } {
+        Ok(h) => {
+            unsafe {
+                let _ = CloseHandle(h);
+            }
+            true
+        }
+        Err(_) => false,
+    }
 }
 
 fn ago(secs: u64) -> String {
