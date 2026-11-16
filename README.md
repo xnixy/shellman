@@ -136,5 +136,9 @@ target\release\shellman-setup.exe uninstall --revert
 
 ## Licence
 
-MIT, see [LICENSE](LICENSE). The bundled ConPTY is Microsoft's, also MIT: see
+Copyright (C) 2026 xnixy. shellman is free software under the GNU General Public License,
+version 3 or any later version: see [LICENSE](LICENSE). You can use it, change it and share
+it, and if you share a changed version, you share its source under the same licence.
+
+The bundled ConPTY is Microsoft's, under the MIT licence: see
 [third_party/conpty](third_party/conpty).
