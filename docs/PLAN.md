@@ -1199,14 +1199,43 @@ beside Explorer for tests.
     `Winlogon\Userinit` runs before any shell (Winlogon's own); `HKCU\...\Windows\Load`/`Run`
     (win.ini era) are honoured by Explorer only on old builds; scheduled tasks "at log on" are
     started by Task Scheduler, not the shell, so they run without Explorer already.
-- **Background tasks (`ready.rs`)**: the Background Tasks Infrastructure service buffers a new
-  session's work (packaged apps' background tasks and app services) until the shell calls
-  `BiNotifyNewSessionComplete` (twinapi.appcore.dll, no arguments; Explorer and ShellAppRuntime
-  both do). The session calls it at its start, on a thread, retried up to five times over 52 s,
-  each answer logged. Found through Dolby Access OEM: its `SessionConnected` and device-watcher
-  tasks never ran under shellman, so Atmos outputs had no licence. Where the shell already made
-  the call it answers 0x8007054F (measured beside Explorer). Still to be seen: the answer at a
-  fresh shellman sign-in.
+- **Background tasks (`ready.rs`)**: the Background Tasks Infrastructure service (`bisrv.dll`)
+  buffers a new session's work (packaged apps' background tasks and app services) until the
+  shell says the session is complete (`WaitForNewSessionComplete` = 1 under
+  `HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\BackgroundModel`, Windows' default). Found
+  through Dolby Access OEM: its `SessionConnected` and device-watcher tasks never ran under
+  shellman, so Atmos outputs had no licence. What Microsoft's shells do (read from the binaries,
+  10.0.26300):
+  - `rdpinit.exe`, the RemoteApp shell and the smallest of them: publishes WNF states
+    `0x0D83063EA3BC1875` (`SHEL`, sequence 3, machine scope) and `0x0D83063EA3BE3835` (`SHEL`,
+    sequence 71, session scope), both with no data, then calls `BiNotifyNewSessionComplete`
+    (twinapi.appcore.dll, no arguments, an RPC; the service takes the session from the caller).
+    The session does exactly this, in this order. Other publishers of both states: Explorer,
+    ShellAppRuntime and CustomShellHost (Shell Launcher). Subscribers include
+    AudioSrvPolicyManager.dll, cdpusersvc.dll, PenService.dll, twinui and ContentDeliveryManager.
+    Both states' security descriptors give Authenticated Users publish rights.
+  - Explorer and ShellAppRuntime (`shell\lib\logontasks\logontasks.cpp`) do the same at the end
+    of their logon tasks, plus what the session leaves out on purpose because rdpinit does
+    without it: deleting `FSIAInProgress`, message 0x5BD to `Shell_TrayWnd`, setting
+    `ShellLauncherReadyEvent`, two private user32 ordinals, and `BiChangeSessionState(5)` in the
+    ContentDeliveryManager logon task, right before it registers its OEM-preinstall background
+    task (CustomShellHost links the same logon-task code). That none of these is needed is not
+    proven: what state 5 does inside the service was not found. If tasks still do not start at
+    a shellman sign-in, adding `BiChangeSessionState(5)` before the publishes is the first thing
+    to try.
+  - The session-scoped state's change stamp says whether this session was announced already
+    (Explorer, the host, or an earlier session process after `update --restart`): then only the
+    call is made, which is harmless there (it answers 0x8007054F, `ERROR_INTERNAL_ERROR`,
+    measured beside Explorer). It is made on a thread at the session's start, retried up to five
+    times over 52 s while it fails (0x8007054F included: it may also mean the service does not
+    know the session yet); every step's result is logged.
+  - Measured beside Explorer (15 Nov): both stamps 2, so the session would skip the publishes;
+    the call answers 0x8007054F (what the service means by it is still unknown). The publish
+    code ran once against a temporary WNF state of its own (stamp 0 to 1; `live_publish`). Not yet seen: the log of a fresh shellman sign-in (stamp 0,
+    publishes succeed, the call's answer) and whether Dolby's tasks then start, with the
+    modern-app host on and with it off.
+  - Packaged apps' startup tasks are a separate thing, run by the session itself ("Startup
+    items" above).
 - **Safety net**: if Shift is held at the session's start, or the bar's exe is missing, or the bar
   was given up on (crash budget spent) or ended with exit code 0, or a running bar has no
   `Shell_TrayWnd` 20 s after its own latest (re)start, the session falls back to Explorer. A bar
