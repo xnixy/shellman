@@ -96,6 +96,12 @@ impl ItemEvents {
         r: usize,
         actions: &mut Vec<Action>,
     ) {
+        // egui turns Enter and Space on the item with the keyboard into a click; those keys are
+        // the folder's own (open, select), so that click would only undo a selection.
+        let keyed = resp.has_focus() && ui.input(|i| i.key_pressed(Key::Enter) || i.key_pressed(Key::Space));
+        if keyed {
+            return;
+        }
         if resp.double_clicked() {
             actions.push(Action::OpenRow(r));
         } else if resp.clicked() {
@@ -377,6 +383,7 @@ pub(super) fn rename_box(
             .id(id)
             .margin(Vec2::new(6.0, 3.0)),
     );
+    shellman_ui::widgets::name_field(&te, "New name", Some(&rn.text));
     if std::mem::take(&mut rn.focus) {
         te.request_focus();
         let stem = if is_dir {

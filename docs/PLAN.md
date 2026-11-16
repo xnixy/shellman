@@ -144,25 +144,34 @@ what each still needs:
   shows the details in the folder's place with a back arrow (E72B, "Back to the folder"), wide
   again shows both. High contrast: selected rows and cards outlined in the highlight, cards and
   drives outlined, the active tab outlined. Grows with the text size like Task Manager. UI
-  Automation, cards and list view, details beside and alone: no unnamed elements. Edge resize
-  checked as for Task Manager.
+  Automation, cards and list view, details beside and alone, This PC, the Recycle Bin, a narrow
+  window (the band's buttons go icon-only and keep their names): no unnamed elements. The
+  rename box, the picker's file name and the tag menu (check boxes, name fields) are named but
+  were not probed. Enter and Space on the item with the keyboard are the folder's keys (open,
+  select), not a click. Edge resize checked as for Task Manager.
+  Still to do: the details island reads only the name and the line under it, not the facts;
+  the arrows were not driven with real keys (no key injection in tests here); the picker and
+  the dialogs were not probed; `SHELLMAN_REMOTE` not looked at.
 - **Shared, from this work**: `widgets::name_scroll_bar` names egui's own scroll bars ("Scroll
   the folder"; egui leaves them unnamed, and they are Tab stops); `islands::drag_gaps` and the
   rail's background are no longer focusable (they were Tab stops and unnamed `Custom` nodes).
-  Note for probes: PowerShell is not DPI-aware, so `SetWindowPos` sizes from it are scaled by
+  egui's scroll bars stay Tab stops (egui gives them `click_and_drag`). High contrast danger
+  chips (shared `chips`) still carry a tint. Note for probes: PowerShell is not DPI-aware, so `SetWindowPos` sizes from it are scaled by
   the display scale.
 - **Terminal** (done 15 Nov, see its section): tabs (`tab_strip::tab` now names each tab and its
   ×, rings them, and outlines the shown one in high contrast), panes, the find field and its
   case toggle are named; the page colour paints under the gaps in a solid window; the focused
   pane holds the keyboard (Ctrl+F6 to the tabs and buttons). UI Automation, two panes and find
   open: every control named but two `Custom` nodes, egui's root and the window's drag area
-  (`islands::drag_gaps`, shared). Edge resize is Windows' own (`WM_NCHITTEST` in
+  (`islands::drag_gaps`, shared; since made no Tab stop, and scroll bars are named by
+  `widgets::name_scroll_bar`). Edge resize is Windows' own (`WM_NCHITTEST` in
   `window::frameless`), so the cursor over the edge is Windows' too. Its Settings page is named
   (combo boxes and fields).
 - **All windowed apps**: Settings, Files, Task Manager, Terminal and the installer attach with
   `attach_window` and paint `islands::under`, so they follow the Window choice and get the solid
-  page and Windows 11 corners in the solid look. Still to check in each: edge resize with the
-  cursor set back to Default (Settings checked), and Frosted at a glance.
+  page and Windows 11 corners in the solid look. Edge resize with the cursor back to
+  the arrow inside: checked in Settings, Task Manager and Files. Still to check: Frosted at a
+  glance in each.
 - **Bar, dock, launcher, switcher, shelf, quick controls**: shared colours and controls only so
   far. They need names for their painted items (pins, tray icons, tiles, thumbnails), focus rings,
   and the solid / high contrast paths checked (the switcher and desktop have no glass panel).

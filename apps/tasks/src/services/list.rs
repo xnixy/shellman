@@ -87,12 +87,15 @@ pub fn show(ui: &mut egui::Ui, rect: Rect, st: &mut State) {
                     let line = Rect::from_min_size(pos2(all.left(), all.top() + r as f32 * ROW_H), vec2(width, ROW_H));
                     let selected = st.services.selected.as_deref() == Some(service.name.as_str());
                     let tab_stop = selected || (st.services.selected.is_none() && r == 0);
-                    let take = st.services.take_focus;
+                    let take = st.services.take_focus || st.services.focus_pending;
                     let (click, focused) = row(ui, line, service, selected, tab_stop, take);
                     if click {
                         clicked = Some(service.name.clone());
                     }
                     st.services.row_focus |= focused;
+                    if selected && take && tab_stop {
+                        st.services.focus_pending = false;
+                    }
                 }
             },
         );
@@ -200,7 +203,7 @@ fn headers(ui: &mut egui::Ui, rect: Rect, st: &mut State) {
 
 /// Up and Down move the selection. Not while the search field has the keyboard.
 fn keys(ui: &mut egui::Ui, st: &mut State) {
-    let elsewhere = ui.memory(|m| m.focused().is_some()) && !st.services.take_focus;
+    let elsewhere = ui.memory(|m| m.focused().is_some()) && !st.services.take_focus && !st.services.focus_pending;
     if ui.ctx().wants_keyboard_input() || elsewhere {
         return;
     }
@@ -217,6 +220,7 @@ fn keys(ui: &mut egui::Ui, st: &mut State) {
     };
     page.selected = Some(page.all[page.rows[next]].name.clone());
     page.reveal = true;
+    page.focus_pending |= page.take_focus;
 }
 
 /// The selected service: its names, how it starts, and what it says it is for.

@@ -130,7 +130,7 @@ pub fn header_name(title: &str, current: bool, descending: bool) -> String {
 /// selection, Enter opens its details. Not while the search field has the keyboard.
 fn keys(ui: &mut egui::Ui, st: &mut State) {
     // Not while a button or the search has the keyboard: there the keys are theirs.
-    let elsewhere = ui.memory(|m| m.focused().is_some()) && !st.list.take_focus;
+    let elsewhere = ui.memory(|m| m.focused().is_some()) && !st.list.take_focus && !st.list.focus_pending;
     if ui.ctx().wants_keyboard_input() || elsewhere {
         return;
     }
@@ -163,6 +163,7 @@ fn keys(ui: &mut egui::Ui, st: &mut State) {
         };
         st.list.select(next.copied());
         st.list.reveal = true;
+        st.list.focus_pending |= st.list.take_focus;
     }
     let Some(sel) = st.list.selected else {
         return;

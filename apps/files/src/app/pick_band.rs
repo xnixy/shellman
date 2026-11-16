@@ -226,6 +226,7 @@ impl super::FileMan {
                 .margin(Vec2::new(8.0, 0.0))
                 .desired_width(rect.width() - 12.0),
         );
+        shellman_ui::widgets::name_field(&resp, "File name", Some(&p.name));
         if std::mem::take(&mut p.focus_name) {
             resp.request_focus();
             // Select the name without its extension, ready to be typed over, as Windows does.

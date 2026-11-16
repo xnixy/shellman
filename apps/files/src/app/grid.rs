@@ -365,4 +365,13 @@ mod tests {
         let (_, plain) = card_look(&c, false, false);
         assert_eq!(plain.width, 1.0);
     }
+
+    #[test]
+    fn high_contrast_cards_are_outlined_not_tinted() {
+        let c = Colors::high_contrast();
+        let (fill, ring) = card_look(&c, true, true);
+        assert_eq!((fill, ring.color, ring.width), (c.bg, c.accent_fill, 2.0));
+        let (fill, line) = card_look(&c, false, true);
+        assert_eq!((fill, line.color), (c.bg, c.text));
+    }
 }

@@ -158,8 +158,9 @@ fn draw(
             // The arrows move the selection, not egui's focus.
             ui.memory_mut(|m| m.set_focus_lock_filter(id, egui::EventFilter { horizontal_arrows: true, vertical_arrows: true, ..Default::default() }));
             st.list.row_focus = true;
-        } else if selected && st.list.take_focus {
+        } else if selected && (st.list.take_focus || st.list.focus_pending) {
             resp.request_focus();
+            st.list.focus_pending = false;
         }
     }
     let row_rect = rect.shrink2(vec2(0.0, 1.0));

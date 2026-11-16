@@ -416,6 +416,9 @@ mod tests {
         assert_eq!(sel, shows_as(theme::with_alpha(c.accent_fill, 64)));
         assert!(row_fill(&c, false, false).is_none());
         assert!(row_fill(&c, false, true).is_some());
+        // High contrast: no wash at all (the selected row is outlined where it is drawn).
+        let hc = Colors::high_contrast();
+        assert!(row_fill(&hc, true, true).is_none() && row_fill(&hc, false, true).is_none());
     }
 
     #[test]

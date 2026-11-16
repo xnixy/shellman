@@ -40,6 +40,8 @@ pub struct Page {
     /// A row has the keyboard this frame / had it last frame (the selected row takes it over).
     row_focus: bool,
     take_focus: bool,
+    /// The arrows moved the selection while a row had the keyboard; the new row takes it once drawn.
+    focus_pending: bool,
 }
 
 impl Page {

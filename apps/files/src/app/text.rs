@@ -179,6 +179,26 @@ mod tests {
     }
 
     #[test]
+    fn items_are_read_out_whole() {
+        let file = Entry {
+            name: "notes.txt".into(),
+            key: "notes.txt".into(),
+            path: std::path::PathBuf::from(r"C:\notes.txt"),
+            is_dir: false,
+            size: 2048,
+            modified: None,
+            modified_text: String::new(),
+            kind: "Text document".into(),
+            hidden: false,
+        };
+        let s = spoken_item(&file, "Today, 14:32", None);
+        assert!(s.starts_with("notes.txt, Text document, modified Today, 14:32, "), "{s}");
+        let dir = Entry { is_dir: true, kind: "File folder".into(), ..file };
+        assert_eq!(spoken_item(&dir, "", Some(3)), "notes.txt, Folder, 3 items");
+        assert_eq!(spoken_item(&dir, "", None), "notes.txt, Folder");
+    }
+
+    #[test]
     fn counts_have_their_plural() {
         assert_eq!(count(1, "item"), "1 item");
         assert_eq!(count(0, "item"), "0 items");

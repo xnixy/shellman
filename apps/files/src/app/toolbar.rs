@@ -72,7 +72,8 @@ impl super::FileMan {
             egui::pos2(toggle.left() - 8.0 - BUTTON / 2.0, bar.center().y),
             Vec2::splat(BUTTON),
         );
-        let on = self.details_on();
+        // In a narrow window the details show only alone, in the folder's place.
+        let on = self.details_on() && (!self.narrow || self.details_alone);
         if on {
             let c = colors();
             ui.painter().circle_filled(info.center(), BUTTON / 2.0, soft_colors(c.light).1);

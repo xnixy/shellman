@@ -427,6 +427,9 @@ impl super::FileMan {
         for i in 0..COUNT {
             let on = paths.iter().all(|p| self.tags.mask(p) & (1 << i) != 0);
             let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width().max(220.0), 32.0), Sense::click());
+            let tag_name = self.tags.store.name(i).to_owned();
+            resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Checkbox, true, on, &tag_name));
+            theme::focus_ring(ui, &resp, rect, 6.0);
             if resp.hovered() && !self.tag_edit {
                 ui.painter().rect_filled(rect, CornerRadius::same(6), theme::with_alpha(c.text, if c.light { 18 } else { 12 }));
             }
@@ -435,6 +438,7 @@ impl super::FileMan {
             if self.tag_edit {
                 let mut name = self.tags.store.name(i).to_owned();
                 let te = ui.put(text_rect, egui::TextEdit::singleline(&mut name).margin(Vec2::new(6.0, 2.0)));
+                shellman_ui::widgets::name_field(&te, &format!("Name of tag {}", i + 1), Some(&name));
                 if te.changed() && self.tags.store.rename(i, &name) {
                     changed = true;
                 }
