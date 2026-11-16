@@ -196,6 +196,10 @@ unsafe extern "system" fn host_proc(
             }
             wake_tops();
         }
+        WM_TIMER if wparam.0 == crate::fullscreen::FOLLOW_UP_TIMER => {
+            crate::fullscreen::on_timer();
+            return LRESULT(0);
+        }
         WM_TIMER if wparam.0 == WORK_AREA_TIMER => {
             work_area_timer(hwnd);
             return LRESULT(0);
