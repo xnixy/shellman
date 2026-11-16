@@ -153,9 +153,6 @@ GitHub with `--publish`. The signing key is in my password manager, not in the r
 
 ## Known problems
 
-- With shellman as the shell, Windows didn't start packaged apps' background tasks at sign-in
-  (I noticed because Dolby Access stopped working). shellman now tells Windows the sign-in is
-  done the way Microsoft's own shells do, but I haven't confirmed it at a real sign-in yet.
 - shellman's own apps and panels sometimes opened slowly after a few idle minutes. I couldn't
   make it happen again in testing (5 to 15 minutes idle). The one big cost I found, Windows
   Defender scanning each app the first time it runs after an install or update, is now paid in
