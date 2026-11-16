@@ -55,6 +55,20 @@ pub fn anchor_of(rect: [i32; 4]) -> (i32, i32) {
     ((rect[0] + rect[2]).div_euclid(2), rect[3])
 }
 
+/// A point in physical pixels as `window` sees the screen. An app that is not per-monitor aware
+/// (Steam, Claude, BRIO; iCloud only knows the main display's scale) works in scaled coordinates
+/// that Windows makes up for it: given physical pixels it opens its menu where those numbers fall
+/// in its own space, half a screen away at 150%. A per-monitor aware app gets them as they are.
+fn for_window(window: HWND, (x, y): (i32, i32)) -> (i32, i32) {
+    use windows::Win32::UI::HiDpi::PhysicalToLogicalPointForPerMonitorDPI;
+    let mut pt = POINT { x, y };
+    if unsafe { PhysicalToLogicalPointForPerMonitorDPI(Some(window), &mut pt) }.as_bool() {
+        (pt.x, pt.y)
+    } else {
+        (x, y)
+    }
+}
+
 impl TrayIcon {
     /// Tell the app. `anchor` is where the icon is on the monitor that was clicked, in physical
     /// pixels (apps open their menu there); without one the cursor stands in.
@@ -74,7 +88,7 @@ impl TrayIcon {
         unsafe {
             let _ = GetCursorPos(&mut pt);
         }
-        let (ax, ay) = anchor.unwrap_or((pt.x, pt.y));
+        let (ax, ay) = for_window(target, anchor.unwrap_or((pt.x, pt.y)));
         let messages = sequence(self.version, click, self.uid, (ax, ay));
         log::line(&format!(
             "click {click:?} {} anchor=({ax},{ay}) cursor=({},{}) grant={granted} key_press={needed_key} elevated={}",
