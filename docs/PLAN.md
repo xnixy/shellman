@@ -271,8 +271,7 @@ Rule: **the top bar is the system, the dock is apps.** Both are windows of one p
   AppUserModelID the Apps folder knows; Squirrel apps through `Update.exe --processStart`;
   Steam games through `steam://rungameid/<id>`; the Start menu shortcut that starts the program
   (by id, by target when it has no arguments, and only for an app known by a declared id, never
-  in Windows' folders, one
-  in a folder above it); the program. Steam is the case it was made for: its client window is
+  in Windows' folders, one in a folder above it); the program. Steam is the case it was made for: its client window is
   `steamwebhelper.exe` with the id `Valve.Steam.Client` and the relaunch command `steam.exe`.
   Pinned from its window, it saves `steam.exe`; an older pin (id and helper only) with Steam
   closed finds the Start menu's `Steam.lnk`. Windows go to the pin they match best
