@@ -1088,10 +1088,16 @@ tested), else the activation manager, else PowerShell.
     Settings applies these with calls of its own.
   - App permissions are shown only: the consent store
     (`CapabilityAccessManager\ConsentStore`, HKLM device switch, HKCU user / per-package /
-    `NonPackaged` switches, `AppPrivacy` policies) is kept by `camsvc`, which does not follow
-    registry writes: setting the user's or the desktop apps' microphone `Value` to `Deny` left
-    WinRT `AppCapability.CheckAccess("microphone")` at `Allowed`. Package names come from the
-    package manager.
+    `NonPackaged` switches, `AppPrivacy` policies) is kept by `camsvc`: setting the user's or the
+    desktop apps' microphone `Value` to `Deny` left WinRT `AppCapability.CheckAccess("microphone")`
+    from an unpackaged process at `Allowed` three seconds later (that probe also says
+    `UserPromptRequired` for location while HKLM says `Deny`: it is not a one-to-one read of the
+    store). Package names come from the package manager.
+  - Value and page names were checked in Windows' own binaries (UTF-16 strings):
+    `HttpAcceptLanguageOptOut` and `EnableAccountNotifications` in Settings' handlers,
+    `Start_TrackProgs` in StartDocked, the `SearchSettings` names in SearchUx, the suggested
+    content ids with `SubscribedContent-%...Enabled` in ContentDeliveryManager, `NumberOfSIUFInPeriod`
+    in `SettingsHandlers_SIUF`, and all 45 `ms-settings:` pages the two pages link to.
   - Written as HKCU values Windows reads where it uses them (read back, not checked against
     Windows' Settings, which cannot open here): advertising ID (`AdvertisingInfo\Enabled`, locked
     by `DisabledByGroupPolicy`), language list (`HttpAcceptLanguageOptOut`), app-launch tracking

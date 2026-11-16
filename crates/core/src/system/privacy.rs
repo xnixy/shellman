@@ -14,11 +14,13 @@
 //! An administrator's policy (`HKLM\SOFTWARE\Policies\Microsoft\Windows\AppPrivacy`,
 //! `LetAppsAccess*` non-zero) takes the decision away.
 //!
-//! App permissions are only read. The capability access service (`camsvc`) keeps the store and
-//! does not follow writes made to it: measured on 26300, setting the user's or the desktop apps'
-//! microphone `Value` to `Deny` left WinRT `AppCapability.CheckAccess("microphone")` saying
-//! `Allowed`. Windows' Settings changes them through the service, which has no public API, so the
-//! page shows each permission and opens Windows' Settings on its page.
+//! App permissions are only read. The capability access service (`camsvc`) keeps the store, and a
+//! write to it did not reach what Windows answers: measured on 26300 from an unpackaged process,
+//! setting the user's or the desktop apps' microphone `Value` to `Deny` left WinRT
+//! `AppCapability.CheckAccess("microphone")` at `Allowed` three seconds later (the same probe said
+//! `UserPromptRequired` for location while HKLM says `Deny`, so it does not read the store one to
+//! one). Windows' Settings changes them through the service, which has no public API, so the page
+//! shows each permission and opens Windows' Settings on its page.
 //!
 //! The other switches are per-user values Windows' Settings writes and Windows reads where it
 //! uses them (the advertising ID, the language list for websites, app-launch tracking, suggested
