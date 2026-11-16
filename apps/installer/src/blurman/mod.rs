@@ -20,8 +20,8 @@ use windows_core::HSTRING;
 
 pub const PRODUCT_ID: &str = "9NQ3GQNBM4LK";
 pub const FAMILY: &str = "xnixy.Blurman_nz2sgw67tcfww";
-/// The longest a Store install is waited for.
-const LIMIT: Duration = Duration::from_secs(15 * 60);
+/// The longest the wizard waits for a Store install it started (the Store carries on after).
+const LIMIT: Duration = Duration::from_secs(5 * 60);
 
 /// The full names of the Blurman packages installed for this user.
 fn packages() -> windows_core::Result<Vec<String>> {
@@ -61,28 +61,54 @@ fn step(state: AppInstallState, percent: f64, error: windows_core::HRESULT) -> S
     }
 }
 
-/// The Store install service, to the end.
-fn via_store(say: &dyn Fn(&str)) -> Result<(), String> {
+/// How the Store install service ended.
+enum Store {
+    Done,
+    /// It never took the job: winget may.
+    NotStarted(String),
+    /// It took the job and it did not finish here (failed, paused, or still going): reported,
+    /// not tried again, since a second install would race the Store's own.
+    Started(String),
+}
+
+/// The Store install service, to the end or to the wizard's limit.
+fn via_store(say: &dyn Fn(&str)) -> Store {
     let e = |e: windows_core::Error| format!("the Store install service: {}", e.message().trim());
-    let mgr = AppInstallManager::new().map_err(e)?;
-    let id = HSTRING::from(PRODUCT_ID);
-    if !mgr.GetIsAppAllowedToInstallAsync(&id).and_then(|op| op.get()).map_err(e)? {
-        return Err("the Store does not allow installing it here".into());
+    let items = (|| -> Result<Vec<store_api::AppInstallItem>, String> {
+        let mgr = AppInstallManager::new().map_err(e)?;
+        let id = HSTRING::from(PRODUCT_ID);
+        if !mgr.GetIsAppAllowedToInstallAsync(&id).and_then(|op| op.get()).map_err(e)? {
+            return Err("the Store does not allow installing it here".into());
+        }
+        let none = HSTRING::new();
+        let items = mgr
+            .StartProductInstallAsync(&id, &none, &none, &HSTRING::from("shellman"), false, false, &none, None::<&PackageVolume>)
+            .and_then(|op| op.get())
+            .map_err(e)?;
+        let items: Vec<_> = items.into_iter().collect();
+        if items.is_empty() {
+            return Err("the Store had nothing to install".into());
+        }
+        Ok(items)
+    })();
+    let items = match items {
+        Ok(i) => i,
+        Err(why) => return Store::NotStarted(why),
+    };
+    match watch(&items, say) {
+        Ok(()) => Store::Done,
+        Err(why) => Store::Started(why),
     }
-    let none = HSTRING::new();
-    let items = mgr
-        .StartProductInstallAsync(&id, &none, &none, &HSTRING::from("shellman"), false, false, &none, None::<&PackageVolume>)
-        .and_then(|op| op.get())
-        .map_err(e)?;
-    let items: Vec<_> = items.into_iter().collect();
-    if items.is_empty() {
-        return Err("the Store had nothing to install".into());
-    }
+}
+
+/// Follow the Store's items until they are done, one fails, or the limit.
+fn watch(items: &[store_api::AppInstallItem], say: &dyn Fn(&str)) -> Result<(), String> {
+    let e = |e: windows_core::Error| format!("the Store install service: {}", e.message().trim());
     let start = Instant::now();
     let mut last = String::new();
     loop {
         let mut all_done = true;
-        for item in &items {
+        for item in items {
             let s = item.GetCurrentStatus().map_err(e)?;
             match step(s.InstallState().map_err(e)?, s.PercentComplete().map_err(e)?, s.ErrorCode().map_err(e)?) {
                 Step::Done => {}
@@ -100,7 +126,7 @@ fn via_store(say: &dyn Fn(&str)) -> Result<(), String> {
             return Ok(());
         }
         if start.elapsed() > LIMIT {
-            return Err("the Store install took too long".into());
+            return Err("the Store is still installing it and finishes by itself".into());
         }
         std::thread::sleep(Duration::from_millis(500));
     }
@@ -135,10 +161,14 @@ pub fn install(say: &dyn Fn(&str)) -> String {
     }
     say("Blurman: installing from the Microsoft Store…");
     let _com = Com::init();
-    let r = via_store(say).or_else(|why| {
-        say(&format!("Blurman: {why}; trying winget."));
-        via_winget()
-    });
+    let r = match via_store(say) {
+        Store::Done => Ok(()),
+        Store::Started(why) => return format!("Blurman: {why}. If it does not appear, get it from the Microsoft Store."),
+        Store::NotStarted(why) => {
+            say(&format!("Blurman: {why}; trying winget."));
+            via_winget()
+        }
+    };
     match r {
         Ok(()) if installed() => "Blurman is installed.".into(),
         Ok(()) => "Blurman: the install reported success, but the app is not there yet; it may still be finishing.".into(),

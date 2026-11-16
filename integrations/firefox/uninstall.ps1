@@ -65,6 +65,8 @@ if ((-not $state.hadChrome) -and (Test-Path -LiteralPath $chromeDir) -and -not (
 # 2. user.js: drop our block (keeps anything the user added after install); remove the file if we created it
 if (Test-Path -LiteralPath $userJs) {
     $rest = Remove-ManagedBlock (Get-Content -LiteralPath $userJs -Raw)
+    # The line break install added after a user.js that did not end in one.
+    if ($state.PSObject.Properties['userJsBreak'] -and $state.userJsBreak -and $rest -and $rest.EndsWith("`r`n")) { $rest = $rest.Substring(0, $rest.Length - 2) }
     if ((-not $state.hadUserJs) -and [string]::IsNullOrWhiteSpace($rest)) { Remove-Item -LiteralPath $userJs -Force }
     else { [System.IO.File]::WriteAllText($userJs, $rest, (New-Object System.Text.UTF8Encoding($false))) }
 }

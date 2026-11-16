@@ -103,7 +103,12 @@ foreach ($f in $script:ChromeFiles) { Copy-Item -LiteralPath (Join-Path $srcChro
 # 2. prefs between markers, appended to any existing user.js
 $existing = ''
 if (Test-Path -LiteralPath $userJs) { $existing = Remove-ManagedBlock (Get-Content -LiteralPath $userJs -Raw) }
-if ($existing -and -not $existing.EndsWith("`n")) { $existing += "`r`n" }
+if ($existing -and -not $existing.EndsWith("`n")) {
+    $existing += "`r`n"
+    # Recorded, so uninstall takes this line break out again (shellman's Settings does the same).
+    $state | Add-Member -NotePropertyName userJsBreak -NotePropertyValue $true -Force
+    $state | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $stateFile -Encoding UTF8
+}
 $block = $script:BeginMark + "`r`n" + ((Get-Content -LiteralPath $srcPrefs -Raw).TrimEnd()) + "`r`n" + $script:EndMark + "`r`n"
 [System.IO.File]::WriteAllText($userJs, $existing + $block, (New-Object System.Text.UTF8Encoding($false)))
 

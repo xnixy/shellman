@@ -82,8 +82,13 @@ pub struct Profiles {
 impl Profiles {
     pub fn read() -> Profiles {
         let Some(root) = root() else { return Profiles::default() };
+        Profiles::read_from(&root)
+    }
+
+    /// The `profiles.ini` in `root`.
+    pub fn read_from(root: &Path) -> Profiles {
         let ini = Ini::parse(&std::fs::read_to_string(root.join("profiles.ini")).unwrap_or_default());
-        Profiles { list: profiles::list(&ini, &root), ini, root }
+        Profiles { list: profiles::list(&ini, root), ini, root: root.to_path_buf() }
     }
 
     /// The profile `install` opens by default, when profiles.ini names one that exists.

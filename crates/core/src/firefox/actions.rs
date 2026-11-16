@@ -103,3 +103,74 @@ pub fn remove(profile: &Path, profiles: &Profiles, installs: &[Install], dir: He
 pub fn profiles_with_look(profiles: &Profiles) -> Vec<std::path::PathBuf> {
     profiles.list.iter().filter(|p| look::read_state(&p.path).is_some()).map(|p| p.path.clone()).collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    struct Fixture {
+        base: PathBuf,
+        profiles: Profiles,
+        install: Install,
+        src: Source,
+    }
+
+    /// A writable fake Firefox folder and two profiles listed in a profiles.ini of their own.
+    fn fixture(name: &str) -> Fixture {
+        let base = std::env::temp_dir().join(format!("shellman-ff-actions-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let ff = base.join("firefox");
+        std::fs::create_dir_all(ff.join(r"defaults\pref")).unwrap();
+        std::fs::write(ff.join("firefox.exe"), b"").unwrap();
+        for p in ["a", "b"] {
+            std::fs::create_dir_all(base.join(p)).unwrap();
+        }
+        let b = base.display();
+        let ini = format!(
+            "[Install0123456789ABCDEF]\r\nDefault={b}\\a\r\n[Profile0]\r\nName=a\r\nIsRelative=0\r\nPath={b}\\a\r\n[Profile1]\r\nName=b\r\nIsRelative=0\r\nPath={b}\\b\r\n"
+        );
+        std::fs::write(base.join("profiles.ini"), ini).unwrap();
+        let src = Source::at(&Path::new(env!("CARGO_MANIFEST_DIR")).join(r"..\..\integrations\firefox")).unwrap();
+        let install = Install { dir: ff, id: "0123456789ABCDEF".into(), machine: false };
+        Fixture { profiles: Profiles::read_from(&base), base, install, src }
+    }
+
+    #[test]
+    fn the_default_comes_from_the_installations_section() {
+        let f = fixture("default");
+        assert_eq!(f.profiles.default_for(&f.install), Some(f.base.join("a")));
+        let _ = std::fs::remove_dir_all(&f.base);
+    }
+
+    #[test]
+    fn the_loader_goes_in_first_and_out_with_the_last_profile_using_it() {
+        let f = fixture("loader");
+        let (a, b) = (f.base.join("a"), f.base.join("b"));
+        let all = [f.install.clone()];
+        apply(&a, &f.src, Some(&f.install), &f.profiles, &all, None).unwrap();
+        apply(&b, &f.src, Some(&f.install), &f.profiles, &all, None).unwrap();
+        assert_eq!(loader::state(&f.install.dir), loader::State::Current);
+        // b still has the scripts: removing a keeps the loader.
+        let msg = remove(&a, &f.profiles, &all, None).unwrap();
+        assert!(msg.starts_with("Removed."), "{msg}");
+        assert_eq!(loader::state(&f.install.dir), loader::State::Current);
+        // b turns its scripts off: nothing uses the loader, so it goes.
+        apply(&b, &f.src, None, &f.profiles, &all, None).unwrap();
+        assert_eq!(loader::state(&f.install.dir), loader::State::Absent);
+        assert_eq!(look::status(&b, Some(&f.src)), look::Status::Installed { scripts: false });
+        remove(&b, &f.profiles, &all, None).unwrap();
+        let _ = std::fs::remove_dir_all(&f.base);
+    }
+
+    #[test]
+    fn another_autoconfig_stops_the_scripts_before_the_profile_changes() {
+        let f = fixture("foreign");
+        std::fs::write(f.install.dir.join("config.js"), b"// someone else's").unwrap();
+        let a = f.base.join("a");
+        let err = apply(&a, &f.src, Some(&f.install), &f.profiles, &[f.install.clone()], None).unwrap_err();
+        assert!(err.contains("another autoconfig"), "{err}");
+        assert!(!a.join(look::BACKUP_ROOT).exists());
+        let _ = std::fs::remove_dir_all(&f.base);
+    }
+}

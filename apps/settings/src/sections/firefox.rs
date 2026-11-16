@@ -60,8 +60,13 @@ fn scan() -> Scan {
 #[derive(Default)]
 pub struct FirefoxView {
     data: Option<Scan>,
-    scan: Slot<Scan>,
+    /// A finished read, with the number of the read it was.
+    scan: Slot<(u64, Scan)>,
     scanning: bool,
+    /// Reads started so far, and the first read that started after the last work ended: the
+    /// switch is set again from that one (an older read still shows what was there before).
+    scans: u64,
+    resync_from: Option<u64>,
     last_scan: f64,
     /// The profile picked (None: the default, once known).
     chosen: Option<PathBuf>,
@@ -76,16 +81,22 @@ impl FirefoxView {
     fn start_scan(&mut self, ctx: &egui::Context, now: f64) {
         self.scanning = true;
         self.last_scan = now;
+        self.scans += 1;
+        let n = self.scans;
         let (slot, ctx) = (self.scan.clone(), ctx.clone());
         std::thread::spawn(move || {
-            *slot.lock().unwrap() = Some(scan());
+            *slot.lock().unwrap() = Some((n, scan()));
             ctx.request_repaint();
         });
     }
 
     fn poll(&mut self, ctx: &egui::Context) {
         let now = ctx.input(|i| i.time);
-        if let Some(s) = self.scan.lock().unwrap().take() {
+        if let Some((n, s)) = self.scan.lock().unwrap().take() {
+            if self.resync_from.is_some_and(|from| n >= from) {
+                self.resync_from = None;
+                self.scripts_for = None; // set the switch again from what is there now
+            }
             self.data = Some(s);
             self.scanning = false;
         }
@@ -93,8 +104,8 @@ impl FirefoxView {
         if let Some(r) = finished {
             self.work = None;
             self.note = Some(r);
-            self.scripts_for = None; // set the switch again from what is there now
             self.start_scan(ctx, now);
+            self.resync_from = Some(self.scans);
         }
         if !self.scanning && self.work.is_none() && (self.data.is_none() || now - self.last_scan > RESCAN_SECS) {
             self.start_scan(ctx, now);
@@ -195,7 +206,8 @@ pub fn group(ui: &mut egui::Ui, v: &mut FirefoxView) {
         ui.add(egui::Label::new(theme::muted("Firefox is open with this profile. Close Firefox to change the look.").size(12.0).color(theme::colors().danger)).wrap());
     }
     ui.add_space(6.0);
-    let busy = v.work.is_some();
+    // Busy until a read after the work shows what is there now (the last one may be older).
+    let busy = v.work.is_some() || v.resync_from.is_some();
     ui.add_enabled_ui(!busy, |ui| {
         theme::setting_row(
             ui,

@@ -1596,7 +1596,9 @@ beside Explorer for tests.
     The "unskinned Firefox at sign-in" seen 13 Nov was such a restart of a second Firefox, a test
     copy in `C:\Temp\ffscript\app` started without `-profile`, so it came back on its own
     default profile (`compatibility.ini` `LastPlatformDir`), which never had the look. Not a
-    shellman bug; the session log of that day is gone, so the RunOnce step is inferred.
+    shellman bug; the session log of that day is gone, so the RunOnce step is inferred. Open: the
+    Program Files Firefox was also running at that shutdown (its session files stop at 16:42:22)
+    and did not come back; why one was restarted and not the other is not known.
   - Switched-off Run and folder items: `...\Explorer\StartupApproved\{Run,Run32,StartupFolder}`,
     read as the shell's own `shell\lib\runonce` code does (ShellAppRuntime.exe 10.0.26100.9818,
     which shares it with Explorer): only the low bit of the first DWORD counts (odd disabled,
@@ -1775,7 +1777,9 @@ DLL (`shellman-firefox-glass`, real gaps) is not shipped and stays a source-chec
   over another autoconfig is left to `uninstall.ps1`. Nothing changes while Firefox holds the
   profile.
 - `userjs`: the marked block on bytes; the begin marker is matched by its start (the scripts used
-  a longer text). A line break install had to add after a `user.js` without one is taken out again.
+  a longer text). A line break install had to add after a `user.js` without one is taken out again
+  (`userJsBreak` in `state.json`; `install.ps1` / `uninstall.ps1` now record and honour it too:
+  before, the scripts left that line break behind).
 - `loader`: `config.js` and `defaults\pref\config-prefs.js`, their text built in
   (`include_str!`). Ours = says "shellman Islands"; another setup's files are never replaced or
   removed (the scripts are then not installed). Written directly when Firefox's folder is
@@ -1811,8 +1815,17 @@ redirected (setup variables, `SHELLMAN_SETUP_REGISTRY`, the Firefox root): "Also
 installed shellman with `firefox\` and the look (the Program Files loader not writable without a
 prompt there, so the CSS-only fallback, logged); the uninstaller showed "Also remove the look from
 Firefox" on, refused with "Firefox is open" while the lock was held, then removed shellman and gave
-the profile back byte for byte. Not run: the scripts through the UAC prompt into Program Files
-(unit-tested with a writable folder).
+the profile back byte for byte. With scripts, against a fake writable Firefox folder
+(`SHELLMAN_FIREFOX_DIR`): Settings' switch on by default, Install wrote the loader, switch off +
+Update removed it (and the switch stayed off, no Update button: the switch is set again only from a
+read that started after the work), on again + Update, Remove: loader gone, profile byte-identical;
+the wizard with "Also style Firefox" wrote the loader and the uninstaller removed it, profile
+byte-identical. Interop, each from a fresh profile with a `chrome\` and a `user.js` without a final
+line break: `install.ps1` → `uninstall.ps1`, Rust → `uninstall.ps1`, `install.ps1` → Rust, Rust →
+Rust, and a profile with no `user.js`: all byte-identical. Not run: the scripts through the UAC
+prompt into Program Files (the helper's op is unit-tested for its arguments only), and the
+wizard and uninstall window looked at on screen (screen capture failed; checked through UI
+Automation, and the window made 40 px taller, 660, for the Firefox and Blurman rows).
 
 ## Install and update
 
@@ -1937,10 +1950,13 @@ package family `xnixy.Blurman_nz2sgw67tcfww` is there for the user, `PackageMana
 `--quiet --blurman` does the same. It runs after shellman's files and integrations
 (`apps/installer/src/blurman`): Windows' Store install service, `AppInstallManager`
 (`GetIsAppAllowedToInstallAsync`, then `StartProductInstallAsync("9NQ3GQNBM4LK", client
-"shellman")`, its items polled every 0.5 s for state and percent, at most 15 minutes), which needs
-no Store window (the Store's UI cannot open under shellman without the modern-app host). If that
-fails, `winget install 9NQ3GQNBM4LK --source msstore --accept-package-agreements
---accept-source-agreements --disable-interactivity`, no window. Either way the result is a log line
+"shellman")`, its items polled every 0.5 s for state and percent, for at most 5 minutes), which
+needs no Store window (the Store's UI cannot open under shellman without the modern-app host). Only
+when the service does not take the job (it fails, refuses, or returns no items) does `winget
+install 9NQ3GQNBM4LK --source msstore --accept-package-agreements --accept-source-agreements
+--disable-interactivity` run, no window; once the Store has the job, a failure, a pause or the
+5 minutes running out is reported and not tried again (a second install would race the Store's).
+Either way the result is a log line
 and never fails the install. The `windows` crate leaves the Store namespaces out, so
 `store_api.rs` is generated with `windows-bindgen` 0.62.1 (command in its header). The uninstall
 window offers "Also remove Blurman" (off; `PackageManager.RemovePackageAsync`), since it is an
@@ -1950,7 +1966,7 @@ Checked 15 Nov on this PC (Blurman 0.8.0.0 already installed from the Store): it
 wizard shows "already installed" and does nothing, the Store service answers
 `GetIsAppAllowedToInstallAsync` (true) without installing (`cargo test -p shellman-installer --
 --ignored`), and the uninstall window shows the row off. Not run: an actual install through the
-service or winget, and a removal. Unknown: whether the Store's automatic updates for Blurman run
+service or winget, a removal, and the wizard with the Blurman row shown (only on a PC without it). Unknown: whether the Store's automatic updates for Blurman run
 while shellman is the shell (they need the Store's update service, not its window; not checked).
 
 ### Automatic updates and signed releases (15 Nov)
