@@ -207,6 +207,8 @@ mod tests {
         assert_eq!(n, 5);
         let p = find(&out).unwrap();
         assert_eq!(p.offset, "shellman-installer.exe".len() as u64);
+        // The updater reads the same footer before it runs a downloaded installer.
+        shellman_update_core::payload::check(&out).unwrap();
         assert!(find(&stub).is_none());
         // Packing from a packed exe keeps only its program.
         assert_eq!(stub_len(&out).unwrap(), p.offset);

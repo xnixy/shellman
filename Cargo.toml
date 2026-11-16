@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/*", "apps/*", "integrations/firefox/glass"]
+members = ["crates/*", "apps/*", "integrations/firefox/glass", "xtask"]
 resolver = "2"
 
 [workspace.package]

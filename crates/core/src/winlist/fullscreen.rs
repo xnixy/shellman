@@ -41,6 +41,17 @@ pub fn is_fullscreen(window: RECT, class: &str, own: bool, maximized_framed: boo
 /// True when the foreground window is fullscreen on the monitor `bar` (a window handle) is on.
 /// Called when the front window changed or moved, never on a timer.
 pub fn foreground_covers_monitor_of(bar: isize) -> bool {
+    foreground_covers(Some(HWND(bar as *mut _)))
+}
+
+/// True when the foreground window is fullscreen on its own monitor (a game, a video, a
+/// presentation): what the updater waits out.
+pub fn foreground_is_fullscreen() -> bool {
+    foreground_covers(None)
+}
+
+/// `on`: the window whose monitor counts; `None`: the front window's own.
+fn foreground_covers(on: Option<HWND>) -> bool {
     unsafe {
         let front = GetForegroundWindow();
         if front.is_invalid() || !IsWindowVisible(front).as_bool() {
@@ -50,7 +61,7 @@ pub fn foreground_covers_monitor_of(bar: isize) -> bool {
             cbSize: size_of::<MONITORINFO>() as u32,
             ..Default::default()
         };
-        let monitor = MonitorFromWindow(HWND(bar as *mut _), MONITOR_DEFAULTTOPRIMARY);
+        let monitor = MonitorFromWindow(on.unwrap_or(front), MONITOR_DEFAULTTOPRIMARY);
         if !GetMonitorInfoW(monitor, &mut info).as_bool() {
             return false;
         }

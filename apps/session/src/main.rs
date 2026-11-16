@@ -7,6 +7,7 @@
 //! Explorer.
 
 mod apps;
+mod autoupdate;
 mod cli;
 mod fallback;
 mod find;
@@ -75,6 +76,7 @@ fn main() {
     }
     if !test {
         warm::start();
+        autoupdate::start(Instant::now());
     }
     run(fleet, safety.then_some(net), None);
 }

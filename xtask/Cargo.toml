@@ -1,0 +1,12 @@
+[package]
+name = "xtask"
+version = "0.1.0"
+edition.workspace = true
+description = "Maintainer commands: `cargo xtask release` (build, pack, sign, publish) and `cargo xtask keygen`"
+license.workspace = true
+publish = false
+
+[dependencies]
+getrandom = "0.2"
+serde_json.workspace = true
+shellman-update-core = { path = "../crates/update" }
