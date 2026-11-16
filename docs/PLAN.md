@@ -1416,6 +1416,73 @@ images, and the shell and default terminal state.)
   and stays so. Shellman's own apps take a pack's icon only by exact name (`shellman-files`), so
   other packs leave them in the accent.
 
+## Opening speed (15 Nov)
+
+The README's known problem: shellman's own apps and panels opened slowly after a few idle
+minutes. Measured on this PC (Ryzen 9 9950X3D, RTX 5090, 96 GB, Explorer as the shell, release
+test copies beside it), the slowdown after idle did not come back; the one large cost found is
+Microsoft Defender's scan of an exe on its first start after it was written, which `core::warm`
+(added after the complaint was written) already pays ahead.
+
+**Measuring.** `SHELLMAN_TIMING=1` makes every app write `timing-<app>.log` in its data folder
+(`%LOCALAPPDATA%\shellman`, or a test copy's `SHELLMAN_CONFIG_DIR`); without it each call is one
+atomic load. A line is `<filetime> <pid> <app> +<ms since the process was created> <what>
+[| detail]`: process created, main entered, window and GL context ready, app built, and the first
+frame with real content painted and presented (two `DwmFlush` after it). From outside,
+`crates/core/examples/open_watch.rs` times a request to the window being shown and uncloaked,
+plus one composition: `summon <event> <title>` (set a resident's event), `run <title> <exe>` (start
+the exe, as the top bar did per click), `spawn <title> <exe> [args]` (a new app); `trim <pid>`
+empties working sets, `display off|on` turns the monitors off as the display timeout does and
+wakes them. `open_probe` (same folder) reads the fleet's memory and throttling and times a bare
+OpenGL context.
+
+**Idle** (from outside, ms to the window on screen; Files to its listing presented):
+
+| | warm | after 5 min idle |
+|---|---|---|
+| launcher, event | 11.5 to 22.5 | 13.8, 14.0 |
+| control centre, event | 15.6 to 25.4 | 17.3, 20.2 |
+| launcher, exe start (the installed bar's way) | 19.1 to 21.0 | 20.2 to 24.7 (monitors off) |
+| control centre, exe start | 31.5, 31.7 | 26.9 to 30.0 (monitors off) |
+| Files, new process | 204 to 228 | 202 to 258 |
+
+- Monitors off for 20 s then woken, 3 rounds: no change (launcher 10 to 16, control centre 17 to
+  23, Files 227 to 248), except one Files open at 908 ms in which every stage, `main` included,
+  was about 4 times slower: the whole machine was slow then (sibling sessions build all day),
+  not the display. The monitors-off request was sent, not confirmed on screen.
+- Emptied working sets (what Windows does to idle processes when memory runs short): +2 to 5 ms
+  for the launcher and control centre; 63 GB were free, so nothing was paged out for real.
+- The GPU stayed in P0 throughout and the machine was never quiet; lock and sleep were not tried
+  (both need the user's password to come back). An idle machine elsewhere, or with less memory,
+  may still differ.
+- The first showing of a resident after it starts is slow: launcher 128 to 142 ms, control
+  centre 138 to 258, against 10 to 25 after. It is not idle: it did not come back after 5 min.
+
+**Defender** (an exe run with `--warm`, which returns from `main` at once; the whole run is
+timed, about 78 ms when nothing is scanned):
+
+- A never-seen exe (a copy with bytes appended): first start 0.98 to 1.30 s, then 76 to 79 ms
+  from the second start on. A new copy of an exe already seen: 233 to 288 ms, then 76 to 80.
+  A real Files open of a never-seen copy: 1.26 to 1.50 s; after one `--warm` run: 0.21 s.
+- Unchanged copies left untouched, then started: 82 ms after 2 min, 72 after 5, 87 after 10
+  (monitors off by then), 76 after 15. No rescan seen up to 15 min; longer gaps were not run.
+- Defender's cloud signature deliveries (event 2010, hundreds an hour while sibling sessions
+  build) did not bring a scan back. Full signature updates (event 2000, a few a day here) were
+  not tried: that would mean starting one.
+- So Defender costs a second or more on the first start after an install or update; the session
+  (4 s after its start) and setup (after an update) already run each on-demand app once with
+  `--warm`. The build the complaint was written against had neither.
+
+**Done.** The top bar sets the resident launcher's and control centre's events itself
+(`core::summon`) instead of starting their exe on each click: about 10 ms less per open by the
+numbers above (from separate runs; a paired run was stopped before it gave numbers).
+
+**Not done, worth weighing.** Files, Settings, Task Manager and the terminal take 200 to 250 ms
+to open every time; a bare OpenGL context is about 95 ms of it, so only a warm hidden instance
+would make them open like the panels. The residents' first showing could be done once, hidden,
+at start. Whether a full signature update makes Defender scan unchanged exes again is open; if
+it does, warming again after event 2000 would cover it.
+
 ## Order of work
 
 1. Dock hover previews (done 13 Nov).

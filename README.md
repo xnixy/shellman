@@ -97,5 +97,6 @@ The same from a terminal, for the developer loop: `target\release\shellman-setup
   sign-in (found with Dolby Access OEM, which stopped running). Not fixed.
 - A dock pin for an app whose window belongs to a helper process (Steam) shows the wrong icon
   or does not start the app after a restart. Unfinished work is on the `wip/dock-pins` branch.
-- Opening shellman's own apps and panels is slow after a few idle minutes. Unfinished work is
-  on the `wip/open-speed` branch.
+- Opening shellman's own apps and panels was slow after a few idle minutes. Not reproduced on
+  test copies after 5 to 15 idle minutes; the one large cost found, Defender's first-start scan
+  after an install or update, is paid ahead by `core::warm` (see docs/PLAN.md, Opening speed).
