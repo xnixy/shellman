@@ -155,7 +155,8 @@ pub fn drag_gaps(ui: &mut egui::Ui, rect: egui::Rect) -> egui::Response {
     let resp = ui.interact(
         rect,
         egui::Id::new("island-gaps"),
-        egui::Sense::click_and_drag(),
+        // Not FOCUSABLE: the gaps are no Tab stop.
+        egui::Sense::CLICK | egui::Sense::DRAG,
     );
     crate::widgets::window_drag(ui, &resp);
     resp

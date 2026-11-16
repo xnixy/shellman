@@ -109,10 +109,14 @@ pub struct TasksApp {
     look_watch: shellman_core::watch::Watcher,
     st: State,
     _instance: Instance,
+    /// The least window size at Windows' text size, and whether the window has been grown to it
+    /// (a size restored from a run at a smaller text size is too small).
+    min: [f32; 2],
+    grown: bool,
 }
 
 impl TasksApp {
-    pub fn new(ctx: &egui::Context, look: Appearance, panel: GlassPanel, hwnd: isize, instance: Instance) -> Self {
+    pub fn new(ctx: &egui::Context, look: Appearance, panel: GlassPanel, hwnd: isize, instance: Instance, min: [f32; 2]) -> Self {
         let wake = ctx.clone();
         // Nothing is read while the window is minimised or hidden.
         let paused = move || unsafe {
@@ -154,6 +158,8 @@ impl TasksApp {
                 services: services::Page::default(),
             },
             _instance: instance,
+            min,
+            grown: false,
         }
     }
 
@@ -268,6 +274,7 @@ impl TasksApp {
             .vertical_align(egui::Align::Center)
             .font(egui::FontId::proportional(13.0));
         let resp = ui.put(inner, edit);
+        shellman_ui::widgets::name_field(&resp, if self.page == Page::Services { "Search services" } else { "Search processes" }, Some(&self.query));
         // Ctrl+F or typing "/" puts the cursor here.
         if ui.input(|i| i.modifiers.command && i.key_pressed(egui::Key::F)) {
             resp.request_focus();
@@ -331,6 +338,9 @@ impl eframe::App for TasksApp {
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.st.thumbs.poll(ctx);
+        if !self.grown {
+            self.grown = theme::env::grow_to(ctx, self.min);
+        }
         self.follow_look(ctx);
         self.track_system(ctx);
         shellman_ui::app_icon::sync_window_icon(ctx, shellman_ui::app_icon::Kind::Shellman);

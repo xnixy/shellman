@@ -37,6 +37,9 @@ pub struct Page {
     stale: bool,
     /// Scroll the selection into view on the next frame.
     reveal: bool,
+    /// A row has the keyboard this frame / had it last frame (the selected row takes it over).
+    row_focus: bool,
+    take_focus: bool,
 }
 
 impl Page {

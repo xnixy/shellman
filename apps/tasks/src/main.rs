@@ -30,11 +30,13 @@ fn main() -> eframe::Result {
         instance::Claim::Signalled => return Ok(()),
         instance::Claim::First(first) => first,
     };
+    // Larger with Windows' text size, as far as the screen allows (egui's zoom does the rest).
+    let (size, min) = theme::env::scaled_window([1060.0, 720.0], [760.0, 520.0], theme::env::text_scale(), theme::env::work_area_points());
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("Task Manager")
-            .with_inner_size([1060.0, 720.0])
-            .with_min_inner_size([760.0, 520.0])
+            .with_inner_size(size)
+            .with_min_inner_size(min)
             .with_transparent(true)
             .with_decorations(false),
         centered: true,
@@ -66,7 +68,7 @@ fn main() -> eframe::Result {
             }
             first.serve(hwnd, cc.egui_ctx.clone());
             let panel = panel.ok_or("the window has no handle")?;
-            Ok(Box::new(app::TasksApp::new(&cc.egui_ctx, look, panel, hwnd, first)))
+            Ok(Box::new(app::TasksApp::new(&cc.egui_ctx, look, panel, hwnd, first, min)))
         }),
     )
 }

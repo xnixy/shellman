@@ -7,6 +7,8 @@ mod pill;
 mod row;
 mod summary;
 
+pub use list::header_name;
+
 use crate::app::{State, MARGIN, RADIUS};
 use egui::{pos2, Rect};
 use shellman_ui::glass::islands::Island;
