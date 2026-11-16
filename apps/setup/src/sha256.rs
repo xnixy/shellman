@@ -84,7 +84,6 @@ impl Sha256 {
     }
 }
 
-#[cfg(test)]
 pub fn of_bytes(data: &[u8]) -> String {
     let mut s = Sha256::default();
     s.update(data);

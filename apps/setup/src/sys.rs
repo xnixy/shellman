@@ -139,6 +139,12 @@ pub fn hhmmss() -> String {
     format!("{:02}{:02}{:02}", t.wHour, t.wMinute, t.wSecond)
 }
 
+/// `yyyyMMdd` of the local date (Apps & features' `InstallDate`).
+pub fn yyyymmdd() -> String {
+    let t = unsafe { GetLocalTime() };
+    format!("{:04}{:02}{:02}", t.wYear, t.wMonth, t.wDay)
+}
+
 /// A named lock so two setups on one install cannot interleave. Held until dropped.
 pub struct Lock(HANDLE);
 

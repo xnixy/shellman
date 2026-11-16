@@ -1,0 +1,22 @@
+[package]
+name = "shellman-installer"
+version = "0.1.0"
+edition.workspace = true
+description = "Installs and removes shellman: one exe with every file inside, and a glass wizard"
+license.workspace = true
+publish = false
+
+[dependencies]
+eframe.workspace = true
+egui.workspace = true
+# The payload is deflated (already in the build for eframe's PNG icons).
+flate2 = "1"
+raw-window-handle.workspace = true
+shellman-buildinfo.workspace = true
+shellman-setup = { path = "../setup" }
+shellman-ui.workspace = true
+windows.workspace = true
+
+[build-dependencies]
+shellman-buildinfo.workspace = true
+winresource.workspace = true

@@ -63,7 +63,7 @@ Today (calendar and weather) and Now playing, beside the tray.
 | `apps/files`, `apps/pickhook` | File manager, and its hook for other apps' Open and Save dialogs |
 | `apps/terminal` | Terminal |
 | `apps/settings`, `apps/control`, `apps/tasks` | Settings, quick controls, task manager |
-| `apps/setup` | Install, update, status and uninstall |
+| `apps/setup`, `apps/installer` | The install engine and its command line; the one-exe installer and uninstaller |
 | `crates/core`, `crates/ui` | Shared system code, and the glass, rail and menu components |
 
 ## Build and install
@@ -72,26 +72,24 @@ Windows 11 and a current Rust toolchain.
 
 ```
 cargo build --release --workspace
-target\release\shellman-setup.exe install --from target\release
+target\release\shellman-installer.exe --pack target\release
 ```
 
-That installs the apps without changing the Windows shell. Making shellman the shell is a
-separate, deliberate step, and holding Shift at sign-in still starts Explorer:
+That writes `target\dist\shellman-<version>-setup.exe`, one exe with every file inside. Run it:
+a window asks for the folder (default `%LOCALAPPDATA%\Programs\shellman`, no administrator
+rights) and offers, all off by default, to make shellman the Windows shell from the next sign-in,
+shellman Terminal the default terminal, and shellman Files the Open and Save dialogs of other
+apps. Holding Shift at sign-in still starts Explorer. Running a newer one over an install updates
+it (and sets those three to match its switches).
 
-```
-%LOCALAPPDATA%\Programs\shellman\shellman-session.exe --install
-```
+To remove it: Settings > Apps > Installed apps > shellman > Uninstall. That puts back the shell,
+the default terminal and the dialogs, closes shellman's apps and removes its files, shortcuts
+and (when asked) settings. If shellman is the shell running at that moment, it keeps running and
+its files go when you sign in again.
 
-To go back to Explorer and remove it:
-
-```
-%LOCALAPPDATA%\Programs\shellman\shellman-terminal.exe --unregister-default-terminal
-%LOCALAPPDATA%\Programs\shellman\shellman-session.exe --uninstall
-target\release\shellman-setup.exe uninstall
-```
-
-`shellman-setup uninstall` does not yet remove the file dialog hook's registry entries or the
-"shellman font check" sign-in entry; see the known gaps in the plan.
+The same from a terminal, for the developer loop: `target\release\shellman-setup.exe install
+--from target\release` (or `update --restart`), and `shellman-setup uninstall --revert`; see
+`shellman-setup --help`.
 
 ## Known problems
 
