@@ -121,7 +121,7 @@ pub fn tab(ui: &mut Ui, rect: Rect, clip: Rect, t: &Tab) -> TabResponse {
     let resp = ui.interact(rect.intersect(clip), t.id, Sense::click_and_drag());
     // A screen reader reads it as a selectable item with its title, selected when shown; with
     // the keyboard on it, it has a ring.
-    resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, t.active, t.title));
+    crate::access::describe(&resp, || egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, t.active, t.title));
     let hovered = resp.hovered() || resp.dragged() || resp.has_focus();
     let r = CornerRadius::same((h / 2.0) as u8);
     let (soft, soft_hover, line) = soft_colors(c.light);
@@ -148,7 +148,7 @@ pub fn tab(ui: &mut Ui, rect: Rect, clip: Rect, t: &Tab) -> TabResponse {
     let mut close = false;
     if show_close && clip.contains_rect(cr) {
         let b = ui.interact(cr, t.id.with("close"), Sense::click());
-        b.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, format!("Close {}", t.title)));
+        crate::access::describe(&b, || egui::WidgetInfo::labeled(egui::WidgetType::Button, true, format!("Close {}", t.title)));
         theme::focus_ring(ui, &b, cr, 10.0);
         if b.hovered() {
             p.circle_filled(cr.center(), 10.0, theme::with_alpha(c.text, 30));

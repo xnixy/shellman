@@ -30,7 +30,7 @@ impl Out {
     /// Say what the slider is to a screen reader: `name`, and its level as a percentage.
     pub fn named(self, name: &str) -> Self {
         let (enabled, value) = (self.response.enabled(), (self.shown * 100.0).round() as f64);
-        self.response.widget_info(|| egui::WidgetInfo::slider(enabled, value, name));
+        crate::access::describe(&self.response, || egui::WidgetInfo::slider(enabled, value, name));
         self
     }
 }
@@ -100,6 +100,18 @@ pub fn thin_in(ui: &mut Ui, rect: Rect, id: Id, value: f32, enabled: bool) -> Ou
     let fill = Rect::from_min_max(track.min, pos2(x, track.bottom()));
     let round = TRACK_H / 2.0;
     let p = ui.painter();
+    if c.high_contrast {
+        // Windows' colours: the track outlined in the text colour, the filled part highlight,
+        // the knob the text colour (grey text when disabled), no shadow.
+        let (fill_color, knob) = if enabled { (c.accent_fill, c.text) } else { (c.muted, c.muted) };
+        p.rect_filled(track, round, c.bg);
+        p.rect_filled(fill, round, fill_color);
+        p.rect_stroke(track, round, Stroke::new(1.0_f32, c.text), egui::StrokeKind::Outside);
+        let grow = if response.hovered() || response.dragged() { 1.0 } else { 0.0 };
+        p.circle(pos2(x, y), KNOB / 2.0 + grow, knob, Stroke::new(1.0_f32, c.bg));
+        crate::theme::focus_ring(ui, &response, rect.shrink2(vec2(0.0, 3.0)), (HEIGHT - 6.0) / 2.0);
+        return Out { value: picked, response, shown };
+    }
     let (fill_color, knob) = if enabled { (c.accent_fill, Color32::WHITE) } else { (with_alpha(c.muted, 120), Color32::from_gray(200)) };
     p.rect_filled(track, round, track_color(c.light));
     p.rect_filled(fill, round, fill_color);

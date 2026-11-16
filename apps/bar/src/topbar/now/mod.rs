@@ -232,7 +232,7 @@ impl Pill {
                 Kind::Attention => format!("{}{SEP}{}\nClick to bring it forward", s.title, s.detail),
             };
             let spoken = s.spoken();
-            resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &spoken));
+            shellman_ui::access::describe(&resp, || egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &spoken));
             shellman_ui::theme::focus_ring(ui, &resp, island.shrink(inset), (layout::ISLAND_H - 2.0 * inset) / 2.0);
             let resp = resp.on_hover_text(tip);
             if resp.clicked() {

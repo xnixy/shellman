@@ -210,9 +210,23 @@ pub fn ago(secs: u64) -> String {
     }
 }
 
+/// What a screen reader reads for a notification card: who, what and when, one line each
+/// joined, the empty parts left out ("Mail, New message, Lunch at noon?, 4 min").
+pub fn spoken(app: &str, title: &str, body: &str, ago: &str) -> String {
+    let body = body.split_whitespace().collect::<Vec<_>>().join(" ");
+    [app, title, body.as_str(), ago].iter().map(|s| s.trim()).filter(|s| !s.is_empty()).collect::<Vec<_>>().join(", ")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_card_reads_who_what_and_when() {
+        assert_eq!(spoken("Mail", "New message", "Lunch
+at noon?", "4 min"), "Mail, New message, Lunch at noon?, 4 min");
+        assert_eq!(spoken("Backup", "", "  ", "now"), "Backup, now");
+    }
     use shellman_core::notify::source::sample;
     use shellman_core::notify::{Action, Activation, Reply};
 

@@ -95,6 +95,12 @@ pub fn item_line(size: Option<u64>, then: i64, now: i64) -> String {
 }
 
 /// The last pill's words: "Open Downloads in Files", and "14 more" when the fan left some out.
+/// What a screen reader reads for a painted item: its lines joined with commas, the dots the
+/// lines use as separators read as commas too, the empty ones left out.
+pub fn spoken(lines: &[&str]) -> String {
+    lines.iter().map(|l| l.replace(" · ", ", ")).map(|l| l.trim().to_owned()).filter(|l| !l.is_empty()).collect::<Vec<_>>().join(", ")
+}
+
 pub fn open_in_files(folder: &str, more: usize) -> (String, Option<String>) {
     (format!("Open {folder} in Files"), (more > 0).then(|| format!("{more} more")))
 }
@@ -102,6 +108,12 @@ pub fn open_in_files(folder: &str, more: usize) -> (String, Option<String>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn spoken_lines_read_as_one() {
+        assert_eq!(spoken(&["report.pdf", "1.2 MB · today"]), "report.pdf, 1.2 MB, today");
+        assert_eq!(spoken(&["Open Downloads in Files", ""]), "Open Downloads in Files");
+    }
 
     /// Thursday 12 November 2026, 12:41 local, as seconds since 1970.
     const NOW: i64 = 1_794_487_260;

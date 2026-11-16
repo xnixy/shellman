@@ -43,7 +43,13 @@ pub fn chip_width(ui: &Ui, label: &str, icon: bool, kind: Chip) -> f32 {
 
 /// The faint fill and line of a soft chip (or a card) on glass, and its hovered fill. Given as
 /// they should show (see `glass::islands::shows_as`).
+/// In high contrast both fills are the window colour and the line is the text colour: a white
+/// wash is not one of Windows' colours, and hover is shown by an outline instead.
 pub fn soft_colors(light: bool) -> (Color32, Color32, Stroke) {
+    let c = colors();
+    if c.high_contrast {
+        return (c.bg, c.bg, Stroke::new(1.0_f32, c.text));
+    }
     let white = |a: u8| shows_as(Color32::from_rgba_unmultiplied(255, 255, 255, a));
     if light {
         (
@@ -67,7 +73,8 @@ pub fn chip(
 ) -> egui::Response {
     let c = colors();
     let resp = ui.interact(rect, id, Sense::click());
-    resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, kind == Chip::Accent, label));
+    // A chip is an action ("Today", "Clear all", "Send"); the accent is its look, not a state.
+    crate::access::describe(&resp, || egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
     theme::focus_ring(ui, &resp, rect, rect.height() / 2.0);
     let hovered = resp.hovered();
     let (soft, soft_hover, line) = soft_colors(c.light);
@@ -102,6 +109,9 @@ pub fn chip(
     let r = CornerRadius::same((rect.height() / 2.0).round() as u8);
     ui.painter()
         .rect(rect, r, fill, stroke, egui::StrokeKind::Inside);
+    if hovered && kind != Chip::Accent {
+        theme::contrast_outline(ui, rect, rect.height() / 2.0, true, false);
+    }
     let mut x = rect.left() + PAD;
     if let Some(g) = icon {
         ui.painter().text(
@@ -144,7 +154,7 @@ pub fn round_icon(
         Sense::hover()
     };
     let resp = ui.interact(rect, id, sense);
-    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, name));
+    crate::access::describe(&resp, || egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, name));
     let radius = rect.width().min(rect.height()) / 2.0;
     theme::focus_ring(ui, &resp, rect, radius);
     let mut fg = if enabled {
@@ -161,7 +171,17 @@ pub fn round_icon(
         if danger {
             fg = Color32::WHITE;
         }
+        // High contrast has no red: a hovered close button is highlight under highlight text.
+        let fill = if c.high_contrast && danger {
+            fg = c.on_accent;
+            c.accent_fill
+        } else {
+            fill
+        };
         ui.painter().circle_filled(rect.center(), radius, fill);
+        if c.high_contrast && !danger {
+            ui.painter().circle_stroke(rect.center(), radius - 0.5, Stroke::new(1.0_f32, c.text));
+        }
     }
     ui.painter()
         .text(rect.center(), Align2::CENTER_CENTER, g, icon_font(11.0), fg);

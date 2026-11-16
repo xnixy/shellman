@@ -68,7 +68,7 @@ pub fn font_picker(ui: &mut Ui, current: FontChoice) -> Option<FontChoice> {
             });
         });
     let label = format!("Font: {}", shown(current));
-    out.response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::ComboBox, true, label.clone()));
+    crate::access::describe(&out.response, || egui::WidgetInfo::labeled(egui::WidgetType::ComboBox, true, label.clone()));
     if pick.is_some() {
         ui.data_mut(|d| d.remove::<String>(query_id));
     }

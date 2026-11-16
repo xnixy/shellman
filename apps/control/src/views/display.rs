@@ -38,7 +38,8 @@ impl DisplayView {
                 }
                 let dragged = self.dragging.as_ref().filter(|(id, _)| *id == screen.id).map(|(_, p)| *p);
                 let shown = dragged.unwrap_or(screen.percent) as f32 / 100.0;
-                let out = kit::slider(ui, egui::Id::new(("brightness", &screen.id)), shown, glyph::BRIGHTNESS);
+                let label = name.as_ref().map_or_else(|| "Brightness".to_owned(), |n| format!("Brightness, {n}"));
+                let out = kit::slider(ui, egui::Id::new(("brightness", &screen.id)), shown, glyph::BRIGHTNESS, &label, None);
                 if let Some(v) = out.value {
                     let percent = (v * 100.0).round() as u8;
                     still_dragging = true;

@@ -56,7 +56,7 @@ pub fn round_button(ui: &mut Ui, g: char, enabled: bool, tip: &str) -> egui::Res
         Sense::hover()
     };
     let (rect, resp) = ui.allocate_exact_size(Vec2::splat(30.0), sense);
-    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, tip));
+    crate::access::describe(&resp, || egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, tip));
     theme::focus_ring(ui, &resp, rect, 15.0);
     if enabled && resp.hovered() {
         ui.painter()
@@ -144,7 +144,7 @@ pub fn switch(ui: &mut Ui, on: &mut bool, label: &str) -> egui::Response {
         .layout_no_wrap(label.to_owned(), FontId::proportional(13.5), c.text);
     let size = Vec2::new(36.0 + 10.0 + galley.size().x, 20.0_f32.max(galley.size().y));
     let (rect, mut resp) = ui.allocate_exact_size(size, Sense::click());
-    resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Checkbox, true, *on, label));
+    crate::access::describe(&resp, || egui::WidgetInfo::selected(egui::WidgetType::Checkbox, true, *on, label));
     if resp.clicked() {
         *on = !*on;
         resp.mark_changed();
@@ -157,10 +157,17 @@ pub fn switch(ui: &mut Ui, on: &mut bool, label: &str) -> egui::Response {
     resp
 }
 
+/// What a screen reader calls a window's tile or preview: its title, or "Untitled window" for
+/// one without (never an unnamed item).
+pub fn window_name(title: &str) -> String {
+    let title = title.trim();
+    if title.is_empty() { "Untitled window".to_owned() } else { title.to_owned() }
+}
+
 /// Give a text field a name a screen reader says (its hint is only a placeholder), with what is
 /// typed as its value; `None` for a password, whose text is never handed over.
 pub fn name_field(resp: &egui::Response, name: &str, typed: Option<&str>) {
-    resp.widget_info(|| egui::WidgetInfo {
+    crate::access::describe(&resp, || egui::WidgetInfo {
         label: Some(name.to_owned()),
         current_text_value: typed.map(str::to_owned),
         ..egui::WidgetInfo::new(egui::WidgetType::TextEdit)
@@ -171,7 +178,7 @@ pub fn name_field(resp: &egui::Response, name: &str, typed: Option<&str>) {
 /// screen reader calls it.
 pub fn toggle(ui: &mut Ui, on: &mut bool, name: &str) -> egui::Response {
     let (rect, mut resp) = ui.allocate_exact_size(Vec2::new(36.0, 20.0), Sense::click());
-    resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Checkbox, true, *on, name));
+    crate::access::describe(&resp, || egui::WidgetInfo::selected(egui::WidgetType::Checkbox, true, *on, name));
     if resp.clicked() {
         *on = !*on;
         resp.mark_changed();
@@ -255,5 +262,16 @@ pub fn name_scroll_bar<R>(ctx: &egui::Context, out: &egui::scroll_area::ScrollAr
     // egui's bar for direction `d` (1: vertical) is `id.with(d)`.
     if let Some(bar) = ctx.read_response(out.id.with(1usize)) {
         bar.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Other, true, format!("Scroll {what}")));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_window_is_never_unnamed() {
+        assert_eq!(window_name("  "), "Untitled window");
+        assert_eq!(window_name(" Notes "), "Notes");
     }
 }

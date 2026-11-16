@@ -70,6 +70,7 @@ impl TopBar {
             egui::pos2(status_right, mid + STATUS_H / 2.0),
         );
         let resp = ui.interact(group, egui::Id::new("status"), egui::Sense::click());
+        shellman_ui::theme::speak(&resp, egui::WidgetType::Button, || st.spoken());
         highlight(ui, group, &resp, (STATUS_H / 2.0) as u8);
         let mut x = group.left() + PAD;
         for ((glyph, text), w) in items.iter().zip(&widths) {

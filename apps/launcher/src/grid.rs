@@ -191,6 +191,8 @@ pub fn show(
                         egui::vec2(width - 2.0 * left - 20.0, HEADER_H),
                     );
                     fade.paint(ui, rect, |p| crate::section::label(p, rect, title));
+                    let resp = ui.interact(rect, egui::Id::new(("header", r)), egui::Sense::hover());
+                    shellman_ui::theme::speak(&resp, egui::WidgetType::Label, || title.to_string());
                 }
                 Row::Items(items) => {
                     for (col, &index) in items.iter().enumerate() {
@@ -200,6 +202,9 @@ pub fn show(
                         );
                         let pos = Pos { row: r, col };
                         let resp = ui.interact(rect, egui::Id::new(("cell", r, col)), egui::Sense::click());
+                        // The search field keeps the keyboard; arrows move the selection, which
+                        // a screen reader sees as this tile's selected state.
+                        shellman_ui::theme::speak_selected(&resp, egui::WidgetType::SelectableLabel, pos == selected, || apps[index].name.clone());
                         if resp.clicked() {
                             out.launch = Some(index);
                         }
@@ -246,9 +251,15 @@ fn draw_cell(
 ) {
     let c = colors();
     let inner = rect.shrink2(egui::vec2(2.0, 0.0));
-    let ink = if selected { c.on_accent } else { c.text };
-    if selected {
+    // High contrast: a highlight outline around ordinary text for the selected tile, a text
+    // outline for hover, never a fill.
+    let fill = selected && !c.high_contrast;
+    let ink = if fill { c.on_accent } else { c.text };
+    if fill {
         p.rect_filled(inner, 14.0, c.accent_fill);
+    } else if c.high_contrast && (selected || hovered) {
+        let stroke = if selected { egui::Stroke::new(2.0_f32, c.row_selected) } else { egui::Stroke::new(1.0_f32, c.text) };
+        p.rect_stroke(inner, 14.0, stroke, egui::StrokeKind::Inside);
     } else if hovered {
         p.rect_filled(inner, 14.0, c.text.gamma_multiply(0.08));
     }

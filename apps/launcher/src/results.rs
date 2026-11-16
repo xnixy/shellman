@@ -71,6 +71,9 @@ pub fn show(
                     egui::vec2(width, ROW_H),
                 );
                 let resp = ui.interact(rect, egui::Id::new(("result", i)), egui::Sense::click());
+                // The search field keeps the keyboard; arrows move the selection, which a screen
+                // reader sees as this row's selected state.
+                shellman_ui::theme::speak_selected(&resp, egui::WidgetType::SelectableLabel, i == selected, || spoken(*item, apps, query));
                 if resp.clicked() {
                     out.launch = Some(i);
                 }
@@ -106,10 +109,15 @@ fn draw_row(
 ) {
     let c = colors();
     let row = rect.shrink2(egui::vec2(0.0, 2.0));
-    // The selected row is a rounded accent fill, its text on the accent.
-    let ink = if selected { c.on_accent } else { c.text };
-    if selected {
+    // The selected row is a rounded accent fill, its text on the accent. High contrast: a
+    // highlight outline around ordinary text, and a text outline for hover.
+    let fill = selected && !c.high_contrast;
+    let ink = if fill { c.on_accent } else { c.text };
+    if fill {
         p.rect_filled(row, 14.0, c.accent_fill);
+    } else if c.high_contrast && (selected || hovered) {
+        let stroke = if selected { egui::Stroke::new(2.0_f32, c.row_selected) } else { egui::Stroke::new(1.0_f32, c.text) };
+        p.rect_stroke(row, 14.0, stroke, egui::StrokeKind::Inside);
     } else if hovered {
         p.rect_filled(row, 12.0, c.text.gamma_multiply(0.08));
     }
@@ -132,14 +140,8 @@ fn draw_row(
         Item::App(index) => {
             crate::icon::paint(p, icon, &apps[index], thumbs);
             name(p, name_at, name_w, &apps[index].name, apps[index].alias().as_deref(), Some(query), ink);
-            let kind = if apps[index].own {
-                "shellman"
-            } else if apps[index].windows_twin {
-                "Windows"
-            } else {
-                "App"
-            };
-            sub(p, sub_at, kind, ink, selected);
+            let kind = kind_of(&apps[index]);
+            sub(p, sub_at, kind, ink, fill);
         }
         Item::Run => {
             crate::icon::plate(p, icon);
@@ -151,7 +153,7 @@ fn draw_row(
                 c.accent_text,
             );
             name(p, name_at, name_w, &format!("Run \"{}\"", query.trim()), None, None, ink);
-            sub(p, sub_at, "Run this command", ink, selected);
+            sub(p, sub_at, "Run this command", ink, fill);
         }
     }
     if selected {
@@ -171,7 +173,8 @@ fn name(
     ink: Color32,
 ) {
     let marks = query.map(|q| crate::rank::matched_with_alias(text, alias, q)).unwrap_or_default();
-    let any = marks.contains(&true);
+    // High contrast has no faded text colour: the matched letters are not set apart there.
+    let any = marks.contains(&true) && !colors().high_contrast;
     let format = |on: bool| TextFormat {
         font_id: egui::FontId::proportional(NAME_SIZE),
         color: if any && !on { ink.gamma_multiply(0.72) } else { ink },
@@ -195,6 +198,29 @@ fn name(
     p.galley(egui::pos2(at.x, at.y - galley.size().y / 2.0), galley, ink);
 }
 
+/// What kind of thing an app is, the line under its name.
+fn kind_of(app: &App) -> &'static str {
+    if app.own {
+        "shellman"
+    } else if app.windows_twin {
+        "Windows"
+    } else {
+        "App"
+    }
+}
+
+/// What a screen reader reads for a row: the name and the line under it.
+pub fn spoken(item: Item, apps: &[App], query: &str) -> String {
+    match item {
+        Item::App(index) => apps.get(index).map_or_else(String::new, |a| format!("{}, {}", a.name, kind_of(a))),
+        Item::Run => run_name(query),
+    }
+}
+
+fn run_name(query: &str) -> String {
+    format!("Run \"{}\", run this command", query.trim())
+}
+
 /// The small line under a name, fainter than it.
 fn sub(p: &Painter, at: egui::Pos2, text: &str, ink: Color32, selected: bool) {
     let color = if selected { ink.gamma_multiply(0.8) } else { colors().muted };
@@ -209,13 +235,20 @@ fn hint(p: &Painter, row: Rect, ink: Color32, admin: bool) {
         egui::Align2::RIGHT_CENTER,
         if admin { "Run as administrator" } else { "Enter" },
         egui::FontId::proportional(12.0),
-        ink.gamma_multiply(0.85),
+        if colors().high_contrast { ink } else { ink.gamma_multiply(0.85) },
     );
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_run_row_says_what_it_runs() {
+        assert_eq!(spoken(Item::Run, &[], "  notepad "), "Run \"notepad\", run this command");
+        // An index past the list (a stale frame) reads as nothing rather than panicking.
+        assert_eq!(spoken(Item::App(3), &[], ""), "");
+    }
 
     #[test]
     fn run_row_is_always_last() {

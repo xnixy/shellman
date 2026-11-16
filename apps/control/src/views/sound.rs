@@ -43,7 +43,7 @@ impl SoundView {
             ui.label(egui::RichText::new("Sound").font(label_font()).color(c.text));
             let shown = if volume.muted { 0.0 } else { self.dragging.unwrap_or(volume.level) };
             let g = if volume.muted { glyph::MUTED } else { glyph::VOLUME };
-            let out = kit::slider(ui, egui::Id::new("volume"), shown, g);
+            let out = kit::slider(ui, egui::Id::new("volume"), shown, g, "Volume", Some(if volume.muted { "Unmute" } else { "Mute" }));
             if let Some(level) = out.value {
                 if self.dragging != Some(level) {
                     self.dragging = Some(level);
@@ -101,9 +101,16 @@ impl SoundView {
         for (i, o) in shown.iter().enumerate() {
             let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), ROW), Sense::click());
             let is_default = default.as_deref() == Some(o.id.as_str());
+            let expanded = self.expanded;
+            shellman_ui::theme::speak_selected(&resp, egui::WidgetType::SelectableLabel, is_default, || {
+                output_name(&o.name, i == 0, expanded)
+            });
+            let back = rect.expand2(Vec2::new(4.0, 0.0));
+            shellman_ui::theme::focus_ring(ui, &resp, back, 8.0);
             if resp.hovered() {
-                ui.painter().rect_filled(rect.expand2(Vec2::new(4.0, 0.0)), CornerRadius::same(8), kit::well(false));
+                ui.painter().rect_filled(back, CornerRadius::same(8), kit::well(false));
             }
+            shellman_ui::theme::contrast_outline(ui, back, 8.0, resp.hovered(), false);
             if is_default && self.expanded {
                 let at = Pos2::new(rect.left() + 8.0, rect.center().y);
                 ui.painter().text(at, Align2::CENTER_CENTER, glyph::CHECK, icon_font(12.0), c.text);
@@ -142,6 +149,9 @@ impl SoundView {
         let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), CHIP), Sense::hover());
         let center = Pos2::new(rect.left() + CHIP / 2.0, rect.center().y);
         let resp = ui.interact(Rect::from_center_size(center, Vec2::splat(CHIP)), egui::Id::new("mic"), Sense::click());
+        // A switch (a checkbox stands in): checked while the microphone is on.
+        shellman_ui::theme::speak_selected(&resp, egui::WidgetType::Checkbox, !muted, || "Microphone".to_owned());
+        shellman_ui::theme::focus_ring(ui, &resp, resp.rect, CHIP / 2.0);
         let g = if muted { glyph::MICROPHONE_OFF } else { glyph::MICROPHONE };
         chip(ui, center, g, !muted, resp.hovered());
         let left = rect.left() + CHIP + 10.0;
@@ -158,16 +168,42 @@ impl SoundView {
     }
 }
 
+/// What a screen reader reads for an output row: its name, and for the first row (which folds
+/// and unfolds the list) what a click does.
+pub fn output_name(name: &str, first: bool, expanded: bool) -> String {
+    match (first, expanded) {
+        (true, false) => format!("{name}, show other outputs"),
+        (true, true) => format!("{name}, hide other outputs"),
+        _ => name.to_owned(),
+    }
+}
+
 /// A small link under a view's controls that opens our settings on that view's page.
 pub(super) fn settings_link(ui: &mut Ui, text: &str) -> bool {
     let c = colors();
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), ROW), Sense::click());
+    shellman_ui::theme::speak(&resp, egui::WidgetType::Link, || text.to_owned());
+    let back = rect.expand2(Vec2::new(4.0, 0.0));
+    shellman_ui::theme::focus_ring(ui, &resp, back, 8.0);
     if resp.hovered() {
-        ui.painter().rect_filled(rect.expand2(Vec2::new(4.0, 0.0)), CornerRadius::same(8), kit::well(false));
+        ui.painter().rect_filled(back, CornerRadius::same(8), kit::well(false));
     }
+    shellman_ui::theme::contrast_outline(ui, back, 8.0, resp.hovered(), false);
     let color = if resp.hovered() { c.text } else { c.muted };
     let at = Pos2::new(rect.right() - 8.0, rect.center().y);
     ui.painter().text(at, Align2::CENTER_CENTER, glyph::OPEN_EXTERNAL, icon_font(10.0), color);
     kit::clipped_text(ui, Pos2::new(rect.left(), rect.center().y), Align2::LEFT_CENTER, text, small_font(), color, rect.width() - 24.0);
     resp.clicked()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_first_output_says_it_folds_the_list() {
+        assert_eq!(output_name("Speakers", true, false), "Speakers, show other outputs");
+        assert_eq!(output_name("Speakers", true, true), "Speakers, hide other outputs");
+        assert_eq!(output_name("Headphones", false, true), "Headphones");
+    }
 }

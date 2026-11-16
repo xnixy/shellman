@@ -82,7 +82,10 @@ pub(super) fn paint<T>(ui: &Ui, rect: Rect, r: &Row<T>, lit: bool, open: bool) {
         }
         _ => {}
     }
-    if lit && r.enabled {
+    if lit && r.enabled && c.high_contrast {
+        // No wash in high contrast: an outline in the text colour.
+        p.rect_stroke(rect.shrink2(Vec2::new(0.0, 1.0)), CornerRadius::same(6), Stroke::new(1.0_f32, c.text), egui::StrokeKind::Inside);
+    } else if lit && r.enabled {
         // The text colour, faint: never the accent, which may be black.
         let fill = theme::with_alpha(c.text, if c.light { 18 } else { 12 });
         p.rect_filled(rect.shrink2(Vec2::new(0.0, 1.0)), CornerRadius::same(6), fill);

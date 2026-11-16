@@ -74,7 +74,8 @@ apart, the accent only where it stands out. What lives in `crates/ui` so every a
   accent); `theme::checkbox`, `theme::setting_row` and `theme::trailing` (control laid out first,
   text wraps beside it); `chips::round_icon` takes the name a screen reader reads; painted
   controls draw `theme::focus_ring` under the keyboard.
-- **Screen readers**: eframe's `accesskit` feature is on. Painted controls (switches, checkboxes,
+- **Screen readers**: eframe's `accesskit` feature is on (root windows; other viewports get an
+  adapter from `access::publish`, see the shell surfaces below). Painted controls (switches, checkboxes,
   round icons, chips, rail pages) say what they are with `widget_info` (egui 0.31 has no Switch,
   Tab or ListItem roles: Checkbox and SelectableLabel stand in). Do not call
   `Context::accesskit_node_builder` while building a frame: in egui 0.31 it kept the installer's
@@ -176,11 +177,70 @@ what each still needs:
   page and Windows 11 corners in the solid look. Edge resize with the cursor back to
   the arrow inside: checked in Settings, Task Manager and Files. Still to check: Frosted at a
   glance in each.
-- **Bar, dock, launcher, switcher, shelf, quick controls**: shared colours and controls only so
-  far. They need names for their painted items (pins, tray icons, tiles, thumbnails), focus rings,
-  and the solid / high contrast paths checked (the switcher and desktop have no glass panel).
-  They do not follow the text size yet: their geometry is computed in pixels and needs checking
-  first.
+- **Shell surfaces** (15 Nov: bar, dock, launcher, switcher, Task View, shelf, quick controls).
+  - *Screen readers for every window.* eframe 0.31 hands only the root viewport to AccessKit, so
+    the bar's windows (its root is a hidden host), the previews, notifications, calendar, the
+    shelf's other monitors and widgets, and the popup menu showed UI Automation an empty window.
+    `access::publish` (end of each non-root viewport's frame) gives such a window its own
+    `accesskit_windows` adapter, found by its title, fed a tree of what its items said through
+    `access::describe`: `theme::speak` / `speak_selected` and every shared control (chips, round
+    icons, switches, sliders, fields, menu rows, rail, tabs) go through it. Names are only made
+    once a screen reader has asked that window for its tree; they run under egui's lock, so a
+    name closure must never touch the `Context` or a `Ui`. A screen reader's click is played to
+    the window as a mouse click on the item. The arrange bar keeps its own adapter (it never
+    publishes); never attach two to one window.
+  - *Names* (role, name, selected): tray icons (tooltip, or "Notification icon"), Start, the clock
+    ("Calendar, <date>, <time>", pressed while open), the status group in words, the bell with
+    its count, dock icons (app, pinned, windows, attention, progress; pressed for the front app),
+    previews and their close buttons, calendar days (full date, today, has events, another month;
+    the chosen one selected) with the month, day heading and event rows as text, notification
+    cards (app, title, body, age), Show more, the Do not disturb switch, the reply field; launcher
+    tiles and results (selected follows the arrows), the search field, section headers; switcher
+    tiles (selected); Task View's header text; shelf stacks (open = pressed), fan pills, the drop
+    zone, Today and Now playing (text and buttons); quick controls' tiles and their switches,
+    sliders (Volume, Brightness per screen), Mute, outputs, Microphone, settings links, power
+    buttons and choices, media buttons and text; popup menu rows (submenu, hint, checked; the
+    lit row holds the focus).
+  - *Probed* (test copies, `SHELLMAN_INSTANCE`, counts; names only where nothing personal):
+    no unnamed interactive element in any of them. Top bar 9 (Start, Calendar, Quick controls,
+    Notifications, 5 tray), dock 6, calendar 47 (42 days, 2 texts, 3 buttons), notifications 19,
+    launcher 28 (24 tiles) and its results, quick controls 22, Task View 12, each shelf 4 and an
+    open fan 11, Today 2, the desktop menu 8. Screen-reader clicks worked through the bridge:
+    UIA Toggle opened the calendar, the notifications and a stack, UIA Invoke turned the calendar
+    to the next month; closing and opening the calendar again keeps its tree. Not probed live:
+    the switcher (shows only while Alt is held, on its hook) and the previews (hover only); both
+    are named in code. Remaining `Custom` nodes are egui's own (the root window's, and the
+    launcher's scroll area) and Task View's backdrop (named "Task View").
+  - *Keyboard*: quick controls and Task View take the keyboard (focus rings on every painted
+    control; Tab order is egui's; checked in quick controls: Tab goes Wi-Fi, its switch,
+    Ethernet, Focus, its switch, Mute, the outputs, with the ring drawn). The notifications'
+    reply field takes the keyboard when clicked. The launcher keeps its field focused and moves a selection
+    with the arrows, which screen readers see as the selected tile or row. The bar, dock, calendar,
+    notifications (outside the reply field), shelf, previews and switcher never take the keyboard (no-activate windows; the switcher reads Alt+Tab
+    on its hook): reachable by screen reader (UIA) but not by Tab. Win+1-9 reaches dock icons.
+  - *High contrast*: Windows' colours, every island outlined (`solid_shapes`), no hover washes
+    (`theme::contrast_outline`: 1 px text outline for hover, 2 px highlight outline for the
+    selected tile, result, day or row), highlight only under highlight text (menus' lit row,
+    switches and tiles that are on, the bell's count). Shared: chips and round icons (the close
+    one is highlight, not red), the slider (outlined track, highlight fill, text-coloured knob),
+    popup menus. The previews now paint their panel with `solid_shapes` like the other bar
+    windows. Looked at with `SHELLMAN_HIGH_CONTRAST`: top bar, dock, calendar, notifications,
+    launcher, quick controls; with `SHELLMAN_REMOTE` / `SHELLMAN_SOLID`: the top bar (opaque
+    islands with their hairline). Written but not looked at in high contrast: the popup menu's
+    lit row, the shelf and its fan, Today / Now playing, Task View, the switcher, the previews.
+  - *Text size: not followed* (none of these calls `env::follow_text_scale`; they follow the
+    monitor's DPI only). Not followed on purpose where the geometry is a band or a fixed place:
+    the top bar is 32 pt and the dock one row of icons, each reserving its band of the work
+    area; the switcher and Task View lay tiles out in pixels per monitor; the shelf's stacks and
+    widgets sit at fixed places on the desktop. Not tried yet where it may fit: the launcher (a
+    fixed 6-column grid and a centred window) and quick controls (a fixed-width panel whose
+    height is fitted to the screen); both need their window size to take the factor, as
+    `env::scaled_window` does for windowed apps.
+  - *Still to do*: text size for the launcher and quick controls (above); Settings › Desktop's
+    stack chips should be checkboxes (they say no state); the "1 h" chip reads only "1 h"; the
+    previews and the switcher to be probed live; the high contrast looks listed above as not
+    looked at; the bar's own right-click menus are the shared popup (named) but were not opened
+    in the probe.
 
 ## Bar plan: a top bar and a dock
 
