@@ -52,6 +52,8 @@ pub struct CalPanel {
     ctx: egui::Context,
     open: bool,
     hwnd: Option<isize>,
+    /// Asked to make the window before its first use (see `make_ahead`).
+    ahead: bool,
     out: bool,
     warm: Option<u8>,
     /// Every bar's clock, by monitor device.
@@ -72,6 +74,7 @@ impl CalPanel {
             ctx,
             open: false,
             hwnd: None,
+            ahead: false,
             out: false,
             warm: None,
             clocks: HashMap::new(),
@@ -173,12 +176,12 @@ impl CalPanel {
                 surface::set_islands(hwnd, &[], 1.0, true, None);
             }
         }
-        self.hwnd.is_some() || self.open
+        self.hwnd.is_some() || self.open || self.ahead
     }
 
     /// After the host declared the window: find it once, give it its manners and glass.
     pub fn adopt(&mut self) -> bool {
-        if self.hwnd.is_some() || !self.open {
+        if self.hwnd.is_some() || !(self.open || self.ahead) {
             return true;
         }
         let Some(hwnd) = shape::own_window(TITLE) else { return false };
@@ -190,10 +193,20 @@ impl CalPanel {
         self.place(hwnd);
         crate::notify::show_window(hwnd);
         self.hwnd = Some(hwnd);
-        self.out = true;
-        self.warm = Some(0);
+        shellman_core::timing::mark_with("calendar: window made", || if self.open { "on first use" } else { "ahead" }.to_string());
+        if self.open {
+            self.out = true;
+            self.warm = Some(0);
+        }
+        // Made ahead: it stays cloaked and parked, as after a close; the first open takes the
+        // same path as every later one.
         self.ctx.request_repaint_of(id());
         true
+    }
+
+    /// Make the window now, hidden, so the first open does not wait for it.
+    pub fn make_ahead(&mut self) {
+        self.ahead = true;
     }
 
     /// The panel's screen rectangle, while it is out.
@@ -240,6 +253,7 @@ impl CalPanel {
         if let Some(n) = self.warm {
             if n + 1 >= WARM_FRAMES {
                 glass::cloak(hwnd, false);
+                shellman_core::timing::mark("calendar: shown");
                 self.warm = None;
             } else {
                 self.warm = Some(n + 1);

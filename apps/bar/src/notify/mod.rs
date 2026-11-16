@@ -113,6 +113,8 @@ pub struct Notify {
     feed: Feed,
     /// The window, once it exists (it is kept from then on).
     hwnd: Option<isize>,
+    /// Asked to make the window before its first use (see `make_ahead`).
+    ahead: bool,
     warm: Option<u8>,
     /// Whether it is out (not parked) now.
     out: bool,
@@ -161,6 +163,7 @@ impl Notify {
             _watch: watch,
             feed: Feed::with_dnd(dnd),
             hwnd: None,
+            ahead: false,
             warm: None,
             out: false,
             replies: HashMap::new(),
@@ -333,7 +336,7 @@ impl Notify {
                 self.park(hwnd);
             }
         }
-        self.hwnd.is_some() || self.feed.visible()
+        self.hwnd.is_some() || self.feed.visible() || self.ahead
     }
 
     /// The store's toasts and the balloons, oldest first.
@@ -377,7 +380,7 @@ impl Notify {
     /// In the host's frame, after it declared the window: find it once it exists and give it its
     /// manners and glass, once. False while it is still to come.
     pub fn adopt(&mut self) -> bool {
-        if self.hwnd.is_some() || !self.feed.visible() {
+        if self.hwnd.is_some() || !(self.feed.visible() || self.ahead) {
             return true;
         }
         let Some(hwnd) = shape::own_window(TITLE) else { return false };
@@ -390,10 +393,20 @@ impl Notify {
         self.place(hwnd);
         window::show(hwnd);
         self.hwnd = Some(hwnd);
-        self.out = true;
-        self.warm = Some(0);
+        shellman_core::timing::mark_with("notifications: window made", || if self.feed.visible() { "on first use" } else { "ahead" }.to_string());
+        if self.feed.visible() {
+            self.out = true;
+            self.warm = Some(0);
+        }
+        // Made ahead: it stays cloaked and parked, as after a close; the first open takes the
+        // same path as every later one.
         self.ctx.request_repaint_of(id());
         true
+    }
+
+    /// Make the window now, hidden, so the first open does not wait for it.
+    pub fn make_ahead(&mut self) {
+        self.ahead = true;
     }
 
     /// The window's frame: lay out, draw, and do what was clicked. `running` lists the apps
@@ -536,6 +549,7 @@ impl Notify {
         let Some(n) = self.warm else { return };
         if n + 1 >= WARM_FRAMES {
             glass::cloak(hwnd, false);
+            shellman_core::timing::mark("notifications: shown");
             self.warm = None;
         } else {
             self.warm = Some(n + 1);

@@ -486,6 +486,25 @@ impl eframe::App for Host {
             }
             shellman_core::calendar::select::clock(until + shared.live.offset(until), shared.live.h24())
         });
+        // The calendar's and notifications' windows are made 2 s after the start, hidden, so the
+        // first click on the clock or the bell is as quick as the next ones (making a window, its
+        // drawing surface and its glass took about a quarter of a second, on the click).
+        {
+            use std::sync::atomic::{AtomicBool, Ordering};
+            static AHEAD: AtomicBool = AtomicBool::new(false);
+            const AFTER: f64 = 2.0;
+            if !AHEAD.load(Ordering::Relaxed) {
+                let now = ctx.input(|i| i.time);
+                if now >= AFTER {
+                    AHEAD.store(true, Ordering::Relaxed);
+                    shellman_core::timing::mark("panels: windows made ahead");
+                    shared.calendar.make_ahead();
+                    shared.notify.make_ahead();
+                } else {
+                    ctx.request_repaint_after(std::time::Duration::from_secs_f64(AFTER - now));
+                }
+            }
+        }
         let parts: &mut Shared = &mut shared;
         let bars = &parts.bars;
         let covered = |device: &str| bars.top_hwnd(device).is_some_and(foreground_covers_monitor_of);
@@ -501,6 +520,7 @@ impl eframe::App for Host {
         };
         let notify_open = parts.notify.tick(&tick);
         if self.summoned.swap(false, std::sync::atomic::Ordering::AcqRel) {
+            shellman_core::timing::mark("notifications: asked (Win+N)");
             // Win+N: the notifications under the bell of the display with the window in front.
             let focused = notify::focused_device().filter(|d| devices.contains(d));
             if let Some(device) = focused.or_else(|| devices.first().cloned()) {
