@@ -116,25 +116,49 @@ what each still needs:
 
 - **Settings** (15 Nov): done. Appearance has Theme and Window chips; every page probed with UI
   Automation has no unnamed controls (search field, sliders, combo boxes, segmented choices,
-  switches in Startup and Desktop rows, search results, font rows), except the Terminal page
-  (a combo box and a field), left to the Terminal work. The selected font row is a highlight
+  switches in Startup and Desktop rows, search results, font rows); the Terminal page's
+  profile combo box and its two fields are named too (15 Nov), and so is the page's scroll bar. The selected font row is a highlight
   outline in high contrast. Edge resize gives the arrows and the cursor comes back to the arrow
   inside, in the glass and solid looks. The rail is compact below 800 (`rail::NARROW_BELOW`,
   which covers the language's 720; Files needs 800 for its tabs). Text size 150 grows the window
   to 1050×810 points.
-- **Task Manager**: already header pill, rail and islands. Its own painted rows (process list,
-  column headers, graphs) need names and a high contrast outline for the selected row (31
-  unnamed painted elements, the search field unnamed). It already follows the Window choice.
-- **Files**: a tab strip instead of a header pill; check the 12 gaps, narrow widths (one pane
-  at a time below 620), names for list rows, tabs and the path bar.
+- **Task Manager** (done 15 Nov): every painted piece is named: process rows (name, note, every
+  column, Suspended / Not responding, expanded or collapsed, "cannot be ended"), the group
+  chevrons ("Expand X"), the Apps / Background headings with their counts, column headers with
+  their sort ("CPU, sorted descending"), the summary tiles (value and detail, "Open in
+  Performance"), each Performance island as one image with its numbers, the details card, the
+  search field, the services rows and headers. Each list is one Tab stop (the selected row, the
+  first when none is); the arrows move the selection and the keyboard goes with it
+  (`set_focus_lock_filter`), and Enter, Delete and the arrows are left alone while a button has
+  the keyboard. High contrast: the selected row is a highlight outline, no hover washes, graphs
+  outlined without fills. Text size grows the window (`scaled_window` / `grow_to`). UI
+  Automation on Processes, Performance and Services: no unnamed elements. Edge resize: the arrows
+  at the edge, the arrow back inside, glass and solid.
+- **Files** (done 15 Nov): rows and cards say name, type, date and size, and selected; tabs (and
+  "Close X"), path segments ("Windows, current folder", "More of the path: ..."), "Type a path",
+  the path field, the search field, the List / Cards radio buttons, column headers with their
+  sort, drives (free of total), the bin's buttons, the folder area ("Windows, 101 items"), the
+  empty and error messages, and the details island as one label are named. Items are one Tab
+  stop (the cursor's item) as in Task Manager. Narrow windows (`plan::ONE_PANE_BELOW`, and never
+  less than 400 for the folder beside the details): one pane at a time; the details button
+  shows the details in the folder's place with a back arrow (E72B, "Back to the folder"), wide
+  again shows both. High contrast: selected rows and cards outlined in the highlight, cards and
+  drives outlined, the active tab outlined. Grows with the text size like Task Manager. UI
+  Automation, cards and list view, details beside and alone: no unnamed elements. Edge resize
+  checked as for Task Manager.
+- **Shared, from this work**: `widgets::name_scroll_bar` names egui's own scroll bars ("Scroll
+  the folder"; egui leaves them unnamed, and they are Tab stops); `islands::drag_gaps` and the
+  rail's background are no longer focusable (they were Tab stops and unnamed `Custom` nodes).
+  Note for probes: PowerShell is not DPI-aware, so `SetWindowPos` sizes from it are scaled by
+  the display scale.
 - **Terminal** (done 15 Nov, see its section): tabs (`tab_strip::tab` now names each tab and its
   ×, rings them, and outlines the shown one in high contrast), panes, the find field and its
   case toggle are named; the page colour paints under the gaps in a solid window; the focused
   pane holds the keyboard (Ctrl+F6 to the tabs and buttons). UI Automation, two panes and find
   open: every control named but two `Custom` nodes, egui's root and the window's drag area
   (`islands::drag_gaps`, shared). Edge resize is Windows' own (`WM_NCHITTEST` in
-  `window::frameless`), so the cursor over the edge is Windows' too. Its Settings page (a combo
-  box and a field) is still to name.
+  `window::frameless`), so the cursor over the edge is Windows' too. Its Settings page is named
+  (combo boxes and fields).
 - **All windowed apps**: Settings, Files, Task Manager, Terminal and the installer attach with
   `attach_window` and paint `islands::under`, so they follow the Window choice and get the solid
   page and Windows 11 corners in the solid look. Still to check in each: edge resize with the

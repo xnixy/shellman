@@ -242,7 +242,7 @@ impl SettingsApp {
         ui.scope_builder(UiBuilder::new().max_rect(area), |ui| {
             ui.spacing_mut().scroll = egui::style::ScrollStyle::floating();
             // Dragging the gaps between islands moves the window, so the area must not take it.
-            egui::ScrollArea::vertical().auto_shrink([false, false]).drag_to_scroll(false).show(ui, |ui| {
+            let out = egui::ScrollArea::vertical().auto_shrink([false, false]).drag_to_scroll(false).show(ui, |ui| {
                 if searching {
                     self.results(ui);
                     return;
@@ -291,6 +291,7 @@ impl SettingsApp {
                     self.st.terminal.stop();
                 }
             });
+            shellman_ui::widgets::name_scroll_bar(ui.ctx(), &out, "the page");
         });
         if let Some(section) = self.st.goto.take() {
             self.section = section;
