@@ -31,7 +31,7 @@ fn shown(choice: FontChoice) -> String {
 pub fn font_picker(ui: &mut Ui, current: FontChoice) -> Option<FontChoice> {
     let query_id = Id::new("font search");
     let mut pick = None;
-    egui::ComboBox::from_id_salt("font family")
+    let out = egui::ComboBox::from_id_salt("font family")
         .width(320.0)
         .selected_text(shown(current))
         .show_ui(ui, |ui| {
@@ -67,6 +67,8 @@ pub fn font_picker(ui: &mut Ui, current: FontChoice) -> Option<FontChoice> {
                 }
             });
         });
+    let label = format!("Font: {}", shown(current));
+    out.response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::ComboBox, true, label.clone()));
     if pick.is_some() {
         ui.data_mut(|d| d.remove::<String>(query_id));
     }

@@ -11,7 +11,7 @@ use shellman_ui::chips::{self, Chip};
 use shellman_ui::glass::islands::shows_as;
 use shellman_ui::menu::{self, Icon};
 use shellman_ui::theme::{self, colors, glyph, icon_font, semibold_font};
-use shellman_ui::widgets::switch;
+use shellman_ui::widgets::toggle;
 
 const TILE_H: f32 = 150.0;
 const ROW_H: f32 = 46.0;
@@ -76,7 +76,7 @@ pub(super) fn row(ui: &mut Ui, label: &str, first: bool, add: impl FnOnce(&mut U
 
 fn rows(ui: &mut Ui, st: &mut State) -> bool {
     let mut changed = false;
-    changed |= row(ui, "Show shelf", true, |ui| switch(ui, &mut st.desktop.shelf.show, "").changed());
+    changed |= row(ui, "Show shelf", true, |ui| toggle(ui, &mut st.desktop.shelf.show, "Show shelf").changed());
     changed |= row(ui, "Show shelf on", false, |ui| {
         let options = ShelfOn::ALL.map(|o| (o, o.label()));
         page::segmented(ui, &mut st.desktop.shelf.on, &options)

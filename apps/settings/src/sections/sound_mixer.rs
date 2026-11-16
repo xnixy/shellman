@@ -59,7 +59,7 @@ fn row(ui: &mut egui::Ui, handle: &SoundPage, s: &AppSession, thumbs: &mut Thumb
     if mute_button(&mut child, s.muted).clicked() {
         handle.set_session_muted(&s.key, !s.muted);
     }
-    if let Some(v) = level_slider(&mut child, Id::new(("session", &s.key)), s.volume, s.muted, 16.0) {
+    if let Some(v) = level_slider(&mut child, Id::new(("session", &s.key)), &format!("{} volume", s.name), s.volume, s.muted, 16.0) {
         handle.set_session_volume(&s.key, v);
     }
 }

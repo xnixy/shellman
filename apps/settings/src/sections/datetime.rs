@@ -126,8 +126,10 @@ fn time_zone(ui: &mut egui::Ui, v: &mut DateTimeView, ctx: &egui::Context, data:
         .map(|z| z.display.clone())
         .unwrap_or_else(|| "Unknown time zone".to_owned());
     let mut pick = None;
-    egui::ComboBox::from_id_salt("tz").width(460.0).selected_text(shown).height(360.0).show_ui(ui, |ui| {
-        ui.add(egui::TextEdit::singleline(&mut v.filter).hint_text("Filter").desired_width(f32::INFINITY));
+    let label = format!("Time zone: {shown}");
+    let out = egui::ComboBox::from_id_salt("tz").width(460.0).selected_text(shown).height(360.0).show_ui(ui, |ui| {
+        let filter = ui.add(egui::TextEdit::singleline(&mut v.filter).hint_text("Filter").desired_width(f32::INFINITY));
+        shellman_ui::widgets::name_field(&filter, "Filter time zones", Some(&v.filter));
         let q = v.filter.trim().to_lowercase();
         for z in data.zones.iter().filter(|z| q.is_empty() || z.display.to_lowercase().contains(&q)) {
             let on = current.is_some_and(|c| c.key == z.key);
@@ -136,6 +138,7 @@ fn time_zone(ui: &mut egui::Ui, v: &mut DateTimeView, ctx: &egui::Context, data:
             }
         }
     });
+    out.response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::ComboBox, true, label.clone()));
     if let Some(key) = pick {
         v.filter.clear();
         v.write(ctx, Box::new(move || region::set_zone(&key)));

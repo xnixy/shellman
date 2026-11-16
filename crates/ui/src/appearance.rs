@@ -1,7 +1,8 @@
-//! The look every shellman app shares: accent color and glass amount, saved once in
+//! The look every shellman app shares: accent color, glass amount, window style and theme, saved once in
 //! `%APPDATA%\shellman\appearance.json`. Files edits it; the bars follow it live.
 
 use crate::fonts::{self, FontChoice};
+use crate::theme::window_style::{self, ThemeChoice, WindowStyle};
 use crate::theme::{self, AccentChoice};
 use serde::{Deserialize, Serialize};
 
@@ -12,7 +13,12 @@ const NAME: &str = "appearance";
 pub struct Appearance {
     pub accent: AccentChoice,
     /// How much of the window's acrylic shows through, from 0 (solid) to 1 (nearly clear).
+    /// Applies to the Invisible and Frosted windows alike; a solid window ignores it.
     pub glass: f32,
+    /// How app windows are drawn: Invisible, Frosted or No transparency (`window_style`).
+    pub window: WindowStyle,
+    /// Light, dark, or Windows' mode.
+    pub theme: ThemeChoice,
     /// The text font: the default, or an installed family by name.
     pub font: FontChoice,
     /// The default for every app's sidebar (see `rail`): icons only, or icons and names. Set in
@@ -59,6 +65,8 @@ impl Default for Appearance {
         Self {
             accent: AccentChoice::System,
             glass: theme::DEFAULT_GLASS,
+            window: WindowStyle::default(),
+            theme: ThemeChoice::default(),
             font: FontChoice::Default,
             rail_collapsed: false,
             rails: Rails::default(),
@@ -114,10 +122,20 @@ impl Appearance {
 
     /// Make the theme use this look.
     pub fn apply(&self, ctx: &egui::Context) {
+        window_style::set_window_style(self.window);
+        window_style::set_theme_choice(self.theme);
+        // The preview overrides (`SHELLMAN_THEME`) still win; see `env::preference`.
+        let want = theme::env::preference();
+        if ctx.options(|o| o.theme_preference) != want {
+            ctx.set_theme(want);
+        }
+        theme::set_light(ctx.theme() == egui::Theme::Light);
         theme::set_accent(ctx, self.accent.resolve());
         theme::set_glass(ctx, self.glass);
         // Does nothing when the window already wears this font.
         fonts::apply(ctx, self.font);
+        // A window's glass panel notices a new window style on the next frame.
+        ctx.request_repaint();
     }
 }
 
@@ -214,6 +232,16 @@ mod tests {
         let saved = toggle_rail_at(&path, RailApp::Tasks, mine);
         assert_eq!(shellman_core::config::load_from::<Appearance>(&path), saved);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn window_and_theme_default_and_round_trip() {
+        let old: Appearance = serde_json::from_str(r#"{"glass":0.5}"#).unwrap();
+        assert_eq!((old.window, old.theme), (WindowStyle::Invisible, ThemeChoice::Windows));
+        let look = Appearance { window: WindowStyle::NoTransparency, theme: ThemeChoice::Light, ..Appearance::default() };
+        let json = serde_json::to_string(&look).unwrap();
+        assert!(json.contains(r#""window":"solid""#) && json.contains(r#""theme":"light""#), "{json}");
+        assert_eq!(serde_json::from_str::<Appearance>(&json).unwrap(), look);
     }
 
     #[test]

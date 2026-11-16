@@ -200,7 +200,7 @@ impl TasksApp {
                 Page::Services => services::show(ui, area, &mut self.st, &mut list),
             }
             if !self.panel.composed() {
-                ui.painter().set(under, egui::Shape::Vec(islands::solid_shapes(&list, &self.panel.style())));
+                ui.painter().set(under, egui::Shape::Vec(islands::under(screen, &list, &self.panel.style())));
             }
         });
         self.panel.set_islands(&list, ctx.pixels_per_point());

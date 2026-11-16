@@ -19,6 +19,8 @@ const fn e(section: Section, group: &'static str, words: &'static str) -> Entry 
 const ENTRIES: &[Entry] = &[
     e(Section::Appearance, "", "look theme dark light colour color style"),
     e(Section::Appearance, "Accent color", "colour swatch windows custom highlight"),
+    e(Section::Appearance, "Theme", "dark light mode night"),
+    e(Section::Appearance, "Window", "invisible frosted no transparency solid opaque background acrylic"),
     e(Section::Appearance, "Glass", "transparency blur acrylic solid clear opacity"),
     e(Section::Appearance, "Sidebars", "rail sidebar collapse expand fold icons names labels"),
     e(Section::Desktop, "", "wallpaper background icons right-click"),

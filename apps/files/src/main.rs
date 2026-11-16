@@ -113,7 +113,7 @@ fn run(start: args::Start, session: Option<pick::Session>) -> eframe::Result {
                     // islands are pieces of glass under it (see `app::layout`). The resize edges
                     // and Snap stay.
                     window::frameless(hwnd);
-                    panel = Some(GlassPanel::attach(hwnd, Style::from_theme(app::RADIUS)));
+                    panel = Some(GlassPanel::attach_window(hwnd, Style::from_theme(app::RADIUS)));
                 }
             }
             Ok(Box::new(app::FileMan::new(

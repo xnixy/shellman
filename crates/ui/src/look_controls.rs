@@ -68,6 +68,48 @@ pub fn accent_picker(ui: &mut Ui, current: AccentChoice) -> Option<AccentChoice>
     pick
 }
 
+/// A row of choice chips, one of which is chosen (accent-filled). Each says what it is to a
+/// screen reader (a radio button, selected or not) and takes the keyboard. With `enabled` false
+/// the row is shown dimmed and takes nothing. Wraps to more lines when narrow. Returns the
+/// choice made this frame.
+pub fn choice_chips<T: Copy + PartialEq>(ui: &mut Ui, current: T, options: &[(T, &str)], enabled: bool) -> Option<T> {
+    use crate::chips::{chip_width, soft_colors, Chip, CHIP_H};
+    let c = colors();
+    let mut picked = None;
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = Vec2::new(6.0, 6.0);
+        for (value, label) in options {
+            let selected = *value == current;
+            let w = chip_width(ui, label, false, Chip::Soft);
+            let sense = if enabled { Sense::click() } else { Sense::hover() };
+            let (rect, resp) = ui.allocate_exact_size(Vec2::new(w, CHIP_H), sense);
+            resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::RadioButton, enabled, selected, *label));
+            theme::focus_ring(ui, &resp, rect, rect.height() / 2.0);
+            let (soft, soft_hover, line) = soft_colors(c.light);
+            let hovered = enabled && resp.hovered();
+            let (fill, stroke, text) = if c.high_contrast && !enabled {
+                // Windows' grey text, the chosen one outlined thicker: no dimmed highlight.
+                (c.bg, Stroke::new(if selected { 2.5_f32 } else { 1.0 }, c.muted), c.muted)
+            } else if selected {
+                let fill = if hovered { theme::mix(c.accent_fill, Color32::WHITE, 0.12) } else { c.accent_fill };
+                let stroke = if c.high_contrast { Stroke::new(1.0_f32, c.text) } else { Stroke::NONE };
+                (fill, stroke, c.on_accent)
+            } else if c.high_contrast {
+                (c.bg, Stroke::new(1.0_f32, c.text), c.text)
+            } else {
+                (if hovered { soft_hover } else { soft }, line, c.text)
+            };
+            let dim = |col: Color32| if enabled || c.high_contrast { col } else { col.gamma_multiply(0.55) };
+            ui.painter().rect(rect, rect.height() / 2.0, dim(fill), stroke, egui::StrokeKind::Inside);
+            ui.painter().text(rect.center(), Align2::CENTER_CENTER, *label, egui::FontId::proportional(13.0), dim(text));
+            if enabled && resp.clicked() && !selected {
+                picked = Some(*value);
+            }
+        }
+    });
+    picked
+}
+
 /// How much of the acrylic shows through, from solid to clear. Without system backdrops
 /// (Windows 10) there is no glass to show, so `enabled` is false and the slider says why. The
 /// caller applies `changed()` as the slider moves, and shares the look once the drag is over.
@@ -76,7 +118,7 @@ pub fn glass_slider(ui: &mut Ui, glass: &mut f32, enabled: bool) -> egui::Respon
     ui.horizontal(|ui| {
         ui.label(RichText::new("Solid").size(11.5).color(c.muted));
         let width = (ui.available_width() - 48.0).clamp(120.0, 320.0);
-        let out = crate::slider::thin(ui, Id::new("glass-slider"), *glass, Some(width), enabled);
+        let out = crate::slider::thin(ui, Id::new("glass-slider"), *glass, Some(width), enabled).named("Glass amount");
         let mut resp = out.response.clone();
         if let Some(v) = out.value {
             *glass = v;
@@ -103,6 +145,8 @@ enum Swatch {
 fn swatch(ui: &mut Ui, kind: Swatch, selected: bool, tip: &str) -> egui::Response {
     let c = colors();
     let (rect, resp) = ui.allocate_exact_size(Vec2::splat(32.0), Sense::click());
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::RadioButton, true, selected, tip));
+    theme::focus_ring(ui, &resp, rect.shrink(1.0), 15.0);
     let center = rect.center();
     let radius = if resp.hovered() { 13.5 } else { 12.5 };
     let p = ui.painter();
@@ -133,6 +177,10 @@ fn swatch(ui: &mut Ui, kind: Swatch, selected: bool, tip: &str) -> egui::Respons
             c.control
         }
     };
+    // High contrast: every swatch outlined, so each is a shape whatever its colour.
+    if c.high_contrast {
+        p.circle_stroke(center, radius, Stroke::new(1.0_f32, c.text));
+    }
     if selected {
         p.circle_stroke(center, 15.0, Stroke::new(2.0_f32, c.text));
         let on = theme::Colors::new(c.light, under).on_accent;

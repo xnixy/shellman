@@ -59,6 +59,15 @@
 //! backdrop window shows its old visuals, while a shape changed inside both windows reaches the
 //! screen with the window's next frame.
 //!
+//! An app window (Settings, Files, Task Manager, Terminal, the installer) attaches with
+//! [`GlassPanel::attach_window`] and then follows the user's Window choice
+//! (`theme::window_style`): Invisible puts each island on glass; Frosted puts one piece of glass
+//! under the whole client area, with the even page tint ([`Style::frosted`]), and the app paints
+//! its islands over it; No transparency (or high contrast, or transparency effects off) makes no
+//! backdrop at all and gives the window back Windows' rounded corners and border, and the app
+//! paints a solid page ([`islands::under`]). The panel notices a change on the app's next frame
+//! (or when Windows' settings change) and switches in place: same window, place and size.
+//!
 //! Or the window can have several separate pieces ("islands", see [`islands`]) through
 //! [`GlassPanel::set_islands`]: then the whole window stays clickable (the gaps between the
 //! islands are the window's own, to drag it by) and only the islands are glass;
@@ -89,15 +98,16 @@ use windows::Foundation::TypedEventHandler;
 use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
 use windows::Win32::Graphics::Dwm::{
     DwmSetWindowAttribute, DWMSBT_NONE, DWMWA_BORDER_COLOR, DWMWA_SYSTEMBACKDROP_TYPE,
-    DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DONOTROUND, DWMWINDOWATTRIBUTE,
+    DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DONOTROUND, DWMWCP_ROUND, DWMWINDOWATTRIBUTE,
 };
+use crate::theme::window_style::{self, WindowLook};
 use windows::Win32::Graphics::Gdi::{
     CombineRgn, CreateRectRgn, CreateRoundRectRgn, DeleteObject, EqualRgn, GetWindowRgn, SetWindowRgn, RGN_ERROR, RGN_OR,
 };
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::Shell::{DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass};
 use windows::Win32::UI::WindowsAndMessaging::{
-    DestroyWindow, GetWindowRect, IsIconic, IsWindowVisible, KillTimer, PostMessageW,
+    DestroyWindow, GetClientRect, GetWindowRect, IsIconic, IsZoomed, IsWindowVisible, KillTimer, PostMessageW,
     RegisterWindowMessageW, SetTimer, SetWindowPos, SWP_HIDEWINDOW, SWP_NOACTIVATE, SWP_NOMOVE,
     SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW, WM_DPICHANGED, WM_TIMER, WM_DWMCOLORIZATIONCOLORCHANGED, WM_DWMCOMPOSITIONCHANGED,
     WM_NCDESTROY, WM_SETTINGCHANGE, WM_WINDOWPOSCHANGED,
@@ -155,6 +165,10 @@ struct Inner {
     effects: Cell<bool>,
     /// False once the served window is destroyed (and the backdrop with it).
     alive: Cell<bool>,
+    /// An app window, which follows the user's Window choice (see [`GlassPanel::attach_window`]).
+    window: bool,
+    /// The look it was last dressed for: always `Glass` for a surface that is not a window.
+    look: Cell<WindowLook>,
 }
 
 /// What an islands window shows and takes clicks on.
@@ -194,9 +208,21 @@ impl GlassPanel {
     /// Windows' own corners, border and backdrop, and gets a rounded window region so clicks
     /// outside the shape fall through. See [`GlassPanel::composed`] for whether there is glass.
     pub fn attach(hwnd: isize, style: Style) -> Self {
+        Self::make(hwnd, style, false)
+    }
+
+    /// [`GlassPanel::attach`] for an app window with islands, which follows the user's Window
+    /// choice: see the module's notes. The app paints its islands itself whenever
+    /// [`GlassPanel::composed`] is false (Frosted included), with [`islands::under`].
+    pub fn attach_window(hwnd: isize, style: Style) -> Self {
+        Self::make(hwnd, style, true)
+    }
+
+    fn make(hwnd: isize, style: Style, window: bool) -> Self {
         let target = HWND(hwnd as *mut _);
-        bare(target);
-        let made = compose(hwnd);
+        let look = if window { window_style::window_look() } else { WindowLook::Glass };
+        dress(target, look);
+        let made = compose(hwnd, look);
         // Refused for the rate alone: tried again once the bucket has a token.
         let refused_for_rate = match &made {
             Err(Refused::RateLimited(ready_in)) => Some(*ready_in),
@@ -219,6 +245,8 @@ impl GlassPanel {
             laid_out: Cell::new(None),
             effects: Cell::new(effects_enabled()),
             alive: Cell::new(true),
+            window,
+            look: Cell::new(look),
         });
         if let Some(composed) = &*inner.composed.borrow() {
             cloak::remember(target, composed.window);
@@ -238,14 +266,21 @@ impl GlassPanel {
         Self { inner }
     }
 
-    /// Whether the surface is drawn under the window (blur, tint, rim and shadow). If not, the
-    /// window paints it itself: see [`content_frame`].
+    /// Whether the surface is drawn under the window (blur, tint, rim and shadow): for an app
+    /// window, whether each island is on glass. If not, the window paints it itself: see
+    /// [`content_frame`] and [`islands::under`].
     pub fn composed(&self) -> bool {
-        self.inner.composed.borrow().is_some()
+        self.inner.composed.borrow().is_some() && self.inner.look.get().islands_on_glass()
+    }
+
+    /// How the window looks now (always `Glass` for a surface that is not an app window).
+    pub fn look(&self) -> WindowLook {
+        self.inner.look.get()
     }
 
     /// Change the look (the theme, accent or glass amount changed). Free when nothing changed.
     pub fn set_style(&self, style: Style) {
+        self.inner.check_look();
         if self.inner.style.replace(style) != style {
             self.inner.laid_out.set(None);
             self.inner.follow();
@@ -282,6 +317,7 @@ impl GlassPanel {
     }
 
     fn put_islands(&self, islands: &[Island], scale: f32, hit: Hit) {
+        self.inner.check_look();
         // A NaN scale would never compare equal, and lay the islands out again every frame.
         let scale = guard::scale(scale);
         {
@@ -334,11 +370,12 @@ enum Refused {
     Unavailable,
 }
 
-/// The backdrop window and its visuals, if Windows can compose them.
-fn compose(hwnd: isize) -> Result<Composed, Refused> {
-    // No glass over Remote Desktop, in high contrast, or when asked (`SHELLMAN_SOLID`,
-    // `SHELLMAN_NO_COMPOSITION`): the window paints its islands itself (`islands::solid_shapes`).
-    if std::env::var_os("SHELLMAN_NO_COMPOSITION").is_some() || crate::theme::env::no_glass() {
+/// The backdrop window and its visuals, if Windows can compose them and `look` has any.
+fn compose(hwnd: isize, look: WindowLook) -> Result<Composed, Refused> {
+    // No glass over Remote Desktop, in high contrast, in a solid app window, or when asked
+    // (`SHELLMAN_SOLID`, `SHELLMAN_NO_COMPOSITION`): the window paints its islands itself
+    // (`islands::solid_shapes`).
+    if std::env::var_os("SHELLMAN_NO_COMPOSITION").is_some() || crate::theme::env::no_glass() || !look.composed() {
         return Err(Refused::Unavailable);
     }
     let compositor = tree::compositor().ok_or(Refused::Unavailable)?;
@@ -385,7 +422,7 @@ impl Inner {
         if self.rebuilding.get() {
             return;
         }
-        if !self.alive.get() || (self.composed.borrow().is_none() && !self.wanted.get()) {
+        if !self.alive.get() || !self.look.get().composed() || (self.composed.borrow().is_none() && !self.wanted.get()) {
             self.rebuild_pending.set(false);
             return;
         }
@@ -402,7 +439,7 @@ impl Inner {
         self.rebuild_pending.set(false);
         self.rebuilt.set(Some(Instant::now()));
         self.rebuilding.set(true);
-        let fresh = match compose(self.target.0 as isize) {
+        let fresh = match compose(self.target.0 as isize, self.look.get()) {
             Ok(fresh) => fresh,
             Err(refused) => {
                 self.rebuilding.set(false);
@@ -462,6 +499,42 @@ impl Inner {
         }
     }
 
+    /// An app window: follow the user's Window choice as Windows lets it be now. Switching
+    /// between Invisible and Frosted keeps the backdrop (only its pieces and tint change); to a
+    /// solid window it goes, and Windows' corners and border come back; from one, a backdrop is
+    /// made again. Cheap when nothing changed, so it runs every frame.
+    fn check_look(&self) {
+        if !self.window || !self.alive.get() {
+            return;
+        }
+        let now = window_style::window_look();
+        if self.look.replace(now) == now {
+            return;
+        }
+        trace(|| format!("glass {:?}: window look {now:?}", self.target.0));
+        dress(self.target, now);
+        self.laid_out.set(None);
+        if now.composed() {
+            if self.composed.borrow().is_none() {
+                self.wanted.set(true);
+                self.ask_rebuild();
+            }
+        } else {
+            let old = self.composed.borrow_mut().take();
+            if let Some(old) = old {
+                unwatch(&old);
+                cloak::forget(self.target);
+                unsafe {
+                    let _ = DestroyWindow(old.window);
+                }
+            }
+        }
+        self.follow();
+        unsafe {
+            let _ = windows::Win32::Graphics::Gdi::InvalidateRect(Some(self.target), None, false);
+        }
+    }
+
     /// Ask for a rebuild once the current message is done; several asks make one rebuild.
     fn ask_rebuild(&self) {
         // A new ask: every attempt again, whatever earlier ones came to.
@@ -495,7 +568,16 @@ impl Inner {
             let window = (rc.right - rc.left, rc.bottom - rc.top);
             let dpi = GetDpiForWindow(self.target).max(96);
             let scale = dpi as f32 / 96.0;
-            let style = self.style.get();
+            let look = self.look.get();
+            let style = match look {
+                // The one backdrop under a Frosted window: the page's even tint, not the islands'.
+                WindowLook::Frosted => {
+                    let own = self.style.get();
+                    let frosted = Style::frosted(&crate::theme::colors(), crate::theme::glass(), own.radius);
+                    Style { tint: frosted.tint, luminosity: frosted.luminosity, ..own }
+                }
+                _ => self.style.get(),
+            };
             let islands = self.islands.borrow();
             // With `Hit::Islands`, the islands in the window's pixels and their radii: the
             // window's region, which is all of it that shows and takes clicks.
@@ -517,21 +599,37 @@ impl Inner {
                             .collect();
                         cut = Some((pieces, extra));
                     }
-                    let placed = list
-                        .iter()
-                        .map(|i| {
-                            let (e, radius) = islands::to_pixels(i, *points);
-                            Placed {
-                                left: geo.left + client.0 + e[0],
-                                top: geo.top + client.1 + e[1],
-                                size: (e[2] - e[0], e[3] - e[1]),
-                                radius,
-                                opacity: i.opacity,
-                                shadow: i.shadow,
-                            }
-                        })
-                        .filter(|p| p.size.0 > 0 && p.size.1 > 0)
-                        .collect();
+                    let placed: Vec<Placed> = if look == WindowLook::Frosted {
+                        // One piece under the whole client area, with Windows 11's corners
+                        // (none while maximized).
+                        let mut cr = RECT::default();
+                        let _ = GetClientRect(self.target, &mut cr);
+                        let radius = if IsZoomed(self.target).as_bool() { 0.0 } else { FROSTED_RADIUS * scale };
+                        let piece = Placed {
+                            left: geo.left + client.0,
+                            top: geo.top + client.1,
+                            size: (cr.right - cr.left, cr.bottom - cr.top),
+                            radius,
+                            opacity: 1.0,
+                            shadow: true,
+                        };
+                        if piece.size.0 > 0 && piece.size.1 > 0 { vec![piece] } else { Vec::new() }
+                    } else {
+                        list.iter()
+                            .map(|i| {
+                                let (e, radius) = islands::to_pixels(i, *points);
+                                Placed {
+                                    left: geo.left + client.0 + e[0],
+                                    top: geo.top + client.1 + e[1],
+                                    size: (e[2] - e[0], e[3] - e[1]),
+                                    radius,
+                                    opacity: i.opacity,
+                                    shadow: i.shadow,
+                                }
+                            })
+                            .filter(|p| p.size.0 > 0 && p.size.1 > 0)
+                            .collect()
+                    };
                     let whole = RECT {
                         left: 0,
                         top: 0,
@@ -618,6 +716,14 @@ impl Inner {
                     } else {
                         SetWindowRgn(self.target, Some(region), true);
                     }
+                } else if key.is_some() && look == WindowLook::Solid {
+                    // A solid window has no region, so Windows rounds its corners and draws its
+                    // border and shadow.
+                    let current = CreateRectRgn(0, 0, 0, 0);
+                    if GetWindowRgn(self.target, current) != RGN_ERROR {
+                        SetWindowRgn(self.target, None, true);
+                    }
+                    let _ = DeleteObject(current.into());
                 } else if key.is_some() {
                     // A window that only now takes all of itself again needs its region reset.
                     let same = before.is_some_and(|b| b.islands.is_some() && b.window == window && !b.cut);
@@ -676,6 +782,25 @@ fn client_origin(hwnd: HWND, rc: &RECT) -> (i32, i32) {
         let _ = ClientToScreen(hwnd, &mut p);
     }
     (p.x - rc.left, p.y - rc.top)
+}
+
+/// The corner radius of a Frosted window's backdrop, in points: Windows 11's window corners.
+const FROSTED_RADIUS: f32 = 8.0;
+
+/// What Windows draws around the window for `look`: nothing (the panel draws it all), or for a
+/// solid app window its own rounded corners and border.
+fn dress(hwnd: HWND, look: WindowLook) {
+    if look != WindowLook::Solid {
+        bare(hwnd);
+        return;
+    }
+    let set = |attribute: DWMWINDOWATTRIBUTE, value: u32| unsafe {
+        let _ = DwmSetWindowAttribute(hwnd, attribute, (&raw const value).cast(), 4);
+    };
+    set(DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_ROUND.0 as u32);
+    // DWMWA_COLOR_DEFAULT.
+    set(DWMWA_BORDER_COLOR, 0xFFFF_FFFF);
+    set(DWMWA_SYSTEMBACKDROP_TYPE, DWMSBT_NONE.0 as u32);
 }
 
 /// Take away what Windows draws around and behind the window: its corners, its border and any
@@ -792,6 +917,10 @@ unsafe extern "system" fn follow_proc(
         }
         WM_SETTINGCHANGE if is_immersive_colors(lparam) => {
             trace(|| format!("glass {:?}: ImmersiveColorSet", hwnd.0));
+            // Transparency effects or high contrast may have changed: an app window may now be
+            // solid, or glass again.
+            crate::theme::env::refresh();
+            inner.check_look();
             inner.ask_rebuild();
             DefSubclassProc(hwnd, msg, wparam, lparam)
         }
@@ -812,6 +941,8 @@ unsafe extern "system" fn follow_proc(
             LRESULT(0)
         }
         _ if msg == effects_message() => {
+            crate::theme::env::refresh();
+            inner.check_look();
             inner.effects.set(effects_enabled());
             inner.laid_out.set(None);
             inner.follow();

@@ -5,6 +5,7 @@
 //! way Blurman's plum shell carries its rose. Dark and light follow the Windows app mode.
 
 pub mod env;
+pub mod window_style;
 mod icons;
 mod style;
 
@@ -324,7 +325,9 @@ impl Colors {
             shell: window,
             sheet: window,
             control: window,
-            control_hover: highlight,
+            // No hover wash: rows and buttons put ordinary text on it, and highlight only pairs
+            // with highlight text. Hovered things are outlined instead where they can be.
+            control_hover: window,
             control_active: highlight,
             bar: window,
             bar_edge: text,
@@ -342,6 +345,18 @@ pub fn shell(light: bool, accent: Color32, glass: f32) -> Color32 {
     let grey = if light { 238 } else { 10 };
     let alpha = (225.0 + (110.0 - 225.0) * glass.clamp(0.0, 1.0)).round() as u8;
     with_alpha(mix(Color32::from_gray(grey), accent, 0.06), alpha)
+}
+
+/// The even tint over a Frosted window's one acrylic backdrop, between its islands (Blurman's
+/// page glass): dark `mix(gray16, accent, .06)`, light `mix(gray248, accent, .03)`. Its alpha
+/// follows the glass amount the way [`shell`] does, and at the default amount it is the look's
+/// 140 (dark) / 120 (light).
+pub fn frosted_tint(light: bool, accent: Color32, glass: f32) -> Color32 {
+    let shell_alpha = 225.0 + (110.0 - 225.0) * glass.clamp(0.0, 1.0);
+    let at_default = 225.0 + (110.0 - 225.0) * DEFAULT_GLASS;
+    let (grey, amount, alpha) = if light { (248, 0.03, 120.0) } else { (16, 0.06, 140.0) };
+    let alpha = (alpha * shell_alpha / at_default).round().clamp(0.0, 255.0) as u8;
+    with_alpha(mix(Color32::from_gray(grey), accent, amount), alpha)
 }
 
 /// Opacity (0..=255) of the top bar's tint: `solid` with no glass, `clear` with all of it.
@@ -399,6 +414,18 @@ pub fn set_accent(ctx: &egui::Context, c: Color32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn frosted_tint_is_the_look_at_the_default_amount_and_follows_the_dial() {
+        let accent = Color32::from_rgb(0, 103, 192);
+        assert_eq!(frosted_tint(false, accent, DEFAULT_GLASS).a(), 140);
+        assert_eq!(frosted_tint(true, accent, DEFAULT_GLASS).a(), 120);
+        // Clearer glass, a fainter tint; more solid, a stronger one.
+        assert!(frosted_tint(false, accent, 1.0).a() < 140 && frosted_tint(false, accent, 0.0).a() > 140);
+        let [r, g, b, _] = frosted_tint(false, accent, 0.5).to_srgba_unmultiplied();
+        let page = mix(Color32::from_gray(16), accent, 0.06);
+        assert!(r.abs_diff(page.r()) <= 1 && g.abs_diff(page.g()) <= 1 && b.abs_diff(page.b()) <= 1);
+    }
 
     #[test]
     fn text_on_accent_contrasts() {

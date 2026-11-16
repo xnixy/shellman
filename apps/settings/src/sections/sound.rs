@@ -182,7 +182,7 @@ fn details(ui: &mut egui::Ui, h: &SoundPage, flow: Flow, dev: &Device, detail: &
             ui.horizontal(|ui| {
                 ui.label(theme::muted("Left").size(11.5));
                 let width = (ui.available_width() - 56.0).clamp(120.0, 300.0);
-                let out = shellman_ui::slider::thin(ui, egui::Id::new(("balance", &dev.id)), (b + 1.0) / 2.0, Some(width), true);
+                let out = shellman_ui::slider::thin(ui, egui::Id::new(("balance", &dev.id)), (b + 1.0) / 2.0, Some(width), true).named("Balance");
                 ui.label(theme::muted("Right").size(11.5));
                 if let Some(v) = out.value {
                     b = v * 2.0 - 1.0;

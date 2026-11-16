@@ -37,6 +37,10 @@ pub struct SettingsApp {
     /// Wakes the window when something in the settings folder changes.
     watcher: shellman_core::watch::Watcher,
     reload_due: bool,
+    /// The least window size at Windows' text size, and whether the window has been grown to it
+    /// (a size restored from an earlier run may be smaller).
+    min: [f32; 2],
+    grown: bool,
     /// Keeps the single-instance mutex for as long as the process runs.
     _instance: Instance,
 }
@@ -48,20 +52,22 @@ impl SettingsApp {
         panel: GlassPanel,
         instance: Instance,
         page: Option<Section>,
+        min: [f32; 2],
     ) -> Self {
         let watcher = shellman_core::watch::Watcher::new(ctx.clone());
         if let Some(dir) = shellman_core::config::config_dir() {
             // The folder may not exist yet; saving makes it, and the first run saves the look.
             watcher.set_dirs(vec![dir]);
         }
-        let glass = panel.composed();
         Self {
-            st: State::new(ctx, look, glass),
+            st: State::new(ctx, look),
             section: page.unwrap_or(Section::Appearance),
             query: String::new(),
             panel,
             watcher,
             reload_due: false,
+            min,
+            grown: false,
             _instance: instance,
         }
     }
@@ -135,7 +141,7 @@ impl SettingsApp {
             self.page(ui, area, &mut list);
 
             if !self.panel.composed() {
-                ui.painter().set(under, egui::Shape::Vec(islands::solid_shapes(&list, &self.panel.style())));
+                ui.painter().set(under, egui::Shape::Vec(islands::under(screen, &list, &self.panel.style())));
             }
         });
         self.panel.set_islands(&list, ctx.pixels_per_point());
@@ -184,6 +190,7 @@ impl SettingsApp {
             .hint_text(egui::RichText::new("Search settings").color(c.muted))
             .desired_width(edit_rect.width());
         let resp = ui.put(edit_rect, edit);
+        shellman_ui::widgets::name_field(&resp, "Search settings", Some(&self.query));
         let enter = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
         if enter {
             if let Some(hit) = search::find(&self.query).first() {
@@ -319,6 +326,9 @@ impl SettingsApp {
 fn result_row(ui: &mut egui::Ui, hit: &Hit, best: bool) -> egui::Response {
     let c = colors();
     let (row, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 44.0), Sense::click());
+    let label = hit.label();
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, best, label.clone()));
+    theme::focus_ring(ui, &resp, row, 14.0);
     let fill = if best {
         c.accent_fill
     } else if resp.hovered() {
@@ -342,6 +352,9 @@ impl eframe::App for SettingsApp {
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.st.thumbs.poll(ctx);
+        if !self.grown {
+            self.grown = theme::env::grow_to(ctx, self.min);
+        }
         self.track_system(ctx);
         shellman_ui::app_icon::sync_window_icon(ctx, shellman_ui::app_icon::Kind::Settings);
         // The glass menu's window (dropdowns), once there has been one.

@@ -61,7 +61,7 @@ fn main() -> eframe::Result {
                 if let RawWindowHandle::Win32(win32) = handle.as_raw() {
                     hwnd = win32.hwnd.get();
                     window::frameless(hwnd);
-                    panel = Some(GlassPanel::attach(hwnd, Style::from_theme(app::RADIUS)));
+                    panel = Some(GlassPanel::attach_window(hwnd, Style::from_theme(app::RADIUS)));
                 }
             }
             first.serve(hwnd, cc.egui_ctx.clone());

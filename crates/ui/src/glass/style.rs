@@ -122,7 +122,16 @@ impl Style {
     /// light one shows lighter (224 at 43% adds what 355 would). The glass's tint is that same
     /// premultiplied colour; what a colour cannot carry past white goes into the lift instead.
     pub fn new(c: &Colors, glass: f32, radius: f32) -> Self {
-        let shell = theme::shell(c.light, c.accent, glass);
+        Self::tinted(c, theme::shell(c.light, c.accent, glass), radius)
+    }
+
+    /// The one backdrop of a Frosted window: the same acrylic under the even page tint
+    /// (`theme::frosted_tint`), which the islands are painted over.
+    pub fn frosted(c: &Colors, glass: f32, radius: f32) -> Self {
+        Self::tinted(c, theme::frosted_tint(c.light, c.accent, glass), radius)
+    }
+
+    fn tinted(c: &Colors, shell: Color32, radius: f32) -> Self {
         let (tint, extra) = as_window_shows(shell);
         let mut luminosity = Luminosity::acrylic(c.light);
         for (lift, extra) in luminosity.lift.iter_mut().zip(extra) {

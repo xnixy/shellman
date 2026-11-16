@@ -22,7 +22,8 @@ use egui::{pos2, vec2, Align2, Color32, FontId, Id, Rect, Response, Sense, Textu
 use std::borrow::Cow;
 use std::time::Duration;
 
-/// Below this window width the rail shows icons only, whatever the user chose.
+/// Below this window width the rail shows icons only, whatever the user chose. The islands
+/// language asks for compact under 720; Files needs it up to 800 to keep room for its tabs.
 pub const NARROW_BELOW: f32 = 800.0;
 /// Space between the window's edge and the rail island.
 const MARGIN: f32 = 12.0;
@@ -442,6 +443,13 @@ fn pill(ui: &mut Ui, anchor: Rect, text: &str, bounds: Rect, list: &mut Vec<Isla
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_rail_is_compact_in_narrow_windows_whatever_was_chosen() {
+        assert_eq!(mode(719.0, false), Mode::Narrow);
+        assert_eq!(mode(NARROW_BELOW, false), Mode::Wide);
+        assert_eq!(mode(960.0, true), Mode::Folded);
+    }
 
     #[test]
     fn narrow_windows_fold_without_changing_the_choice() {

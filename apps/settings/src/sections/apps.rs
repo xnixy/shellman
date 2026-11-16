@@ -211,7 +211,8 @@ fn controls(ui: &mut egui::Ui, v: &mut AppsView) {
         .vertical_align(Align::Center)
         .hint_text(egui::RichText::new("Search apps").color(c.muted))
         .desired_width(edit_rect.width());
-    ui.put(edit_rect, edit);
+    let resp = ui.put(edit_rect, edit);
+    shellman_ui::widgets::name_field(&resp, "Search apps", Some(&v.query));
 
     ui.add_space(10.0);
     ui.horizontal(|ui| {

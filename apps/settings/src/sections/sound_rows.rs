@@ -91,10 +91,10 @@ pub struct Level {
 /// A 0..1 slider whose width is what is left less `tail`, with the percentage after it. `id`
 /// keeps the value being dragged apart from what the audio system reports back meanwhile, so
 /// the knob does not jump. Returns the new level in the frames it is moved.
-pub fn level_slider(ui: &mut Ui, id: Id, served: f32, muted: bool, tail: f32) -> Option<f32> {
+pub fn level_slider(ui: &mut Ui, id: Id, name: &str, served: f32, muted: bool, tail: f32) -> Option<f32> {
     let held = ui.data(|d| d.get_temp::<f32>(id));
     let width = (ui.available_width() - 44.0 - tail).max(60.0);
-    let out = slider::thin(ui, id.with("thin"), held.unwrap_or(served), Some(width), true);
+    let out = slider::thin(ui, id.with("thin"), held.unwrap_or(served), Some(width), true).named(name);
     let v = out.value.or(held).unwrap_or(served);
     if out.dragging() {
         ui.data_mut(|d| d.insert_temp(id, v));
@@ -114,7 +114,7 @@ pub fn volume_row(ui: &mut Ui, key: impl std::hash::Hash, served: f32, muted: bo
         if mute_button(ui, muted).clicked() {
             out.toggle_mute = true;
         }
-        out.set = level_slider(ui, Id::new(key), served, muted, 0.0);
+        out.set = level_slider(ui, Id::new(key), "Volume", served, muted, 0.0);
     });
     out
 }

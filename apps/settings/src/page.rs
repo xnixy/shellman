@@ -170,6 +170,8 @@ pub fn segmented<T: Copy + PartialEq>(ui: &mut Ui, current: &mut T, options: &[(
         x += width;
         let resp = ui.interact(seg, ui.id().with(("segment", *text)), Sense::click());
         let selected = *value == *current;
+        resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::RadioButton, true, selected, *text));
+        theme::focus_ring(ui, &resp, seg, 8.0);
         if selected {
             ui.painter().rect_filled(seg, CornerRadius::same(8), c.accent_fill);
         } else if resp.hovered() {

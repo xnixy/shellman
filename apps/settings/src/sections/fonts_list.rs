@@ -69,7 +69,8 @@ fn controls(ui: &mut egui::Ui, v: &mut FontsView) {
             .vertical_align(egui::Align::Center)
             .hint_text(egui::RichText::new("Search fonts").color(c.muted))
             .desired_width(edit_rect.width());
-        ui.put(edit_rect, edit);
+        let resp = ui.put(edit_rect, edit);
+        shellman_ui::widgets::name_field(&resp, "Search fonts", Some(&v.query));
         let label = if v.picking() { "Choosing a file..." } else { "Add font file..." };
         let button = egui::Button::new(egui::RichText::new(label).size(13.0)).corner_radius(CornerRadius::same(10)).min_size(Vec2::new(add_w, 34.0));
         if ui.add_enabled(!v.picking() && !v.busy(), button).on_hover_text("Try a .ttf, .otf or .ttc file without installing it. A copy is kept with the fonts you added.").clicked() {
@@ -88,7 +89,12 @@ fn row(ui: &mut egui::Ui, v: &FontsView, family: &Family) -> bool {
     let c = colors();
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), ROW_H), Sense::click());
     let selected = v.selected.as_ref().is_some_and(|(n, o)| *n == family.name && *o == family.origin);
-    let fill = if selected {
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, selected, &family.name));
+    theme::focus_ring(ui, &resp, rect, 12.0);
+    // High contrast: the selected row is a highlight outline, never a fill under ordinary text.
+    let fill = if c.high_contrast {
+        c.bg
+    } else if selected {
         c.row_selected
     } else if resp.hovered() {
         c.control_hover
@@ -97,7 +103,10 @@ fn row(ui: &mut egui::Ui, v: &FontsView, family: &Family) -> bool {
     };
     ui.painter().rect_filled(rect, CornerRadius::same(12), fill);
     if selected {
-        ui.painter().rect_stroke(rect, CornerRadius::same(12), egui::Stroke::new(1.5_f32, c.accent_fill), egui::StrokeKind::Inside);
+        let width: f32 = if c.high_contrast { 2.5 } else { 1.5 };
+        ui.painter().rect_stroke(rect, CornerRadius::same(12), egui::Stroke::new(width, c.accent_fill), egui::StrokeKind::Inside);
+    } else if c.high_contrast && resp.hovered() {
+        ui.painter().rect_stroke(rect, CornerRadius::same(12), egui::Stroke::new(1.0_f32, c.text), egui::StrokeKind::Inside);
     }
     let own = v.fonts.family(&fonts_logic::tile_key(family)).unwrap_or(FontFamily::Proportional);
     let tile = egui::Rect::from_center_size(egui::pos2(rect.left() + 32.0, rect.center().y), Vec2::new(40.0, 40.0));
