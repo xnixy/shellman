@@ -270,6 +270,8 @@ impl super::FileMan {
                     chip(ui, r, Id::new(("band", b.label)), text, Some(b.icon), b.kind)
                 })
                 .inner;
+            // Icon only when narrow: the name is still the label.
+            resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, b.enabled, b.label));
             let resp = if label { resp } else { resp.on_hover_text(b.label) };
             let clicked = b.enabled && resp.clicked();
             match b.does {

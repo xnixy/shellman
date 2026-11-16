@@ -56,14 +56,18 @@ fn run(start: args::Start, session: Option<pick::Session>) -> eframe::Result {
     let picking = session.is_some();
     let owner = session.as_ref().map_or(0, |s| s.req.owner);
     let size = if picking { placement::PICK_SIZE } else { placement::DEFAULT_SIZE };
+    // Larger with Windows' text size, as far as the screen allows (egui's zoom does the rest):
+    // the islands need their least size in zoomed points too (see `app::plan`).
+    let z = theme::env::text_scale();
+    let (size, min) = theme::env::scaled_window([size.0, size.1], [placement::MIN_SIZE.0, placement::MIN_SIZE.1], z, theme::env::work_area_points());
     let mut viewport = egui::ViewportBuilder::default()
         .with_title("Files")
-        .with_inner_size([size.0, size.1])
-        .with_min_inner_size([placement::MIN_SIZE.0, placement::MIN_SIZE.1])
+        .with_inner_size(size)
+        .with_min_inner_size(min)
         .with_transparent(true)
         .with_decorations(false)
         .with_drag_and_drop(false);
-    let at = if picking { pick_rect(owner) } else { browse_rect(&settings) };
+    let at = if picking { pick_rect(owner) } else { browse_rect(&settings, z) };
     if let Some(at) = at {
         // The builder takes points, so the pixel rectangle is divided by the scale of the
         // monitor it lands on.
@@ -122,24 +126,20 @@ fn run(start: args::Start, session: Option<pick::Session>) -> eframe::Result {
                 }
             }
             let _built = shellman_core::timing::span("app built");
-            Ok(Box::new(app::FileMan::new(
-                cc.egui_ctx.clone(),
-                settings,
-                look,
-                start,
-                session,
-                hwnd,
-                panel,
-            )))
+            Ok(Box::new(
+                app::FileMan::new(cc.egui_ctx.clone(), settings, look, start, session, hwnd, panel).with_min_size(min),
+            ))
         }),
     )
 }
 
 /// Where a browsing window opens: where it was left, or else centred on the monitor under the
 /// pointer.
-fn browse_rect(settings: &settings::Settings) -> Option<placement::Rect> {
+fn browse_rect(settings: &settings::Settings, text_scale: f32) -> Option<placement::Rect> {
     let (work, scale) = placement::pointer_monitor()?;
-    Some(placement::place(work, scale, settings.window, &placement::work_areas()))
+    // The default size grows with the text size; a saved one smaller than the minimum is grown
+    // once the window is up (`FileMan::with_min_size`).
+    Some(placement::place(work, scale * text_scale, settings.window, &placement::work_areas()))
 }
 
 /// Where a picker opens: centred over the asking app's window, on its monitor, or else in the

@@ -32,7 +32,7 @@ pub fn show(ui: &mut egui::Ui, st: &mut State) {
     page::group(ui, "", |ui| {
         page::segmented(ui, &mut v.tab, &Tab::ALL.map(|t| (t, t.label())));
         ui.add_space(12.0);
-        egui::ScrollArea::vertical()
+        let out = egui::ScrollArea::vertical()
             .id_salt("fonts-tab")
             .max_height(inner)
             .min_scrolled_height(inner)
@@ -45,6 +45,7 @@ pub fn show(ui: &mut egui::Ui, st: &mut State) {
                 Tab::Coverage => fonts_tabs::coverage(ui, v),
                 Tab::Backups => fonts_tabs::backups(ui, v),
             });
+        shellman_ui::widgets::name_scroll_bar(ui.ctx(), &out, "the fonts");
     });
     page::group(ui, "", |ui| command_pill(ui, v));
 }

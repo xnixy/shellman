@@ -39,6 +39,15 @@ pub fn scale(ring: &Ring, floor: f32) -> f32 {
 /// line, and the line.
 pub fn draw(painter: &Painter, rect: Rect, ring: &Ring, max: f32, color: Color32, grid: bool) {
     let c = colors();
+    if c.high_contrast {
+        // No tints: the well is outlined, the line drawn alone.
+        painter.rect_stroke(rect, 10.0, Stroke::new(1.0_f32, c.text), egui::StrokeKind::Inside);
+        let pts = points(ring, rect.shrink2(egui::vec2(1.0, 3.0)), max);
+        if pts.len() > 1 {
+            painter.add(Shape::line(pts, Stroke::new(2.0_f32, color)));
+        }
+        return;
+    }
     let well = shows_as(theme::with_alpha(c.text, if c.light { 10 } else { 8 }));
     painter.rect_filled(rect, 10.0, well);
     if grid {

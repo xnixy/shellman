@@ -244,3 +244,16 @@ pub fn select_range(ctx: &egui::Context, id: Id, from: usize, to: usize) {
 pub fn select_all(ctx: &egui::Context, id: Id, len: usize) {
     select_range(ctx, id, 0, len);
 }
+
+/// Name a scroll area's vertical bar for screen readers ("Scroll <what>"), which egui leaves
+/// unnamed. Only while the bar shows (the content is taller than the area), so no node is made
+/// for a bar that is not there.
+pub fn name_scroll_bar<R>(ctx: &egui::Context, out: &egui::scroll_area::ScrollAreaOutput<R>, what: &str) {
+    if out.content_size.y <= out.inner_rect.height() + 0.5 {
+        return;
+    }
+    // egui's bar for direction `d` (1: vertical) is `id.with(d)`.
+    if let Some(bar) = ctx.read_response(out.id.with(1usize)) {
+        bar.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Other, true, format!("Scroll {what}")));
+    }
+}

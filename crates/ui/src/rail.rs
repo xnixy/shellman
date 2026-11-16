@@ -251,7 +251,8 @@ pub fn show(
     list.push(if wide { Island::new(rail, radius) } else { Island::pill(rail) });
 
     // Its empty space moves the window, like the gaps around it. Made first, so rows win.
-    let background = ui.interact(rail, Id::new("rail-bg"), Sense::click_and_drag());
+    // Not FOCUSABLE: no Tab stop, and no unnamed control for a screen reader.
+    let background = ui.interact(rail, Id::new("rail-bg"), Sense::CLICK | Sense::DRAG);
     crate::widgets::window_drag(ui, &background);
 
     let mut out = Out { clicked: None, toggled: false, rows: vec![None; entries.len()], background, rect: rail };
@@ -330,6 +331,7 @@ pub fn show(
     });
     // More rows than fit (wide; folded, the cut-off icon says it): a hairline over the foot, so the cut-off row reads as scrolled under.
     let more = scrolled.inner;
+    crate::widgets::name_scroll_bar(ui.ctx(), &more, "the sidebar");
     if wide && more.content_size.y > more.inner_rect.height() + 0.5 {
         let y = rail.bottom() - INSET - h - GAP / 2.0 - 1.0;
         let line = Rect::from_center_size(pos2(rail.center().x, y), vec2(row_w - 2.0 * ROW_PAD, 1.0));

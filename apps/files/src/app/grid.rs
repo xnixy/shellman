@@ -11,7 +11,7 @@ use super::rows::file_icon;
 use super::select;
 use super::tab::Loc;
 use super::text;
-use egui::{Align2, Color32, CornerRadius, FontId, Id, Rect, Sense, Stroke, Ui, Vec2};
+use egui::{Align2, Color32, CornerRadius, FontId, Id, Rect, Stroke, Ui, Vec2};
 use shellman_core::fsops::Entry;
 use shellman_core::thumbs;
 use shellman_ui::glass::islands::shows_as;
@@ -40,6 +40,15 @@ pub(super) fn fit(width: f32) -> (usize, f32, f32) {
 /// A card's fill and line, by its state. Selected: the accent at a fifth, ringed by a lighter
 /// accent, as the design has it.
 fn card_look(c: &Colors, selected: bool, hovered: bool) -> (Color32, Stroke) {
+    // High contrast: no tints; every card outlined in the text colour, the selected one in the
+    // highlight.
+    if c.high_contrast {
+        return if selected {
+            (c.bg, Stroke::new(2.0_f32, c.accent_fill))
+        } else {
+            (c.bg, Stroke::new(1.0_f32, c.text))
+        };
+    }
     // As the design gives them (CSS colours), converted for the window (see `shows_as`).
     let css = |r: u8, g: u8, b: u8, a: u8| shows_as(Color32::from_rgba_unmultiplied(r, g, b, a));
     if selected {
@@ -95,13 +104,16 @@ impl super::FileMan {
         let n = tab.view.len();
         let lines = n.div_ceil(cols);
         let many = tab.selected.len() > 1;
+        let take_focus = self.take_focus;
+        let mut has_focus = false;
+        let mut tabbed_in = None;
 
         let scroll = interact::scroll_to_cursor(tab, line_h, cols);
         let out = scroll.show_rows(ui, line_h, lines, |ui, line_range| {
             ui.spacing_mut().item_spacing.y = 0.0;
             for line in line_range {
-                let (line_rect, _) =
-                    ui.allocate_exact_size(Vec2::new(width, line_h), Sense::hover());
+                // Space only, not a widget: a line is no control of its own.
+                let (_, line_rect) = ui.allocate_space(Vec2::new(width, line_h));
                 for col in 0..cols {
                     let r = line * cols + col;
                     if r >= n {
@@ -114,7 +126,7 @@ impl super::FileMan {
                     );
                     // Drags too, so a drag that starts on a card is the card's, never a
                     // rubber band.
-                    let resp = ui.interact(card, Id::new(("card", r)), Sense::click_and_drag());
+                    let resp = ui.interact(card, Id::new(("card", r)), interact::item_sense(tab, r));
                     if !bin {
                         super::dnd::item_zone(ui, card, e, super::RADIUS);
                     }
@@ -128,6 +140,14 @@ impl super::FileMan {
                         stroke,
                         egui::StrokeKind::Inside,
                     );
+                    let items = if e.is_dir && !bin { counts.get(&e.path) } else { None };
+                    let date = text::friendly_date(&e.modified_text, &days.0, &days.1);
+                    let name = text::spoken_item(e, &date, items);
+                    has_focus |= interact::item_access(ui, &resp, &name, selected, take_focus);
+                    theme::focus_ring(ui, &resp, card, CARD_RADIUS as f32);
+                    if resp.gained_focus() && tab.selected.is_empty() {
+                        tabbed_in = Some(r);
+                    }
                     // The keyboard's place, when it is not plainly the one selected item.
                     if tab.cursor == Some(r) && (many || (!selected && !tab.selected.is_empty())) {
                         ui.painter().rect_stroke(
@@ -178,7 +198,6 @@ impl super::FileMan {
                         tags.mask(&e.path),
                         true,
                     );
-                    let items = if e.is_dir && !bin { counts.get(&e.path) } else { None };
                     let below = Rect::from_min_max(
                         egui::pos2(name.left(), name.bottom()),
                         egui::pos2(card.right() - 12.0, name.bottom() + 17.0),
@@ -202,9 +221,15 @@ impl super::FileMan {
                 }
             }
         });
+        shellman_ui::widgets::name_scroll_bar(ui.ctx(), &out, "the folder");
         tab.list_offset = out.state.offset.y;
         tab.list_height = out.inner_rect.height();
         tab.view_rect = out.inner_rect;
+        if let Some(r) = tabbed_in {
+            tab.select_only(r);
+        }
+        self.row_focus |= has_focus;
+        let tab = &mut self.tabs[self.active];
         let layout = select::Layout {
             count: n,
             cols,
@@ -339,5 +364,14 @@ mod tests {
         assert!(fill.a() > 0 && fill.a() < 80);
         let (_, plain) = card_look(&c, false, false);
         assert_eq!(plain.width, 1.0);
+    }
+
+    #[test]
+    fn high_contrast_cards_are_outlined_not_tinted() {
+        let c = Colors::high_contrast();
+        let (fill, ring) = card_look(&c, true, true);
+        assert_eq!((fill, ring.color, ring.width), (c.bg, c.accent_fill, 2.0));
+        let (fill, line) = card_look(&c, false, true);
+        assert_eq!((fill, line.color), (c.bg, c.text));
     }
 }

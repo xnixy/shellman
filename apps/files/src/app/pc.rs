@@ -14,7 +14,7 @@ const GAP: f32 = 12.0;
 impl super::FileMan {
     pub(super) fn pc_page(&mut self, ui: &mut Ui, actions: &mut Vec<Action>) {
         let c = colors();
-        ScrollArea::vertical().show(ui, |ui| {
+        let out = ScrollArea::vertical().show(ui, |ui| {
             ui.add_space(8.0);
             ui.label(theme::muted("Drives").size(13.0));
             ui.add_space(4.0);
@@ -25,14 +25,23 @@ impl super::FileMan {
             let card_w = (width + GAP) / cols as f32 - GAP;
             ui.spacing_mut().item_spacing.y = GAP;
             for (line, drives) in self.drives.chunks(cols).enumerate() {
-                let (row, _) = ui.allocate_exact_size(Vec2::new(width, CARD_H), Sense::hover());
+                let (_, row) = ui.allocate_space(Vec2::new(width, CARD_H));
                 for (col, d) in drives.iter().enumerate() {
                     let rect = Rect::from_min_size(
                         row.min + Vec2::new(col as f32 * (card_w + GAP), 0.0),
                         Vec2::new(card_w, CARD_H),
                     );
                     let resp = ui.interact(rect, Id::new(("drive", line, col)), Sense::click());
+                    let spoken = match d.total > 0 {
+                        true => format!("{}, {} free of {}", d.title(), shellman_core::fsops::format_size(d.free), shellman_core::fsops::format_size(d.total)),
+                        false => d.title(),
+                    };
+                    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &spoken));
+                    theme::focus_ring(ui, &resp, rect, 12.0);
                     super::dnd::zone(ui, rect, super::dnd::Dest::Dir(d.root.clone()), 12.0);
+                    if c.high_contrast {
+                        ui.painter().rect_stroke(rect, CornerRadius::same(12), egui::Stroke::new(1.0_f32, c.text), egui::StrokeKind::Inside);
+                    }
                     let fill = if resp.hovered() {
                         c.control_hover
                     } else {
@@ -56,13 +65,15 @@ impl super::FileMan {
                 ui.add_space(4.0);
                 ui.spacing_mut().item_spacing.y = GAP;
                 for (line, distros) in self.linux.chunks(cols).enumerate() {
-                    let (row, _) = ui.allocate_exact_size(Vec2::new(width, CARD_H), Sense::hover());
+                    let (_, row) = ui.allocate_space(Vec2::new(width, CARD_H));
                     for (col, d) in distros.iter().enumerate() {
                         let rect = Rect::from_min_size(
                             row.min + Vec2::new(col as f32 * (card_w + GAP), 0.0),
                             Vec2::new(card_w, CARD_H),
                         );
                         let resp = ui.interact(rect, Id::new(("linux", line, col)), Sense::click());
+                        resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, format!("{} (Linux)", d.name)));
+                        theme::focus_ring(ui, &resp, rect, 12.0);
                         super::dnd::zone(ui, rect, super::dnd::Dest::Dir(d.root.clone()), 12.0);
                         let fill = if resp.hovered() { c.control_hover } else { c.control };
                         ui.painter().rect_filled(rect, CornerRadius::same(12), fill);
@@ -77,6 +88,7 @@ impl super::FileMan {
                 }
             }
         });
+        shellman_ui::widgets::name_scroll_bar(ui.ctx(), &out, "This PC");
     }
 }
 

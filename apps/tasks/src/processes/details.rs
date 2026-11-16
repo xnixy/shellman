@@ -53,8 +53,16 @@ pub fn show(ui: &mut egui::Ui, rect: Rect, proc: usize, st: &mut State) {
         let y = inner.top() + 38.0 + (i / 4) as f32 * 36.0;
         line(y, label, value, x, col);
     }
-    // What could not be read says why when hovered.
+    // Read out as one piece; what could not be read says why when hovered.
+    let resp = ui.interact(card, egui::Id::new(("denied", key)), egui::Sense::hover());
+    let spoken = std::iter::once(("Path", path.as_str()))
+        .chain(std::iter::once(("Command line", command.as_str())))
+        .chain(fields.iter().map(|(l, v)| (*l, v.as_str())))
+        .map(|(l, v)| format!("{l}: {v}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, format!("Details. {spoken}")));
     if let Some(why) = &details.denied {
-        ui.interact(card, egui::Id::new(("denied", key)), egui::Sense::hover()).on_hover_text(why);
+        resp.on_hover_text(why);
     }
 }

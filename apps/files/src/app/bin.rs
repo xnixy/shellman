@@ -242,6 +242,11 @@ fn pill(ui: &mut Ui, rect: Rect, g: char, label: &str, enabled: bool, tip: &str)
     let c = colors();
     let sense = if enabled { Sense::click() } else { Sense::hover() };
     let resp = ui.interact(rect, Id::new(("bin-pill", label)), sense).on_hover_text(tip);
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, label));
+    theme::focus_ring(ui, &resp, rect, 16.0);
+    if c.high_contrast {
+        ui.painter().rect_stroke(rect, CornerRadius::same(16), egui::Stroke::new(1.0_f32, c.text), egui::StrokeKind::Inside);
+    }
     let fill = if enabled && resp.hovered() { c.control_hover } else { c.control };
     ui.painter().rect_filled(rect, CornerRadius::same(16), fill);
     let color = if enabled { c.text } else { theme::with_alpha(c.muted, 90) };

@@ -117,9 +117,11 @@ pub fn show(ui: &mut egui::Ui, rect: Rect, line: Line, st: &mut State) -> Option
     }
 }
 
-fn heading(ui: &egui::Ui, rect: Rect, apps: bool, count: usize) {
+fn heading(ui: &mut egui::Ui, rect: Rect, apps: bool, count: usize) {
     let c = colors();
     let title = if apps { "Apps" } else { "Background processes" };
+    let resp = ui.interact(rect, egui::Id::new(("heading", apps)), Sense::hover());
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, format!("{title} ({count})")));
     let y = rect.center().y + 3.0;
     let t = ui.painter().text(pos2(rect.left() + 8.0, y), Align2::LEFT_CENTER, title, semibold_font(13.0), c.text);
     ui.painter().text(pos2(t.right() + 6.0, y), Align2::LEFT_CENTER, format!("({count})"), FontId::proportional(12.5), c.muted);
@@ -141,25 +143,55 @@ fn draw(
     let p: &Proc = &st.list.procs[proc];
     let key = p.key;
     let id = egui::Id::new(("row", key, indent as i32));
-    let resp = ui.interact(rect, id, Sense::click());
     // A group's root has two rows (the group's, and its own inside); only the one clicked lights.
     let member_row = indent > 0.0;
     let selected = st.list.selected == Some(key) && (st.list.as_member == member_row || !is_group_row(st, proc));
-    // Given as they should show over the glass (see `glass::islands::shows_as`).
-    let fill = if selected {
-        shows_as(theme::with_alpha(c.accent_fill, if c.light { 40 } else { 52 }))
-    } else if resp.hovered() {
-        shows_as(c.row_hover)
+    // One Tab stop for the whole list: the selected row (the first row when none is), and the
+    // arrow keys move it (see `list::keys`).
+    let tab_stop = selected || (st.list.selected.is_none() && st.list.tab_stop == Some(key) && !member_row);
+    let resp = ui.interact(rect, id, if tab_stop { Sense::click() } else { Sense::CLICK });
+    let verdict = policy::may_end(p, st.own_pid);
+    let name = row_name(label, extra, n, open, verdict.reason().is_some());
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, selected, &name));
+    if tab_stop {
+        if resp.has_focus() {
+            // The arrows move the selection, not egui's focus.
+            ui.memory_mut(|m| m.set_focus_lock_filter(id, egui::EventFilter { horizontal_arrows: true, vertical_arrows: true, ..Default::default() }));
+            st.list.row_focus = true;
+        } else if selected && (st.list.take_focus || st.list.focus_pending) {
+            resp.request_focus();
+            st.list.focus_pending = false;
+        }
+    }
+    let row_rect = rect.shrink2(vec2(0.0, 1.0));
+    if c.high_contrast {
+        // Highlight only under highlight text: the selected row is outlined instead.
+        if selected {
+            ui.painter().rect_stroke(row_rect, 10.0, egui::Stroke::new(2.0_f32, c.accent_fill), egui::StrokeKind::Inside);
+        }
     } else {
-        Color32::TRANSPARENT
-    };
-    ui.painter().rect_filled(rect.shrink2(vec2(0.0, 1.0)), 10.0, fill);
+        // Given as they should show over the glass (see `glass::islands::shows_as`).
+        let fill = if selected {
+            shows_as(theme::with_alpha(c.accent_fill, if c.light { 40 } else { 52 }))
+        } else if resp.hovered() {
+            shows_as(c.row_hover)
+        } else {
+            Color32::TRANSPARENT
+        };
+        ui.painter().rect_filled(row_rect, 10.0, fill);
+    }
+    theme::focus_ring(ui, &resp, row_rect, 10.0);
+    // Tab into the list selects its first row.
+    let tabbed_in = resp.gained_focus() && !selected;
 
     let mut x = rect.left() + 4.0 + indent;
     let mut press = None;
     if let Some(open) = open {
         let chevron = Rect::from_min_size(pos2(x, rect.top()), vec2(22.0, rect.height()));
-        let cr = ui.interact(chevron, id.with("chevron"), Sense::click());
+        // Not a Tab stop (Right and Left open and close a group), but named for screen readers.
+        let cr = ui.interact(chevron, id.with("chevron"), Sense::CLICK);
+        let what = if open { "Collapse" } else { "Expand" };
+        cr.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, format!("{what} {label}")));
         let g = if open { CHEVRON_DOWN } else { glyph::CHEVRON };
         let color = if cr.hovered() { c.text } else { c.muted };
         ui.painter().text(chevron.center(), Align2::CENTER_CENTER, g, icon_font(10.0), color);
@@ -191,7 +223,6 @@ fn draw(
         let e = painter.text(pos2(after, rect.center().y), Align2::LEFT_CENTER, extra, FontId::proportional(12.0), c.muted);
         after = e.right() + 8.0;
     }
-    let verdict = policy::may_end(p, st.own_pid);
     let mark = match verdict {
         Verdict::Critical(_) | Verdict::Denied(_) => Some(glyph::LOCK),
         Verdict::Protected(_) => Some(SHIELD),
@@ -202,7 +233,9 @@ fn draw(
         if at.right() < name.right() {
             painter.text(at.center(), Align2::CENTER_CENTER, g, icon_font(11.0), c.muted);
             if let Some(reason) = verdict.reason() {
-                ui.interact(at, id.with("mark"), Sense::hover()).on_hover_text(reason);
+                let m = ui.interact(at, id.with("mark"), Sense::hover());
+                m.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, reason));
+                m.on_hover_text(reason);
             }
         }
     }
@@ -211,7 +244,7 @@ fn draw(
     if press.is_none() {
         if resp.double_clicked() {
             press = Some(if open.is_some() { Press::Toggle(key) } else { Press::Details(key, member_row) });
-        } else if resp.clicked() {
+        } else if resp.clicked() || tabbed_in {
             press = Some(Press::Select(key, member_row));
         }
     }
@@ -250,6 +283,37 @@ fn numbers(ui: &egui::Ui, rect: Rect, n: &Numbers) {
     };
     let cell = cell(rect, Column::Status);
     ui.painter().text(pos2(cell.left() + 8.0, rect.center().y), Align2::LEFT_CENTER, text, font, color);
+}
+
+/// What a screen reader says for a row: its name and note, every column, whether its group is
+/// open, and that it cannot be ended (the reason is on the lock beside it).
+fn row_name(label: &str, extra: &str, n: &Numbers, open: Option<bool>, locked: bool) -> String {
+    let mut s = label.to_owned();
+    if !extra.is_empty() {
+        s += &format!(" {extra}");
+    }
+    let gpu = n.gpu.map(format::percent).unwrap_or_else(|| "none".into());
+    s += &format!(
+        ", CPU {}, Memory {}, Disk {}, GPU {gpu}, PID {}",
+        format::percent(n.cpu),
+        format::memory_mb(n.memory),
+        format::rate(n.disk),
+        n.pid
+    );
+    match n.status {
+        Status::Running => {}
+        Status::Suspended => s += ", Suspended",
+        Status::NotResponding => s += ", Not responding",
+    }
+    match open {
+        Some(true) => s += ", expanded",
+        Some(false) => s += ", collapsed",
+        None => {}
+    }
+    if locked {
+        s += ", cannot be ended";
+    }
+    s
 }
 
 /// What a browser-style helper is for, from its command line: `--type=renderer` is "renderer",
@@ -297,7 +361,19 @@ fn elide(ui: &egui::Ui, text: &str, font: &FontId, width: f32) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::helper_kind;
+    use super::{helper_kind, row_name, Numbers};
+    use shellman_core::procs::Status;
+
+    #[test]
+    fn rows_say_every_column() {
+        let n = Numbers { cpu: 3.0, memory: 512 * 1024 * 1024, disk: 0.0, gpu: None, pid: 42, status: Status::NotResponding };
+        let s = row_name("Firefox", "(5)", &n, Some(false), true);
+        assert!(s.starts_with("Firefox (5), CPU "), "{s}");
+        assert!(s.contains("PID 42") && s.contains("GPU none") && s.contains("Memory "), "{s}");
+        assert!(s.ends_with("Not responding, collapsed, cannot be ended"), "{s}");
+        let plain = row_name("x", "", &Numbers { status: Status::Running, ..n }, None, false);
+        assert!(plain.starts_with("x, CPU ") && plain.ends_with("PID 42"), "{plain}");
+    }
 
     #[test]
     fn helpers_say_what_they_are_for() {

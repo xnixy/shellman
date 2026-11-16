@@ -70,6 +70,18 @@ impl super::FileMan {
     }
 
     pub(super) fn toggle_details(&mut self) {
+        // A narrow window shows one pane at a time: the button goes between the folder and the
+        // details (turning them on if they were off) rather than squeezing both in.
+        if self.narrow {
+            if self.details_on() && self.details_alone {
+                self.details_alone = false;
+                return;
+            }
+            self.details_alone = true;
+            if self.details_on() {
+                return;
+            }
+        }
         match &mut self.pick {
             Some(p) => p.details = !p.details,
             None => {
@@ -82,10 +94,41 @@ impl super::FileMan {
         }
     }
 
-    /// Draw the island's contents in `rect`.
-    pub(super) fn details_island(&mut self, ui: &mut Ui, rect: Rect, actions: &mut Vec<Action>) {
+    /// Draw the island's contents in `rect`; `back`: they show in the folder's place (a narrow
+    /// window), with a back arrow to the folder.
+    pub(super) fn details_island(&mut self, ui: &mut Ui, rect: Rect, back: bool, actions: &mut Vec<Action>) {
+        let mut rect = rect;
+        if back {
+            let b = Rect::from_min_size(rect.min + Vec2::new(12.0, 10.0), Vec2::splat(30.0));
+            let resp = shellman_ui::chips::round_icon(ui, b, Id::new("details-back"), glyph::BACK, true, false, "Back to the folder");
+            if resp.clicked() {
+                self.details_alone = false;
+            }
+            ui.painter().text(
+                egui::pos2(b.right() + 8.0, b.center().y),
+                Align2::LEFT_CENTER,
+                "Details",
+                semibold_font(14.0),
+                colors().text,
+            );
+            rect.min.y = b.bottom() - 6.0;
+        }
+        // The whole island read as one piece; its buttons are named on their own.
+        let resp = ui.interact(rect, Id::new("details-island"), Sense::hover());
         let sel = self.details_contents(ui, rect, actions);
+        let spoken = self.details_spoken(&sel);
+        resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, &spoken));
         self.details_sel.1 = sel;
+    }
+
+    /// The details as a screen reader says them: "Details. dock.png, PNG · 4.2 MB".
+    fn details_spoken(&self, sel: &[Entry]) -> String {
+        let reading = &self.details.reading;
+        match sel {
+            [] => format!("Details. {}", self.tabs[self.active].loc.title()),
+            [e] => format!("Details. {}, {}", e.name, subline(e, reading.pixels, reading.online_only)),
+            many => format!("Details. {} selected", many.len()),
+        }
     }
 
     /// The island's contents; hands back the selection it was given, to keep for next frame.
@@ -123,11 +166,14 @@ impl super::FileMan {
 
         // The preview.
         let well = CornerRadius::same(14);
-        let soft = if c.light {
+        let soft = if c.high_contrast {
+            c.bg
+        } else if c.light {
             Color32::from_black_alpha(10)
         } else {
             shows_as(Color32::from_rgba_unmultiplied(255, 255, 255, 10))
         };
+
         match sel.as_slice() {
             [] => {
                 ui.painter().rect_filled(preview, well, soft);
@@ -137,7 +183,8 @@ impl super::FileMan {
                     _ => glyph::FOLDER,
                 };
                 if matches!(loc, Loc::Dir(_)) {
-                    let w = preview.width() * 0.32;
+                    // A third of the well's width, but never taller than the well.
+                    let w = (preview.width() * 0.32).min(preview.height() * 0.7 / 0.74);
                     widgets::folder_icon(ui.painter(), Rect::from_center_size(preview.center(), Vec2::new(w, w * 0.74)), c.accent_text, |x| x);
                 } else {
                     ui.painter().text(preview.center(), Align2::CENTER_CENTER, g, icon_font(42.0), c.muted);
@@ -161,6 +208,10 @@ impl super::FileMan {
                     c.muted,
                 );
             }
+        }
+
+        if c.high_contrast {
+            ui.painter().rect_stroke(preview, well, egui::Stroke::new(1.0_f32, c.text), egui::StrokeKind::Inside);
         }
 
         // The name and what it is.
@@ -376,6 +427,9 @@ impl super::FileMan {
         for i in 0..COUNT {
             let on = paths.iter().all(|p| self.tags.mask(p) & (1 << i) != 0);
             let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width().max(220.0), 32.0), Sense::click());
+            let tag_name = self.tags.store.name(i).to_owned();
+            resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Checkbox, true, on, &tag_name));
+            theme::focus_ring(ui, &resp, rect, 6.0);
             if resp.hovered() && !self.tag_edit {
                 ui.painter().rect_filled(rect, CornerRadius::same(6), theme::with_alpha(c.text, if c.light { 18 } else { 12 }));
             }
@@ -384,6 +438,7 @@ impl super::FileMan {
             if self.tag_edit {
                 let mut name = self.tags.store.name(i).to_owned();
                 let te = ui.put(text_rect, egui::TextEdit::singleline(&mut name).margin(Vec2::new(6.0, 2.0)));
+                shellman_ui::widgets::name_field(&te, &format!("Name of tag {}", i + 1), Some(&name));
                 if te.changed() && self.tags.store.rename(i, &name) {
                     changed = true;
                 }

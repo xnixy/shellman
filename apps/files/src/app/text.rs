@@ -99,6 +99,25 @@ pub(crate) fn card_detail(e: &Entry, sort: SortKey, items: Option<usize>, days: 
     }
 }
 
+/// What a screen reader says for an item: its name, what it is, when it changed and its size
+/// (a folder's item count when known).
+pub(crate) fn spoken_item(e: &Entry, date: &str, items: Option<usize>) -> String {
+    let mut parts = vec![e.name.clone()];
+    parts.push(if e.is_dir { "Folder".to_owned() } else { e.kind.clone() });
+    if !date.is_empty() {
+        parts.push(format!("modified {date}"));
+    }
+    if e.is_dir {
+        if let Some(n) = items {
+            parts.push(count(n, "item"));
+        }
+    } else {
+        parts.push(fsops::format_size(e.size));
+    }
+    parts.retain(|p| !p.is_empty());
+    parts.join(", ")
+}
+
 /// "1 item", "3 items".
 pub(crate) fn count(n: usize, what: &str) -> String {
     format!("{n} {what}{}", if n == 1 { "" } else { "s" })
@@ -157,6 +176,26 @@ mod tests {
         }
         assert_eq!(civil_from_days(days_from_civil(2024, 3, 1) - 1), (2024, 2, 29));
         assert_eq!(civil_from_days(days_from_civil(2026, 1, 1) - 1), (2025, 12, 31));
+    }
+
+    #[test]
+    fn items_are_read_out_whole() {
+        let file = Entry {
+            name: "notes.txt".into(),
+            key: "notes.txt".into(),
+            path: std::path::PathBuf::from(r"C:\notes.txt"),
+            is_dir: false,
+            size: 2048,
+            modified: None,
+            modified_text: String::new(),
+            kind: "Text document".into(),
+            hidden: false,
+        };
+        let s = spoken_item(&file, "Today, 14:32", None);
+        assert!(s.starts_with("notes.txt, Text document, modified Today, 14:32, "), "{s}");
+        let dir = Entry { is_dir: true, kind: "File folder".into(), ..file };
+        assert_eq!(spoken_item(&dir, "", Some(3)), "notes.txt, Folder, 3 items");
+        assert_eq!(spoken_item(&dir, "", None), "notes.txt, Folder");
     }
 
     #[test]

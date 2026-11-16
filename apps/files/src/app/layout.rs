@@ -35,7 +35,13 @@ impl super::FileMan {
                 let under = ui.painter().add(Shape::Noop);
                 islands::drag_gaps(ui, screen);
                 let rail_w = shellman_ui::rail::width(ui, &rows.entries, mode);
-                let plan = Plan::new(screen, self.details_on(), rail_w);
+                let plan = Plan::new(screen, self.details_on(), self.details_alone, rail_w);
+                self.narrow = plan.one_pane;
+                if !plan.one_pane {
+                    // Wide again: next time it narrows, the folder shows first.
+                    self.details_alone = false;
+                }
+                self.take_focus = std::mem::take(&mut self.row_focus);
 
                 let top = if self.pick.is_some() {
                     self.pick_title(ui, plan.tabs_row, actions)
@@ -54,25 +60,28 @@ impl super::FileMan {
                 // that keeps them readable on any wallpaper.
                 self.content_island = plan.content;
                 let listed = self.listed();
-                let content = if listed {
-                    list.push(Island::new(plan.content, RADIUS));
-                    plan.content.shrink2(Vec2::new(10.0, 8.0))
-                } else {
-                    list.push(Island::new(plan.content, RADIUS).faint(BACKING));
-                    plan.content.shrink(10.0)
-                };
-                let mut child = ui.new_child(
-                    UiBuilder::new()
-                        .id_salt("folder")
-                        .max_rect(content)
-                        .layout(Layout::top_down(Align::Min)),
-                );
-                child.set_clip_rect(content);
-                self.folder_body(&mut child, actions);
+                // With the details in the folder's place (a narrow window), no folder this frame.
+                if !plan.alone {
+                    let content = if listed {
+                        list.push(Island::new(plan.content, RADIUS));
+                        plan.content.shrink2(Vec2::new(10.0, 8.0))
+                    } else {
+                        list.push(Island::new(plan.content, RADIUS).faint(BACKING));
+                        plan.content.shrink(10.0)
+                    };
+                    let mut child = ui.new_child(
+                        UiBuilder::new()
+                            .id_salt("folder")
+                            .max_rect(content)
+                            .layout(Layout::top_down(Align::Min)),
+                    );
+                    child.set_clip_rect(content);
+                    self.folder_body(&mut child, actions);
+                }
 
                 if let Some(d) = plan.details {
                     list.push(Island::new(d, RADIUS));
-                    self.details_island(ui, d, actions);
+                    self.details_island(ui, d, plan.alone, actions);
                 }
 
                 let mut extra = Vec::new();

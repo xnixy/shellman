@@ -25,18 +25,25 @@ pub fn show(ui: &mut egui::Ui, rect: Rect, st: &mut State) {
     let body = Rect::from_min_max(pos2(rect.left() + PAD - 4.0, header.bottom() + 2.0), pos2(rect.right() - 4.0, rect.bottom() - 10.0));
     let over = ui.rect_contains_pointer(rect);
     st.list.hold(over);
+    st.list.take_focus = std::mem::take(&mut st.list.row_focus);
+    st.list.tab_stop = st.list.lines.iter().find_map(|l| match *l {
+        Line::Group { group, .. } => Some(st.list.procs[st.list.groups[group].root].key),
+        _ => None,
+    });
     keys(ui, st);
     let mut press = None;
     ui.scope_builder(UiBuilder::new().max_rect(body), |ui| {
         ui.spacing_mut().scroll = egui::style::ScrollStyle::floating();
-        egui::ScrollArea::vertical()
+        let out = egui::ScrollArea::vertical()
             .id_salt("process-list")
             .auto_shrink([false, false])
             .drag_to_scroll(false)
             .show_viewport(ui, |ui, view| {
                 let (tops, height) = model::tops(&st.list.lines, ROW_H, DETAILS_H);
                 let width = ui.available_width() - 8.0;
-                let (all, _) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
+                let (all, area) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
+                let rows = st.list.lines.iter().filter(|l| matches!(l, Line::Group { .. } | Line::Member { .. })).count();
+                area.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Other, true, format!("Processes, {rows} rows")));
                 if std::mem::take(&mut st.list.reveal) {
                     // The selected row, and its details under it when they are open.
                     let at = |i: usize| Rect::from_min_size(pos2(all.left(), all.top() + tops[i]), vec2(width, ROW_H));
@@ -59,6 +66,7 @@ pub fn show(ui: &mut egui::Ui, rect: Rect, st: &mut State) {
                     }
                 }
             });
+        shellman_ui::widgets::name_scroll_bar(ui.ctx(), &out, "processes");
     });
     match press {
         Some(Press::Select(k, member)) => st.list.select_row(k, member),
@@ -91,6 +99,8 @@ fn headers(ui: &mut egui::Ui, rect: Rect, st: &mut State) {
     for (column, title, cell) in cells {
         let resp = ui.interact(cell, egui::Id::new(("header", title)), Sense::click());
         let current = sort.column == column;
+        resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, header_name(title, current, sort.descending)));
+        theme::focus_ring(ui, &resp, cell.shrink(2.0), 8.0);
         let color = if current || resp.hovered() { c.text } else { c.muted };
         let right = column != Column::Name && column != Column::Status;
         let font = FontId::proportional(12.5);
@@ -107,10 +117,21 @@ fn headers(ui: &mut egui::Ui, rect: Rect, st: &mut State) {
     }
 }
 
+/// A column header as a screen reader says it: "CPU, sorted descending".
+pub fn header_name(title: &str, current: bool, descending: bool) -> String {
+    match (current, descending) {
+        (false, _) => format!("{title}, sort by"),
+        (true, true) => format!("{title}, sorted descending"),
+        (true, false) => format!("{title}, sorted ascending"),
+    }
+}
+
 /// Up and Down move the selection, Right and Left open and close a group, Delete ends the
 /// selection, Enter opens its details. Not while the search field has the keyboard.
 fn keys(ui: &mut egui::Ui, st: &mut State) {
-    if ui.ctx().wants_keyboard_input() {
+    // Not while a button or the search has the keyboard: there the keys are theirs.
+    let elsewhere = ui.memory(|m| m.focused().is_some()) && !st.list.take_focus && !st.list.focus_pending;
+    if ui.ctx().wants_keyboard_input() || elsewhere {
         return;
     }
     let (up, down, left, right, delete, enter) = ui.input(|i| {
@@ -142,6 +163,7 @@ fn keys(ui: &mut egui::Ui, st: &mut State) {
         };
         st.list.select(next.copied());
         st.list.reveal = true;
+        st.list.focus_pending |= st.list.take_focus;
     }
     let Some(sel) = st.list.selected else {
         return;
@@ -155,5 +177,15 @@ fn keys(ui: &mut egui::Ui, st: &mut State) {
     }
     if delete {
         st.actions.start(&st.list, Act::End, &st.control, st.own_pid);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn headers_say_their_sort() {
+        assert_eq!(super::header_name("CPU", true, true), "CPU, sorted descending");
+        assert_eq!(super::header_name("Name", true, false), "Name, sorted ascending");
+        assert_eq!(super::header_name("PID", false, true), "PID, sort by");
     }
 }

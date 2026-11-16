@@ -109,13 +109,14 @@ fn profile(ui: &mut egui::Ui, st: &mut State) {
     ui.add_space(8.0);
     let current = f.default_profile();
     let mut picked = None;
-    egui::ComboBox::from_id_salt("terminal-profile").width(300.0).selected_text(&current).show_ui(ui, |ui| {
+    let resp = egui::ComboBox::from_id_salt("terminal-profile").width(300.0_f32.min(ui.available_width())).selected_text(&current).show_ui(ui, |ui| {
         for name in &v.profiles {
             if ui.selectable_label(name.eq_ignore_ascii_case(&current), name).clicked() {
                 picked = Some(name.clone());
             }
         }
     });
+    resp.response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::ComboBox, true, format!("Default profile, {current}")));
     if let Some(name) = picked {
         f.set("default_profile", name);
         let f = f.clone();
@@ -130,8 +131,9 @@ fn font(ui: &mut egui::Ui, st: &mut State) {
     let edit = ui.add(
         egui::TextEdit::singleline(&mut v.family)
             .hint_text(theme::muted("Cascadia Mono"))
-            .desired_width(300.0),
+            .desired_width(300.0_f32.min(ui.available_width())),
     );
+    shellman_ui::widgets::name_field(&edit, "Font family", Some(&v.family));
     let done = edit.lost_focus() || (edit.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)));
     let mut changed = false;
     if done && v.family.trim() != f.font_family() {
@@ -225,6 +227,7 @@ fn open_with(ui: &mut egui::Ui, st: &mut State) {
                 .hint_text(theme::muted("\"C:\\Tools\\wezterm.exe\" start --cwd {dir}"))
                 .desired_width(ui.available_width().min(520.0)),
         );
+        shellman_ui::widgets::name_field(&edit, "Command line", Some(&v.custom));
         if (edit.lost_focus() || (edit.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)))) && v.custom.trim() != choice.custom_terminal {
             choice.custom_terminal = v.custom.trim().to_owned();
             changed = true;

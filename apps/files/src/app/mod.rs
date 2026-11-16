@@ -220,6 +220,18 @@ pub(crate) struct FileMan {
     editing_path: Option<String>,
     focus_path: bool,
     focus_search: bool,
+    /// An item of the folder has the keyboard (set while drawing), and had it last frame (the
+    /// cursor's item then takes it over, see `interact::item_access`).
+    row_focus: bool,
+    take_focus: bool,
+    /// Below `plan::ONE_PANE_BELOW` the details show instead of the folder, not beside it;
+    /// `details_alone` says which one shows, `narrow` whether the window is that narrow.
+    details_alone: bool,
+    narrow: bool,
+    /// The least window size at Windows' text size, and whether the window has been grown to it
+    /// (a size saved at a smaller text size is too small for the islands).
+    min_size: [f32; 2],
+    grown: bool,
     /// The shared look, which the settings app edits; Files only follows it.
     look: shellman_ui::appearance::Appearance,
     look_watch: shellman_core::watch::Watcher,
@@ -346,6 +358,12 @@ impl FileMan {
             editing_path: None,
             focus_path: false,
             focus_search: false,
+            row_focus: false,
+            take_focus: false,
+            details_alone: false,
+            narrow: false,
+            min_size: [0.0; 2],
+            grown: false,
             look,
             look_watch,
             last_accent_check: 0.0,
@@ -382,6 +400,12 @@ impl FileMan {
         // Learn the tagged items' identities, and find any renamed or moved while Files was closed.
         app.want_tag_check();
         app
+    }
+
+    /// The least window size (points, at Windows' text size), which a restored window is grown to.
+    pub(crate) fn with_min_size(mut self, min: [f32; 2]) -> Self {
+        self.min_size = min;
+        self
     }
 
     fn push_tab(&mut self, loc: Loc) -> usize {
@@ -874,6 +898,9 @@ impl eframe::App for FileMan {
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         shellman_ui::timing::content(ctx, "first frame", 0);
+        if !self.grown {
+            self.grown = shellman_ui::theme::env::grow_to(ctx, self.min_size);
+        }
         self.drain();
         self.watch_tabs();
         // The bin is also re-listed when the window is brought back, in case a change slipped by.

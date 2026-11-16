@@ -57,6 +57,15 @@ pub struct List {
     pub details: bool,
     /// Scroll the selection (and its details) into view on the next frame.
     pub reveal: bool,
+    /// A row has the keyboard this frame (set while drawing).
+    pub row_focus: bool,
+    /// A row had the keyboard last frame: the newly selected row takes it over.
+    pub take_focus: bool,
+    /// The arrows moved the selection while a row had the keyboard, and the selected row has not
+    /// taken it yet (it may be drawn only once scrolled into view).
+    pub focus_pending: bool,
+    /// With nothing selected, the row that Tab stops at (the first one), so the list is reachable.
+    pub tab_stop: Option<Key>,
     held: bool,
     shown: HashMap<Parent, Vec<Key>>,
     by_key: HashMap<Key, usize>,

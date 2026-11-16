@@ -95,6 +95,10 @@ impl Columns {
 /// A row's fill, by its state: the accent at a quarter when selected, a faint lift when hovered.
 /// Given as CSS would show them over the glass (see `shows_as`).
 pub(super) fn row_fill(c: &Colors, selected: bool, hovered: bool) -> Option<Color32> {
+    // High contrast: no washes; the selected row is outlined where it is drawn.
+    if c.high_contrast {
+        return None;
+    }
     if selected {
         let a = if c.light { 44 } else { 64 };
         return Some(shows_as(theme::with_alpha(c.accent_fill, a)));
@@ -142,6 +146,9 @@ impl super::FileMan {
             return;
         }
         let many = tab.selected.len() > 1;
+        let take_focus = self.take_focus;
+        let mut has_focus = false;
+        let mut tabbed_in = None;
 
         let scroll = interact::scroll_to_cursor(tab, ROW_H, 1);
         let out = scroll.show_rows(ui, ROW_H, tab.view.len(), |ui, range| {
@@ -150,7 +157,7 @@ impl super::FileMan {
                 let e = &tab.entries[tab.view[r]];
                 // Drags too, so a drag that starts on a row is the row's, never a rubber band.
                 let (rect, resp) =
-                    ui.allocate_exact_size(Vec2::new(width, ROW_H), Sense::click_and_drag());
+                    ui.allocate_exact_size(Vec2::new(width, ROW_H), interact::item_sense(tab, r));
                 if !bin {
                     super::dnd::item_zone(ui, rect, e, 10.0);
                 }
@@ -164,6 +171,22 @@ impl super::FileMan {
                 if let Some(fill) = row_fill(&c, selected, resp.hovered()) {
                     p.rect_filled(row_rect, radius, fill);
                 }
+                if c.high_contrast && selected {
+                    // Highlight only under highlight text: the selected row is outlined.
+                    p.rect_stroke(row_rect, radius, Stroke::new(2.0_f32, c.accent_fill), egui::StrokeKind::Inside);
+                }
+                let date = if bin {
+                    e.modified_text.clone()
+                } else {
+                    text::friendly_date(&e.modified_text, &days.0, &days.1)
+                };
+                let name = text::spoken_item(e, &date, None);
+                has_focus |= interact::item_access(ui, &resp, &name, selected, take_focus);
+                theme::focus_ring(ui, &resp, row_rect, 10.0);
+                if resp.gained_focus() && tab.selected.is_empty() {
+                    tabbed_in = Some(r);
+                }
+                let p = ui.painter();
                 if tab.cursor == Some(r) && (many || (!selected && !tab.selected.is_empty())) {
                     p.rect_stroke(
                         row_rect,
@@ -228,11 +251,6 @@ impl super::FileMan {
                     )
                 };
                 let small = FontId::proportional(12.0);
-                let date = if bin {
-                    e.modified_text.clone()
-                } else {
-                    text::friendly_date(&e.modified_text, &days.0, &days.1)
-                };
                 draw_text(
                     ui,
                     col(cols.x_modified(), cols.modified),
@@ -277,9 +295,15 @@ impl super::FileMan {
                 interact::item_menu(ui, &resp, actions, r, bin);
             }
         });
+        shellman_ui::widgets::name_scroll_bar(ui.ctx(), &out, "the folder");
         tab.list_offset = out.state.offset.y;
         tab.list_height = out.inner_rect.height();
         tab.view_rect = out.inner_rect;
+        if let Some(r) = tabbed_in {
+            tab.select_only(r);
+        }
+        self.row_focus |= has_focus;
+        let tab = &mut self.tabs[self.active];
         let layout = select::Layout {
             count: tab.view.len(),
             cols: 1,
@@ -299,7 +323,7 @@ impl super::FileMan {
 /// again reverses.
 fn header(ui: &mut Ui, tab: &mut Tab, cols: &Columns, width: f32) {
     let c = colors();
-    let (head, _) = ui.allocate_exact_size(Vec2::new(width, HEADER_H + HEADER_GAP), Sense::hover());
+    let (_, head) = ui.allocate_space(Vec2::new(width, HEADER_H + HEADER_GAP));
     let head = Rect::from_min_size(head.min, Vec2::new(width, HEADER_H));
     ui.painter().hline(
         head.x_range().shrink(6.0),
@@ -314,6 +338,13 @@ fn header(ui: &mut Ui, tab: &mut Tab, cols: &Columns, width: f32) {
         let label = if tagged && key == SortKey::Kind { "Where" } else { label };
         let r = Rect::from_min_size(head.min + Vec2::new(x, 0.0), Vec2::new(w, HEADER_H));
         let resp = ui.interact(r, Id::new(("col", label)), Sense::click());
+        let spoken = match (tab.sort == key, tab.ascending) {
+            (false, _) => format!("{label}, sort by"),
+            (true, true) => format!("{label}, sorted ascending"),
+            (true, false) => format!("{label}, sorted descending"),
+        };
+        resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &spoken));
+        theme::focus_ring(ui, &resp, r.shrink(2.0), 8.0);
         if resp.hovered() {
             ui.painter()
                 .rect_filled(r.shrink2(Vec2::new(2.0, 2.0)), CornerRadius::same(8), row_fill(&c, false, true).unwrap_or_default());
@@ -385,6 +416,9 @@ mod tests {
         assert_eq!(sel, shows_as(theme::with_alpha(c.accent_fill, 64)));
         assert!(row_fill(&c, false, false).is_none());
         assert!(row_fill(&c, false, true).is_some());
+        // High contrast: no wash at all (the selected row is outlined where it is drawn).
+        let hc = Colors::high_contrast();
+        assert!(row_fill(&hc, true, true).is_none() && row_fill(&hc, false, true).is_none());
     }
 
     #[test]

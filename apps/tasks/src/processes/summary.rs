@@ -7,7 +7,7 @@ use egui::{pos2, vec2, Align2, FontId, Rect, Sense};
 use shellman_core::procs::format;
 use shellman_core::procs::history::Ring;
 use shellman_ui::chips;
-use shellman_ui::theme::{colors, semibold_font};
+use shellman_ui::theme::{self, colors, semibold_font};
 
 struct Tile<'a> {
     label: &'static str,
@@ -55,9 +55,12 @@ pub fn show(ui: &mut egui::Ui, rect: Rect, st: &mut State) {
     for (i, t) in tiles.iter().enumerate() {
         let tile = Rect::from_min_size(pos2(inner.left() + i as f32 * (w + gap), inner.top()), vec2(w, inner.height()));
         let resp = ui.interact(tile, egui::Id::new(("tile", t.label)), Sense::click());
-        if resp.hovered() {
+        let name = [t.label, &t.value, &t.detail].iter().filter(|s| !s.is_empty()).copied().collect::<Vec<_>>().join(", ");
+        resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, format!("{name}. Open in Performance")));
+        if resp.hovered() && !c.high_contrast {
             ui.painter().rect_filled(tile.expand(4.0), 14.0, hover);
         }
+        theme::focus_ring(ui, &resp, tile.expand(4.0), 14.0);
         let p = ui.painter().with_clip_rect(tile);
         p.text(pos2(tile.left() + 4.0, tile.top() + 2.0), Align2::LEFT_TOP, t.label, FontId::proportional(12.0), c.muted);
         p.text(pos2(tile.right() - 4.0, tile.top() + 2.0), Align2::RIGHT_TOP, &t.detail, FontId::proportional(11.5), c.muted);

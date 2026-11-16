@@ -19,7 +19,9 @@ impl super::FileMan {
         if menu_key {
             actions.push(Action::MenuKey);
         }
-        let typing = ctx.wants_keyboard_input();
+        // A text field, or a button or tab with the keyboard: Enter, the arrows and the rest are
+        // theirs, not the folder's. An item of the folder having it is the folder's own.
+        let typing = ctx.wants_keyboard_input() || (ctx.memory(|m| m.focused().is_some()) && !self.row_focus);
         let (mouse_back, mouse_fwd) = ctx.input(|i| {
             (
                 i.pointer.button_pressed(PointerButton::Extra1),

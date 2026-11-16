@@ -49,6 +49,7 @@ pub fn show(ui: &mut egui::Ui, rect: Rect, st: &mut State) {
         Stroke::new(1.0_f32, c.hairline),
     );
     let body = Rect::from_min_max(pos2(rect.left() + PAD - 4.0, header.bottom() + 2.0), pos2(rect.right() - 4.0, rect.bottom() - 10.0));
+    st.services.take_focus = std::mem::take(&mut st.services.row_focus);
     keys(ui, st);
     if st.services.rows.is_empty() {
         let text = if !st.services.loaded {
@@ -64,12 +65,13 @@ pub fn show(ui: &mut egui::Ui, rect: Rect, st: &mut State) {
     let mut clicked = None;
     ui.scope_builder(UiBuilder::new().max_rect(body), |ui| {
         ui.spacing_mut().scroll = egui::style::ScrollStyle::floating();
-        egui::ScrollArea::vertical().id_salt("service-list").auto_shrink([false, false]).drag_to_scroll(false).show_viewport(
+        let out = egui::ScrollArea::vertical().id_salt("service-list").auto_shrink([false, false]).drag_to_scroll(false).show_viewport(
             ui,
             |ui, view| {
                 let rows = st.services.rows.len();
                 let width = ui.available_width() - 8.0;
-                let (all, _) = ui.allocate_exact_size(vec2(width, rows as f32 * ROW_H), Sense::hover());
+                let (all, area) = ui.allocate_exact_size(vec2(width, rows as f32 * ROW_H), Sense::hover());
+                area.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Other, true, format!("Services, {rows} rows")));
                 if std::mem::take(&mut st.services.reveal) {
                     let at = st.services.selected.as_deref().and_then(|name| {
                         st.services.rows.iter().position(|&i| st.services.all[i].name == name)
@@ -84,30 +86,57 @@ pub fn show(ui: &mut egui::Ui, rect: Rect, st: &mut State) {
                     let service = &st.services.all[st.services.rows[r]];
                     let line = Rect::from_min_size(pos2(all.left(), all.top() + r as f32 * ROW_H), vec2(width, ROW_H));
                     let selected = st.services.selected.as_deref() == Some(service.name.as_str());
-                    if row(ui, line, service, selected) {
+                    let tab_stop = selected || (st.services.selected.is_none() && r == 0);
+                    let take = st.services.take_focus || st.services.focus_pending;
+                    let (click, focused) = row(ui, line, service, selected, tab_stop, take);
+                    if click {
                         clicked = Some(service.name.clone());
+                    }
+                    st.services.row_focus |= focused;
+                    if selected && take && tab_stop {
+                        st.services.focus_pending = false;
                     }
                 }
             },
         );
+        shellman_ui::widgets::name_scroll_bar(ui.ctx(), &out, "services");
     });
     if clicked.is_some() {
         st.services.selected = clicked;
     }
 }
 
-/// One service's row; true when clicked.
-fn row(ui: &mut egui::Ui, rect: Rect, s: &Service, selected: bool) -> bool {
+/// One service's row: whether it was clicked (or tabbed into), and whether it has the keyboard.
+/// Only `tab_stop` (the selected row, else the first) is a Tab stop; the arrows move it.
+fn row(ui: &mut egui::Ui, rect: Rect, s: &Service, selected: bool, tab_stop: bool, take_focus: bool) -> (bool, bool) {
     let c = colors();
-    let resp = ui.interact(rect, egui::Id::new(("service", &s.name)), Sense::click());
-    let fill = if selected {
-        shows_as(theme::with_alpha(c.accent_fill, if c.light { 40 } else { 52 }))
-    } else if resp.hovered() {
-        shows_as(c.row_hover)
+    let id = egui::Id::new(("service", &s.name));
+    let resp = ui.interact(rect, id, if tab_stop { Sense::click() } else { Sense::CLICK });
+    let name = format!("{}, {}, {}, {}{}", s.display, s.name, s.state.label(), s.startup_label(), if s.pid == 0 { String::new() } else { format!(", PID {}", s.pid) });
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, selected, &name));
+    let focused = tab_stop && resp.has_focus();
+    if focused {
+        ui.memory_mut(|m| m.set_focus_lock_filter(id, egui::EventFilter { horizontal_arrows: true, vertical_arrows: true, ..Default::default() }));
+    } else if tab_stop && selected && take_focus {
+        resp.request_focus();
+    }
+    let row_rect = rect.shrink2(vec2(0.0, 1.0));
+    if c.high_contrast {
+        if selected {
+            ui.painter().rect_stroke(row_rect, 10.0, Stroke::new(2.0_f32, c.accent_fill), egui::StrokeKind::Inside);
+        }
     } else {
-        Color32::TRANSPARENT
-    };
-    ui.painter().rect_filled(rect.shrink2(vec2(0.0, 1.0)), 10.0, fill);
+        let fill = if selected {
+            shows_as(theme::with_alpha(c.accent_fill, if c.light { 40 } else { 52 }))
+        } else if resp.hovered() {
+            shows_as(c.row_hover)
+        } else {
+            Color32::TRANSPARENT
+        };
+        ui.painter().rect_filled(row_rect, 10.0, fill);
+    }
+    theme::focus_ring(ui, &resp, row_rect, 10.0);
+    let tabbed_in = resp.gained_focus() && !selected;
 
     let font = FontId::proportional(13.0);
     let small = FontId::proportional(12.5);
@@ -143,7 +172,7 @@ fn row(ui: &mut egui::Ui, rect: Rect, s: &Service, selected: bool) -> bool {
         Some(t) => resp.on_hover_text_at_pointer(t),
         None => resp,
     };
-    resp.clicked()
+    (resp.clicked() || tabbed_in, focused)
 }
 
 /// The column titles; the one sorted on carries an arrow.
@@ -155,6 +184,8 @@ fn headers(ui: &mut egui::Ui, rect: Rect, st: &mut State) {
     for (column, title, cell) in cells {
         let resp = ui.interact(cell, egui::Id::new(("service-header", title)), Sense::click());
         let current = sort.column == column;
+        resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, crate::processes::header_name(title, current, sort.descending)));
+        theme::focus_ring(ui, &resp, cell.shrink(2.0), 8.0);
         let color = if current || resp.hovered() { c.text } else { c.muted };
         let right = column == Column::Pid;
         let (anchor, x) = if right { (Align2::RIGHT_CENTER, cell.right() - 8.0) } else { (Align2::LEFT_CENTER, cell.left() + 8.0) };
@@ -172,7 +203,8 @@ fn headers(ui: &mut egui::Ui, rect: Rect, st: &mut State) {
 
 /// Up and Down move the selection. Not while the search field has the keyboard.
 fn keys(ui: &mut egui::Ui, st: &mut State) {
-    if ui.ctx().wants_keyboard_input() {
+    let elsewhere = ui.memory(|m| m.focused().is_some()) && !st.services.take_focus && !st.services.focus_pending;
+    if ui.ctx().wants_keyboard_input() || elsewhere {
         return;
     }
     let (up, down) = ui.input(|i| (i.key_pressed(egui::Key::ArrowUp), i.key_pressed(egui::Key::ArrowDown)));
@@ -188,6 +220,7 @@ fn keys(ui: &mut egui::Ui, st: &mut State) {
     };
     page.selected = Some(page.all[page.rows[next]].name.clone());
     page.reveal = true;
+    page.focus_pending |= page.take_focus;
 }
 
 /// The selected service: its names, how it starts, and what it says it is for.
