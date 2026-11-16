@@ -12,11 +12,14 @@ pub struct ShellSettings {
     /// the user asks for it: it is Microsoft's process, and it runs startup apps and Windows' own
     /// Start menu host.
     pub modern_apps: bool,
+    /// Install new shellman releases by themselves (`shellman-update --auto`, started by the
+    /// session about 5 minutes after sign-in and then daily). On unless the user turns it off.
+    pub auto_update: bool,
 }
 
 impl Default for ShellSettings {
     fn default() -> Self {
-        Self { modern_apps: false }
+        Self { modern_apps: false, auto_update: true }
     }
 }
 
@@ -44,5 +47,13 @@ mod tests {
         assert!(!ShellSettings::default().modern_apps);
         assert!(!serde_json::from_str::<ShellSettings>("{}").unwrap().modern_apps);
         assert!(serde_json::from_str::<ShellSettings>(r#"{ "modern_apps": true }"#).unwrap().modern_apps);
+    }
+
+    #[test]
+    fn auto_update_default_on() {
+        assert!(ShellSettings::default().auto_update);
+        // A file saved before the setting existed keeps updating on.
+        assert!(serde_json::from_str::<ShellSettings>(r#"{ "modern_apps": true }"#).unwrap().auto_update);
+        assert!(!serde_json::from_str::<ShellSettings>(r#"{ "auto_update": false }"#).unwrap().auto_update);
     }
 }

@@ -70,8 +70,9 @@ It only changes things for your own Windows account. Other accounts on the PC ke
 
 ## Install
 
-There are no downloads yet, so for now you build it yourself (see below). That gives you one
-file, `shellman-<version>-setup.exe`. Run it:
+Downloads will be on the [Releases page](https://github.com/xnixy/shellman/releases). I
+haven't published the first one yet, so until then you build it yourself (see below). Either
+way you end up with one file, `shellman-<version>-setup.exe`. Run it:
 
 - Pick a folder. The default is `%LOCALAPPDATA%\Programs\shellman`, no admin rights needed.
 - Three optional switches, all off by default: make shellman your shell from the next sign-in,
@@ -80,6 +81,23 @@ file, `shellman-<version>-setup.exe`. Run it:
 - Click Install.
 
 Running a newer setup over an existing install updates it and keeps your settings.
+
+### Updates
+
+Once there are releases, an installed shellman updates itself. About 5 minutes after you sign
+in, and then once a day, it asks GitHub whether there's a newer release. If there is, it
+downloads the setup file and checks it before running anything: every release comes with a
+signature made with my release key, and shellman has the public half of that key built in, so a
+file that wasn't signed by me, or was changed on the way, or is an older release, is refused.
+Then it installs quietly. It waits while something is fullscreen (a game, a video, a
+presentation) or while files are being copied. The apps restart by themselves; the shell
+process itself switches over the next time you sign in. It never signs you out.
+
+You can turn this off in Settings > About > Update automatically. The same page has Check now,
+the version you're running and a link to the release notes. What it did each time is in
+`%LOCALAPPDATA%\shellman\session.log`.
+
+A copy you built and ran from `target\release` never updates itself; only an installed one does.
 
 ## Uninstall
 
@@ -111,6 +129,11 @@ target\release\shellman-setup.exe uninstall --revert
 
 `shellman-setup --help` lists everything it can do.
 
+Releases are made with `cargo xtask release --version X.Y.Z`: it builds, packs, signs the setup
+file and writes release notes from the commits since the last release, and only publishes it on
+GitHub with `--publish`. The signing key is in my password manager, not in the repo; see
+"Install and update" in `docs/PLAN.md`.
+
 ## What's in here
 
 | Folder | What it is |
@@ -123,6 +146,8 @@ target\release\shellman-setup.exe uninstall --revert
 | `apps/terminal` | Terminal |
 | `apps/settings`, `apps/control`, `apps/tasks` | Settings, quick controls, task manager |
 | `apps/setup`, `apps/installer` | Install, update and uninstall, and the one-file setup |
+| `apps/update`, `crates/update` | Automatic updates: finding, checking and installing a new release |
+| `xtask` | The release command (`cargo xtask release`) |
 | `crates/core`, `crates/ui` | Shared Windows code, and the shared look (glass, colours, controls) |
 | `integrations/firefox` | Optional: makes Firefox match |
 

@@ -10,6 +10,8 @@ publish = false
 [dependencies]
 dirs.workspace = true
 shellman-core.workspace = true
+# The update schedule and `update.json` (the checking itself is shellman-update.exe's).
+shellman-update-core = { path = "../../crates/update" }
 windows.workspace = true
 
 [build-dependencies]

@@ -24,6 +24,7 @@ accent color, fast.
 | `apps/session` | the shell process itself | the shell: the per-user Winlogon `Shell` value points at it (in daily use since 2026-11-12). Starts and supervises the apps, runs startup items, safety net, `--install`/`--uninstall` |
 | `apps/setup` | the install engine | `shellman-setup`: `install`, `update [--restart]`, `status`, `uninstall [--revert]`; a library plus a console tool that also works from a release folder (see Install and update) |
 | `apps/installer` | the installer and uninstaller | `shellman-installer`: one packed exe with a glass wizard; Apps & features runs its `--uninstall` (see Install and update) |
+| `apps/update` | automatic updates | `shellman-update`: finds a newer signed release, verifies it and installs it quietly; started by the session and by Settings' Check now (see Install and update) |
 
 Shared code:
 
@@ -41,6 +42,9 @@ Shared code:
 - `crates/buildinfo`: the build stamp (`<crate version>+<git describe> <commit date>`, or
   `SHELLMAN_BUILD_STAMP`) every exe carries as its `ProductVersion`, put there by each app's
   `build.rs` (`shellman_buildinfo::apply`).
+- `crates/update`: signed releases and the update decisions (versions, the release signature,
+  the feed, when to check and when to hold off), shared by `apps/update`, the session, Settings
+  and the release command (`xtask`).
 - `crates/icons`: shellman's own app icons, drawn in code. The build-time `.ico` generator in
   `tools/icongen` and the running apps share it.
 
@@ -1704,8 +1708,9 @@ real RunOnce at sign-in.
     :: then, when you want it as your shell:
     %LOCALAPPDATA%\Programs\shellman\shellman-session.exe --install   :: next sign-in; undo: --uninstall
 
-Updating later: unzip the new release anywhere and run `.\shellman-setup.exe update --restart`
-from it (`--from <folder>` otherwise).
+Updating later: an installed shellman updates itself (see below). By hand: unzip or run the new
+release, or run `.\shellman-setup.exe update --restart` from a release folder (`--from <folder>`
+otherwise).
 
 (b) The developer loop:
 
@@ -1716,6 +1721,107 @@ elease\shellman-setup.exe update --restart
 (`status` shows each installed file against `target
 elease`, which processes still run from old
 images, and the shell and default terminal state.)
+
+### Automatic updates and signed releases (15 Nov)
+
+**Releases** are GitHub Releases of `xnixy/shellman`, tagged `vX.Y.Z` (no pre-release tags).
+Each has two files: `shellman-X.Y.Z-setup.exe` (the packed installer) and
+`shellman-X.Y.Z-setup.exe.sig`, a short text naming the version, file name, size and SHA-256,
+signed with Ed25519 (`crates/update/src/sig.rs` has the format). Signing the version stops a
+downgrade: an old, validly signed release served as the newest still says its own version, and
+only a greater X.Y.Z is installed (`crates/update/src/version.rs`).
+
+**The key.** Made 15 Nov by `cargo xtask keygen`, which generates the seed in memory, starts
+1Password's local MCP server (`1password-mcp`, from the desktop app) and stores it through that,
+so it never touched a file, a log or a chat transcript. It is the concealed secret
+`SHELLMAN_RELEASE_SIGNING_KEY` in the 1Password Environment `shellman/release-signing` (id
+`ojhbajp6vr6dp33bdkrjjgldci`; `SHELLMAN_RELEASE_PUBLIC_KEY` beside it). Only the public key is
+in the repo, compiled into shellman: fingerprint `0e5f:c242:acb4:9c9f:3192:2ea2:71b6:d4bf`
+(the first 16 bytes of its SHA-256). Keygen refuses if that Environment already exists; to
+replace the key, rename the old Environment, run keygen, paste the new public key into
+`sig.rs`, and know that installs with the old key cannot verify releases made with the new one
+(ship one release signed with the old key that carries the new key first).
+
+**The release command** is `cargo xtask release --version X.Y.Z [--publish]` (a cargo xtask:
+the signing and the check before upload are the very code the updater verifies with, and it
+needs nothing but cargo). It refuses a dirty tree, a version not greater than the last `v*` tag,
+and a tag or Release that already exists; reads the key from `SHELLMAN_RELEASE_SIGNING_KEY` and
+refuses unless it is the pair of the compiled-in public key; builds the workspace with
+`SHELLMAN_BUILD_STAMP="X.Y.Z <commit date>"`; packs into `target\dist`; signs; checks the result
+as the updater will (signature against the compiled-in key, name, size, hash, payload hash);
+writes release notes from the commit subjects since the last tag
+(`target\dist\release-notes-X.Y.Z.md`). Without `--publish` it stops there and prints the
+`gh release create` it would run. With `--publish` the commit must already be on GitHub; the
+tag is created there by `gh`. The key gets into the environment from 1Password's CLI (`op`,
+`winget install AgileBits.1Password.CLI`):
+
+    op run --environment ojhbajp6vr6dp33bdkrjjgldci -- cargo xtask release --version 0.1.0
+    op run --environment ojhbajp6vr6dp33bdkrjjgldci -- cargo xtask release --version 0.1.0 --publish
+
+`--test-key` signs with a throwaway key so the whole path can be tried without 1Password (such
+a release cannot be published, and no install would accept it).
+
+**Versions.** A release build is stamped `X.Y.Z <date>`. A developer build is
+`<crate version>+<git describe> <date>`; when the describe starts at a release tag
+(`v0.2.0-5-gabc`) it counts as 0.2.0 plus 5 commits, newer than 0.2.0, so only a later release
+replaces it. Settings > About shows the stamp's first word.
+
+**Checking** is `shellman-update.exe` (`apps/update`, installed like any `shellman-*.exe`), in
+its own process so the session never waits on the network:
+
+- The session (`session/src/autoupdate.rs`, a thread) starts `shellman-update --auto --prefix
+  <its folder>` about 5 minutes after it starts, then daily counted from the last check in
+  `update.json` (`schedule::next_check`: a failed check again after 3 h, a held one after 1 h).
+  Only when setup's record (`shellman-install.txt`) and the helper are beside the session (a
+  build folder or a test session never updates), never while the session is ending or parked
+  behind Explorer, and not while "Update automatically" (`shell.json` `auto_update`, on by
+  default) is off.
+- Settings > About > Updates: the switch, Check now (`shellman-update --now`: installs what it
+  finds, whatever the switch says), its result line from `update.json`, when it last checked,
+  the version, and a link to the release's notes (else the Releases page).
+- The helper: one at a time (a named mutex, per `SHELLMAN_INSTANCE`). Nothing unless the record
+  is in the prefix. The feed (`/releases/latest`; `SHELLMAN_UPDATE_FEED` overrides it) must name
+  a greater version; the `.sig` is fetched first and verified; its version must be the feed's.
+  Then the exe is downloaded to `%TEMP%\shellman-update-<pid>` (HTTPS only, redirects followed
+  to GitHub's storage host, at most the signed size: `core::net::download`), and must match the
+  signed name, size and SHA-256, and its payload footer its own hash. Then it waits while the
+  window in front is fullscreen on its monitor (`winlist::fullscreen::foreground_is_fullscreen`)
+  or file work is under way (a visible `OperationStatusWindow`, or a window with
+  `fsops::busy`'s property), looking every 30 s for at most 2 h (then "held"). Then
+  `<setup> --quiet --prefix <dir>` with no window: setup's update with `--restart`, so the
+  supervised apps restart and the session switches at the next sign-in. It never signs out.
+  Every step is a line in `session.log` (`update: ...`); the outcome goes to `update.json`
+  (`%LOCALAPPDATA%\shellman`, or `<SHELLMAN_CONFIG_DIR>-update.json` in tests).
+- For tests a debug build also trusts the hex key in `SHELLMAN_UPDATE_TEST_KEY` and plain HTTP
+  from 127.0.0.1; a release build reads neither.
+
+**CI**: `.github/workflows/ci.yml` builds the workspace and runs `cargo test --workspace` on
+windows-latest for every push and pull request. No secrets; releases are never made there.
+
+**The bar's "updated" notice (not built).** The helper leaves `update.json` with
+`outcome: "installed"`, `version` and `last_check`. The bar could read it at its start (it is
+restarted by the update) and, when `outcome` is `installed` and `last_check` is within the last
+hour and newer than the last one it showed (kept in its own state), show "Updated to X.Y.Z" in
+the now pill once, with the release-notes `page` as its click. No new protocol is needed.
+
+Tested 15 Nov. `cargo xtask release --version 0.1.0 --test-key --allow-dirty`: the full release
+build, pack (19 files, `shellman-update.exe` among them, 46 MB), sign, check and notes, ending
+at the printed `gh release create`; without the key it refuses and names the `op run` command,
+with a key that is not the compiled-in pair it refuses to sign, and `--publish` refuses a dirty
+tree and `--test-key`. Then, everything redirected (`SHELLMAN_SETUP_PREFIX`, Start Menu,
+config, data, the stand-in registry, `SHELLMAN_INSTANCE`, `SHELLMAN_CONFIG_DIR`), a quiet
+install of that 0.1.0 into a scratch folder and a debug `shellman-update` against a fake feed on
+127.0.0.1 serving a "0.2.0" signed with a throwaway key (`SHELLMAN_UPDATE_TEST_KEY`), with
+GitHub's redirect from the download URL to the file imitated: `--check` says available;
+`--now` verified, downloaded, checked and ran setup, which replaced the one installed file made
+to differ ("1 file(s) changed, 18 unchanged"), outcome `installed` in `update.json` and the steps
+in the log. Refused, nothing run: the same release without the test key (not shellman's key),
+the exe with one byte changed (SHA-256 differs), a feed over plain HTTP from another host, a
+feed whose newest is the installed version (up to date). A folder without setup's record is
+left alone; `--auto` with the switch off checks nothing; a feed with no release (404) is "no
+release is published yet".
+Not run: a real release (none is published), the real key through `op run` (the `op` CLI is not
+installed on this PC), the session's own timer at a real sign-in, and CI (nothing is pushed).
 
 ## Icons
 

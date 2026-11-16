@@ -143,6 +143,67 @@ fn last_error(what: &str) -> NetError {
 /// Send one request and read the answer. Redirects come back as they are (see
 /// [`Response::location`]).
 pub fn send(method: &str, url: &str, headers: &[(&str, &str)], body: Option<&[u8]>) -> Result<Response, NetError> {
+    let mut out = Vec::new();
+    let (status, location) = exchange(method, url, headers, body, &mut |chunk| {
+        out.extend_from_slice(chunk);
+        if out.len() > MAX_BODY {
+            return Err(NetError::Network("the answer was too large".into()));
+        }
+        Ok(())
+    })?;
+    Ok(Response { status, body: out, location })
+}
+
+/// GET `url` into the file `dest`, following up to five redirects, each of which `allow` must
+/// accept (say, HTTPS only). At most `max` bytes; `progress(bytes so far)`. A failed or refused
+/// download leaves no file. Only `Accept` is sent: no credentials, so following a redirect to
+/// another host (GitHub's release downloads go to its storage host) gives nothing away.
+pub fn download(url: &str, dest: &std::path::Path, max: u64, allow: &dyn Fn(&Url) -> bool, progress: &mut dyn FnMut(u64)) -> Result<(), NetError> {
+    use std::io::Write;
+    let mut url = url.to_owned();
+    for _ in 0..6 {
+        let u = parse_url(&url).ok_or(NetError::BadUrl)?;
+        if !allow(&u) {
+            return Err(NetError::Network(format!("refused to download from {}", u.host)));
+        }
+        let mut file = std::fs::File::create(dest).map_err(|e| NetError::Network(format!("cannot write {}: {e}", dest.display())))?;
+        let mut got = 0u64;
+        let result = exchange("GET", &url, &[("Accept", "application/octet-stream")], None, &mut |chunk| {
+            got += chunk.len() as u64;
+            if got > max {
+                return Err(NetError::Network("the download is larger than expected".into()));
+            }
+            file.write_all(chunk).map_err(|e| NetError::Network(format!("cannot write {}: {e}", dest.display())))?;
+            progress(got);
+            Ok(())
+        });
+        let flushed = file.sync_all();
+        drop(file);
+        let fail = |e: NetError| {
+            let _ = std::fs::remove_file(dest);
+            Err(e)
+        };
+        match result {
+            Err(e) => return fail(e),
+            Ok((status, Some(location))) if (300..400).contains(&status) => {
+                let _ = std::fs::remove_file(dest);
+                url = if location.starts_with('/') { format!("{}://{}:{}{location}", if u.https { "https" } else { "http" }, u.host, u.port) } else { location };
+            }
+            Ok((status, _)) if (200..300).contains(&status) => {
+                if let Err(e) = flushed {
+                    return fail(NetError::Network(format!("cannot write {}: {e}", dest.display())));
+                }
+                return Ok(());
+            }
+            Ok((status, _)) => return fail(NetError::Network(format!("the server answered {status}"))),
+        }
+    }
+    let _ = std::fs::remove_file(dest);
+    Err(NetError::Network("too many redirects".into()))
+}
+
+/// One request; the body goes to `sink` piece by piece. Returns the status and any `Location`.
+fn exchange(method: &str, url: &str, headers: &[(&str, &str)], body: Option<&[u8]>, sink: &mut dyn FnMut(&[u8]) -> Result<(), NetError>) -> Result<(u16, Option<String>), NetError> {
     let u = parse_url(url).ok_or(NetError::BadUrl)?;
     unsafe {
         let session = Handle(WinHttpOpen(
@@ -213,7 +274,6 @@ pub fn send(method: &str, url: &str, headers: &[(&str, &str)], body: Option<&[u8
             std::ptr::null_mut(),
         );
         let location = header(request.0, WINHTTP_QUERY_LOCATION);
-        let mut out = Vec::new();
         let mut buf = vec![0u8; 64 * 1024];
         loop {
             let mut read = 0u32;
@@ -223,12 +283,9 @@ pub fn send(method: &str, url: &str, headers: &[(&str, &str)], body: Option<&[u8
             if read == 0 {
                 break;
             }
-            out.extend_from_slice(&buf[..read as usize]);
-            if out.len() > MAX_BODY {
-                return Err(NetError::Network("the answer was too large".into()));
-            }
+            sink(&buf[..read as usize])?;
         }
-        Ok(Response { status: status as u16, body: out, location })
+        Ok((status as u16, location))
     }
 }
 

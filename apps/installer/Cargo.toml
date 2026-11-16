@@ -17,6 +17,10 @@ shellman-setup = { path = "../setup" }
 shellman-ui.workspace = true
 windows.workspace = true
 
+[dev-dependencies]
+# The updater checks a downloaded installer's payload with its own copy of the footer reader.
+shellman-update-core = { path = "../../crates/update" }
+
 [build-dependencies]
 shellman-buildinfo.workspace = true
 winresource.workspace = true

@@ -1,0 +1,18 @@
+[package]
+name = "shellman-update-core"
+version = "0.1.0"
+edition.workspace = true
+description = "Signed releases and the update decisions: versions, the release signature, the feed, when to check"
+license.workspace = true
+publish = false
+
+[lib]
+name = "shellman_update_core"
+
+[dependencies]
+dirs.workspace = true
+# Verifying (and, for the release command, making) the release signature.
+ed25519-dalek = "2.2"
+serde.workspace = true
+serde_json.workspace = true
+sha2 = "0.10"

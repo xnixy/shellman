@@ -89,6 +89,7 @@ const ENTRIES: &[Entry] = &[
     e(Section::Terminal, "Open Terminal here uses", "windows terminal wt custom command default terminal folder"),
     e(Section::Terminal, "Console programs", "default terminal application console host handoff conhost all console programs"),
     e(Section::About, "", "version info"),
+    e(Section::About, "Updates", "update automatically check now new release notes upgrade"),
     e(Section::About, "Windows apps", "classic control panel"),
     e(Section::About, "Settings folder", "files config json"),
 ];

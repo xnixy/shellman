@@ -1,0 +1,17 @@
+[package]
+name = "shellman-update"
+version = "0.1.0"
+edition.workspace = true
+description = "Checks for a new shellman release, verifies its signature and installs it quietly"
+license.workspace = true
+publish = false
+
+[dependencies]
+shellman-buildinfo.workspace = true
+shellman-core.workspace = true
+shellman-update-core = { path = "../../crates/update" }
+windows.workspace = true
+
+[build-dependencies]
+shellman-buildinfo.workspace = true
+winresource.workspace = true
