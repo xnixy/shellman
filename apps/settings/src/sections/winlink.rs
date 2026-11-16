@@ -7,7 +7,6 @@ use crate::page;
 use crate::state::State;
 use egui::{RichText, Ui};
 use shellman_ui::theme::{self, colors};
-use shellman_ui::widgets::switch;
 
 /// Open a link (`ms-settings:`, `windowsdefender:`) from a thread of its own (ShellExecute may
 /// take a moment). Windows' Settings needs the host for modern apps: when it is not running, it is
@@ -72,8 +71,8 @@ pub fn row(ui: &mut Ui, title: &str, value: &str, uri: &str, host: bool) {
     );
 }
 
-/// Without the host: an island saying why the buttons are off, with the host's switch (the
-/// same one Default apps offers).
+/// Without the host (only when "Never" is chosen): an island saying why the buttons are off,
+/// with the choice.
 pub fn host_group(ui: &mut Ui, st: &mut State, host: bool) {
     if host {
         return;
@@ -81,15 +80,47 @@ pub fn host_group(ui: &mut Ui, st: &mut State, host: bool) {
     page::group(ui, "Windows Settings", |ui| {
         ui.add(egui::Label::new(theme::muted("Some of these settings change only in Windows' own Settings, which needs its host to open.").size(12.0)).wrap());
         ui.add_space(10.0);
-        if switch(ui, &mut st.shell.modern_apps, "Keep Settings, Calculator and the Store working").changed() {
-            st.save_shell();
-        }
-        if st.shell.modern_apps {
-            ui.add_space(6.0);
-            ui.label(theme::muted("Starting it. The buttons work once it runs.").size(12.0));
-            ui.ctx().request_repaint_after(std::time::Duration::from_secs(1));
-        }
+        windows_apps_choice(ui, st);
     });
+}
+
+/// When Windows' host for Settings, Calculator and the Store runs: three chips and what is true
+/// now. The one control for it (About, and wherever a page needs Windows' Settings).
+pub fn windows_apps_choice(ui: &mut Ui, st: &mut State) {
+    use shellman_core::settings::shell::WindowsApps;
+    let options = [(WindowsApps::WhenNeeded, "When needed"), (WindowsApps::Always, "Always"), (WindowsApps::Never, "Never")];
+    if let Some(choice) = shellman_ui::look_controls::choice_chips(ui, st.shell.windows_apps(), &options, true) {
+        st.shell.set_windows_apps(choice);
+        st.save_shell();
+    }
+    ui.add_space(6.0);
+    let what = match st.shell.windows_apps() {
+        WindowsApps::WhenNeeded => "Starts the first time you open one of them, until you sign out.",
+        WindowsApps::Always => "Starts at every sign-in, so they open at once.",
+        WindowsApps::Never => "Does not start: those apps and Windows Settings links do not open.",
+    };
+    let now = match shellman_core::app_host::running_since() {
+        Some(Some(at)) => format!("Running since {} (started when one of them was opened).", local_hm(at)),
+        Some(None) => "Running now.".to_owned(),
+        None if st.shell.windows_apps() == WindowsApps::Never => "Not running.".to_owned(),
+        None => "Not running now.".to_owned(),
+    };
+    ui.add(egui::Label::new(theme::muted(format!("{what} {now}")).size(12.0)).wrap());
+    // It may start or stop by itself (a click elsewhere, the desktop's supervisor).
+    ui.ctx().request_repaint_after(std::time::Duration::from_secs(2));
+}
+
+/// A time today as "22:31", in the local time zone.
+fn local_hm(t: std::time::SystemTime) -> String {
+    use windows::Win32::Foundation::{FILETIME, SYSTEMTIME};
+    use windows::Win32::System::Time::{FileTimeToSystemTime, SystemTimeToTzSpecificLocalTime};
+    let Ok(d) = t.duration_since(std::time::SystemTime::UNIX_EPOCH) else { return "?".into() };
+    let ticks = (d.as_secs() + 11_644_473_600) * 10_000_000;
+    let ft = FILETIME { dwLowDateTime: ticks as u32, dwHighDateTime: (ticks >> 32) as u32 };
+    let (mut utc, mut local) = (SYSTEMTIME::default(), SYSTEMTIME::default());
+    // SAFETY: plain conversions between stack structs.
+    let ok = unsafe { FileTimeToSystemTime(&ft, &mut utc).is_ok() && SystemTimeToTzSpecificLocalTime(None, &utc, &mut local).is_ok() };
+    if ok { format!("{:02}:{:02}", local.wHour, local.wMinute) } else { "?".into() }
 }
 
 /// A switch row that may be locked (a policy, or Windows' own decision): dimmed and not

@@ -35,14 +35,12 @@ pub fn show(ui: &mut egui::Ui, st: &mut State) {
 
     page::group(ui, "Updates", |ui| updates(ui, st));
 
-    page::group(ui, "Windows apps", |ui| {
-        if switch(ui, &mut st.shell.modern_apps, "Keep Settings, Calculator and the Store working").changed() {
-            st.save_shell();
-        }
+    page::group(ui, "Windows Settings, Calculator and the Store", |ui| {
         // Without Explorer these apps only open while Windows' own host for them runs; the
-        // desktop starts and watches it (`app_host`). One window lookup, so asked every frame.
-        let now = if shellman_core::app_host::modern_apps_available() { "They can open now." } else { "They cannot open right now." };
-        ui.label(theme::muted(format!("Runs Windows' own host for them while Explorer is not running. {now}")).size(12.0));
+        // desktop starts and watches it (`app_host`).
+        ui.add(egui::Label::new(theme::muted("They need Windows' own host, which shellman runs for them.").size(12.0)).wrap());
+        ui.add_space(8.0);
+        super::winlink::windows_apps_choice(ui, st);
     });
 
     page::group(ui, "Settings folder", folder);

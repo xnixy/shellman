@@ -15,7 +15,7 @@ use shellman_core::apps_index::{App, AppIndex};
 use shellman_core::system::default_apps_change::{self as dc, Candidate};
 use shellman_core::thumbs::Thumbs;
 use shellman_ui::theme::{self, colors, glyph, icon_font};
-use shellman_ui::widgets::{draw_text, switch};
+use shellman_ui::widgets::draw_text;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -148,14 +148,7 @@ pub fn show(ui: &mut egui::Ui, st: &mut State) {
                     .size(12.0),
             );
             ui.add_space(10.0);
-            if switch(ui, &mut st.shell.modern_apps, "Keep Settings, Calculator and the Store working").changed() {
-                st.save_shell();
-            }
-            if st.shell.modern_apps {
-                ui.add_space(6.0);
-                ui.label(theme::muted("Starting it. The Change buttons appear when it runs.").size(12.0));
-                ui.ctx().request_repaint_after(std::time::Duration::from_secs(1));
-            }
+            super::winlink::windows_apps_choice(ui, st);
         });
     }
 

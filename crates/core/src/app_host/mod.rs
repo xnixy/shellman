@@ -49,11 +49,34 @@ fn allowed(env: Option<&str>, instance: bool, no_shell: bool) -> bool {
     }
 }
 
-/// The user's setting, or a request for this sign-in ([`want_now`]), under the environment's
-/// `off`.
+/// The user's choice (`Always`, or `WhenNeeded` and asked for in this sign-in by [`want_now`]),
+/// under the environment's `off`.
 fn enabled() -> bool {
+    use crate::settings::shell::WindowsApps;
     std::env::var(ENV).map_or(true, |v| v.trim() != "off")
-        && (crate::settings::shell::ShellSettings::load().modern_apps || wanted_now())
+        && match choice() {
+            WindowsApps::Always => true,
+            WindowsApps::WhenNeeded => wanted_now(),
+            WindowsApps::Never => false,
+        }
+}
+
+fn choice() -> crate::settings::shell::WindowsApps {
+    crate::settings::shell::ShellSettings::load().windows_apps()
+}
+
+/// Why the host is running now, for Settings to say: `Some(Some(time))` started on demand at
+/// that local time this sign-in, `Some(None)` running from sign-in (or by Explorer), `None` not
+/// running.
+pub fn running_since() -> Option<Option<std::time::SystemTime>> {
+    if !modern_apps_available() {
+        return None;
+    }
+    if choice() == crate::settings::shell::WindowsApps::WhenNeeded && wanted_now() {
+        let at = crate::config::config_dir().and_then(|d| std::fs::metadata(d.join(WANTED)).ok()).and_then(|m| m.modified().ok());
+        return Some(at);
+    }
+    Some(None)
 }
 
 /// The file a request for the host is written to, in the settings folder (which the supervisor
@@ -94,6 +117,10 @@ pub fn want_now(timeout: std::time::Duration) -> bool {
     if modern_apps_available() {
         return true;
     }
+    // "Never": the user does not want it; nothing is asked for.
+    if choice() == crate::settings::shell::WindowsApps::Never {
+        return false;
+    }
     let (Some(dir), Some(id)) = (crate::config::config_dir(), logon_id()) else { return false };
     let _ = std::fs::create_dir_all(&dir);
     if std::fs::write(dir.join(WANTED), id.to_string()).is_err() {
@@ -112,7 +139,7 @@ pub fn want_now(timeout: std::time::Duration) -> bool {
 /// Whether modern apps can be made to open: they can now, or the host is on this system and
 /// [`want_now`] starts it on demand. What decides whether a "Windows Settings" button is offered.
 pub fn modern_apps_reachable() -> bool {
-    modern_apps_available() || win::host_path().is_some()
+    modern_apps_available() || (choice() != crate::settings::shell::WindowsApps::Never && win::host_path().is_some())
 }
 
 /// Whether modern apps (and `ms-settings:` links) can open right now: Explorer or the host is
