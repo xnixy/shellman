@@ -111,7 +111,8 @@ pub fn stop() {
 /// have styled. For cleaning up after a service that was killed before it could stop.
 pub fn reset_all_windows() {
     for hwnd in top_level_windows() {
-        if unsafe { IsWindow(Some(hwnd)) }.as_bool() {
+        // A window that draws its own frame set its own border and corners: leave them.
+        if unsafe { IsWindow(Some(hwnd)) }.as_bool() && !draws_own_frame(hwnd) {
             apply::reset(hwnd);
         }
     }
@@ -262,7 +263,7 @@ fn consider(hwnd: HWND, front: isize) -> bool {
         }
         let exe = exe_of(hwnd);
         let own = exe.as_ref().is_some_and(|e| is_own_exe(e, &st.own_dirs));
-        let full = WindowFacts { cloaked: is_cloaked(hwnd) || frame_off(hwnd), own_process: own, fullscreen: is_fullscreen(hwnd, facts.style), ..basic };
+        let full = WindowFacts { cloaked: is_cloaked(hwnd) || frame_off(hwnd) || draws_own_frame(hwnd), own_process: own, fullscreen: is_fullscreen(hwnd, facts.style), ..basic };
         if !eligible(&full) {
             return None;
         }
@@ -331,6 +332,27 @@ fn frame_off(hwnd: HWND) -> bool {
     }
 }
 
+/// Whether the window draws its whole frame itself: its client area is the whole window, so it
+/// has no title bar or border of Windows'. Frameless apps (Espalier, Blurman, apps with their own
+/// title bar) do this while keeping the title-bar style, and set "no border, square corners"
+/// themselves; a border colour or rounded corners from here would override that and draw a line
+/// round their see-through window. Left alone like a cloaked one.
+fn draws_own_frame(hwnd: HWND) -> bool {
+    use windows::Win32::UI::WindowsAndMessaging::GetClientRect;
+    let (mut w, mut c) = (RECT::default(), RECT::default());
+    unsafe {
+        if GetWindowRect(hwnd, &mut w).is_err() || GetClientRect(hwnd, &mut c).is_err() {
+            return false;
+        }
+    }
+    own_frame_sizes((w.right - w.left, w.bottom - w.top), (c.right - c.left, c.bottom - c.top))
+}
+
+/// The client area covers the window: no frame of Windows' around it. Pure, for the test.
+fn own_frame_sizes(window: (i32, i32), client: (i32, i32)) -> bool {
+    window.0 > 0 && window.1 > 0 && client == window
+}
+
 fn is_cloaked(hwnd: HWND) -> bool {
     let mut cloaked = 0u32;
     unsafe {
@@ -387,5 +409,17 @@ mod tests {
         let mut denied: HashSet<isize> = [7, 9].into_iter().collect();
         sweep(&mut denied, |h| h == 9);
         assert_eq!(denied, [9].into_iter().collect(), "a later window reusing 7 is styled again");
+    }
+}
+
+#[cfg(test)]
+mod own_frame_tests {
+    use super::own_frame_sizes;
+
+    #[test]
+    fn a_window_whose_client_is_the_whole_window_draws_its_own_frame() {
+        assert!(own_frame_sizes((920, 660), (920, 660)), "Espalier");
+        assert!(!own_frame_sizes((920, 660), (904, 621)), "a title bar and borders");
+        assert!(!own_frame_sizes((0, 0), (0, 0)), "no size");
     }
 }
