@@ -34,7 +34,7 @@ pub fn show(ui: &mut egui::Ui, rect: Rect, st: &mut State) {
     let mut press = None;
     ui.scope_builder(UiBuilder::new().max_rect(body), |ui| {
         ui.spacing_mut().scroll = egui::style::ScrollStyle::floating();
-        egui::ScrollArea::vertical()
+        let out = egui::ScrollArea::vertical()
             .id_salt("process-list")
             .auto_shrink([false, false])
             .drag_to_scroll(false)
@@ -66,6 +66,7 @@ pub fn show(ui: &mut egui::Ui, rect: Rect, st: &mut State) {
                     }
                 }
             });
+        shellman_ui::widgets::name_scroll_bar(ui.ctx(), &out, "processes");
     });
     match press {
         Some(Press::Select(k, member)) => st.list.select_row(k, member),

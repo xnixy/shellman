@@ -114,14 +114,22 @@ impl super::FileMan {
                 Sense::click(),
             );
             super::dnd::zone(ui, rect.intersect(clip), super::dnd::Dest::Tab(i), h / 2.0);
+            resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, active, loc.title()));
             let hovered = resp.hovered();
             let r = CornerRadius::same((h / 2.0) as u8);
             let (soft, soft_hover, line) = soft_colors(c.light);
             let p = ui.painter().with_clip_rect(clip);
-            if active {
+            if c.high_contrast {
+                // The shown tab outlined in the highlight, the others in the text colour.
+                let stroke = if active { egui::Stroke::new(2.0_f32, c.accent_fill) } else { egui::Stroke::new(1.0_f32, c.text) };
+                p.rect_stroke(rect, r, stroke, egui::StrokeKind::Inside);
+            } else if active {
                 p.rect(rect, r, soft_hover, line, egui::StrokeKind::Inside);
             } else if hovered {
                 p.rect_filled(rect, r, soft);
+            }
+            if resp.has_focus() {
+                p.rect_stroke(rect.shrink(1.0), r, egui::Stroke::new(2.0_f32, c.text), egui::StrokeKind::Inside);
             }
             let icon_at = egui::pos2(rect.left() + 16.0, rect.center().y);
             match loc {
@@ -143,7 +151,7 @@ impl super::FileMan {
                     );
                 }
             }
-            let show_close = n > 1 && (active || hovered);
+            let show_close = n > 1 && (active || hovered || resp.has_focus());
             let text_right = rect.right() - if show_close { 28.0 } else { 12.0 };
             let text = Rect::from_min_max(
                 egui::pos2(rect.left() + 30.0, rect.top()),
@@ -165,6 +173,10 @@ impl super::FileMan {
             );
             if show_close && clip.contains_rect(cr) {
                 let close = ui.interact(cr, Id::new(("tab-close", tab_id)), Sense::click());
+                close.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, format!("Close {}", loc.title())));
+                if close.has_focus() {
+                    p.circle_stroke(cr.center(), 11.0, egui::Stroke::new(2.0_f32, c.text));
+                }
                 if close.hovered() {
                     p.circle_filled(cr.center(), 10.0, theme::with_alpha(c.text, 30));
                 }

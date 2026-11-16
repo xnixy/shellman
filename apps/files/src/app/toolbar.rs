@@ -125,10 +125,13 @@ impl super::FileMan {
                 .interact(r, Id::new(("view", i)), Sense::click())
                 .on_hover_text(tip);
             let current = self.settings.view == mode;
+            let name = if mode == ViewMode::List { "List view" } else { "Cards view" };
+            resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::RadioButton, true, current, name));
+            theme::focus_ring(ui, &resp, r, 13.0);
             if current {
                 ui.painter()
                     .rect_filled(r, CornerRadius::same(13), c.accent_fill);
-            } else if resp.hovered() {
+            } else if resp.hovered() && !c.high_contrast {
                 ui.painter()
                     .rect_filled(r, CornerRadius::same(13), soft_hover);
             }
@@ -183,6 +186,7 @@ impl super::FileMan {
                 .margin(Vec2::new(2.0, 0.0))
                 .desired_width(inner.width()),
         );
+        shellman_ui::widgets::name_field(&resp, &format!("Search {}", tab.loc.title()), Some(&tab.filter));
         if std::mem::take(&mut self.focus_search) {
             resp.request_focus();
         }
@@ -224,6 +228,7 @@ impl super::FileMan {
                     .margin(Vec2::new(10.0, 4.0))
                     .desired_width(rect.width()),
             );
+            shellman_ui::widgets::name_field(&resp, "Path", Some(text.as_str()));
             if !resp.has_focus() && !resp.lost_focus() {
                 resp.request_focus();
                 select_all(ui.ctx(), resp.id, text.chars().count());
@@ -274,6 +279,8 @@ impl super::FileMan {
             ),
         );
         let bg = ui.interact(zone, Id::new("path-bg"), Sense::click());
+        bg.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Type a path"));
+        theme::focus_ring(ui, &bg, zone, 16.0);
         if bg.hovered() {
             let (soft, _, line) = soft_colors(c.light);
             ui.painter().rect(
@@ -304,8 +311,10 @@ impl super::FileMan {
             let w = ellipsis_w - SEP_W;
             let r = Rect::from_min_size(egui::pos2(x, y), Vec2::new(w, CHIP_H));
             let hidden: Vec<String> = crumbs[..first].iter().map(|(n, _)| n.clone()).collect();
-            let _ = chip(ui, r, Id::new("crumb-more"), "…", None, Chip::Soft)
-                .on_hover_text(hidden.join(" / "));
+            let more = chip(ui, r, Id::new("crumb-more"), "…", None, Chip::Soft);
+            let spoken = format!("More of the path: {}", hidden.join(" / "));
+            more.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &spoken));
+            let _ = more.on_hover_text(hidden.join(" / "));
             x += w;
             sep(ui, &mut x);
         }
@@ -314,6 +323,9 @@ impl super::FileMan {
             let w = widths[i].min(rect.right() - x).max(0.0);
             let r = Rect::from_min_size(egui::pos2(x, y), Vec2::new(w, CHIP_H));
             let resp = chip(ui, r, Id::new(("crumb", i)), &name, None, kind);
+            if i == last {
+                resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, true, true, format!("{name}, current folder")));
+            }
             if let Loc::Dir(p) = &target {
                 super::dnd::zone(ui, r, super::dnd::Dest::Dir(p.clone()), CHIP_H / 2.0);
             }

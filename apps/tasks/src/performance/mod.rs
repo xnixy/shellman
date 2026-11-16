@@ -19,7 +19,7 @@ pub fn show(ui: &mut egui::Ui, area: Rect, st: &mut State, islands: &mut Vec<Isl
     ui.scope_builder(UiBuilder::new().max_rect(area), |ui| {
         ui.spacing_mut().scroll = egui::style::ScrollStyle::floating();
         ui.spacing_mut().item_spacing.y = MARGIN;
-        egui::ScrollArea::vertical()
+        let out = egui::ScrollArea::vertical()
             .id_salt("performance")
             .auto_shrink([false, false])
             .drag_to_scroll(false)
@@ -36,6 +36,7 @@ pub fn show(ui: &mut egui::Ui, area: Rect, st: &mut State, islands: &mut Vec<Isl
                 };
                 cards::all(ui, st, &mut island);
             });
+        shellman_ui::widgets::name_scroll_bar(ui.ctx(), &out, "the graphs");
     });
     islands.extend(shown.into_iter().map(|r| Island::new(r, RADIUS)));
 }

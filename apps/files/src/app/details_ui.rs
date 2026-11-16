@@ -70,6 +70,18 @@ impl super::FileMan {
     }
 
     pub(super) fn toggle_details(&mut self) {
+        // A narrow window shows one pane at a time: the button goes between the folder and the
+        // details (turning them on if they were off) rather than squeezing both in.
+        if self.narrow {
+            if self.details_on() && self.details_alone {
+                self.details_alone = false;
+                return;
+            }
+            self.details_alone = true;
+            if self.details_on() {
+                return;
+            }
+        }
         match &mut self.pick {
             Some(p) => p.details = !p.details,
             None => {
@@ -82,10 +94,41 @@ impl super::FileMan {
         }
     }
 
-    /// Draw the island's contents in `rect`.
-    pub(super) fn details_island(&mut self, ui: &mut Ui, rect: Rect, actions: &mut Vec<Action>) {
+    /// Draw the island's contents in `rect`; `back`: they show in the folder's place (a narrow
+    /// window), with a back arrow to the folder.
+    pub(super) fn details_island(&mut self, ui: &mut Ui, rect: Rect, back: bool, actions: &mut Vec<Action>) {
+        let mut rect = rect;
+        if back {
+            let b = Rect::from_min_size(rect.min + Vec2::new(12.0, 10.0), Vec2::splat(30.0));
+            let resp = shellman_ui::chips::round_icon(ui, b, Id::new("details-back"), glyph::BACK, true, false, "Back to the folder");
+            if resp.clicked() {
+                self.details_alone = false;
+            }
+            ui.painter().text(
+                egui::pos2(b.right() + 8.0, b.center().y),
+                Align2::LEFT_CENTER,
+                "Details",
+                semibold_font(14.0),
+                colors().text,
+            );
+            rect.min.y = b.bottom() - 6.0;
+        }
+        // The whole island read as one piece; its buttons are named on their own.
+        let resp = ui.interact(rect, Id::new("details-island"), Sense::hover());
         let sel = self.details_contents(ui, rect, actions);
+        let spoken = self.details_spoken(&sel);
+        resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, &spoken));
         self.details_sel.1 = sel;
+    }
+
+    /// The details as a screen reader says them: "Details. dock.png, PNG · 4.2 MB".
+    fn details_spoken(&self, sel: &[Entry]) -> String {
+        let reading = &self.details.reading;
+        match sel {
+            [] => format!("Details. {}", self.tabs[self.active].loc.title()),
+            [e] => format!("Details. {}, {}", e.name, subline(e, reading.pixels, reading.online_only)),
+            many => format!("Details. {} selected", many.len()),
+        }
     }
 
     /// The island's contents; hands back the selection it was given, to keep for next frame.

@@ -11,6 +11,37 @@ use shellman_ui::theme::{self, colors, glyph};
 use shellman_ui::widgets::select_range;
 use std::path::Path;
 
+/// One Tab stop for a folder's items: the cursor's item, or the first when there is none. The
+/// arrows move the cursor (see `keys`), and the keyboard goes with it.
+pub(super) fn item_sense(tab: &Tab, r: usize) -> Sense {
+    if tab.cursor.unwrap_or(0) == r {
+        Sense::click_and_drag()
+    } else {
+        Sense::CLICK | Sense::DRAG
+    }
+}
+
+/// Say what an item is to a screen reader, keep the arrows its own while it has the keyboard,
+/// and take the keyboard over when the cursor moved to it from another item (`take_focus`).
+/// True while it has the keyboard.
+pub(super) fn item_access(ui: &Ui, resp: &egui::Response, name: &str, selected: bool, take_focus: bool) -> bool {
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, selected, name));
+    if !resp.sense.is_focusable() {
+        return false;
+    }
+    if resp.has_focus() {
+        ui.memory_mut(|m| {
+            m.set_focus_lock_filter(resp.id, egui::EventFilter { horizontal_arrows: true, vertical_arrows: true, ..Default::default() })
+        });
+        true
+    } else {
+        if take_focus {
+            resp.request_focus();
+        }
+        false
+    }
+}
+
 /// The keys held for a click this frame. egui's `modifiers` is the state at the end of the
 /// frame's input, which misses a Ctrl let go in the same frame as the click, and a Ctrl pressed
 /// while another window had the keyboard (the click that activates the window): so the state
@@ -148,6 +179,10 @@ pub(super) fn state_message(ui: &mut Ui, g: char, title: &str, note: &str) {
     let c = colors();
     let area = ui.available_rect_before_wrap();
     let centre = egui::pos2(area.center().x, area.top() + (area.height() * 0.42).max(70.0));
+    // Read out, as it is all the folder has to say.
+    let said = if note.is_empty() { title.to_owned() } else { format!("{title}. {note}") };
+    let resp = ui.interact(Rect::from_center_size(centre, egui::vec2(area.width().min(520.0), 90.0)), Id::new("state-message"), Sense::hover());
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, &said));
     let p = ui.painter();
     p.text(
         centre - egui::vec2(0.0, 34.0),
@@ -235,7 +270,10 @@ fn backdrop_id() -> Id {
 /// to the folder itself. Call before drawing items, so items sit on top of it. Its drags never
 /// reach the gaps under it, so the island never moves the window.
 pub(super) fn folder_backdrop(ui: &mut Ui, island: Rect, tab: &mut Tab, actions: &mut Vec<Action>) {
-    let bg = ui.interact(island, backdrop_id(), Sense::click_and_drag());
+    // Not a Tab stop: the items are.
+    let bg = ui.interact(island, backdrop_id(), Sense::CLICK | Sense::DRAG);
+    let spoken = format!("{}, {}", tab.loc.title(), super::text::count(tab.view.len(), "item"));
+    bg.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Other, true, &spoken));
     // Dropped on the empty space: into the folder shown (or the bin).
     match &tab.loc {
         super::tab::Loc::Dir(p) => super::dnd::zone(ui, island, super::dnd::Dest::Dir(p.clone()), super::RADIUS),

@@ -28,8 +28,10 @@ pub(super) const BAND_H: f32 = 44.0;
 pub(super) const CONTROLS_W: f32 = 212.0;
 /// The details island, when it shows (the design's 336 of 1600).
 pub(super) const DETAILS_W: f32 = 300.0;
-/// Narrower than this, the content keeps its room and the details island does not show.
+/// The folder's least room beside the details island.
 const DETAILS_MIN_CONTENT: f32 = 400.0;
+/// The UI language's narrow window: below this much room right of the rail, one pane at a time.
+pub(super) const ONE_PANE_BELOW: f32 = 620.0;
 
 /// The fixed islands of one frame, and the areas the sized-to-fit ones may use.
 #[derive(Debug, Clone, Copy)]
@@ -43,13 +45,19 @@ pub(super) struct Plan {
     pub(super) content: Rect,
     /// Where the bottom pill sits, centred under the content.
     pub(super) band: Rect,
-    /// The details island on the right, when it shows.
+    /// The details island on the right, when it shows; in place of the folder when `alone`.
     pub(super) details: Option<Rect>,
+    /// Too narrow for the folder and the details side by side: one pane at a time (never two
+    /// squeezed ones), the details with a back arrow to the folder.
+    pub(super) one_pane: bool,
+    /// The details fill the folder's place.
+    pub(super) alone: bool,
 }
 
 impl Plan {
-    /// The plan for a window of `screen`, with the rail `rail_w` wide.
-    pub(super) fn new(screen: Rect, details: bool, rail_w: f32) -> Self {
+    /// The plan for a window of `screen`, with the rail `rail_w` wide. `details`: the details
+    /// are on; `alone`: in a narrow window, they show instead of the folder.
+    pub(super) fn new(screen: Rect, details: bool, alone: bool, rail_w: f32) -> Self {
         let left = screen.left() + MARGIN;
         let right = screen.right() - MARGIN;
         let top = screen.top() + MARGIN;
@@ -66,10 +74,17 @@ impl Plan {
         let band = Rect::from_min_max(pos2(inner_left, bottom - BAND_H), pos2(right, bottom));
         let content_bottom = (band.top() - GAP).max(content_top);
         let room = right - inner_left;
-        let details = (details && room - DETAILS_W - GAP >= DETAILS_MIN_CONTENT).then(|| {
-            Rect::from_min_max(pos2(right - DETAILS_W, content_top), pos2(right, content_bottom))
-        });
-        let content_right = details.map_or(right, |d| d.left() - GAP);
+        let one_pane = room < ONE_PANE_BELOW.max(DETAILS_W + GAP + DETAILS_MIN_CONTENT);
+        let alone = details && alone && one_pane;
+        let details = if alone {
+            Some(Rect::from_min_max(pos2(inner_left, content_top), pos2(right, content_bottom)))
+        } else {
+            (details && !one_pane).then(|| {
+                Rect::from_min_max(pos2(right - DETAILS_W, content_top), pos2(right, content_bottom))
+            })
+        };
+        let details_beside = details.filter(|_| !alone);
+        let content_right = details_beside.map_or(right, |d| d.left() - GAP);
         let content = Rect::from_min_max(
             pos2(inner_left, content_top),
             pos2(content_right, content_bottom),
@@ -84,6 +99,8 @@ impl Plan {
             content,
             band,
             details,
+            one_pane,
+            alone,
         }
     }
 }
@@ -132,7 +149,7 @@ mod tests {
             (1100.0, 700.0, 180.0),
             (2560.0, 1400.0, widest),
         ] {
-            let p = Plan::new(screen(w, h), false, rail_w);
+            let p = Plan::new(screen(w, h), false, false, rail_w);
             let all = [p.tabs_row, p.controls, p.bar, p.rail_area, p.content, p.band];
             for (i, a) in all.iter().enumerate() {
                 assert!(
@@ -156,7 +173,7 @@ mod tests {
     #[test]
     fn content_lines_up_with_the_bar_and_the_rail() {
         for rail_w in [RAIL_W, 200.0] {
-            let p = Plan::new(screen(1100.0, 700.0), false, rail_w);
+            let p = Plan::new(screen(1100.0, 700.0), false, false, rail_w);
             assert_eq!(p.content.left(), p.bar.left());
             assert_eq!(p.content.right(), p.bar.right());
             assert_eq!(p.rail_area.top(), p.tabs_row.top());
@@ -169,8 +186,9 @@ mod tests {
 
     #[test]
     fn the_details_island_takes_the_right_and_never_overlaps() {
-        let p = Plan::new(screen(1400.0, 800.0), true, RAIL_W);
+        let p = Plan::new(screen(1400.0, 800.0), true, false, RAIL_W);
         let d = p.details.expect("room for it");
+        assert!(!p.one_pane && !p.alone);
         assert_eq!(d.right(), p.bar.right());
         assert_eq!(d.top(), p.content.top());
         assert_eq!(d.bottom(), p.content.bottom());
@@ -178,8 +196,32 @@ mod tests {
         assert!(apart(d, p.band) && apart(d, p.content));
         // Too narrow: the content keeps its room.
         let (w, _) = MIN_SIZE;
-        assert!(Plan::new(screen(w, 600.0), true, RAIL_W).details.is_none());
-        assert!(Plan::new(screen(1400.0, 800.0), false, RAIL_W).details.is_none());
+        assert!(Plan::new(screen(w, 600.0), true, false, RAIL_W).details.is_none());
+        assert!(Plan::new(screen(1400.0, 800.0), false, false, RAIL_W).details.is_none());
+        // Asked for alone in a wide window, they still go beside the folder.
+        assert!(!Plan::new(screen(1400.0, 800.0), true, true, RAIL_W).alone);
+    }
+
+    #[test]
+    fn a_narrow_window_shows_one_pane_at_a_time() {
+        // 620 of room right of the rail (the text size makes a window this narrow in points).
+        let w = MARGIN + RAIL_W + GAP + 600.0 + MARGIN;
+        let list = Plan::new(screen(w, 700.0), true, false, RAIL_W);
+        assert!(list.one_pane && !list.alone && list.details.is_none());
+        let details = Plan::new(screen(w, 700.0), true, true, RAIL_W);
+        assert!(details.alone);
+        // The details take the folder's whole place, as wide as the bar.
+        assert_eq!(details.details, Some(details.content));
+        assert_eq!(details.content.left(), details.bar.left());
+        assert_eq!(details.content.right(), details.bar.right());
+        // Never two panes squeezed: whenever both show, the folder keeps its room.
+        for w in (500..2000).step_by(10) {
+            let p = Plan::new(screen(w as f32, 700.0), true, false, RAIL_W);
+            if let Some(d) = p.details {
+                assert!(p.content.width() >= DETAILS_MIN_CONTENT && d.left() > p.content.right(), "{w}");
+                assert!(p.content.width() + GAP + d.width() >= ONE_PANE_BELOW, "{w}");
+            }
+        }
     }
 
     #[test]

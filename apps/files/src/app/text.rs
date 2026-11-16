@@ -99,6 +99,25 @@ pub(crate) fn card_detail(e: &Entry, sort: SortKey, items: Option<usize>, days: 
     }
 }
 
+/// What a screen reader says for an item: its name, what it is, when it changed and its size
+/// (a folder's item count when known).
+pub(crate) fn spoken_item(e: &Entry, date: &str, items: Option<usize>) -> String {
+    let mut parts = vec![e.name.clone()];
+    parts.push(if e.is_dir { "Folder".to_owned() } else { e.kind.clone() });
+    if !date.is_empty() {
+        parts.push(format!("modified {date}"));
+    }
+    if e.is_dir {
+        if let Some(n) = items {
+            parts.push(count(n, "item"));
+        }
+    } else {
+        parts.push(fsops::format_size(e.size));
+    }
+    parts.retain(|p| !p.is_empty());
+    parts.join(", ")
+}
+
 /// "1 item", "3 items".
 pub(crate) fn count(n: usize, what: &str) -> String {
     format!("{n} {what}{}", if n == 1 { "" } else { "s" })

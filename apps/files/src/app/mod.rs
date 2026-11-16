@@ -220,6 +220,14 @@ pub(crate) struct FileMan {
     editing_path: Option<String>,
     focus_path: bool,
     focus_search: bool,
+    /// An item of the folder has the keyboard (set while drawing), and had it last frame (the
+    /// cursor's item then takes it over, see `interact::item_access`).
+    row_focus: bool,
+    take_focus: bool,
+    /// Below `plan::ONE_PANE_BELOW` the details show instead of the folder, not beside it;
+    /// `details_alone` says which one shows, `narrow` whether the window is that narrow.
+    details_alone: bool,
+    narrow: bool,
     /// The shared look, which the settings app edits; Files only follows it.
     look: shellman_ui::appearance::Appearance,
     look_watch: shellman_core::watch::Watcher,
@@ -346,6 +354,10 @@ impl FileMan {
             editing_path: None,
             focus_path: false,
             focus_search: false,
+            row_focus: false,
+            take_focus: false,
+            details_alone: false,
+            narrow: false,
             look,
             look_watch,
             last_accent_check: 0.0,

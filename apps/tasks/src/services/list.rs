@@ -65,7 +65,7 @@ pub fn show(ui: &mut egui::Ui, rect: Rect, st: &mut State) {
     let mut clicked = None;
     ui.scope_builder(UiBuilder::new().max_rect(body), |ui| {
         ui.spacing_mut().scroll = egui::style::ScrollStyle::floating();
-        egui::ScrollArea::vertical().id_salt("service-list").auto_shrink([false, false]).drag_to_scroll(false).show_viewport(
+        let out = egui::ScrollArea::vertical().id_salt("service-list").auto_shrink([false, false]).drag_to_scroll(false).show_viewport(
             ui,
             |ui, view| {
                 let rows = st.services.rows.len();
@@ -96,6 +96,7 @@ pub fn show(ui: &mut egui::Ui, rect: Rect, st: &mut State) {
                 }
             },
         );
+        shellman_ui::widgets::name_scroll_bar(ui.ctx(), &out, "services");
     });
     if clicked.is_some() {
         st.services.selected = clicked;
