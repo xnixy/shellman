@@ -177,9 +177,13 @@ Rule: **the top bar is the system, the dock is apps.** Both are windows of one p
     children under any top bar or dock, the clock and bell included); fixing that is bar-wide.
   - Checked 15 Nov in a `--no-shell` test bar: a real shell copy's dialog in a scratch process
     whose window carried the property, its progress handed to the test bar's hook window, read
-    "Copying · 29%"; the paused, stopped, in-progress and none states; a flashing window's call,
-    "+1 more", and a click that brought that window forward and cleared it; high contrast
-    (`SHELLMAN_HIGH_CONTRAST`). Not checked end to end: a copy started in Files reaching a bar
+    "Copying · 29%"; the paused, stopped, in-progress and none states; a flashing window's call
+    with "+1 more"; high contrast (`SHELLMAN_HIGH_CONTRAST`). The mark itself, set from a worker
+    thread as Files does, is tested in `fsops::busy`. A click: after one, the clicked call's
+    window was in front and its call gone, but other sessions were moving windows on the same
+    desktop at the time, so this is not confirmed; nor is the light theme looked at, nor the
+    cost of every taskbar message now repainting the top bars (measure with a busy copy).
+    Not checked end to end: a copy started in Files reaching a bar
     that is the shell (a test bar is not the task window, so it hears progress only as a test
     sends it).
 - **Calendar** (`calpanel`): clicking the clock opens one glass island under it: the month (the

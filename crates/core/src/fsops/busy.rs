@@ -184,5 +184,36 @@ mod tests {
         let a = Counts { copy: 1, ..Default::default() };
         assert_eq!(a.plus(Counts { mv: 1, ..Default::default() }).verb(), None);
     }
+    /// As Files does it: the window lives on one thread, the operation runs on a worker.
+    #[test]
+    fn a_worker_marks_its_window_and_the_mark_goes_with_it() {
+        use windows::core::w;
+        use windows::Win32::System::Threading::GetCurrentProcessId;
+        use windows::Win32::UI::WindowsAndMessaging::{CreateWindowExW, DestroyWindow, WINDOW_EX_STYLE, WS_POPUP};
+        // SAFETY: a plain hidden STATIC window, destroyed at the end on this thread.
+        let hwnd = unsafe {
+            CreateWindowExW(WINDOW_EX_STYLE(0), w!("STATIC"), w!("shellman busy test"), WS_POPUP, 0, 0, 10, 10, None, None, None, None)
+        }
+        .expect("test window");
+        let h = hwnd.0 as isize;
+        let pid = unsafe { GetCurrentProcessId() };
+        let before = read_process(pid);
+        let (started, done) = (std::sync::mpsc::channel(), std::sync::mpsc::channel::<()>());
+        let worker = std::thread::spawn(move || {
+            let _busy = start(h, Work::Copy);
+            started.0.send(()).unwrap();
+            done.1.recv().unwrap();
+        });
+        started.1.recv().unwrap();
+        assert_eq!(read(h), Counts { copy: 1, ..Default::default() });
+        assert_eq!(read_process(pid).copy, before.copy + 1);
+        assert_eq!(read_process(pid).verb(), Some("Copying"));
+        done.0.send(()).unwrap();
+        worker.join().unwrap();
+        assert_eq!(read(h), Counts::default(), "the mark goes when the work ends");
+        assert!(start(0, Work::Move).is_none(), "no window, no mark");
+        unsafe {
+            let _ = DestroyWindow(hwnd);
+        }
+    }
 }
-
