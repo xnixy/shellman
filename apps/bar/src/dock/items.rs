@@ -1,8 +1,9 @@
 //! What the dock shows, in order: the Launcher, Files, pinned apps, running apps that are not pinned, and the
 //! Recycle Bin. Pure logic over the window list and the pins, so it can be tested without windows.
 
-use shellman_core::settings::dock::{self as pins, Pin};
-use shellman_core::winlist::AppWindow;
+use shellman_core::settings::dock::{pin_for_window, Launch, Pin};
+use shellman_core::settings::dock_resolve::split_command;
+use shellman_core::winlist::{AppWindow, Relaunch};
 use std::path::PathBuf;
 
 /// Where an item sits. Dividers go between the sections.
@@ -22,6 +23,12 @@ pub struct Item {
     pub app_id: String,
     pub exe: Option<PathBuf>,
     pub windows: Vec<isize>,
+    /// What the icon is: the saved pin, or for a running app one made from its window; worked
+    /// out further on a worker (`resolve`) and replaced with the answer when it comes. Its
+    /// launch, icon and name are what a click starts and what the dock shows.
+    pub pin: Pin,
+    /// How a window of the app asks to be started again, if one says (for working the pin out).
+    pub relaunch: Option<Relaunch>,
 }
 
 pub const BIN: &str = "shell:RecycleBinFolder";
@@ -29,8 +36,12 @@ pub const BIN: &str = "shell:RecycleBinFolder";
 const LAUNCHER: &str = "shellman:launcher";
 
 impl Item {
-    fn new(section: Section, app_id: &str, exe: Option<PathBuf>) -> Self {
-        Self { section, app_id: app_id.to_owned(), exe, windows: Vec::new() }
+    pub(super) fn new(section: Section, app_id: &str, exe: Option<PathBuf>) -> Self {
+        Self::of(section, Pin::new(app_id, exe))
+    }
+
+    fn of(section: Section, pin: Pin) -> Self {
+        Self { section, app_id: pin.app_id.clone(), exe: pin.exe.clone(), windows: Vec::new(), pin, relaunch: None }
     }
 
     /// None for the Launcher, which `draw` paints itself.
@@ -38,16 +49,16 @@ impl Item {
         match self.section {
             Section::Launcher => None,
             Section::Bin => Some(PathBuf::from(BIN)),
-            _ => pins::icon_source(&self.app_id, self.exe.as_deref()),
+            _ => self.pin.icon_source(),
         }
     }
 
-    /// What a click opens when no window is there to show.
-    pub fn launch_target(&self) -> Option<PathBuf> {
+    /// What a click starts when no window is there to show.
+    pub fn launch(&self) -> Option<Launch> {
         match self.section {
             Section::Launcher => None,
-            Section::Bin => Some(PathBuf::from(BIN)),
-            _ => pins::launch_target(&self.app_id, self.exe.as_deref()),
+            Section::Bin => Some(Launch::Open { path: PathBuf::from(BIN) }),
+            _ => self.pin.launch_or_default(),
         }
     }
 
@@ -56,6 +67,7 @@ impl Item {
             Section::Launcher => "Launcher".into(),
             Section::Files => "Files".into(),
             Section::Bin => "Recycle Bin".into(),
+            _ if self.pin.name.is_some() => self.pin.name.clone().unwrap_or_default(),
             // Looked up on a worker (the shell and the disk can take 100 ms and more); the
             // exe's name shows until then, and the docks are woken when it arrives.
             _ => shellman_core::system::app_name::display_name_soon(
@@ -75,34 +87,35 @@ impl Item {
 /// shellman's own Files app: the sibling program of the running bar.
 pub fn files_pin() -> Pin {
     let exe = std::env::current_exe().ok().map(|p| p.with_file_name("shellman-files.exe"));
-    Pin {
-        app_id: exe.as_ref().map(|p| p.to_string_lossy().to_lowercase()).unwrap_or_default(),
-        exe,
-    }
+    Pin::new(exe.as_ref().map(|p| p.to_string_lossy().to_lowercase()).unwrap_or_default(), exe)
 }
 
 /// The icons for these windows. `prev_running` is the order of the unpinned running apps last
-/// time, so icons keep their places and new apps go at the end.
+/// time, so icons keep their places and new apps go at the end. A window goes to the pin it
+/// belongs to best (`pin_for_window`): its own app id, else its program, its app's folder, or the
+/// program it asks to be relaunched with (Steam's client window is `steamwebhelper.exe` asking
+/// for `steam.exe`).
 pub fn build(pins: &[Pin], files: &Pin, windows: &[AppWindow], prev_running: &[String]) -> Vec<Item> {
-    let mut files_item = Item::new(Section::Files, &files.app_id, files.exe.clone());
+    let mut files_item = Item::of(Section::Files, files.clone());
     // A pin that duplicates Files would show it twice.
-    let mut pinned: Vec<Item> = pins
-        .iter()
-        .filter(|p| !files.matches(&p.app_id))
-        .map(|p| Item::new(Section::Pinned, &p.app_id, p.exe.clone()))
-        .collect();
+    let shown: Vec<Pin> = pins.iter().filter(|p| !files.matches(&p.app_id)).cloned().collect();
+    let mut pinned: Vec<Item> = shown.iter().map(|p| Item::of(Section::Pinned, p.clone())).collect();
     let mut running: Vec<Item> = Vec::new();
     for w in windows {
-        if files.matches(&w.app_id) {
-            files_item.windows.push(w.hwnd);
-        } else if let Some(item) = pinned.iter_mut().find(|i| i.app_id.eq_ignore_ascii_case(&w.app_id)) {
-            item.windows.push(w.hwnd);
-        } else if let Some(item) = running.iter_mut().find(|i| i.app_id.eq_ignore_ascii_case(&w.app_id)) {
-            item.windows.push(w.hwnd);
+        let relaunch = w.relaunch.as_ref().and_then(|r| split_command(&r.command)).map(|(program, _)| program);
+        let item = if files.matches(&w.app_id) {
+            &mut files_item
+        } else if let Some(at) = pin_for_window(&shown, &w.app_id, w.exe.as_deref(), relaunch.as_deref()) {
+            &mut pinned[at]
+        } else if let Some(at) = running.iter().position(|i| i.app_id.eq_ignore_ascii_case(&w.app_id)) {
+            &mut running[at]
         } else {
-            let mut item = Item::new(Section::Running, &w.app_id, w.exe.clone());
-            item.windows.push(w.hwnd);
-            running.push(item);
+            running.push(Item::new(Section::Running, &w.app_id, w.exe.clone()));
+            running.last_mut().unwrap()
+        };
+        item.windows.push(w.hwnd);
+        if item.relaunch.is_none() {
+            item.relaunch = w.relaunch.clone();
         }
     }
     // Stable sort: known apps by their old place, new ones after them in window order.
@@ -112,6 +125,13 @@ pub fn build(pins: &[Pin], files: &Pin, windows: &[AppWindow], prev_running: &[S
     out.extend(running);
     out.push(Item::new(Section::Bin, BIN, None));
     out
+}
+
+/// The icon Win+`n` opens: the `n`th pinned app as the dock shows them (1 the first after Files;
+/// a pin that duplicates Files is not shown, so not counted). None past the last.
+pub fn nth_pinned(items: &[Item], n: u8) -> Option<usize> {
+    let n = usize::from(n).checked_sub(1)?;
+    items.iter().enumerate().filter(|(_, i)| i.section == Section::Pinned).nth(n).map(|(at, _)| at)
 }
 
 /// Where in the pinned section an icon dragged to `center` (in the same space as `xs`, the icons'
@@ -188,11 +208,12 @@ mod tests {
             app_id: app.into(),
             exe: Some(PathBuf::from(app)),
             minimized: false,
+            relaunch: None,
         }
     }
 
     fn pin(app: &str) -> Pin {
-        Pin { app_id: app.into(), exe: Some(PathBuf::from(app)) }
+        Pin::new(app, Some(PathBuf::from(app)))
     }
 
     fn ids(items: &[Item]) -> Vec<(Section, &str, usize)> {
@@ -258,7 +279,7 @@ mod tests {
     }
 
     fn item(section: Section, id: &str) -> Item {
-        Item { section, app_id: id.into(), exe: None, windows: Vec::new() }
+        Item::new(section, id, None)
     }
 
     /// Launcher, Files, pinned a b c, running x y, bin; 48 pt icons 8 pt apart.
@@ -368,5 +389,84 @@ mod tests {
         // Not in front: the front-most window.
         assert_eq!(cycle_target(&[20, 30, 10], Some(99), 1), Some(20));
         assert_eq!(cycle_target(&[], None, 1), None);
+    }
+
+    const STEAM: &str = r"C:\Program Files (x86)\Steam\steam.exe";
+    const HELPER: &str = r"C:\Program Files (x86)\Steam\bin\cef\cef.win64\steamwebhelper.exe";
+
+    /// Steam's client window, as the probe saw it: Steam's id, run by a helper program, asking
+    /// to be relaunched with `steam.exe`.
+    fn steam_window(hwnd: isize) -> AppWindow {
+        AppWindow {
+            hwnd,
+            title: "Steam".into(),
+            app_id: "Valve.Steam.Client".into(),
+            exe: Some(PathBuf::from(HELPER)),
+            minimized: false,
+            relaunch: Some(Relaunch { command: STEAM.into(), name: Some("Steam".into()), icon: None }),
+        }
+    }
+
+    #[test]
+    fn a_running_helper_app_carries_its_relaunch_for_the_worker() {
+        let items = build(&[], &pin("f"), &[steam_window(1)], &[]);
+        let steam = items.iter().find(|i| i.section == Section::Running).unwrap();
+        assert_eq!(steam.app_id, "Valve.Steam.Client");
+        assert_eq!(steam.relaunch.as_ref().map(|r| r.command.as_str()), Some(STEAM));
+    }
+
+    #[test]
+    fn a_saved_steam_pin_shows_and_starts_steam_with_no_window() {
+        // What pinning Steam's window saves once worked out (`dock_resolve`).
+        let saved = Pin {
+            name: Some("Steam".into()),
+            launch: Some(Launch::Exe { path: PathBuf::from(STEAM), args: String::new() }),
+            icon: Some(PathBuf::from(STEAM)),
+            ..Pin::new("Valve.Steam.Client", Some(PathBuf::from(HELPER)))
+        };
+        let items = build(&[saved.clone()], &pin("f"), &[], &[]);
+        let item = &items[2];
+        assert_eq!(item.icon_source(), Some(PathBuf::from(STEAM)));
+        assert_eq!(item.launch(), Some(Launch::Exe { path: PathBuf::from(STEAM), args: String::new() }));
+        assert_eq!(item.name(), "Steam");
+        // Its window, when it opens, lights that pin up: no second icon.
+        let items = build(&[saved], &pin("f"), &[steam_window(7)], &[]);
+        assert_eq!(items.iter().filter(|i| i.section == Section::Running).count(), 0);
+        assert_eq!(items[2].windows, vec![7]);
+    }
+
+    #[test]
+    fn a_pin_of_steam_exe_takes_the_client_window_by_its_relaunch_command() {
+        // Pinned by dropping Steam's shortcut: known by steam.exe's path.
+        let by_path = pin(&STEAM.to_lowercase());
+        let items = build(&[Pin { exe: Some(PathBuf::from(STEAM)), ..by_path }], &pin("f"), &[steam_window(3)], &[]);
+        assert_eq!(items[2].windows, vec![3]);
+        assert!(items.iter().all(|i| i.section != Section::Running));
+    }
+
+    #[test]
+    fn an_old_pin_falls_back_to_its_program() {
+        // Saved by an older bar: only the id and program. Until it is worked out it starts and
+        // shows what it did before.
+        let old = Pin::new(r"c:\a\b.exe", Some(PathBuf::from(r"C:\a\b.exe")));
+        let items = build(&[old], &pin("f"), &[], &[]);
+        assert_eq!(items[2].launch(), Some(Launch::Exe { path: PathBuf::from(r"C:\a\b.exe"), args: String::new() }));
+        assert_eq!(items[2].icon_source(), Some(PathBuf::from(r"C:\a\b.exe")));
+    }
+
+    #[test]
+    fn win_digits_count_the_pinned_apps_as_shown() {
+        let (items, _) = row();
+        // l f [a b c] x y z
+        assert_eq!(nth_pinned(&items, 1), Some(2));
+        assert_eq!(nth_pinned(&items, 3), Some(4));
+        assert_eq!(nth_pinned(&items, 4), None, "running apps are not counted");
+        assert_eq!(nth_pinned(&items, 0), None);
+        assert_eq!(nth_pinned(&items, 9), None);
+        // A pin for Files is not shown, so not counted.
+        let files = pin("c:\\files.exe");
+        let built = build(&[pin("C:\\FILES.exe"), pin("c:\\a.exe")], &files, &[], &[]);
+        assert_eq!(built[nth_pinned(&built, 1).unwrap()].app_id, "c:\\a.exe");
+        assert_eq!(nth_pinned(&build(&[], &files, &[win(1, "c:\\x.exe")], &[]), 1), None);
     }
 }

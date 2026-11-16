@@ -15,6 +15,8 @@ mod drop_target;
 mod items;
 mod menu;
 mod metrics;
+pub(crate) mod numkey;
+mod resolve;
 mod shown;
 mod status;
 pub(crate) mod tasks;
@@ -29,7 +31,7 @@ use metrics::Metrics;
 use shown::Shown;
 use shellman_ui::glass::{self, Island, Style};
 use shellman_ui::menu::popup::PopupMenu;
-use shellman_core::settings::dock::{DockSettings as Pins, Pin};
+use shellman_core::settings::dock::{DockSettings as Pins, Launch, Pin};
 use shellman_core::thumbs::Thumbs;
 use shellman_core::winlist::{self, AppWindow, WindowList, WindowWatcher};
 use shellman_ui::theme;
@@ -144,12 +146,38 @@ impl Dock {
     /// Lay out the icons from the windows and pins already known.
     fn rebuild(&mut self) {
         self.items = items::build(&self.pins.pins, &self.files, &self.windows, &self.running_order);
+        self.resolve_items();
         self.running_order = self
             .items
             .iter()
             .filter(|i| i.section == Section::Running)
             .map(|i| i.app_id.clone())
             .collect();
+    }
+
+    /// Give each app icon what the worker worked out for it (`resolve`): what a click starts,
+    /// its icon and name. A pin that was missing some of it, or whose program moved, is saved
+    /// with the answer, so after a restart the dock shows and starts the right thing at once,
+    /// with no window of the app open. Answers not known yet are asked for; the docks are woken
+    /// when they come.
+    fn resolve_items(&mut self) {
+        let mut changed = false;
+        for item in self.items.iter_mut().filter(|i| matches!(i.section, Section::Pinned | Section::Running)) {
+            let Some(answer) = resolve::get(&item.pin, item.relaunch.as_ref()) else { continue };
+            if answer.pin == item.pin {
+                continue;
+            }
+            if item.section == Section::Pinned {
+                if let Some(saved) = self.pins.pins.iter_mut().find(|p| **p == item.pin) {
+                    *saved = answer.pin.clone();
+                    changed = true;
+                }
+            }
+            item.pin = answer.pin;
+        }
+        if changed {
+            self.pins.save();
+        }
     }
 
     fn metrics(&self) -> Metrics {
@@ -196,14 +224,14 @@ impl Dock {
         // Ctrl+Shift+click, as on Windows' taskbar: a new instance, as administrator.
         // Only what the menu would offer it for; a folder or a sandboxed app gets a plain click.
         if admin_keys_held() && can_run_as_admin(item) == Some(true) {
-            if let Some(target) = item.launch_target() {
+            if let Some(target) = admin_target(item) {
                 launch_as_admin(target);
             }
             return;
         }
         if item.windows.is_empty() {
-            if let Some(target) = item.launch_target() {
-                launch(target);
+            if let Some(l) = item.launch() {
+                launch(l);
             }
             return;
         }
@@ -214,6 +242,18 @@ impl Dock {
             }
         } else if let Some(w) = items::cycle_target(&item.windows, self.front, 1) {
             Self::show_window(w);
+        }
+    }
+
+    /// Win+`n` (1 to 9, from the switcher's hook): what a click on the `n`th pinned app does.
+    /// It starts the app, brings its front-most window forward, minimizes its only window when
+    /// that is in front, or steps through its windows, as Windows' taskbar does.
+    pub fn win_key(&mut self, n: u8) {
+        // The window in front now, not at the last regroup: the app the key was pressed in.
+        self.front = winlist::foreground();
+        if let Some(i) = items::nth_pinned(&self.items, n) {
+            let item = self.items[i].clone();
+            self.activate(&item);
         }
     }
 
@@ -289,14 +329,16 @@ impl Dock {
                 if item.section == Section::Pinned {
                     self.pins.remove(&item.app_id);
                 } else {
-                    self.pins.add(&item.app_id, item.exe.as_deref());
+                    // As worked out from its window, if the answer is in (else it is worked out
+                    // and saved later, the same way).
+                    self.pins.add_pin(item.pin.clone());
                 }
                 self.pins.save();
                 self.rebuild();
                 self.wake.bars();
             }
             menu::Choice::RunAsAdmin => {
-                if let Some(target) = item.launch_target() {
+                if let Some(target) = admin_target(&item) {
                     launch_as_admin(target);
                 }
             }
@@ -357,8 +399,8 @@ impl Dock {
                 crate::topbar::open_start();
             } else if self.items[i].section == Section::Bin {
                 bin::open();
-            } else if let Some(target) = self.items[i].launch_target() {
-                launch(target);
+            } else if let Some(l) = self.items[i].launch() {
+                launch(l);
             }
         }
         if let Some((i, delta)) = events.scrolled {
@@ -389,17 +431,33 @@ pub(crate) fn wake_docks_from_thread() {
     crate::host::request_frame();
 }
 
-/// Start what a pin or icon opens: a pinned folder opens in Files, anything else through the
-/// shell. On a thread of its own: a pin on a sleeping or network drive, or a slow shell
-/// handler, would otherwise freeze every bar window.
-fn launch(target: std::path::PathBuf) {
-    std::thread::spawn(move || {
-        if target.is_dir() {
-            shellman_core::sibling::start_with("files", &[&target.to_string_lossy()]);
-        } else {
-            shellman_core::fsops::open(&target);
+/// Start what a pin or icon opens: a pinned folder opens in Files, a program with its
+/// arguments, anything else through the shell. On a thread of its own: a pin on a sleeping or
+/// network drive, or a slow shell handler, would otherwise freeze every bar window.
+fn launch(l: Launch) {
+    std::thread::spawn(move || match l {
+        Launch::Exe { path, args } if !args.is_empty() => shellman_core::fsops::open_with_args(&path, &args),
+        Launch::Exe { path, .. } | Launch::Open { path } if path.is_dir() => {
+            shellman_core::sibling::start_with("files", &[&path.to_string_lossy()]);
         }
+        Launch::Exe { path, .. } | Launch::Open { path } => shellman_core::fsops::open(&path),
+        Launch::AppsFolder { id } => shellman_core::fsops::open(&apps_folder(&id)),
+        Launch::Url { url } => shellman_core::fsops::open(std::path::Path::new(&url)),
     });
+}
+
+fn apps_folder(id: &str) -> std::path::PathBuf {
+    format!("shell:AppsFolder\\{id}").into()
+}
+
+/// What "Run as administrator" starts for an icon: its program (without arguments), file or
+/// Apps-folder entry; never a URL.
+fn admin_target(item: &Item) -> Option<std::path::PathBuf> {
+    match item.launch()? {
+        Launch::Exe { path, .. } | Launch::Open { path } => Some(path),
+        Launch::AppsFolder { id } => Some(apps_folder(&id)),
+        Launch::Url { .. } => None,
+    }
 }
 
 /// Start it as administrator, behind the UAC prompt, which a thread of its own waits for.
@@ -416,7 +474,7 @@ fn launch_as_admin(target: std::path::PathBuf) {
 /// Whether an app's icon offers "Run as administrator": None while a Store app's package is
 /// still being read (the docks are woken when it has been).
 fn can_run_as_admin(item: &Item) -> Option<bool> {
-    match item.launch_target() {
+    match admin_target(item) {
         Some(target) => shellman_core::apps_index::admin::can_elevate_soon(&target.to_string_lossy(), wake_docks_from_thread),
         None => Some(false),
     }
@@ -484,6 +542,11 @@ impl Dock {
             self.wake.docks();
         }
         let icons = self.thumbs.poll(ctx);
+        // Pins worked out on the worker: lay out again with their icons, names and launches.
+        if resolve::take_changed() {
+            self.rebuild();
+            self.wake.bars();
+        }
         let renamed = self.watcher.take_front_renamed();
         let dirty = self.watcher.take_dirty();
         if !(icons || renamed || dirty) {
@@ -671,7 +734,7 @@ impl Dock {
     /// other docks follow when the bars are woken.
     fn drop_at(&mut self, app_id: &str, k: usize) {
         let Some(item) = self.items.iter().find(|i| i.app_id == app_id) else { return };
-        let pin = Pin { app_id: item.app_id.clone(), exe: item.exe.clone() };
+        let pin = item.pin.clone();
         if items::move_pin(&mut self.pins.pins, &self.files, pin, k) {
             self.pins.save();
             self.rebuild();
@@ -761,7 +824,7 @@ mod tests {
     use std::path::PathBuf;
 
     fn window(exe: Option<&str>) -> AppWindow {
-        AppWindow { hwnd: 1, title: "egui window".into(), app_id: String::new(), exe: exe.map(PathBuf::from), minimized: false }
+        AppWindow { hwnd: 1, title: "egui window".into(), app_id: String::new(), exe: exe.map(PathBuf::from), minimized: false, relaunch: None }
     }
 
     #[test]

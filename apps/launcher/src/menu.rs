@@ -103,7 +103,7 @@ mod tests {
     fn an_app_offers_what_it_can_do() {
         // Before the facts: Open alone.
         assert_eq!(picks(&app_entries(None)), [Pick::Open]);
-        let pin = Pin { app_id: "c:\\a.exe".into(), exe: Some("C:\\a.exe".into()) };
+        let pin = Pin::new("c:\\a.exe", Some("C:\\a.exe".into()));
         let program = Facts { admin: true, pin: Some(pin.clone()), pinned: false, location: Some("C:\\a.exe".into()) };
         assert_eq!(picks(&app_entries(Some(&program))), [Pick::Open, Pick::Admin, Pick::Pin, Pick::Location]);
         let pinned = Facts { pinned: true, ..program };

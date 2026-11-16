@@ -8,5 +8,7 @@
 pub mod bar;
 pub mod desktop;
 pub mod dock;
+pub mod dock_resolve;
+pub mod dock_world;
 pub mod launcher;
 pub mod shell;
