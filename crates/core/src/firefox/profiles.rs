@@ -94,25 +94,25 @@ mod tests {
     use super::*;
 
     /// This PC's file on 15 Nov: two installations, and a stale `Default=1` on an empty profile.
-    const REAL: &str = "[General]\r\nStartWithLastProfile=1\r\nVersion=2\r\n\r\n[BackgroundTasksProfiles]\r\nMozillaBackgroundTask-308046B0AF4A39CB-defaultagent=gmsgx0l7.MozillaBackgroundTask-308046B0AF4A39CB-defaultagent\r\n\r\n[Install9182EB444AA46955]\r\nDefault=Profiles/8ysuzyou.default-release-1\r\nLocked=1\r\n\r\n[Profile0]\r\nName=default-release\r\nIsRelative=1\r\nPath=Profiles/2xulqp7m.default-release\r\n\r\n[Profile2]\r\nName=default-release-1\r\nIsRelative=1\r\nPath=Profiles/8ysuzyou.default-release-1\r\n\r\n[Profile1]\r\nName=default\r\nIsRelative=1\r\nPath=Profiles/b4hrg233.default\r\nDefault=1\r\n\r\n[Install308046B0AF4A39CB]\r\nDefault=Profiles/2xulqp7m.default-release\r\nLocked=1\r\n\r\n[Profile3]\r\nName=elsewhere\r\nIsRelative=0\r\nPath=C:\\Temp\\fftest\\prof\r\n";
+    const SAMPLE: &str = "[General]\r\nStartWithLastProfile=1\r\nVersion=2\r\n\r\n[BackgroundTasksProfiles]\r\nMozillaBackgroundTask-308046B0AF4A39CB-defaultagent=mnop3456.MozillaBackgroundTask-308046B0AF4A39CB-defaultagent\r\n\r\n[Install9182EB444AA46955]\r\nDefault=Profiles/efgh5678.default-release-1\r\nLocked=1\r\n\r\n[Profile0]\r\nName=default-release\r\nIsRelative=1\r\nPath=Profiles/abcd1234.default-release\r\n\r\n[Profile2]\r\nName=default-release-1\r\nIsRelative=1\r\nPath=Profiles/efgh5678.default-release-1\r\n\r\n[Profile1]\r\nName=default\r\nIsRelative=1\r\nPath=Profiles/ijkl9012.default\r\nDefault=1\r\n\r\n[Install308046B0AF4A39CB]\r\nDefault=Profiles/abcd1234.default-release\r\nLocked=1\r\n\r\n[Profile3]\r\nName=elsewhere\r\nIsRelative=0\r\nPath=C:\\Temp\\fftest\\prof\r\n";
 
     #[test]
     fn profiles_are_listed_in_file_order_with_their_folders() {
         let root = Path::new(r"C:\Users\u\AppData\Roaming\Mozilla\Firefox");
-        let ps = list(&Ini::parse(REAL), root);
+        let ps = list(&Ini::parse(SAMPLE), root);
         let names: Vec<&str> = ps.iter().map(|p| p.name.as_str()).collect();
         assert_eq!(names, ["default-release", "default-release-1", "default", "elsewhere"]);
-        assert_eq!(ps[0].path, root.join(r"Profiles\2xulqp7m.default-release"));
+        assert_eq!(ps[0].path, root.join(r"Profiles\abcd1234.default-release"));
         assert_eq!(ps[3].path, PathBuf::from(r"C:\Temp\fftest\prof"));
     }
 
     #[test]
     fn the_default_is_the_installations_own_never_the_stale_flag() {
         let root = Path::new(r"C:\ff");
-        let ini = Ini::parse(REAL);
-        assert_eq!(default_for(&ini, root, "308046B0AF4A39CB"), Some(root.join(r"Profiles\2xulqp7m.default-release")));
-        assert_eq!(default_for(&ini, root, "308046b0af4a39cb"), Some(root.join(r"Profiles\2xulqp7m.default-release")));
-        assert_eq!(default_for(&ini, root, "9182EB444AA46955"), Some(root.join(r"Profiles\8ysuzyou.default-release-1")));
+        let ini = Ini::parse(SAMPLE);
+        assert_eq!(default_for(&ini, root, "308046B0AF4A39CB"), Some(root.join(r"Profiles\abcd1234.default-release")));
+        assert_eq!(default_for(&ini, root, "308046b0af4a39cb"), Some(root.join(r"Profiles\abcd1234.default-release")));
+        assert_eq!(default_for(&ini, root, "9182EB444AA46955"), Some(root.join(r"Profiles\efgh5678.default-release-1")));
         // An installation profiles.ini does not know: nothing, not the Default=1 profile.
         assert_eq!(default_for(&ini, root, "0000000000000000"), None);
     }
