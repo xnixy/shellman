@@ -394,6 +394,25 @@ mod tests {
         assert!(!trusted_server(0));
     }
 
+    /// How a descriptor string names `sid`: the SID itself, or Windows' short alias for a
+    /// well-known account (the built-in Administrator is `LA`, as on GitHub's runners). Found by
+    /// a round trip through a descriptor that holds only that SID.
+    fn sddl_trustee(sid: &str) -> String {
+        use windows::Win32::Security::Authorization::ConvertSecurityDescriptorToStringSecurityDescriptorW;
+        use windows::Win32::Security::DACL_SECURITY_INFORMATION;
+        unsafe {
+            let mut sd = PSECURITY_DESCRIPTOR::default();
+            ConvertStringSecurityDescriptorToSecurityDescriptorW(&HSTRING::from(format!("D:(A;;FA;;;{sid})")), SDDL_REVISION_1, &mut sd, None).unwrap();
+            let mut s = PWSTR::null();
+            ConvertSecurityDescriptorToStringSecurityDescriptorW(sd, SDDL_REVISION_1, DACL_SECURITY_INFORMATION, &mut s, None).unwrap();
+            let text = s.to_string().unwrap();
+            let _ = LocalFree(Some(HLOCAL(s.0.cast())));
+            let _ = LocalFree(Some(HLOCAL(sd.0)));
+            let start = text.rfind(";;;").unwrap() + 3;
+            text[start..].trim_end_matches(')').to_string()
+        }
+    }
+
     #[test]
     fn the_pipe_lets_only_this_user_in() {
         use windows::Win32::Security::Authorization::{ConvertSecurityDescriptorToStringSecurityDescriptorW, GetSecurityInfo, SE_KERNEL_OBJECT};
@@ -414,7 +433,7 @@ mod tests {
         };
         let me = my_sid().unwrap();
         assert_eq!(text.matches("(A;").count(), 1, "{text}");
-        assert!(text.contains(&me), "{text}");
+        assert!(text.contains(&format!(";;;{})", sddl_trustee(&me))), "{text}");
         assert!(!text.contains(";WD)") && !text.contains(";AN)") && !text.contains(";BA)") && !text.contains(";SY)"), "{text}");
     }
 }
