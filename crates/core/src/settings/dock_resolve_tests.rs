@@ -339,6 +339,34 @@ fn programs_and_gone_programs() {
     assert_eq!(again.icon, Some(p(r"D:\Apps\coolwave.exe")));
 }
 
+/// Seen on this machine: plain `notepad.exe` was taken for the Windows SDK, whose Start menu
+/// shortcut starts a program in `C:\Windows`, a folder above `System32`.
+#[test]
+fn programs_are_never_taken_for_a_shortcut_in_a_folder_above_them() {
+    let notepad = r"C:\Windows\System32\notepad.exe";
+    let sdk = Shortcut { path: p(&format!(r"{START}\Windows Kits\SDK.lnk")), name: "Windows Software Development Kit".into(), target: Some(p(r"C:\Windows\explorer.exe")), ..Default::default() };
+    let tools = Shortcut { path: p(&format!(r"{START}\Tools.lnk")), name: "Tools".into(), target: Some(p(r"D:\Tools\menu.exe")), ..Default::default() };
+    let w = Fake::default().file(notepad).file(r"C:\Windows\explorer.exe").file(r"D:\Tools\menu.exe").file(r"D:\Tools\sub\cut.exe").desc(notepad, "Notepad").shortcut(sdk).shortcut(tools);
+    let n = resolve(&Pin::new(notepad.to_lowercase(), Some(p(notepad))), None, &w);
+    assert_eq!(n.launch, Some(Launch::Exe { path: p(notepad), args: String::new() }));
+    assert_eq!(n.name.as_deref(), Some("Notepad"));
+    // A program pinned by its path is itself, whatever shortcut sits in a folder above.
+    let cut = resolve(&Pin::new(r"d:\tools\sub\cut.exe", Some(p(r"D:\Tools\sub\cut.exe"))), None, &w);
+    assert_eq!(cut.launch, Some(Launch::Exe { path: p(r"D:\Tools\sub\cut.exe"), args: String::new() }));
+    // An app id declared by a window of a program in Windows' folder: no guess either.
+    let odd = resolve(&Pin::new("Some.App", Some(p(notepad))), None, &w);
+    assert_ne!(odd.launch, Some(Launch::Open { path: p(&format!(r"{START}\Windows Kits\SDK.lnk")) }));
+}
+
+/// Steam pinned by an older bar (its id and helper program only), with Steam's window closed:
+/// the Start menu's Steam shortcut, a folder above the helper.
+#[test]
+fn an_old_steam_pin_with_no_window_finds_steams_shortcut() {
+    let old = resolve(&Pin::new("Valve.Steam.Client", Some(p(HELPER))), None, &steam_machine());
+    assert_eq!(old.launch, Some(Launch::Open { path: p(&format!(r"{START}\Steam\Steam.lnk")) }));
+    assert_eq!(old.name.as_deref(), Some("Steam"));
+}
+
 #[test]
 fn a_resolved_pin_is_left_as_it_is() {
     let w = steam_machine();

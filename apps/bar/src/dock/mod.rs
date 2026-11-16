@@ -235,7 +235,10 @@ impl Dock {
             }
             return;
         }
-        let in_front = self.front.is_some_and(|f| item.windows.contains(&f));
+        // A minimized window can stay the foreground window (after Win+digit minimized it, with
+        // nothing else activated): it is not in front, and the next press brings it back.
+        let in_front =
+            self.front.is_some_and(|f| item.windows.contains(&f) && !unsafe { IsIconic(HWND(f as *mut _)) }.as_bool());
         if in_front && item.windows.len() == 1 {
             unsafe {
                 let _ = ShowWindow(HWND(item.windows[0] as *mut _), SW_MINIMIZE);

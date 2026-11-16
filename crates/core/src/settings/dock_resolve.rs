@@ -437,7 +437,10 @@ pub fn steam_id(url: &str) -> Option<u64> {
 
 /// The Start menu shortcut that starts this app: one carrying its id, else one whose target is
 /// its program, else (for a helper program such as `steamwebhelper.exe`) the closest one whose
-/// program sits in a folder above it that is the app's own.
+/// program sits in a folder above it that is the app's own. That last guess is made only for an
+/// app known by an id its window declared (`Valve.Steam.Client`): a pin known by its program's
+/// path is that program, and starts as itself. And never in Windows' own folders, where unrelated
+/// programs sit under one another (`System32\notepad.exe` below a tool's `C:\Windows\...`).
 fn shortcut_for(app_id: &str, exe: &Path, w: &dyn World) -> Option<Shortcut> {
     let shortcuts: Vec<Shortcut> = w
         .shortcuts()
@@ -453,14 +456,18 @@ fn shortcut_for(app_id: &str, exe: &Path, w: &dyn World) -> Option<Shortcut> {
         return Some(s.clone());
     }
     let places = w.places();
+    let in_system = |d: &str| places.system.iter().map(|s| norm(s)).any(|s| d == s || d.starts_with(&format!("{s}\\")));
     let ed = parent(&e);
+    if is_path_id(app_id) || in_system(&ed) {
+        return None;
+    }
     shortcuts
         .iter()
         .filter_map(|s| {
             let t = norm(s.target.as_deref()?);
             let td = parent(&t);
             let above = ed.starts_with(&format!("{td}\\"));
-            let broad = places.broad.iter().any(|b| norm(b) == td) || td.matches('\\').count() < 1;
+            let broad = places.broad.iter().any(|b| norm(b) == td) || td.matches('\\').count() < 1 || in_system(&td);
             (t.ends_with(".exe") && above && !broad).then_some((td.len(), s))
         })
         .max_by_key(|(depth, _)| *depth)

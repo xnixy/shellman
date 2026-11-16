@@ -8,7 +8,7 @@ accent color, fast.
 | App | Replaces | Status |
 | --- | --- | --- |
 | `apps/files` | File Explorer windows | working: tabs, list/grid, thumbnails, shell menu, auto-refresh, Ctrl+H hides or shows hidden files, the Recycle Bin as a place (`--recycle-bin`). No settings UI |
-| `apps/bar` | taskbar, tray, clock, Start button (as a top bar and a dock) | working: a top bar and a dock on every monitor, tray, pins, fullscreen step-aside. Next: hover previews, Win keys |
+| `apps/bar` | taskbar, tray, clock, Start button (as a top bar and a dock) | working: a top bar and a dock on every monitor, tray, pins (helper-process apps such as Steam included), Win+1-9, fullscreen step-aside, hover previews |
 | `apps/launcher` | Start menu and search | working: Spotlight-style panel, app grid, ranked search, most used, the Win key (through the switcher's hook) |
 | `apps/switcher` | Alt+Tab, Task View | working: Alt+Tab with live previews. Next: Task View (Win+Tab) |
 | `apps/desktop` | wallpaper window | working: wallpaper per monitor; keeps Windows' modern-app host running; hands a right-click to the shelf |
@@ -236,7 +236,18 @@ Rule: **the top bar is the system, the dock is apps.** Both are windows of one p
   apps are not reorderable among themselves, and the Launcher, Files, divider and bin never move.
   Unpinning stays in the right-click menu.
 - No magnification, which would repaint on every mouse move; a short hover lift instead.
-- Holding Win shows 1-9 on icons. Dropping a file on an icon opens it with that app.
+- Win+1 ... Win+9 (done 15 Nov) do what a click on the Nth pinned app does: start it with no
+  window, bring its front-most window forward, minimize its only window when that is in front
+  (a minimized window is never "in front", so the next press restores it), or step through its
+  windows. N counts the pinned apps as shown, from the first after Files (Files, the running
+  unpinned apps and the bin are not numbered; a pin that duplicates Files is hidden, so not
+  counted). The switcher's hook takes the digit (`dockkey`: Win with no Ctrl, Alt or Shift, main
+  row 1-9 only, its repeats and release too, mask key in its place, `AllowSetForegroundWindow`)
+  and sets the digit's named event `Local\shellman-dock-key<instance>-<n>`; the bar's
+  `dock::numkey` waits on all nine and the host frame calls `Dock::win_key`. Only while shellman
+  is the shell. Not done: Win+0, Win+Shift/Ctrl/Alt+digit, numbers shown on the icons while Win
+  is held.
+- Dropping a file on an icon opens it with that app.
   Done (13 Nov), each dock window an OLE drop target (`dock::drop` rules, `dock::drop_target`):
   resting 700 ms on a running app's icon brings its window forward (spring-loading); a drop on
   an app opens the files with it where that is well defined (`core::open_with`: an app known by
@@ -247,6 +258,32 @@ Rule: **the top bar is the system, the dock is apps.** Both are windows of one p
   pins (or after Files or the last pin) are pinned there; a pinned folder opens in Files. The
   aimed icon gets an accent plate and ring, a pin boundary an accent bar. Opening and recycling
   run on threads of their own; the dock never takes the focus.
+- **Pins are self-sufficient** (15 Nov, `core::settings::{dock, dock_resolve, dock_world}`,
+  `bar::dock::resolve`): besides the app id and program that match windows to it, a pin saves its
+  name, what a click starts (`Launch`: an Apps-folder entry, a program and arguments, a URL, a
+  file) and its icon source, worked out on a worker thread and saved to `dock.json`, so after a
+  restart the dock shows and starts the right thing with no window of the app open. The rules, in
+  order: a dropped file is itself; the window's own relaunch command
+  (`System.AppUserModel.RelaunchCommand`, read with its name and icon in `winlist::identity`)
+  when its program is the app's own (in the window program's folder or one above that is not
+  Program Files, AppData or the like, or the target of the Start menu shortcut with the app's id,
+  or in its own Store package; never in Windows' folders); Store apps through the Apps folder; an
+  AppUserModelID the Apps folder knows; Squirrel apps through `Update.exe --processStart`;
+  Steam games through `steam://rungameid/<id>`; the Start menu shortcut that starts the program
+  (by id, by target, and only for an app known by a declared id, never in Windows' folders, one
+  in a folder above it); the program. Steam is the case it was made for: its client window is
+  `steamwebhelper.exe` with the id `Valve.Steam.Client` and the relaunch command `steam.exe`.
+  Pinned from its window, it saves `steam.exe`; an older pin (id and helper only) with Steam
+  closed finds the Start menu's `Steam.lnk`. Windows go to the pin they match best
+  (`dock::pin_for_window`: same id, same package, same program, inside the pin's home folder, or
+  the pin's launch program / the window's relaunch program), so a pin of `steam.exe` takes
+  Steam's window too. Running unpinned apps are worked out the same way for their icon. Pins
+  saved by older bars load, are worked out once and saved; fields a newer version wrote are kept.
+  A pin, once worked out, keeps its launch while that still exists: a wrong answer sticks until
+  unpinned. `cargo test -p shellman-core -- --ignored --nocapture what_pins_resolve_to` prints
+  what this machine's pins resolve to (`SHELLMAN_PINS=<dock.json>`); the `windows_probe` example
+  lists the windows with their ids and relaunch commands. Not done: the preview panel's tiles
+  still show the window program's icon (the helper's, for Steam).
 - Slots for progress and overlay badges; Files reports its copy progress directly.
   Done (13 Nov, `dock::tasks`, `dock::status`, `core::taskbar_list`): `ITaskbarList3` runs inside
   the calling app (explorerframe.dll) and sends window messages to the shell's taskbar window:
@@ -353,7 +390,8 @@ Rule: **the top bar is the system, the dock is apps.** Both are windows of one p
 - Own resident process. A low-level keyboard hook runs on its own thread, with pure decision
   logic.
 - Takes only Alt+Tab and Alt+Shift+Tab, plus Esc, Enter and arrows while open. Alt's release
-  always passes through.
+  always passes through. While shellman is the shell, the same hook also takes Ctrl+Shift+Esc
+  (Task Manager), Win+N (notifications) and Win+1 ... 9 (the dock's pins, `dockkey`).
 - The same hook turns a lone Win tap into the launcher while Explorer is not the shell: Win's
   press always passes, only a lone tap's release is replaced by 0xE8 and the release.
 - Hidden between uses. While Alt is held it is awake but cloaked, and it shows after 120 ms or on
@@ -1419,7 +1457,8 @@ images, and the shell and default terminal state.)
 ## Order of work
 
 1. Dock hover previews (done 13 Nov).
-2. Win+1-9 (the lone Win key is done).
+2. Win+1-9: done (15 Nov), with dock pins for helper-process apps (Steam). Left: Win+0 and the
+   Shift/Ctrl/Alt variants, numbers on the icons while Win is held.
 3. Dock: drag-and-drop onto icons, badges and progress, Recycle Bin empty / full (done 13 Nov).
    Left open: the design's live-activity pill beside the dock ("Copying · 64%"): this plan gives
    copy progress and attention to the top bar's "now" pill, so what the dock's pill would show
