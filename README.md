@@ -131,8 +131,6 @@ target\release\shellman-setup.exe uninstall --revert
 - With shellman as the shell, Windows didn't start packaged apps' background tasks at sign-in
   (I noticed because Dolby Access stopped working). shellman now tells Windows the sign-in is
   done the way Microsoft's own shells do, but I haven't confirmed it at a real sign-in yet.
-- A dock pin for an app whose window belongs to a helper process (Steam) can show the wrong icon
-  or not start the app after a restart.
 - shellman's own apps and panels open slowly after a few idle minutes.
 
 ## Licence

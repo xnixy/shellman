@@ -205,7 +205,7 @@ mod tests {
     use super::*;
 
     fn window(title: &str, minimized: bool) -> AppWindow {
-        AppWindow { hwnd: 1, title: title.into(), app_id: String::new(), exe: None, minimized }
+        AppWindow { hwnd: 1, title: title.into(), app_id: String::new(), exe: None, minimized, relaunch: None }
     }
 
     #[test]
