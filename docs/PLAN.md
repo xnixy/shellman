@@ -1588,6 +1588,15 @@ beside Explorer for tests.
   the user Startup folders (via ShellExecute). First start 6 s after the session, then 1.5 s
   apart. `shellman-session --dry-run` prints the apps and each item with why it is enabled or
   disabled, and Windows' run marker (below), and changes nothing.
+  - Windows' restart entries: after a restart that restarts apps (Windows Update's), each app
+    that called `RegisterApplicationRestart` comes back as an `Application Restart #N` HKCU
+    RunOnce value holding its exe and its own restart line, and the shell runs it like any RunOnce
+    value (tested in `startup/items.rs`). Firefox's line is its original command line with
+    `-os-restarted` in front, `-profile` kept (measured 15 Nov with `GetApplicationRestartSettings`).
+    The "unskinned Firefox at sign-in" seen 13 Nov was such a restart of a second Firefox, a test
+    copy in `C:\Temp\ffscript\app` started without `-profile`, so it came back on its own
+    default profile (`compatibility.ini` `LastPlatformDir`), which never had the look. Not a
+    shellman bug; the session log of that day is gone, so the RunOnce step is inferred.
   - Switched-off Run and folder items: `...\Explorer\StartupApproved\{Run,Run32,StartupFolder}`,
     read as the shell's own `shell\lib\runonce` code does (ShellAppRuntime.exe 10.0.26100.9818,
     which shares it with Explorer): only the low bit of the first DWORD counts (odd disabled,
@@ -1740,6 +1749,70 @@ If the screen is empty after the swap: hold Shift at sign-in (the safety net sta
 Ctrl+Alt+Del, Task Manager, Run new task, `explorer.exe` (then `shellman-session --uninstall`
 from a terminal); or `reg delete "HKCU\Software\Microsoft\Windows NT\CurrentVersion\Winlogon" /v Shell /f`
 from Run new task with `cmd`. Signing in as another user is unaffected (the value is per user).
+
+## Firefox look (15 Nov)
+
+The Islands look for Firefox (`integrations/firefox`: CSS, `user.js` prefs, optional chrome
+scripts with an autoconfig loader) ships in the installer: `install-manifest` lists every file
+into `<install>\firefox\` (a test checks the list against `firefox::shipped_files`). The glass
+DLL (`shellman-firefox-glass`, real gaps) is not shipped and stays a source-checkout option.
+
+`shellman_core::firefox` does what `install.ps1` / `uninstall.ps1` do, in Rust:
+- `detect`: installations from `TaskBarIDs` (HKLM, then HKCU; folder as value name, the 16-hex
+  install id as data; kept when `firefox.exe` is there), the profiles folder, `in_use` (Firefox
+  holds `parent.lock` with no sharing). Tests redirect with `SHELLMAN_FIREFOX_ROOT` (folder of
+  `profiles.ini`), `SHELLMAN_FIREFOX_DIR` and `SHELLMAN_FIREFOX_ID`.
+- `profiles`: `profiles.ini` read only. The default profile is the installation's own
+  `[Install<id>]` `Default=`, never the stale `Default=1` flag (on this PC it points at an empty
+  profile); no such section, nothing preselected.
+- `look`: install (first time: backup of `chrome\` and `user.js` into
+  `<profile>\shellman-islands-backup\<yyyyMMdd-HHmmss>\`, `state.json` written before anything
+  changes), update (files again, backup kept), remove (exactly what was added, what the backup
+  holds of it put back, a `chrome\` or `user.js` it created deleted once empty, the backup folder
+  last), status (not installed / installed / outdated, by comparing bytes with the shipped files
+  and the loader). `state.json` is the scripts' own format (BOM tolerated, unknown fields kept)
+  plus `userJsBreak`, so either tool undoes the other; an install the scripts did with `-Force`
+  over another autoconfig is left to `uninstall.ps1`. Nothing changes while Firefox holds the
+  profile.
+- `userjs`: the marked block on bytes; the begin marker is matched by its start (the scripts used
+  a longer text). A line break install had to add after a `user.js` without one is taken out again.
+- `loader`: `config.js` and `defaults\pref\config-prefs.js`, their text built in
+  (`include_str!`). Ours = says "shellman Islands"; another setup's files are never replaced or
+  removed (the scripts are then not installed). Written directly when Firefox's folder is
+  writable, else by the administrator helper: `shellman-elevate firefox-loader <install|remove>
+  <id>`, which finds the folder of that id in HKLM `TaskBarIDs` only and writes only the built-in
+  text. The loader is written before the profile changes (a declined UAC prompt changes nothing)
+  and removed after, only when no profile in `profiles.ini` still has `chrome\shellman-scripts`.
+- `actions`: a button press put together (loader, then profile; messages).
+
+Settings › Appearance › Firefox (`apps/settings/src/sections/firefox.rs`): "Firefox is installed"
+with the folder, a profile list (default marked and preselected), the look's state, a red line
+while Firefox has the profile open (buttons off), "With scripts" (on by default where the look is
+not installed, else as installed; detail says the full-privilege trade-off and the one UAC
+prompt), Install, or Update (when outdated or the switch differs) and Remove; the result under
+them. Profiles are read every 4 s on a thread; the work runs on another.
+The wizard has "Also style Firefox" (off; shown only when Firefox is installed): with the scripts,
+into the first installation's default profile, after the install; when the loader cannot go in
+(UAC declined, another autoconfig) it installs CSS only and says so; a refusal (Firefox open) is a
+line in the log, never a failed install. The uninstaller has "Also remove the look from Firefox" (on when a
+profile has it); with Firefox open, Uninstall says so and waits. It runs in the interactive pass
+only, before shellman's files go (the loader through the helper in the install folder). `--quiet`
+uninstalls leave the look.
+
+Verified 15 Nov on Firefox 160 with a throwaway profile (`C:\Temp\fftest\prof`, with its own
+`userChrome.css`, another file in `chrome\` and a `user.js` without a final line break):
+install then remove with Firefox closed gives the same tree (all 455 entries); installed, Firefox
+started on it showed the islands; a changed CSS file read as outdated, Update fixed it and kept
+the backup; Remove gave `chrome\` and `user.js` back byte for byte and no backup folder (Firefox's
+own `prefs.js` keeps the prefs it copied, as documented). Settings (redirected root, driven
+through UI Automation): the default profile preselected, Install, the "Firefox is open" line with
+Remove off while the lock was held, Remove, byte-identical again. A packed debug installer, all
+redirected (setup variables, `SHELLMAN_SETUP_REGISTRY`, the Firefox root): "Also style Firefox"
+installed shellman with `firefox\` and the look (the Program Files loader not writable without a
+prompt there, so the CSS-only fallback, logged); the uninstaller showed "Also remove the look from
+Firefox" on, refused with "Firefox is open" while the lock was held, then removed shellman and gave
+the profile back byte for byte. Not run: the scripts through the UAC prompt into Program Files
+(unit-tested with a writable folder).
 
 ## Install and update
 

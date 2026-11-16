@@ -180,10 +180,14 @@ pub fn group(ui: &mut egui::Ui, v: &mut FirefoxView) {
         return;
     };
 
-    // The switch follows what is installed whenever the profile changes.
+    // The switch follows what is installed whenever the profile changes; on (the default) where
+    // the look is not installed yet.
     if v.scripts_for.as_ref() != Some(&row.path) {
         v.scripts_for = Some(row.path.clone());
-        v.scripts = matches!(row.status, Status::Installed { scripts: true } | Status::Outdated { scripts: true });
+        v.scripts = match row.status {
+            Status::NotInstalled => true,
+            Status::Installed { scripts } | Status::Outdated { scripts } => scripts,
+        };
     }
     ui.add_space(4.0);
     muted(ui, status_text(&row));

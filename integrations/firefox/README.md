@@ -40,6 +40,13 @@ Checked on **Firefox 160.0** (Windows 11, release build, default theme, "Nova" U
 
 ## Install / uninstall
 
+**From shellman** (installed): Settings › Appearance › Firefox picks the profile and has Install,
+Update, Remove and "With scripts"; the install wizard can style Firefox's default profile, and the
+uninstaller takes the look out again. That is the same thing as the scripts below, done by
+`crates/core/src/firefox` with the same `state.json`, so either one undoes the other. The files
+are in shellman's install folder under `firefox\`. The scripts below work from a source checkout
+and from that folder alike.
+
 ```powershell
 # Close Firefox first. The script refuses to run without an explicit target.
 .\install.ps1 -DefaultProfile          # the default-release profile from profiles.ini

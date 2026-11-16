@@ -102,7 +102,7 @@ pub fn firefox_open(profiles: &[PathBuf]) -> bool {
 fn style_firefox(tx: &Sender<Msg>, prefix: &Path) {
     let installs = detect::installs(&Real);
     let profiles = detect::Profiles::read();
-    let Some(profile) = installs.iter().find_map(|i| profiles.default_for(i)) else {
+    let Some((install, profile)) = installs.iter().find_map(|i| profiles.default_for(i).map(|p| (i, p))) else {
         say(tx, "Firefox: no default profile found; choose one in Settings \u{203a} Appearance \u{203a} Firefox.");
         return;
     };
@@ -110,9 +110,19 @@ fn style_firefox(tx: &Sender<Msg>, prefix: &Path) {
         say(tx, "Firefox: the look's files are missing from the install folder.");
         return;
     };
-    match actions::apply(&profile, &src, None, &profiles, &installs, Some(prefix)) {
+    // With the scripts (the default). Their loader may need the UAC prompt; declined, or another
+    // autoconfig in the way, the look still goes in, CSS only.
+    let later = "You can do it later in Settings \u{203a} Appearance \u{203a} Firefox.";
+    match actions::apply(&profile, &src, Some(install), &profiles, &installs, Some(prefix)) {
         Ok(msg) => say(tx, &format!("Firefox: {msg}")),
-        Err(e) => say(tx, &format!("Firefox: {e} You can do it later in Settings \u{203a} Appearance \u{203a} Firefox.")),
+        Err(e) if detect::in_use(&profile) => say(tx, &format!("Firefox: {e} {later}")),
+        Err(e) => {
+            say(tx, &format!("Firefox: {e} Installing the look without scripts."));
+            match actions::apply(&profile, &src, None, &profiles, &installs, Some(prefix)) {
+                Ok(msg) => say(tx, &format!("Firefox: {msg} The scripts can be added in Settings \u{203a} Appearance \u{203a} Firefox.")),
+                Err(e) => say(tx, &format!("Firefox: {e} {later}")),
+            }
+        }
     }
 }
 

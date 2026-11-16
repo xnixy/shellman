@@ -309,7 +309,7 @@ impl App {
                 theme::setting_row(
                     ui,
                     "Also style Firefox",
-                    "The Islands look in Firefox's default profile, from its next start. Settings \u{203a} Appearance \u{203a} Firefox changes or removes it.",
+                    "The Islands look in Firefox's default profile, with its live-look scripts (their loader asks for administrator rights once). Settings \u{203a} Appearance \u{203a} Firefox changes it.",
                     &mut self.choice.firefox,
                 );
             }
