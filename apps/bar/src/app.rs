@@ -245,9 +245,9 @@ impl Shared {
         theme::set_light(light(ctx));
         self.dock.catch_up(ctx);
         let dock = &mut self.dock;
-        let windows: Vec<(String, isize)> = dock.front_windows();
-        let front_of = |app: &str| windows.iter().find(|(a, _)| a == app).map(|(_, h)| *h);
-        self.notify.frame(ctx, &mut |ctx, path| dock.icon(ctx, path), &front_of);
+        let windows = dock.front_windows();
+        let running = || crate::notify::Running(windows.clone());
+        self.notify.frame(ctx, &mut |ctx, path| dock.icon(ctx, path), &running);
     }
 
     /// A frame of the calendar panel: the month's events from the regular reading and any month

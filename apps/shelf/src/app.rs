@@ -26,7 +26,7 @@ use shellman_ui::appearance::Appearance;
 use shellman_ui::glass::{self, GlassPanel, Island, Style};
 use shellman_ui::menu::popup::{self, Anchor, PopupMenu};
 use std::sync::{Arc, Mutex};
-use windows::Win32::Foundation::HWND;
+use windows::Win32::Foundation::{HWND, RECT};
 use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, SetForegroundWindow};
 
 /// How long a fan takes to open or close.
@@ -272,8 +272,13 @@ impl Shelf {
         -(bias as i64) * 60
     }
 
-    /// The shelf's frame in the window of `self.views[view]`: the islands to show this time.
-    fn shelf_frame(&mut self, ctx: &egui::Context, view: usize, placed: displays::Placement) -> Vec<Island> {
+    /// The shelf's frame in the window of `self.views[view]`: the islands to show this time,
+    /// and while a fan is on its way open or shut, the part of the window it moves in (in the
+    /// window's pixels). That part shows and takes clicks as a whole meanwhile, so the window's
+    /// region holds still while the pills move in it; cutting it anew around every pill on
+    /// every frame made Windows clip and redraw the window mid-animation (slow, and the pills
+    /// tore).
+    fn shelf_frame(&mut self, ctx: &egui::Context, view: usize, placed: displays::Placement) -> (Vec<Island>, Option<RECT>) {
         let stacks = self.settings.stacks();
         let window = ctx.screen_rect();
         let layout = geometry::layout(window, placed.area, self.settings.shelf.edge, stacks.len());
@@ -287,11 +292,16 @@ impl Shelf {
         let eased = 1.0 - (1.0 - t).powi(3);
         let fan_kind = if mine { self.drawn.filter(|k| stacks.contains(k)) } else { None };
         let fan_items = fan_kind.map(|k| stacks::fan(self.stacks.items(k), geometry::FAN_ITEMS));
+        let mut moving = None;
         let pills = match (fan_kind, &fan_items) {
             (Some(k), Some((shown, _))) => {
                 let i = stacks.iter().position(|s| *s == k).unwrap_or(0);
                 let anchor = layout.stacks[i].center().y;
-                geometry::fan_at(layout.shelf, anchor, shown.len(), self.settings.shelf.edge, placed.area, eased)
+                let at = |t: f32| geometry::fan_at(layout.shelf, anchor, shown.len(), self.settings.shelf.edge, placed.area, t);
+                if t < 1.0 {
+                    moving = geometry::swept(&at(0.0), &at(1.0), ctx.pixels_per_point());
+                }
+                at(eased)
             }
             _ => Vec::new(),
         };
@@ -349,7 +359,7 @@ impl Shelf {
                 (p, name)
             });
         }
-        islands
+        (islands, moving.map(|(left, top, right, bottom)| RECT { left, top, right, bottom }))
     }
 }
 
@@ -388,7 +398,7 @@ impl Shelf {
         // The window must sit at the scale of the monitor it was placed on before the shelf is
         // laid out in its points; a frame at the old scale draws nothing.
         let placed = self.views[view].placed.filter(|p| (p.scale - ctx.pixels_per_point()).abs() < 0.01);
-        let islands = match (shown, placed) {
+        let (islands, moving) = match (shown, placed) {
             (true, Some(p)) => self.shelf_frame(ctx, view, p),
             _ => {
                 if self.views[view].placed.is_some() && placed.is_none() {
@@ -397,7 +407,7 @@ impl Shelf {
                 if let Ok(mut d) = self.views[view].drop.lock() {
                     d.zone = None;
                 }
-                Vec::new()
+                (Vec::new(), None)
             }
         };
         if self.dragging && self.drag_on.is_none() {
@@ -406,7 +416,7 @@ impl Shelf {
         if let Some(panel) = &self.views[view].panel {
             panel.set_style(Style::from_theme(geometry::RADIUS));
             // Only the islands show and take clicks; the rest of the window lets the desktop through.
-            panel.set_islands_only(&islands, ctx.pixels_per_point(), None);
+            panel.set_islands_only(&islands, ctx.pixels_per_point(), moving);
         }
     }
 }

@@ -80,7 +80,19 @@ pub trait Shell {
     fn explorer_taskbar(&self, within: Duration) -> bool;
     /// Any taskbar (the bar's or Explorer's): what the parked watchdog looks for.
     fn any_taskbar(&self) -> bool;
+    /// Tell shellman's wallpaper to hide: Explorer's desktop and taskbar lie under it. How many
+    /// desktop processes were told.
+    fn wallpaper_aside(&self) -> usize;
     fn ending(&self) -> bool;
+}
+
+/// Explorer is the shell: shellman's wallpaper windows must not lie over its desktop and
+/// taskbar (`core::desktop_aside`).
+fn clear_the_desktop(sh: &dyn Shell, say: &dyn Fn(&str)) {
+    match sh.wallpaper_aside() {
+        0 => say("fallback: no shellman desktop runs, nothing to hide"),
+        n => say(&format!("fallback: told {n} shellman desktop process(es) to hide the wallpaper windows")),
+    }
 }
 
 /// Hand the session to Explorer. Blocks for up to ~`ATTEMPTS * (HOST_QUIT + EXPLORER_GRACE)`,
@@ -93,6 +105,7 @@ pub fn run(sh: &dyn Shell, say: &dyn Fn(&str)) -> Outcome {
         }
         if sh.explorer_is_shell() {
             say("fallback: Explorer is already the shell, nothing to start");
+            clear_the_desktop(sh, say);
             return if attempt == 1 { Outcome::AlreadyShell } else { Outcome::Taskbar };
         }
         match sh.owner() {
@@ -118,6 +131,7 @@ pub fn run(sh: &dyn Shell, say: &dyn Fn(&str)) -> Outcome {
         }
         if sh.explorer_taskbar(EXPLORER_GRACE) {
             say("fallback: Explorer's taskbar is up");
+            clear_the_desktop(sh, say);
             return Outcome::Taskbar;
         }
         say(&format!("fallback: WARNING no Explorer taskbar {} s after attempt {attempt} of {ATTEMPTS}", EXPLORER_GRACE.as_secs()));
@@ -221,6 +235,9 @@ impl Shell for Real {
     fn any_taskbar(&self) -> bool {
         tray_up()
     }
+    fn wallpaper_aside(&self) -> usize {
+        shellman_core::desktop_aside::tell(true)
+    }
     fn ending(&self) -> bool {
         shutdown::quiet()
     }
@@ -260,6 +277,10 @@ impl Shell for StandIn {
     }
     fn any_taskbar(&self) -> bool {
         self.runs()
+    }
+    fn wallpaper_aside(&self) -> usize {
+        // A test run never touches the real desktop.
+        0
     }
     fn ending(&self) -> bool {
         shutdown::quiet()
@@ -310,6 +331,8 @@ mod tests {
         ending: bool,
         calls: RefCell<Vec<String>>,
         starts: Cell<usize>,
+        /// How often the wallpaper was told to stand aside.
+        asides: Cell<usize>,
     }
 
     impl Shell for Fake {
@@ -344,6 +367,10 @@ mod tests {
         fn any_taskbar(&self) -> bool {
             self.explorer_shell.get()
         }
+        fn wallpaper_aside(&self) -> usize {
+            self.asides.set(self.asides.get() + 1);
+            1
+        }
         fn ending(&self) -> bool {
             self.ending
         }
@@ -366,6 +393,7 @@ mod tests {
         let f = Fake { owner: Cell::new(Some(Owner::Host(40))), host_quits: true, taskbar_after: 1, ..Fake::default() };
         assert_eq!(go(&f), Outcome::Taskbar);
         assert_eq!(*f.calls.borrow(), ["quit 40", "start", "look"]);
+        assert_eq!(f.asides.get(), 1, "Explorer's taskbar is up: the wallpaper windows hide");
     }
 
     #[test]
@@ -386,6 +414,7 @@ mod tests {
         let f = Fake { owner: Cell::new(Some(Owner::Host(40))), host_quits: false, taskbar_after: 1, ..Fake::default() };
         assert_eq!(go(&f), Outcome::NoTaskbar);
         assert_eq!(f.starts.get(), ATTEMPTS, "retried once, then given up");
+        assert_eq!(f.asides.get(), 0, "no Explorer desktop to make room for");
     }
 
     #[test]
@@ -403,6 +432,7 @@ mod tests {
         let f = Fake { explorer_shell: Cell::new(true), owner: Cell::new(Some(Owner::Explorer(5))), ..Fake::default() };
         assert_eq!(go(&f), Outcome::AlreadyShell);
         assert!(f.calls.borrow().is_empty());
+        assert_eq!(f.asides.get(), 1, "its desktop and taskbar are there: the wallpaper windows hide");
     }
 
     #[test]
@@ -410,6 +440,7 @@ mod tests {
         let f = Fake { ending: true, taskbar_after: 1, ..Fake::default() };
         assert_eq!(go(&f), Outcome::Ending);
         assert_eq!(f.starts.get(), 0);
+        assert_eq!(f.asides.get(), 0);
     }
 
     #[test]

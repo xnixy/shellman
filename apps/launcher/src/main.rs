@@ -10,6 +10,7 @@ mod fade;
 mod grid;
 mod icon;
 mod label;
+mod menu;
 mod rank;
 mod results;
 mod section;

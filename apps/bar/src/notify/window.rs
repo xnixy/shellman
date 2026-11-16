@@ -7,7 +7,7 @@ use windows::Win32::Foundation::{HWND, LPARAM, RECT};
 use windows::Win32::Graphics::Gdi::{EnumDisplayMonitors, GetMonitorInfoW, HDC, HMONITOR, MONITORINFO};
 use windows::Win32::UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI};
 use windows::Win32::UI::WindowsAndMessaging::{
-    IsWindowVisible, SetForegroundWindow, ShowWindow, SW_SHOWNOACTIVATE,
+    GetForegroundWindow, IsWindowVisible, SetForegroundWindow, ShowWindow, SW_SHOWNOACTIVATE,
 };
 
 /// Every monitor with its work area (the screen less the top bar's and the dock's reserved
@@ -76,5 +76,35 @@ pub fn show(hwnd: isize) {
 pub fn take_focus(hwnd: isize) {
     unsafe {
         let _ = SetForegroundWindow(HWND(hwnd as *mut _));
+    }
+}
+
+/// Whether the window in front belongs to the process that owns `hwnd` (the app came forward
+/// by itself, with this window or another of its own).
+pub fn in_front_is_of(hwnd: isize) -> bool {
+    use windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId;
+    let pid = |w: HWND| {
+        let mut pid = 0u32;
+        unsafe { GetWindowThreadProcessId(w, Some(&mut pid)) };
+        pid
+    };
+    let front = unsafe { GetForegroundWindow() };
+    !front.0.is_null() && pid(front) != 0 && pid(front) == pid(HWND(hwnd as *mut _))
+}
+
+/// Bring an app's window to the front, restoring it if minimised. When Windows refuses (the
+/// click that allowed it is too long ago by now), one unused key press makes this process the
+/// last input's sender and it is asked again.
+pub fn raise(hwnd: isize) {
+    use windows::Win32::UI::WindowsAndMessaging::{IsIconic, ShowWindow, SW_RESTORE};
+    let hwnd = HWND(hwnd as *mut _);
+    unsafe {
+        if IsIconic(hwnd).as_bool() {
+            let _ = ShowWindow(hwnd, SW_RESTORE);
+        }
+        if !SetForegroundWindow(hwnd).as_bool() || GetForegroundWindow() != hwnd {
+            shellman_core::foreground::send_mask();
+            let _ = SetForegroundWindow(hwnd);
+        }
     }
 }

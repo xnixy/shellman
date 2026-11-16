@@ -36,6 +36,8 @@ pub fn items(ranked: impl Iterator<Item = usize>, query_is_empty: bool) -> Vec<I
 pub struct Outcome {
     pub launch: Option<usize>,
     pub hover: Option<usize>,
+    /// A row was right-clicked (which, and where the pointer was).
+    pub menu: Option<(usize, egui::Pos2)>,
 }
 
 /// Draw the rows in view. `reveal` scrolls the selected row into view (after arrow keys).
@@ -46,6 +48,7 @@ pub fn show(
     apps: &[App],
     query: &str,
     selected: usize,
+    admin: bool,
     thumbs: &mut Thumbs,
     fade: Fade,
     reveal: bool,
@@ -71,6 +74,9 @@ pub fn show(
                 if resp.clicked() {
                     out.launch = Some(i);
                 }
+                if resp.secondary_clicked() {
+                    out.menu = Some((i, resp.interact_pointer_pos().unwrap_or(rect.center())));
+                }
                 if resp.hovered() && moved {
                     out.hover = Some(i);
                 }
@@ -79,7 +85,7 @@ pub fn show(
                 }
                 let (is_selected, hovered) = (i == selected, resp.hovered());
                 fade.paint(ui, rect, |p| {
-                    draw_row(p, rect, *item, apps, query, is_selected, hovered, thumbs)
+                    draw_row(p, rect, *item, apps, query, is_selected, admin, hovered, thumbs)
                 });
             }
         });
@@ -94,6 +100,7 @@ fn draw_row(
     apps: &[App],
     query: &str,
     selected: bool,
+    admin: bool,
     hovered: bool,
     thumbs: &mut Thumbs,
 ) {
@@ -111,7 +118,11 @@ fn draw_row(
         egui::Vec2::splat(ICON),
     );
     // The hint takes room at the right of the selected row.
-    let hint_w = if selected { 54.0 } else { 0.0 };
+    let hint_w = match (selected, admin) {
+        (false, _) => 0.0,
+        (true, false) => 54.0,
+        (true, true) => 150.0,
+    };
     let name_x = icon.right() + 14.0;
     let name_w = row.right() - 14.0 - hint_w - name_x;
     // The name sits a little above the middle, with what kind of thing it is beneath.
@@ -144,7 +155,7 @@ fn draw_row(
         }
     }
     if selected {
-        hint(p, row, ink);
+        hint(p, row, ink, admin);
     }
 }
 
@@ -190,12 +201,13 @@ fn sub(p: &Painter, at: egui::Pos2, text: &str, ink: Color32, selected: bool) {
     p.text(at, egui::Align2::LEFT_CENTER, text, egui::FontId::proportional(11.5), color);
 }
 
-/// "Enter", at the right end of the selected row: what the key will do.
-fn hint(p: &Painter, row: Rect, ink: Color32) {
+/// "Enter", at the right end of the selected row: what the key will do. With Ctrl and Shift
+/// held it says what Enter does then.
+fn hint(p: &Painter, row: Rect, ink: Color32, admin: bool) {
     p.text(
         egui::pos2(row.right() - 16.0, row.center().y),
         egui::Align2::RIGHT_CENTER,
-        "Enter",
+        if admin { "Run as administrator" } else { "Enter" },
         egui::FontId::proportional(12.0),
         ink.gamma_multiply(0.85),
     );

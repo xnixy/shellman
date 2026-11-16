@@ -45,6 +45,8 @@ pub(super) enum Kind {
     App(String),
     Pc,
     Drive,
+    /// A Linux distribution of WSL.
+    Linux,
 }
 
 /// Where a row goes, and what it is.
@@ -59,7 +61,7 @@ impl Spot {
     fn dest(&self) -> Option<Dest> {
         match (&self.kind, &self.loc) {
             (Kind::Bin, _) => Some(Dest::Bin),
-            (Kind::Place | Kind::Drive | Kind::Pin { there: true }, Loc::Dir(p)) => Some(Dest::Dir(p.clone())),
+            (Kind::Place | Kind::Drive | Kind::Linux | Kind::Pin { there: true }, Loc::Dir(p)) => Some(Dest::Dir(p.clone())),
             _ => None,
         }
     }
@@ -124,7 +126,14 @@ impl super::FileMan {
         drives.extend(self.drives.iter().map(|d| {
             glyph_row(format!("drive:{}", d.root.display()), glyph::DRIVE, d.title(), Loc::Dir(d.root.clone()), Kind::Drive)
         }));
-        Rail::build(vec![("Places", places), ("Pinned", pins), ("Tags", tags), ("Apps", apps), ("Drives", drives)])
+        // Opening one starts the distribution (the listing waits for it on its worker); the
+        // row itself costs nothing.
+        let linux = self
+            .linux
+            .iter()
+            .map(|d| glyph_row(format!("linux:{}", d.name), glyph::LINUX, d.name.clone(), Loc::Dir(d.root.clone()), Kind::Linux))
+            .collect();
+        Rail::build(vec![("Places", places), ("Pinned", pins), ("Tags", tags), ("Apps", apps), ("Drives", drives), ("Linux", linux)])
     }
 
     /// How the rail shows in a window this wide.
@@ -177,7 +186,7 @@ impl super::FileMan {
 
 /// What a sidebar row's menu offers: a pinned folder or an app's place; nothing for the rest.
 fn row_entries(spot: &Spot) -> Vec<MenuEntry<Action>> {
-    let (Kind::Pin { .. } | Kind::App(_), Loc::Dir(path)) = (&spot.kind, &spot.loc) else { return Vec::new() };
+    let (Kind::Pin { .. } | Kind::App(_) | Kind::Linux, Loc::Dir(path)) = (&spot.kind, &spot.loc) else { return Vec::new() };
     let mut e = Vec::new();
     if spot.usable() {
         e.push(item(Action::NewTab(spot.loc.clone()), glyph::ADD, "Open in new tab"));
@@ -214,6 +223,9 @@ mod tests {
         assert_eq!(row_entries(&gone).iter().map(label).collect::<Vec<_>>(), ["Unpin from sidebar"]);
         let app = Spot { loc: dir(r"C:\Dropbox"), kind: Kind::App("dropbox".into()) };
         assert_eq!(row_entries(&app).iter().map(label).collect::<Vec<_>>(), ["Open in new tab", "Hide from the sidebar"]);
+        let linux = Spot { loc: dir(r"\\wsl.localhost\Debian"), kind: Kind::Linux };
+        assert_eq!(row_entries(&linux).iter().map(label).collect::<Vec<_>>(), ["Open in new tab"]);
+        assert!(matches!(linux.dest(), Some(Dest::Dir(_))));
         // Places and drives have no menu.
         assert!(row_entries(&Spot { loc: dir(r"C:\"), kind: Kind::Drive }).is_empty());
     }

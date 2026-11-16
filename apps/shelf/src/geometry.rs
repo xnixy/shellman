@@ -117,6 +117,26 @@ pub fn fan_at(shelf: Rect, anchor_y: f32, items: usize, edge: Edge, area: Rect, 
         .collect()
 }
 
+/// Room around the fan's path: between its ends the pills swing a little past both.
+const SWEPT_PAD: f32 = 8.0;
+
+/// The part of the window a fan moves in while it opens or shuts: what holds its pills when
+/// shut (`from`) and when open (`to`), with a little room, in the window's pixels (left, top,
+/// right, bottom). None without pills.
+pub fn swept(from: &[Rect], to: &[Rect], scale: f32) -> Option<(i32, i32, i32, i32)> {
+    let all = from.iter().chain(to).fold(Rect::NOTHING, |a, r| a.union(*r));
+    if !all.is_positive() {
+        return None;
+    }
+    let all = all.expand(SWEPT_PAD);
+    Some((
+        (all.left() * scale).floor() as i32,
+        (all.top() * scale).floor() as i32,
+        (all.right() * scale).ceil() as i32,
+        (all.bottom() * scale).ceil() as i32,
+    ))
+}
+
 /// The point of `p` (points in the window) in physical screen pixels, for a window whose client
 /// area starts at `origin` (pixels) with `scale` pixels per point.
 pub fn to_screen(p: Pos2, origin: (i32, i32), scale: f32) -> (i32, i32) {
@@ -140,6 +160,23 @@ pub fn from_screen(p: (i32, i32), origin: (i32, i32), scale: f32) -> Pos2 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_fans_path_holds_every_pill_on_the_way() {
+        let shelf = Rect::from_min_size(pos2(8.0, 300.0), vec2(64.0, 200.0));
+        let area = Rect::from_min_max(pos2(0.0, 64.0), pos2(800.0, 974.0));
+        for edge in [Edge::Left, Edge::Right] {
+            let at = |t: f32| fan_at(shelf, 400.0, 5, edge, area, t);
+            let (l, t, r, b) = swept(&at(0.0), &at(1.0), 2.0).unwrap();
+            let held = Rect::from_min_max(pos2(l as f32 / 2.0, t as f32 / 2.0), pos2(r as f32 / 2.0, b as f32 / 2.0));
+            for step in 0..=20 {
+                for pill in at(step as f32 / 20.0) {
+                    assert!(held.contains_rect(pill), "{edge:?} at {step}: {pill:?} outside {held:?}");
+                }
+            }
+        }
+        assert_eq!(swept(&[], &[], 1.0), None);
+    }
 
     fn window() -> Rect {
         Rect::from_min_size(Pos2::ZERO, vec2(window_width(), 1080.0))

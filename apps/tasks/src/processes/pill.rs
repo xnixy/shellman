@@ -130,10 +130,9 @@ fn commands(row: &mut Row, st: &mut State) {
     let p = &st.list.procs[t.proc];
     let exe = p.exe.clone();
     let folder = exe.as_ref().and_then(|e| e.parent().map(|d| d.to_path_buf()));
-    if row.chip("Open location", Some(glyph::FOLDER), Chip::Soft, folder.is_some(), Some(if folder.is_some() { "Open its folder in Files" } else { "Its path cannot be read" })) {
-        if let Some(dir) = &folder {
-            let dir = dir.to_string_lossy().into_owned();
-            if !shellman_core::sibling::start_with("files", &[&dir]) {
+    if row.chip("Open location", Some(glyph::FOLDER), Chip::Soft, folder.is_some(), Some(if folder.is_some() { "Show it in Files" } else { "Its path cannot be read" })) {
+        if let Some(exe) = exe.as_ref().filter(|_| folder.is_some()) {
+            if !shellman_core::sibling::start_with("files", &["--select", &exe.to_string_lossy()]) {
                 st.actions.ask = Ask::Note("Files (shellman-files.exe) was not found next to Task Manager.".into());
             }
         }

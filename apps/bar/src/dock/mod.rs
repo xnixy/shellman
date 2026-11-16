@@ -34,7 +34,8 @@ use shellman_core::thumbs::Thumbs;
 use shellman_core::winlist::{self, AppWindow, WindowList, WindowWatcher};
 use shellman_ui::theme;
 use windows::Win32::Foundation::{HWND, LPARAM, RECT, WPARAM};
-use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_ESCAPE};
+use windows::Win32::System::Com::{CoInitializeEx, COINIT_APARTMENTTHREADED};
+use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VIRTUAL_KEY, VK_CONTROL, VK_ESCAPE, VK_SHIFT};
 use windows::Win32::UI::WindowsAndMessaging::{
     GetClientRect, IsIconic, PostMessageW, SetForegroundWindow, ShowWindow, SW_MINIMIZE, SW_RESTORE, WM_CLOSE,
 };
@@ -62,6 +63,9 @@ pub struct Dock {
     /// The icons' right-click menu, and the icon it is open for.
     menu: PopupMenu<menu::Choice>,
     menu_for: Option<Item>,
+    /// The open menu is for a Store app, and whether that can run as administrator is still
+    /// being read from its package: the row is added when the answer comes.
+    menu_admin_pending: bool,
     /// An icon being picked up and moved (see `drag`).
     drag: drag::Machine,
     /// Files dragged over the dock windows from other apps (see `drop`).
@@ -101,6 +105,7 @@ impl Dock {
             scroll: (0, 0.0),
             menu: PopupMenu::new(),
             menu_for: None,
+            menu_admin_pending: false,
             drag: drag::Machine::default(),
             bin,
             badge_tex: badges::Textures::default(),
@@ -188,6 +193,14 @@ impl Dock {
             bin::open();
             return;
         }
+        // Ctrl+Shift+click, as on Windows' taskbar: a new instance, as administrator.
+        // Only what the menu would offer it for; a folder or a sandboxed app gets a plain click.
+        if admin_keys_held() && can_run_as_admin(item) == Some(true) {
+            if let Some(target) = item.launch_target() {
+                launch_as_admin(target);
+            }
+            return;
+        }
         if item.windows.is_empty() {
             if let Some(target) = item.launch_target() {
                 launch(target);
@@ -230,19 +243,42 @@ impl Dock {
         } else if item.section == Section::Bin {
             menu::Kind::Bin { state: self.bin.state() }
         } else {
-            let pinned = item.pinnable().then(|| item.section == Section::Pinned);
-            menu::Kind::App { pinned, windows: item.windows.len() }
+            let admin = can_run_as_admin(&item);
+            self.menu_admin_pending = admin.is_none();
+            app_kind(&item, admin == Some(true))
         };
         let entries = menu::entries(&kind);
+        // A menu still waiting for its only row has nothing to open with: the next right-click
+        // has the answer.
         if entries.is_empty() {
+            self.menu_admin_pending = false;
             return;
         }
         self.menu.open(ctx, menu::anchor(), entries);
         self.menu_for = Some(item);
     }
 
+    /// The open menu's "Run as administrator" row, once a Store app's package has said whether
+    /// it applies.
+    fn menu_late_row(&mut self) {
+        if !self.menu_admin_pending {
+            return;
+        }
+        let Some(item) = self.menu_for.as_ref().filter(|_| self.menu.is_open()) else {
+            self.menu_admin_pending = false;
+            return;
+        };
+        if let Some(admin) = can_run_as_admin(item) {
+            self.menu_admin_pending = false;
+            if admin {
+                self.menu.update(menu::entries(&app_kind(item, true)));
+            }
+        }
+    }
+
     /// Do what the icon's menu chose, if it chose something since the last frame.
     fn menu_picked(&mut self, ctx: &egui::Context) {
+        self.menu_late_row();
         let Some(choice) = self.menu.take_pick() else { return };
         let Some(item) = self.menu_for.take() else { return };
         match choice {
@@ -258,6 +294,11 @@ impl Dock {
                 self.pins.save();
                 self.rebuild();
                 self.wake.bars();
+            }
+            menu::Choice::RunAsAdmin => {
+                if let Some(target) = item.launch_target() {
+                    launch_as_admin(target);
+                }
             }
             menu::Choice::Close => {
                 for &w in &item.windows {
@@ -286,8 +327,8 @@ impl Dock {
     }
 
     /// Each app's front-most window, by app id (the notifications bring an app forward with it).
-    pub fn front_windows(&self) -> Vec<(String, isize)> {
-        self.items.iter().filter_map(|i| Some((i.app_id.clone(), *i.windows.first()?))).collect()
+    pub fn front_windows(&self) -> Vec<(String, Option<std::path::PathBuf>, isize)> {
+        self.items.iter().filter_map(|i| Some((i.app_id.clone(), i.exe.clone(), *i.windows.first()?))).collect()
     }
 
     /// An app's icon, once the shell has it.
@@ -359,6 +400,38 @@ fn launch(target: std::path::PathBuf) {
             shellman_core::fsops::open(&target);
         }
     });
+}
+
+/// Start it as administrator, behind the UAC prompt, which a thread of its own waits for.
+fn launch_as_admin(target: std::path::PathBuf) {
+    std::thread::spawn(move || {
+        // The shell's `runas` wants COM on its thread.
+        unsafe {
+            let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+        }
+        shellman_core::apps_index::admin::launch(&target.to_string_lossy());
+    });
+}
+
+/// Whether an app's icon offers "Run as administrator": None while a Store app's package is
+/// still being read (the docks are woken when it has been).
+fn can_run_as_admin(item: &Item) -> Option<bool> {
+    match item.launch_target() {
+        Some(target) => shellman_core::apps_index::admin::can_elevate_soon(&target.to_string_lossy(), wake_docks_from_thread),
+        None => Some(false),
+    }
+}
+
+/// The menu of an app's icon.
+fn app_kind(item: &Item, admin: bool) -> menu::Kind {
+    let pinned = item.pinnable().then(|| item.section == Section::Pinned);
+    menu::Kind::App { pinned, windows: item.windows.len(), admin }
+}
+
+/// Ctrl and Shift are both down. Asked of Windows: the dock never has the keyboard.
+fn admin_keys_held() -> bool {
+    let down = |key: VIRTUAL_KEY| unsafe { GetAsyncKeyState(key.0 as i32) } < 0;
+    down(VK_CONTROL) && down(VK_SHIFT)
 }
 
 /// Ask a window to close, as its own close button would.

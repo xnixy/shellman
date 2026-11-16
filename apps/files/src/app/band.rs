@@ -199,7 +199,10 @@ impl super::FileMan {
         let tab = &self.tabs[self.active];
         let place = match tab.loc {
             Loc::Pc => {
-                let text = format!("{} drives", self.drives.len());
+                let text = match self.linux.len() {
+                    0 => format!("{} drives", self.drives.len()),
+                    n => format!("{} drives, {n} Linux", self.drives.len()),
+                };
                 return Some(self.muted_pill(ui, band, &text));
             }
             Loc::Bin => Place::Bin,

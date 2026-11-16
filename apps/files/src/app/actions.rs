@@ -67,6 +67,8 @@ pub(super) enum Action {
     ToggleCursor,
     /// Open a terminal in this folder (the one chosen in `terminal.json`).
     OpenTerminal(PathBuf),
+    /// Start this program as administrator, behind the UAC prompt.
+    RunAsAdmin(PathBuf),
     /// Sort by this key; the key it is sorted by already turns the order around.
     SortBy(super::tab::SortKey),
     /// Sort ascending (true) or descending.
@@ -283,6 +285,18 @@ impl super::FileMan {
                     if let Err(e) = shellman_core::terminal::open_at(&dir) {
                         eprintln!("files: {e}");
                     }
+                });
+            }
+            Action::RunAsAdmin(program) => {
+                // The worker waits for the prompt; the shell's `runas` wants COM on its thread.
+                std::thread::spawn(move || {
+                    unsafe {
+                        let _ = windows::Win32::System::Com::CoInitializeEx(
+                            None,
+                            windows::Win32::System::Com::COINIT_APARTMENTTHREADED,
+                        );
+                    }
+                    shellman_core::apps_index::admin::launch(&program.to_string_lossy());
                 });
             }
             // Whether its folder is there is looked at on a worker (see `probed`).

@@ -14,6 +14,7 @@ mod leftovers;
 mod log;
 mod policy;
 mod proc;
+mod ready;
 mod restart;
 mod registry;
 mod safety;
@@ -23,6 +24,7 @@ mod startup;
 mod supervisor;
 mod swap;
 mod transparency;
+mod warm;
 mod window;
 
 use cli::Mode;
@@ -57,6 +59,10 @@ fn main() {
         return;
     };
     transparency::listen(window);
+    // Without this Windows runs no packaged app's background task in the session (`ready.rs`).
+    if !test {
+        ready::start();
+    }
     let net = Net { shell: fallback::for_run(test), window: window.0 as isize, t0: Instant::now() };
     // Shift at start is the user's way out: Explorer, and no shellman apps at all.
     if safety && fallback::shift_held() {
@@ -66,6 +72,9 @@ fn main() {
     let fleet = supervisor::Fleet::new(apps);
     if startup && !test {
         startup::start(fleet.adopted());
+    }
+    if !test {
+        warm::start();
     }
     run(fleet, safety.then_some(net), None);
 }

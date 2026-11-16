@@ -12,6 +12,12 @@ pub fn launch(app: &App) -> bool {
     execute(&path, None) || super::activate::retry(&path)
 }
 
+/// Start an app as administrator (the UAC prompt), or as usual when it cannot run as one. Blocks
+/// until the prompt is answered.
+pub fn launch_as_admin(app: &App) -> bool {
+    super::admin::launch(&app.shell_path())
+}
+
 /// ShellExecute the text as typed: a path, a URL, a program name, or `program arguments`.
 pub fn run_text(text: &str) -> bool {
     let text = text.trim();
@@ -34,7 +40,7 @@ pub fn run_text(text: &str) -> bool {
 }
 
 /// "program rest of the line", or a quoted program then the rest.
-fn split_command(text: &str) -> Option<(&str, &str)> {
+pub(super) fn split_command(text: &str) -> Option<(&str, &str)> {
     if let Some(rest) = text.strip_prefix('"') {
         let end = rest.find('"')?;
         return Some((&rest[..end], rest[end + 1..].trim()));

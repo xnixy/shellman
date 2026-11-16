@@ -7,6 +7,9 @@ use std::path::PathBuf;
 pub const RECYCLE_BIN: &str = "--recycle-bin";
 /// The flag, followed by a request file, that runs Files as a file picker for another app.
 pub const PICK: &str = "--pick";
+/// The flag, followed by a file or folder, that opens the folder it is in with it selected
+/// ("open file location" from the other apps).
+pub const SELECT: &str = "--select";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Start {
@@ -14,6 +17,8 @@ pub enum Start {
     Saved,
     /// One tab on this folder.
     Folder(PathBuf),
+    /// One tab on the folder this item is in, with the item selected once it is listed.
+    Select(PathBuf),
     /// One tab on the Recycle Bin.
     RecycleBin,
     /// A picker for another app, as the request in this file asks (see `crate::pick`).
@@ -32,6 +37,15 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Start {
         }
         if arg == RECYCLE_BIN {
             return Start::RecycleBin;
+        }
+        if arg == SELECT {
+            // Not looked at here: the folder's listing finds the item, or does not. Something
+            // with no folder above it (a drive, nothing at all) is not an item to select.
+            match args.next().map(PathBuf::from) {
+                Some(path) if path.parent().is_some_and(|d| !d.as_os_str().is_empty()) => return Start::Select(path),
+                Some(path) if path.is_dir() => return Start::Folder(path),
+                _ => continue,
+            }
         }
         let path = PathBuf::from(arg);
         if path.is_dir() {
@@ -68,6 +82,19 @@ mod tests {
             Start::Pick(PathBuf::from(r"C:\Temp\req.json"))
         );
         assert_eq!(parse_strs(&["--pick"]), Start::Pick(PathBuf::new()));
+    }
+
+    #[test]
+    fn select_takes_the_item_after_it() {
+        assert_eq!(parse_strs(&["--select", r"C:\Windows\notepad.exe"]), Start::Select(PathBuf::from(r"C:\Windows\notepad.exe")));
+        assert_eq!(
+            parse_strs(&["--select", r"\\wsl.localhost\Debian\etc\hosts"]),
+            Start::Select(PathBuf::from(r"\\wsl.localhost\Debian\etc\hosts"))
+        );
+        // Nothing to select: the saved tabs, as for any stray argument.
+        assert_eq!(parse_strs(&["--select"]), Start::Saved);
+        assert_eq!(parse_strs(&["--select", "file-with-no-folder"]), Start::Saved);
+        assert_eq!(parse_strs(&["--select", r"Z:\"]), Start::Saved);
     }
 
     #[test]

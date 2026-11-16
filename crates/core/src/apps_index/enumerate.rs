@@ -69,7 +69,7 @@ pub(super) fn needs_target(id: &str) -> bool {
 }
 
 /// The program the item's shortcut points at.
-unsafe fn target_of(item: &IShellItem) -> Option<String> {
+pub(super) unsafe fn target_of(item: &IShellItem) -> Option<String> {
     let item: IShellItem2 = item.cast().ok()?;
     let raw: PWSTR = item.GetString(&PKEY_LINK_TARGET_PARSING_PATH).ok()?;
     let text = raw.to_string().ok().filter(|t| !t.is_empty());

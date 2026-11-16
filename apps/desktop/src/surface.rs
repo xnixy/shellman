@@ -18,7 +18,7 @@ use windows::Win32::Graphics::Gdi::{
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, GetClientRect, GetCursorPos, LoadCursorW, PostMessageW, RegisterClassW, SetWindowPos, ShowWindow,
-    HWND_BOTTOM, IDC_ARROW, SWP_NOACTIVATE, SWP_NOZORDER, SW_SHOWNOACTIVATE, WINDOWPOS, WM_DPICHANGED, WM_ERASEBKGND,
+    HWND_BOTTOM, IDC_ARROW, SWP_NOACTIVATE, SWP_NOZORDER, SW_HIDE, SW_SHOWNOACTIVATE, WINDOWPOS, WM_DPICHANGED, WM_ERASEBKGND,
     WM_MOUSEACTIVATE, WM_NCDESTROY, WM_PAINT, WM_RBUTTONUP, WM_WINDOWPOSCHANGING, WNDCLASSW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
     WS_POPUP,
 };
@@ -75,8 +75,9 @@ pub fn register() {
     }
 }
 
-/// A wallpaper window covering `area`, at the bottom of the z-order, shown without activation.
-pub fn create(area: Area) -> Option<HWND> {
+/// A wallpaper window covering `area`, at the bottom of the z-order, shown without activation;
+/// left hidden when `shown` is false (the wallpaper stands aside for Explorer's desktop).
+pub fn create(area: Area, shown: bool) -> Option<HWND> {
     unsafe {
         let hwnd = CreateWindowExW(
             WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
@@ -94,8 +95,17 @@ pub fn create(area: Area) -> Option<HWND> {
         )
         .ok()?;
         let _ = SetWindowPos(hwnd, Some(HWND_BOTTOM), area.x, area.y, area.w, area.h, SWP_NOACTIVATE);
-        let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+        if shown {
+            let _ = ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+        }
         Some(hwnd)
+    }
+}
+
+/// Hide or show a wallpaper window, never activating it.
+pub fn show(hwnd: HWND, shown: bool) {
+    unsafe {
+        let _ = ShowWindow(hwnd, if shown { SW_SHOWNOACTIVATE } else { SW_HIDE });
     }
 }
 

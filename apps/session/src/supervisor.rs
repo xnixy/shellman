@@ -222,7 +222,15 @@ impl Fleet {
     pub fn bar(&self) -> (Bar, Duration) {
         match self.slots.iter().find(|s| s.app.is_bar()) {
             // One that exited during a logoff that may yet be cancelled is pending, never lost.
-            Some(s) => (Bar::of(s.proc.is_some(), s.due.is_some() || s.ended_while_ending), s.started.elapsed()),
+            // One asked to close for a restart is pending too, from the asking on: its process
+            // still runs for a moment but its tray window is already gone, and its start is long
+            // past the tray deadline, so as "running" it read as a bar with no tray and the
+            // safety net handed the session to Explorer in the same pass (13 Nov, on
+            // `shellman-setup update --restart`).
+            Some(s) => {
+                let closing = s.restart.is_some();
+                (Bar::of(s.proc.is_some() && !closing, s.due.is_some() || s.ended_while_ending || closing), s.started.elapsed())
+            }
             None => (Bar::Absent, self.since_start()),
         }
     }
@@ -555,7 +563,10 @@ mod tests {
         world.requests.borrow_mut().push("bar".into());
         fleet.step();
         assert_eq!(*world.closed.borrow(), [pid], "asked to close");
-        assert_eq!(fleet.bar().0, Bar::Running);
+        // Closing, its tray already gone and its start long ago: never "running without a tray".
+        assert_eq!(fleet.bar().0, Bar::Pending);
+        let closing = crate::safety::Seen { shift: false, bar: fleet.bar().0, tray_up: false, since: crate::safety::DEADLINE * 100 };
+        assert_eq!(crate::safety::decide(&closing), None, "a requested restart never falls back to Explorer");
         world.end(pid, 1);
         fleet.step();
         assert_eq!(world.starts("bar"), 2, "started again at once, no pause");

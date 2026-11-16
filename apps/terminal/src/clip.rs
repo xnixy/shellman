@@ -1,7 +1,7 @@
 //! The clipboard's text, for a right-click paste (egui only hands over the clipboard on its own
 //! paste keys), and following a link a program printed (Ctrl+click).
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use windows::core::HSTRING;
 use windows::Win32::Foundation::{HANDLE, HGLOBAL};
 use windows::Win32::System::DataExchange::{CloseClipboard, GetClipboardData, OpenClipboard};
@@ -158,9 +158,14 @@ pub fn open(uri: &str) {
             if !crate::local::on_local_drive(&path) {
                 return;
             }
-            let dir = if path.is_dir() { path } else { path.parent().map(Path::to_path_buf).unwrap_or(path) };
-            if !shellman_core::sibling::start_with("files", &[&dir.display().to_string()]) {
-                eprintln!("terminal: could not start Files for {}", dir.display());
+            let shown = path.display().to_string();
+            let started = if path.is_dir() {
+                shellman_core::sibling::start_with("files", &[&shown])
+            } else {
+                shellman_core::sibling::start_with("files", &["--select", &shown])
+            };
+            if !started {
+                eprintln!("terminal: could not start Files for {shown}");
             }
         }
     });

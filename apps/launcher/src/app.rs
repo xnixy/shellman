@@ -3,6 +3,7 @@
 
 use crate::fade::Fade;
 use crate::grid::{self, Dir, Grid, Pos};
+use crate::menu::{self, Facts, Pick};
 use crate::results::{self, Item};
 use crate::summon::{self, Shared};
 use crate::usage::Usage;
@@ -10,6 +11,8 @@ use crate::rank;
 use shellman_core::apps_index::{self, App, AppIndex};
 use shellman_core::thumbs::Thumbs;
 use shellman_ui::glass;
+use shellman_ui::menu::popup::{self, Anchor, PopupMenu};
+use std::sync::mpsc::{channel, Receiver};
 use shellman_ui::theme::{self, colors, glyph, icon_font};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -59,6 +62,15 @@ pub struct Launcher {
     seen_shown: u32,
     had_focus: bool,
     shown_at: Instant,
+    /// The right-click menu, what it is for, and that row's facts: on their way, then here.
+    menu: PopupMenu<Pick>,
+    menu_for: Option<Item>,
+    facts_rx: Option<Receiver<Facts>>,
+    facts: Option<Facts>,
+    /// The menu was open on the last frame; and, once it has closed, until when a missing
+    /// focus is the focus on its way back from the menu rather than a click elsewhere.
+    menu_seen: bool,
+    quiet_until: Option<Instant>,
 }
 
 impl Launcher {
@@ -84,6 +96,12 @@ impl Launcher {
             seen_shown: 0,
             had_focus: false,
             shown_at: Instant::now(),
+            menu: PopupMenu::new(),
+            menu_for: None,
+            facts_rx: None,
+            facts: None,
+            menu_seen: false,
+            quiet_until: None,
         };
         me.rebuild_grid();
         me
@@ -123,6 +141,9 @@ impl Launcher {
 
     /// Back to a clean state and out of sight.
     fn hide(&mut self) {
+        self.menu.close();
+        self.menu_for = None;
+        self.facts_rx = None;
         self.shared.mark_hidden();
         summon::hide(self.hwnd);
         self.query.clear();
@@ -133,22 +154,31 @@ impl Launcher {
         self.thumbs.cancel_pending();
     }
 
-    /// Start what was chosen, and go away.
-    fn activate(&mut self, item: Item) {
+    /// Start what was chosen, and go away. `admin` (Ctrl+Shift, as in Windows' Start) starts it
+    /// as administrator, behind the UAC prompt, which the worker waits for.
+    fn activate(&mut self, item: Item, admin: bool) {
         match item {
             Item::App(i) => {
                 let app = self.apps[i].clone();
                 self.usage.record(&app.id);
                 std::thread::spawn(move || {
                     com_init();
-                    apps_index::launch(&app);
+                    if admin {
+                        apps_index::launch_as_admin(&app);
+                    } else {
+                        apps_index::launch(&app);
+                    }
                 });
             }
             Item::Run => {
                 let text = self.query.clone();
                 std::thread::spawn(move || {
                     com_init();
-                    apps_index::run_text(&text);
+                    if admin {
+                        apps_index::admin::run_text(&text);
+                    } else {
+                        apps_index::run_text(&text);
+                    }
                 });
             }
         }
@@ -165,7 +195,9 @@ impl Launcher {
             self.hide();
             return;
         }
-        let enter = press(Key::Enter);
+        // Ctrl+Shift+Enter first: a plain Enter pattern would take it too.
+        let admin = ctx.input_mut(|i| i.consume_key(Modifiers::CTRL | Modifiers::SHIFT, Key::Enter));
+        let enter = admin || press(Key::Enter);
         let dir = [
             (Key::ArrowLeft, Dir::Left),
             (Key::ArrowRight, Dir::Right),
@@ -188,7 +220,7 @@ impl Launcher {
             }
             if enter {
                 if let Some(&item) = self.items.get(self.result_sel) {
-                    self.activate(item);
+                    self.activate(item, admin);
                 }
             }
         } else {
@@ -198,7 +230,7 @@ impl Launcher {
             }
             if enter {
                 if let Some(i) = self.grid.app_at(self.grid_sel) {
-                    self.activate(Item::App(i));
+                    self.activate(Item::App(i), admin);
                 }
             }
         }
@@ -225,9 +257,22 @@ impl Launcher {
         if !self.shared.is_showing() && summon::is_visible(self.hwnd) {
             summon::hide(self.hwnd);
         }
+        // The menu is a window of its own and holds the focus while open: that is not the user
+        // leaving. When it closes by a pick or Esc the focus comes back, a moment later.
+        if self.menu.is_open() {
+            self.menu_seen = true;
+            return;
+        }
+        if std::mem::take(&mut self.menu_seen) {
+            self.quiet_until = Some(Instant::now() + FOCUS_GRACE);
+            ctx.request_repaint_after(FOCUS_GRACE + Duration::from_millis(10));
+        }
         let focused = ctx.input(|i| i.focused);
         if focused {
             self.had_focus = true;
+            self.quiet_until = None;
+        } else if self.quiet_until.is_some_and(|t| Instant::now() < t) {
+            // Still on its way back.
         } else if self.had_focus && self.shown_at.elapsed() > FOCUS_GRACE {
             self.hide();
         } else if self.had_focus {
@@ -311,6 +356,7 @@ impl Launcher {
 
     /// One frame. Returns the glass for it: the islands, in points; empty while hidden.
     pub fn frame(&mut self, ctx: &egui::Context) -> Vec<glass::Island> {
+        self.menu_frame(ctx);
         self.thumbs.poll(ctx);
         let apps = self.index.apps();
         if !Arc::ptr_eq(&apps, &self.apps) {
@@ -355,6 +401,7 @@ impl Launcher {
             ctx.request_repaint();
         }
         let mut picked = None;
+        let mut menu_at = None;
         egui::Area::new(egui::Id::new("content"))
             .order(egui::Order::Foreground)
             .fixed_pos(screen.min)
@@ -375,7 +422,7 @@ impl Launcher {
                     // Rows only fade into the island's edge when there are more than fit.
                     let edge = if layout.overflows { list.bottom() - 4.0 } else { 1.0e9 };
                     ui.scope_builder(egui::UiBuilder::new().max_rect(inner), |ui| {
-                        picked = self.content(ui, Fade { edge });
+                        (picked, menu_at) = self.content(ui, Fade { edge });
                     });
                 }
                 if !self.glass {
@@ -384,15 +431,74 @@ impl Launcher {
                 }
             });
         if let Some(item) = picked {
-            self.activate(item);
+            // Ctrl+Shift+click, like Ctrl+Shift+Enter.
+            self.activate(item, admin_held(ctx));
+        } else if let Some((item, at)) = menu_at {
+            self.open_menu(ctx, item, at);
         }
         self.reveal = false;
         self.reset_scroll = false;
         islands
     }
 
-    /// The grid or the result list. Returns what was clicked.
-    fn content(&mut self, ui: &mut egui::Ui, fade: Fade) -> Option<Item> {
+    /// The right-click menu's part of a frame, also while the launcher is hidden: its window is
+    /// kept, late facts go into the open menu, and what was picked is done.
+    fn menu_frame(&mut self, ctx: &egui::Context) {
+        popup::declare(ctx);
+        if let Some(facts) = self.facts_rx.as_ref().and_then(|rx| rx.try_recv().ok()) {
+            self.facts_rx = None;
+            if self.menu.is_open() {
+                self.menu.update(menu::app_entries(Some(&facts)));
+            }
+            self.facts = Some(facts);
+        }
+        let Some(pick) = self.menu.take_pick() else { return };
+        let Some(item) = self.menu_for.take() else { return };
+        let facts = self.facts.take().unwrap_or_default();
+        match pick {
+            Pick::Open => self.activate(item, false),
+            Pick::Admin => self.activate(item, true),
+            // The launcher stays: the dock shows what happened.
+            Pick::Pin | Pick::Unpin => {
+                if let Some(pin) = facts.pin {
+                    std::thread::spawn(move || menu::set_pinned(&pin, pick == Pick::Pin));
+                }
+            }
+            Pick::Location => {
+                if let Some(path) = facts.location {
+                    shellman_core::sibling::start_with("files", &["--select", &path.to_string_lossy()]);
+                }
+                self.hide();
+            }
+        }
+    }
+
+    /// Open the menu for a right-clicked row, at the pointer (`at`, in the window's points).
+    fn open_menu(&mut self, ctx: &egui::Context, item: Item, at: egui::Pos2) {
+        self.menu_for = Some(item);
+        self.facts = None;
+        self.facts_rx = None;
+        let entries = match item {
+            Item::Run => menu::run_entries(),
+            Item::App(i) => {
+                let app = self.apps[i].clone();
+                let (tx, rx) = channel();
+                let wake = ctx.clone();
+                std::thread::spawn(move || {
+                    com_init();
+                    let _ = tx.send(menu::facts(&app));
+                    wake.request_repaint();
+                });
+                self.facts_rx = Some(rx);
+                menu::app_entries(None)
+            }
+        };
+        self.menu.open(ctx, Anchor::in_window(ctx, at), entries);
+    }
+
+    /// The grid or the result list. Returns what was clicked, and what was right-clicked with
+    /// where the pointer was. A right-clicked row is selected, so the menu is seen to be its.
+    fn content(&mut self, ui: &mut egui::Ui, fade: Fade) -> (Option<Item>, Option<(Item, egui::Pos2)>) {
         if self.typing() {
             let out = results::show(
                 ui,
@@ -400,6 +506,7 @@ impl Launcher {
                 &self.apps,
                 &self.query,
                 self.result_sel,
+                admin_held(ui.ctx()),
                 &mut self.thumbs,
                 fade,
                 self.reveal,
@@ -407,7 +514,11 @@ impl Launcher {
             if let Some(i) = out.hover {
                 self.result_sel = i;
             }
-            out.launch.and_then(|i| self.items.get(i).copied())
+            let menu = out.menu.and_then(|(i, at)| {
+                self.result_sel = i;
+                self.items.get(i).map(|item| (*item, at))
+            });
+            (out.launch.and_then(|i| self.items.get(i).copied()), menu)
         } else {
             let out = grid::show(
                 ui,
@@ -422,7 +533,11 @@ impl Launcher {
             if let Some(pos) = out.hover {
                 self.grid_sel = pos;
             }
-            out.launch.map(Item::App)
+            let menu = out.menu.map(|(pos, index, at)| {
+                self.grid_sel = pos;
+                (Item::App(index), at)
+            });
+            (out.launch.map(Item::App), menu)
         }
     }
 }
@@ -436,6 +551,11 @@ struct Layout {
     pad_top: f32,
     /// Whether the content is taller than the island, so it scrolls and fades at the edge.
     overflows: bool,
+}
+
+/// Ctrl and Shift are both down: what is started now is started as administrator.
+fn admin_held(ctx: &egui::Context) -> bool {
+    ctx.input(|i| i.modifiers.ctrl && i.modifiers.shift)
 }
 
 /// Shell launches want COM on the thread that makes them.

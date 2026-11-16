@@ -212,6 +212,11 @@ impl Target {
                     shellman_core::sibling::start_with("files", &[&folder.to_string_lossy()]);
                 });
             }
+            Plan::Select(file) => {
+                std::thread::spawn(move || {
+                    shellman_core::sibling::start_with("files", &["--select", &file.to_string_lossy()]);
+                });
+            }
             Plan::OpenWith(with) => {
                 std::thread::spawn(move || {
                     let _ = shellman_core::open_with::open(&with, &files);

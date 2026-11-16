@@ -9,8 +9,9 @@
 //! Why this cannot trip the crash back-off or the bar's safety net: the supervisor remembers
 //! that the exit of that process was asked for, and treats it as a restart that is not a crash
 //! (`policy::Crashes::on_requested_exit`: no entry in the crash list, no pause), whatever the
-//! exit code is. The bar's slot goes from running straight to "start scheduled" (never "lost"),
-//! and the safety net's 20 s tray deadline counts from the new copy's own start. A new copy that
+//! exit code is. The bar's slot counts as "start scheduled" from the moment it is asked to close
+//! (never "lost", and never "running without a tray" while it closes: `Fleet::bar`), and the
+//! safety net's 20 s tray deadline counts from the new copy's own start. A new copy that
 //! then crashes by itself is an ordinary crash again, so a broken update still ends in Explorer.
 
 use std::sync::atomic::{AtomicBool, Ordering};

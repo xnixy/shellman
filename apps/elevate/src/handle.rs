@@ -29,5 +29,8 @@ pub fn run(op: &Op) -> bool {
             }
             all
         }
+        // A Store app started from here, elevated, runs as administrator when it is a desktop
+        // program in a package. The id was checked to be an app id and nothing else.
+        Op::LaunchApp { id } => shellman_core::apps_index::activate::activate_with(id, ""),
     }
 }

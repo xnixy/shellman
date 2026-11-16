@@ -39,14 +39,10 @@ pub fn wsl_order(mut entries: Vec<(String, String)>, default: Option<&str>) -> V
     entries.into_iter().map(|(_, n)| n).collect()
 }
 
-/// Look on this machine.
-pub fn detect() -> Found {
+/// The WSL distributions on this machine, the default one first; none without `wsl.exe`. Only
+/// the registry and that one file are looked at.
+pub fn wsl_names() -> Vec<String> {
     use crate::registry::{Hive, Real, Registry};
-    let env = |k: &str| std::env::var_os(k).map(PathBuf::from);
-    let pwsh = env("ProgramFiles").and_then(|pf| {
-        ["7", "7-preview"].iter().map(|v| pf.join("PowerShell").join(v).join("pwsh.exe")).find(|p| p.is_file())
-    });
-    let git_bash = env("ProgramFiles").map(|pf| pf.join("Git").join("bin").join("bash.exe")).filter(|p| p.is_file());
     const LXSS: &str = r"Software\Microsoft\Windows\CurrentVersion\Lxss";
     let reg = Real;
     let default = reg.get(Hive::Hkcu, LXSS, "DefaultDistribution").and_then(|v| v.text().map(str::to_owned));
@@ -58,12 +54,21 @@ pub fn detect() -> Found {
             Some((guid, name))
         })
         .collect();
-    let wsl = if Path::new(&format!(r"{}\System32\wsl.exe", std::env::var("SystemRoot").unwrap_or_default())).is_file() {
+    if Path::new(&format!(r"{}\System32\wsl.exe", std::env::var("SystemRoot").unwrap_or_default())).is_file() {
         wsl_order(entries, default.as_deref())
     } else {
         Vec::new()
-    };
-    Found { pwsh, wsl, git_bash }
+    }
+}
+
+/// Look on this machine.
+pub fn detect() -> Found {
+    let env = |k: &str| std::env::var_os(k).map(PathBuf::from);
+    let pwsh = env("ProgramFiles").and_then(|pf| {
+        ["7", "7-preview"].iter().map(|v| pf.join("PowerShell").join(v).join("pwsh.exe")).find(|p| p.is_file())
+    });
+    let git_bash = env("ProgramFiles").map(|pf| pf.join("Git").join("bin").join("bash.exe")).filter(|p| p.is_file());
+    Found { pwsh, wsl: wsl_names(), git_bash }
 }
 
 #[cfg(test)]

@@ -25,6 +25,10 @@ pub enum Op {
     /// <pid>:<created> ...`); one whose start time differs is another process on a reused PID and
     /// is left alone. Never a name or a command line.
     EndProcesses { targets: Vec<(u32, i64)> },
+    /// Start a Store app, which then runs as administrator when it is a desktop program in a
+    /// package (`launch-app <Family>!<App>`). Only an app id of an installed package: never a
+    /// path, a command line or arguments.
+    LaunchApp { id: String },
 }
 
 /// The most processes one `end-processes` may name (a big browser's tree is well under this).
@@ -76,6 +80,18 @@ pub fn is_generation(s: &str) -> bool {
     !s.is_empty() && s.len() <= 13 && s.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit())
 }
 
+/// Whether `s` is spelled like a Store app's id, `<Name>_<PublisherId>!<App>`: a package name of
+/// letters, digits, dots and dashes, the 13-character publisher id, and an application id of
+/// letters, digits and dots. Never a path or anything with a space.
+pub fn is_app_id(s: &str) -> bool {
+    let Some((family, app)) = s.split_once('!') else { return false };
+    let Some((name, publisher)) = family.split_once('_') else { return false };
+    let word = |w: &str, max: usize, extra: &[u8]| {
+        !w.is_empty() && w.len() <= max && w.bytes().all(|b| b.is_ascii_alphanumeric() || extra.contains(&b))
+    };
+    word(name, 50, b".-") && publisher.len() == 13 && word(publisher, 13, b"") && word(app, 64, b".")
+}
+
 fn state_word(state: &str) -> Result<bool, BadArgs> {
     match state {
         "enable" => Ok(true),
@@ -110,6 +126,8 @@ pub fn parse(args: &[String]) -> Result<Op, BadArgs> {
             let parsed: Option<Vec<_>> = targets.iter().map(|t| parse_target(t)).collect();
             parsed.map(|targets| Op::EndProcesses { targets }).ok_or(BadArgs("a target is <pid>:<start time>"))
         }
+        ["launch-app", id] if is_app_id(id) => Ok(Op::LaunchApp { id: (*id).to_owned() }),
+        ["launch-app", ..] => Err(BadArgs("launch-app takes exactly one Store app id")),
         ["end-processes", ..] => Err(BadArgs("end-processes takes 1 to 256 targets")),
         ["sysfont-apply" | "sysfont-reuse", ..] => Err(BadArgs("takes exactly one generation id")),
         ["sysfont-restore", ..] => Err(BadArgs("sysfont-restore takes nothing")),
@@ -139,6 +157,7 @@ impl Op {
                 v.extend(targets.iter().map(|(pid, created)| format!("{pid}:{created}")));
                 v
             }
+            Op::LaunchApp { id } => vec!["launch-app".into(), id.clone()],
         }
     }
 
@@ -169,6 +188,11 @@ impl Op {
     pub fn end_processes(targets: &[(u32, i64)]) -> Option<Op> {
         let ok = (1..=MAX_TARGETS).contains(&targets.len()) && targets.iter().all(|&(pid, created)| pid > 4 && created > 0);
         ok.then(|| Op::EndProcesses { targets: targets.to_vec() })
+    }
+
+    /// The operation that starts a Store app, or None when `id` is not spelled like one.
+    pub fn launch_app(id: &str) -> Option<Op> {
+        is_app_id(id).then(|| Op::LaunchApp { id: id.to_owned() })
     }
 
     /// The operation for a sound device, or None when `id` is not an endpoint id.
@@ -340,6 +364,34 @@ mod tests {
         assert!(Op::end_processes(&[(4, 1)]).is_none());
         assert!(Op::end_processes(&[(100, 0)]).is_none());
         assert!(Op::end_processes(&vec![(100, 1); MAX_TARGETS + 1]).is_none());
+    }
+
+    #[test]
+    fn launch_app_takes_only_a_store_app_id() {
+        let ok = |a: &[&str]| parse(&args(a));
+        const NOTEPAD: &str = "Microsoft.WindowsNotepad_8wekyb3d8bbwe!App";
+        assert_eq!(ok(&["launch-app", NOTEPAD]), Ok(Op::LaunchApp { id: NOTEPAD.into() }));
+        assert!(ok(&["launch-app", "Agilebits.1Password_amwd9z03whsfe!Agilebits.OnePassword"]).is_ok());
+        for bad in [
+            &["launch-app"][..],
+            &["launch-app", NOTEPAD, "--flag"],
+            &["launch-app", "cmd.exe"],
+            &["launch-app", "C:\\Windows\\System32\\cmd.exe"],
+            &["launch-app", "Microsoft.WindowsNotepad!App"],
+            &["launch-app", "Microsoft.WindowsNotepad_8wekyb3d8bbwe"],
+            &["launch-app", "Microsoft.WindowsNotepad_8wekyb3d8bbwe!"],
+            &["launch-app", "Microsoft.WindowsNotepad_short!App"],
+            &["launch-app", "..\\x_8wekyb3d8bbwe!App"],
+            &["launch-app", "Name_8wekyb3d8bbwe!App x"],
+            &["launch-app", "Name_8wekyb3d8bbwe!App!B"],
+            &["launch-app", "Name_8wekyb3d8bbwe!a/b"],
+        ] {
+            assert!(ok(bad).is_err(), "{bad:?}");
+        }
+        let op = Op::launch_app(NOTEPAD).unwrap();
+        assert_eq!(parse(&op.to_args()), Ok(op.clone()));
+        assert_eq!(op.command_line(), format!("launch-app {NOTEPAD}"));
+        assert!(Op::launch_app("shell:AppsFolder\\x").is_none());
     }
 
     #[test]

@@ -11,6 +11,8 @@ use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Choice {
     TogglePin,
+    /// Start the app (another instance when it runs) as administrator.
+    RunAsAdmin,
     Close,
     Settings,
     OpenBin,
@@ -26,8 +28,9 @@ pub enum Kind {
     /// The Launcher: just a way into the settings.
     Launcher,
     /// An app. `pinned` is `None` for icons that cannot be pinned or unpinned; `windows` is how
-    /// many windows it has open.
-    App { pinned: Option<bool>, windows: usize },
+    /// many windows it has open; `admin` is whether it can be started as administrator (a
+    /// program or a desktop Store app, not a folder or a sandboxed Store app).
+    App { pinned: Option<bool>, windows: usize, admin: bool },
     /// The Recycle Bin, with what is in it (None while not known yet). Emptying is offered only
     /// when something is.
     Bin { state: Option<BinState> },
@@ -58,8 +61,11 @@ pub fn entries(kind: &Kind) -> Vec<Entry<Choice>> {
             Entry::item(Choice::EmptyBinConfirmed, "Empty Recycle Bin").icon(glyph::DELETE).danger(),
             Entry::item(Choice::Cancel, "Cancel"),
         ],
-        Kind::App { pinned, windows } => {
+        Kind::App { pinned, windows, admin } => {
             let mut e = Vec::new();
+            if admin {
+                e.push(Entry::item(Choice::RunAsAdmin, "Run as administrator").icon(glyph::ADMIN));
+            }
             if let Some(pinned) = pinned {
                 e.push(if pinned {
                     Entry::item(Choice::TogglePin, "Unpin from dock").icon(glyph::UNPIN)
@@ -109,15 +115,24 @@ mod tests {
         // Not known yet: nothing to empty either.
         assert!(!ids(&entries(&Kind::Bin { state: None }))[1].1);
         assert_eq!(
-            ids(&entries(&Kind::App { pinned: Some(true), windows: 2 })),
+            ids(&entries(&Kind::App { pinned: Some(true), windows: 2, admin: false })),
             [(Choice::TogglePin, true, "Unpin from dock".into()), (Choice::Close, true, "Close all windows".into())]
         );
         assert_eq!(
-            ids(&entries(&Kind::App { pinned: Some(false), windows: 1 })),
+            ids(&entries(&Kind::App { pinned: Some(false), windows: 1, admin: false })),
             [(Choice::TogglePin, true, "Pin to dock".into()), (Choice::Close, true, "Close window".into())]
         );
+        // What can run as administrator says so first; Files (never pinnable) too.
+        assert_eq!(
+            ids(&entries(&Kind::App { pinned: None, windows: 0, admin: true })),
+            [(Choice::RunAsAdmin, true, "Run as administrator".into())]
+        );
+        assert_eq!(
+            ids(&entries(&Kind::App { pinned: Some(true), windows: 0, admin: true })).iter().map(|i| i.0).collect::<Vec<_>>(),
+            [Choice::RunAsAdmin, Choice::TogglePin]
+        );
         // Nothing to offer: no menu.
-        assert!(entries(&Kind::App { pinned: None, windows: 0 }).is_empty());
+        assert!(entries(&Kind::App { pinned: None, windows: 0, admin: false }).is_empty());
     }
 
     fn headings(e: &[Entry<Choice>]) -> Vec<String> {

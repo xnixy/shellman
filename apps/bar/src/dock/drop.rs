@@ -77,6 +77,8 @@ pub enum Plan {
     Recycle,
     /// Open this folder in Files.
     Reveal(PathBuf),
+    /// Open the folder this file is in, in Files, with the file selected.
+    Select(PathBuf),
     OpenWith(With),
     /// Pin these at this slot.
     Pin(Vec<Pin>, usize),
@@ -89,8 +91,13 @@ pub fn plan_icon(icon: &Icon, files: &[PathBuf], is_dir: impl Fn(&Path) -> bool)
         Icon::Launcher => Plan::Nothing,
         Icon::Bin => Plan::Recycle,
         Icon::Files => {
-            let folder = if is_dir(first) { Some(first.clone()) } else { first.parent().map(Path::to_path_buf) };
-            folder.map_or(Plan::Nothing, Plan::Reveal)
+            if is_dir(first) {
+                Plan::Reveal(first.clone())
+            } else if first.parent().is_some() {
+                Plan::Select(first.clone())
+            } else {
+                Plan::Nothing
+            }
         }
         Icon::App { app_id, exe, .. } => {
             open_with::with_for(app_id, exe.as_deref()).map_or(Plan::Nothing, Plan::OpenWith)
@@ -133,7 +140,7 @@ pub fn effect(plan: &Plan, files: &[PathBuf], allowed: u32) -> u32 {
     match plan {
         Plan::Nothing => NONE,
         Plan::Recycle => transfer::choose_bin(files, allowed),
-        Plan::Reveal(_) | Plan::OpenWith(_) => prefer(COPY, LINK),
+        Plan::Reveal(_) | Plan::Select(_) | Plan::OpenWith(_) => prefer(COPY, LINK),
         Plan::Pin(..) => prefer(LINK, COPY),
     }
 }
@@ -219,7 +226,7 @@ mod tests {
         let no_dirs = |_: &Path| false;
         let m = map();
         assert_eq!(plan_icon(&m.icons[0].icon, &files, no_dirs), Plan::Nothing);
-        assert_eq!(plan_icon(&m.icons[1].icon, &files, no_dirs), Plan::Reveal(PathBuf::from(r"C:\t")));
+        assert_eq!(plan_icon(&m.icons[1].icon, &files, no_dirs), Plan::Select(PathBuf::from(r"C:\t\one.txt")));
         assert_eq!(plan_icon(&m.icons[1].icon, &files, |_| true), Plan::Reveal(PathBuf::from(r"C:\t\one.txt")));
         assert_eq!(plan_icon(&m.icons[2].icon, &files, no_dirs), Plan::OpenWith(With::Exe(PathBuf::from(r"C:\a.exe"))));
         assert_eq!(plan_icon(&m.icons[3].icon, &files, no_dirs), Plan::OpenWith(With::Packaged("Pkg_1!App".into())));

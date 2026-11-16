@@ -312,12 +312,21 @@ pub(super) struct Facts {
     pub pin_label: &'static str,
     /// The six tags' names and whether the whole selection has each.
     pub tags: Vec<(String, bool)>,
+    /// The one item, when it is something that can run as administrator (a program, a script,
+    /// a shortcut: told by its name alone).
+    pub admin: Option<PathBuf>,
 }
 
 /// Files' own entries.
 fn native_entries(ctx: &Context, open: &Open) -> Vec<Entry<Pick>> {
     let dir = if open.background { open.target.folder.clone() } else { open.target.items.first().cloned().unwrap_or_default() };
+    let admin = match open.target.items.as_slice() {
+        [one] if !open.background && !open.is_dir => Some(one.clone())
+            .filter(|p| shellman_core::apps_index::admin::by_name(&p.to_string_lossy()) == Some(true)),
+        _ => None,
+    };
     let facts = Facts {
+        admin,
         background: open.background,
         is_dir: open.is_dir,
         can_paste: open.has_clip.0,
@@ -344,6 +353,9 @@ pub(super) fn own_entries(f: &Facts) -> Vec<Entry<Action>> {
         e.push(item(Action::OpenTerminal(f.dir.clone()), glyph::APP, "Open Terminal here"));
     } else {
         e.push(item(Action::OpenSelected, glyph::OPEN_EXTERNAL, "Open").hint("Enter"));
+        if let Some(program) = &f.admin {
+            e.push(item(Action::RunAsAdmin(program.clone()), glyph::ADMIN, "Run as administrator"));
+        }
         if f.is_dir {
             e.push(item(Action::NewTab(Loc::Dir(f.dir.clone())), glyph::ADD, "Open in new tab"));
             e.push(item(Action::OpenTerminal(f.dir.clone()), glyph::APP, "Open Terminal here"));
@@ -559,6 +571,16 @@ mod tests {
         let Some(Entry::Submenu { entries: sub, .. }) = e.iter().find(|e| matches!(e, Entry::Submenu { .. })) else { panic!() };
         assert_eq!(labels(sub), ["Red", "Orange", "Yellow", "Green", "Blue", "Purple", "-", "Remove all tags"]);
         assert!(item_of(sub, "Orange").checked && !item_of(sub, "Red").checked);
+    }
+
+    #[test]
+    fn a_program_can_run_as_administrator() {
+        let exe = PathBuf::from(r"C:\x\app.exe");
+        let e = own_entries(&Facts { admin: Some(exe.clone()), ..Default::default() });
+        assert_eq!(labels(&e)[..3], ["Open".to_string(), "Run as administrator".into(), "-".into()]);
+        assert!(matches!(&item_of(&e, "Run as administrator").id, Action::RunAsAdmin(p) if *p == exe));
+        // A document, a folder, several items: not offered.
+        assert!(!labels(&own_entries(&Facts::default())).iter().any(|l| l == "Run as administrator"));
     }
 
     #[test]

@@ -5,14 +5,16 @@
 //! the finished list from memory.
 
 pub mod activate;
+pub mod admin;
 mod enumerate;
 mod launch;
 mod merge;
 mod noise;
+pub mod pin;
 mod startmenu;
 
 pub use enumerate::enumerate;
-pub use launch::{launch, run_text};
+pub use launch::{launch, launch_as_admin, run_text};
 
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};

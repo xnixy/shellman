@@ -52,6 +52,7 @@ const TITLE: &str = "shellman notifications";
 /// Frames drawn before the window is uncloaked, as the preview panel does.
 const WARM_FRAMES: u8 = 2;
 
+pub use act::Running;
 pub use draw::Icons;
 pub use window::{areas, show as show_window};
 
@@ -395,9 +396,9 @@ impl Notify {
         true
     }
 
-    /// The window's frame: lay out, draw, and do what was clicked. `front_of` finds an app's
-    /// window, for apps whose toasts cannot be handed to them.
-    pub fn frame(&mut self, ctx: &egui::Context, icons: Icons, front_of: &dyn Fn(&str) -> Option<isize>) {
+    /// The window's frame: lay out, draw, and do what was clicked. `running` lists the apps
+    /// with windows, to bring the clicked toast's app forward.
+    pub fn frame(&mut self, ctx: &egui::Context, icons: Icons, running: &dyn Fn() -> act::Running) {
         let Some(hwnd) = self.hwnd else { return };
         let now = Instant::now();
         // While something slides this window repaints itself every frame, and then the host's
@@ -446,7 +447,7 @@ impl Notify {
         }
         let was_visible = self.feed.visible();
         for event in drawn.events {
-            self.act(event, hwnd, front_of);
+            self.act(event, hwnd, running);
         }
         if self.feed.visible() != was_visible {
             host::request_frame();
@@ -457,7 +458,7 @@ impl Notify {
         self.warm_up(ctx, hwnd);
     }
 
-    fn act(&mut self, event: Event, hwnd: isize, front_of: &dyn Fn(&str) -> Option<isize>) {
+    fn act(&mut self, event: Event, hwnd: isize, running: &dyn Fn() -> act::Running) {
         let invoke = |feed: &Feed, id: u32, how: &dyn Fn(&Toast) -> Option<Invoke>| {
             feed.toast(id).and_then(|t| how(t).map(|i| (t.clone(), i)))
         };
@@ -523,12 +524,11 @@ impl Notify {
                 self.feed.close_list();
                 return;
             }
-            let front = front_of(&toast.app_id);
             self.feed.remove(toast.id);
             self.replies.remove(&toast.id);
             // Acted on from the list: it closes as the app comes forward.
             self.feed.close_list();
-            act::activate(self.source.clone(), toast, invoke, front);
+            act::activate(self.source.clone(), toast, invoke, running());
         }
     }
 

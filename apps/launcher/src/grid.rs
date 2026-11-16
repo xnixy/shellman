@@ -145,6 +145,8 @@ pub struct Outcome {
     pub launch: Option<usize>,
     /// The mouse moved onto a cell.
     pub hover: Option<Pos>,
+    /// An app was right-clicked (its cell, its index into the list, where the pointer was).
+    pub menu: Option<(Pos, usize, egui::Pos2)>,
 }
 
 /// Draw the rows in view. `reveal` scrolls the selected cell into view (after arrow keys).
@@ -200,6 +202,9 @@ pub fn show(
                         let resp = ui.interact(rect, egui::Id::new(("cell", r, col)), egui::Sense::click());
                         if resp.clicked() {
                             out.launch = Some(index);
+                        }
+                        if resp.secondary_clicked() {
+                            out.menu = Some((pos, index, resp.interact_pointer_pos().unwrap_or(rect.center())));
                         }
                         if resp.hovered() && moved {
                             out.hover = Some(pos);

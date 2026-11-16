@@ -45,10 +45,14 @@ struct State {
     monitors: Vec<Area>,
     windows: Vec<HWND>,
     jobs: Jobs,
+    /// The session handed over to Explorer and told the wallpaper to stand aside
+    /// (`core::desktop_aside`): the windows are kept, with their pictures, but hidden.
+    aside: bool,
 }
 
 thread_local! {
-    static STATE: RefCell<State> = const { RefCell::new(State { monitors: Vec::new(), windows: Vec::new(), jobs: Jobs::new() }) };
+    static STATE: RefCell<State> =
+        const { RefCell::new(State { monitors: Vec::new(), windows: Vec::new(), jobs: Jobs::new(), aside: false }) };
 }
 
 /// The picture workers, coalesced: at most one runs at a time. A refresh while one runs only
@@ -150,7 +154,7 @@ pub fn run(frames_only: bool) {
 
 /// Registers the controller's window class and returns its name.
 unsafe fn register_class() -> windows::core::PCWSTR {
-    let name = w!("ShellmanDesktopController");
+    let name = shellman_core::desktop_aside::CONTROLLER_CLASS;
     let class = WNDCLASSW {
         lpfnWndProc: Some(proc),
         hInstance: GetModuleHandleW(None).unwrap_or_default().into(),
@@ -192,6 +196,11 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPA
             PostQuitMessage(0);
             LRESULT(0)
         }
+        // A registered message, so not a constant to match on.
+        m if m == shellman_core::desktop_aside::message() => {
+            stand_aside(wparam.0 != 0);
+            LRESULT(0)
+        }
         _ => DefWindowProcW(hwnd, msg, wparam, lparam),
     }
 }
@@ -208,7 +217,8 @@ fn refresh(ctl: HWND) {
                     let _ = DestroyWindow(w);
                 }
             }
-            s.windows = now.iter().filter_map(|m| surface::create(*m)).collect();
+            let shown = !s.aside;
+            s.windows = now.iter().filter_map(|m| surface::create(*m, shown)).collect();
             s.monitors = now.clone();
         }
         s.jobs.ask()
@@ -216,6 +226,18 @@ fn refresh(ctl: HWND) {
     if let Some(generation) = start {
         spawn_worker(generation, now, ctl);
     }
+}
+
+/// Hide the wallpaper windows for Explorer's desktop, or show them again. Windows made
+/// meanwhile (a monitor change) follow it too.
+fn stand_aside(aside: bool) {
+    STATE.with(|s| {
+        let mut s = s.borrow_mut();
+        s.aside = aside;
+        for w in &s.windows {
+            surface::show(*w, !aside);
+        }
+    });
 }
 
 fn spawn_worker(generation: u64, monitors: Vec<Area>, ctl: HWND) {

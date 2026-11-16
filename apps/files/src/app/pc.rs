@@ -3,7 +3,7 @@
 use super::actions::Action;
 use super::tab::Loc;
 use egui::{Align2, CornerRadius, FontId, Id, Rect, ScrollArea, Sense, Ui, Vec2};
-use shellman_core::fsops::{self, Drive};
+use shellman_core::fsops;
 use shellman_ui::theme::{self, colors, glyph, icon_font};
 use shellman_ui::widgets::draw_text;
 
@@ -39,7 +39,7 @@ impl super::FileMan {
                         c.control
                     };
                     ui.painter().rect_filled(rect, CornerRadius::same(12), fill);
-                    drive_card(ui, rect, d);
+                    drive_card(ui, rect, glyph::DRIVE, &d.title(), (d.total > 0).then_some((d.free, d.total)));
                     if resp.clicked() {
                         actions.push(Action::Navigate(Loc::Dir(d.root.clone())));
                     }
@@ -48,16 +48,44 @@ impl super::FileMan {
                     }
                 }
             }
+            // WSL's distributions, as cards without a usage bar: asking for their space would
+            // start them.
+            if !self.linux.is_empty() {
+                ui.add_space(8.0);
+                ui.label(theme::muted("Linux").size(13.0));
+                ui.add_space(4.0);
+                ui.spacing_mut().item_spacing.y = GAP;
+                for (line, distros) in self.linux.chunks(cols).enumerate() {
+                    let (row, _) = ui.allocate_exact_size(Vec2::new(width, CARD_H), Sense::hover());
+                    for (col, d) in distros.iter().enumerate() {
+                        let rect = Rect::from_min_size(
+                            row.min + Vec2::new(col as f32 * (card_w + GAP), 0.0),
+                            Vec2::new(card_w, CARD_H),
+                        );
+                        let resp = ui.interact(rect, Id::new(("linux", line, col)), Sense::click());
+                        super::dnd::zone(ui, rect, super::dnd::Dest::Dir(d.root.clone()), 12.0);
+                        let fill = if resp.hovered() { c.control_hover } else { c.control };
+                        ui.painter().rect_filled(rect, CornerRadius::same(12), fill);
+                        drive_card(ui, rect, glyph::LINUX, &d.name, None);
+                        if resp.clicked() {
+                            actions.push(Action::Navigate(Loc::Dir(d.root.clone())));
+                        }
+                        if resp.middle_clicked() {
+                            actions.push(Action::NewTab(Loc::Dir(d.root.clone())));
+                        }
+                    }
+                }
+            }
         });
     }
 }
 
-/// The inside of one drive card: icon and name, then a usage bar the width of the card and the
-/// free space under it.
-fn drive_card(ui: &Ui, rect: Rect, d: &Drive) {
+/// The inside of one card: icon and name, then, when the space is known (`free`, `total`), a
+/// usage bar the width of the card and the free space under it.
+fn drive_card(ui: &Ui, rect: Rect, icon: char, name: &str, space: Option<(u64, u64)>) {
     let c = colors();
     let inner = rect.shrink2(Vec2::new(16.0, 0.0));
-    let title_y = if d.total > 0 {
+    let title_y = if space.is_some() {
         rect.top() + 24.0
     } else {
         rect.center().y
@@ -65,7 +93,7 @@ fn drive_card(ui: &Ui, rect: Rect, d: &Drive) {
     ui.painter().text(
         egui::pos2(inner.left() + 13.0, title_y),
         Align2::CENTER_CENTER,
-        glyph::DRIVE,
+        icon,
         icon_font(26.0),
         c.accent_text,
     );
@@ -76,15 +104,13 @@ fn drive_card(ui: &Ui, rect: Rect, d: &Drive) {
     draw_text(
         ui,
         title,
-        &d.title(),
+        name,
         FontId::proportional(14.5),
         c.text,
         false,
     );
-    if d.total == 0 {
-        return;
-    }
-    let used = (1.0 - d.free as f32 / d.total as f32).clamp(0.0, 1.0);
+    let Some((free, total)) = space else { return };
+    let used = (1.0 - free as f32 / total as f32).clamp(0.0, 1.0);
     let bar = Rect::from_min_size(
         egui::pos2(inner.left(), rect.top() + 44.0),
         Vec2::new(inner.width(), 4.0),
@@ -97,8 +123,8 @@ fn drive_card(ui: &Ui, rect: Rect, d: &Drive) {
     p.rect_filled(fill, CornerRadius::same(2), col);
     let free = format!(
         "{} free of {}",
-        fsops::format_size(d.free),
-        fsops::format_size(d.total)
+        fsops::format_size(free),
+        fsops::format_size(total)
     );
     let line = Rect::from_min_max(
         egui::pos2(inner.left(), bar.bottom() + 4.0),
