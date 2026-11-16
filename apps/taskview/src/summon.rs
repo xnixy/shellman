@@ -18,7 +18,7 @@ use shellman_ui::glass;
 use windows::Win32::UI::WindowsAndMessaging::{
     AllowSetForegroundWindow, GetCursorPos, GetForegroundWindow, GetWindowLongPtrW, GetWindowRect, IsIconic,
     IsWindowVisible, SetForegroundWindow, SetWindowLongPtrW, SetWindowPos, ShowWindow, ASFW_ANY, GWL_EXSTYLE,
-    GWL_STYLE, HWND_TOPMOST, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_SHOWWINDOW, SW_HIDE, SW_SHOWNOACTIVATE,
+    GWL_STYLE, HWND_TOPMOST, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW, SW_HIDE, SW_SHOWNOACTIVATE,
     WS_CAPTION, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW, WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_POPUP, WS_SYSMENU, WS_THICKFRAME,
 };
 
@@ -136,6 +136,12 @@ pub fn is_visible(hwnd: isize) -> bool {
 pub fn prepare(hwnd: isize) {
     glass::cloak(hwnd, true);
     edge_to_edge(hwnd);
+    // The frame comes off now, while out of sight, not at the first showing (see `show`).
+    let h = HWND(hwnd as *mut _);
+    strip_frame(h);
+    unsafe {
+        let _ = SetWindowPos(h, None, 0, 0, 0, 0, SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER);
+    }
     tool_window(HWND(hwnd as *mut _));
     shellman_ui::park::shrink(hwnd);
 }
@@ -172,9 +178,11 @@ fn show(hwnd: HWND) {
         if !GetMonitorInfoW(front_monitor(), &mut info).as_bool() {
             return;
         }
-        // One pixel short of the monitor's height: a window covering a monitor exactly counts as a
-        // full-screen app, and this Windows draws a caption strip with its title over the top of
-        // one (measured on 26300; also kept off the bar's full-screen check).
+        // One pixel short of the monitor's height. Covering it exactly, this Windows (26300)
+        // drew a light title strip over the top on the first showing; so did taking the frame
+        // off at the first showing. Measured on cold starts, the strip was there for most of the
+        // first showing with either alone, and gone with both this and `prepare`'s. (It also
+        // keeps the overlay off the bar's full-screen check.)
         let mut r = info.rcMonitor;
         r.bottom -= 1;
         let (x, y, w, h) = (r.left, r.top, r.right - r.left, r.bottom - r.top);
@@ -226,22 +234,21 @@ fn take_foreground(hwnd: HWND) {
 fn strip_frame(hwnd: HWND) {
     unsafe {
         let style = GetWindowLongPtrW(hwnd, GWL_STYLE) as u32;
-        // A pop-up: an overlapped window as large as its monitor gets a caption strip from Windows
-        // even without WS_CAPTION.
+        // A bare pop-up: no caption, sizing frame or system menu.
         let bare = (style & !(WS_CAPTION.0 | WS_SYSMENU.0 | WS_THICKFRAME.0 | WS_MINIMIZEBOX.0 | WS_MAXIMIZEBOX.0)) | WS_POPUP.0;
         SetWindowLongPtrW(hwnd, GWL_STYLE, bare as isize);
     }
 }
 
-/// The monitor of the window in front (Win+Tab is a key, so that is where the user is); with the
-/// desktop in front, the one under the pointer. A test copy may name a point instead:
-/// `SHELLMAN_TEST_AT=x,y`.
+/// The monitor of the window in front, whichever it is (the desktop's too: Win+Tab is a key, so
+/// that is where the user is); with nothing in front, or a minimized window, the one under the
+/// pointer. A test copy may name a point instead: `SHELLMAN_TEST_AT=x,y` (or `@file`).
 unsafe fn front_monitor() -> HMONITOR {
     if let Some(at) = test_point() {
         return MonitorFromPoint(at, MONITOR_DEFAULTTONEAREST);
     }
     let front = GetForegroundWindow();
-    if !front.is_invalid() && !IsIconic(front).as_bool() && shellman_core::winlist::foreground().is_some() {
+    if !front.is_invalid() && !IsIconic(front).as_bool() {
         return MonitorFromWindow(front, MONITOR_DEFAULTTONEAREST);
     }
     let mut at = POINT::default();
@@ -251,7 +258,12 @@ unsafe fn front_monitor() -> HMONITOR {
 
 fn test_point() -> Option<POINT> {
     std::env::var("SHELLMAN_INSTANCE").ok().filter(|i| !i.is_empty())?;
-    let at = std::env::var("SHELLMAN_TEST_AT").ok()?;
+    let mut at = std::env::var("SHELLMAN_TEST_AT").ok()?;
+    // `@file`: the point is read from that file at each showing, so a test can move one copy
+    // between monitors.
+    if let Some(file) = at.strip_prefix('@') {
+        at = std::fs::read_to_string(file).ok()?;
+    }
     let (x, y) = at.split_once(',')?;
     Some(POINT { x: x.trim().parse().ok()?, y: y.trim().parse().ok()? })
 }

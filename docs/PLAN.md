@@ -372,12 +372,17 @@ release from opening Start) signals `Local\shellman-taskview-summon<instance>`, 
 running the exe again does the same. Each signal toggles it. The session starts it with
 `--background`.
 
-- **Where**: one overlay on the monitor of the window in front (with the desktop in front, the
-  one under the pointer), listing every app window from every monitor. One window has one DPI
-  scale and the previews are drawn into one window, so a window per monitor would mean a
-  process-wide second viewport for little gain. It covers the monitor one pixel short of its
-  height: a window exactly covering a monitor counts as a full-screen app (the bar's check, and
-  Windows draws a title strip over one).
+- **Where**: one overlay on the monitor of the window in front, whichever it is (the desktop's
+  too; with nothing in front, the one under the pointer), listing every app window from every
+  monitor. One window has one DPI scale and the previews are drawn into one window, so a window
+  per monitor would mean a process-wide second viewport for little gain. When the window library
+  catches up with a move to a monitor of another scale, the list is cut again for that screen and
+  the previews placed again (only once egui's size matches the window's real one).
+- **No title strip**: on 26300 a light strip with the window's title showed across the top for
+  most of the first showing after a start. Measured on cold starts, it took both of: the window
+  one pixel short of the monitor's height (covering it exactly, the strip came every time), and
+  the frame taken off once while out of sight (`prepare`), not at the first showing. With both,
+  1 sample in 42 had it, none on later showings. Cause inside Windows not known.
 - **Unlike the switcher it takes the foreground** while showing, so its keys come to it (no
   hook changes beyond Win+Tab) and screen readers follow its focus. Esc gives the foreground back
   to the window that was in front; losing the foreground closes it.
@@ -398,17 +403,23 @@ running the exe again does the same. Each signal toggles it. The session starts 
   has a focus ring. Arrows are Task View's (`set_focus_lock_filter`), not egui's focus moves. High
   contrast: a solid page in Windows' colours, tiles outlined in the text colour, the selection a
   3 px highlight outline. No glass (`SHELLMAN_SOLID`, Remote Desktop): a solid page.
-- **Look**: the window's own acrylic with the shared tint (`Colors::shell`), not the floating
-  glass of the other apps (its window would be larger than the monitor); a light page is shaded
-  a little so white cards stand out. Minimized windows show their icon on a plate.
-- Checked by hand in a test copy (`SHELLMAN_INSTANCE`, summoned by running the exe again):
-  dark, light, high contrast, solid; keyboard, click, middle click, Delete, Esc, toggling, a
-  minimized window restored on pick, the monitor of the window in front; UI Automation: every
-  element named. Not checked: Win+Tab itself (a test copy installs no hook; `taskviewkey` is unit
-  tested), Remote Desktop, the text size (geometry is in points and does not follow it yet).
-- Known limits: the first showing after the process starts can show a Windows title strip
-  across the top for about a second (seen right after a fresh start; later showings did not);
-  elevated windows can't be closed from it; no virtual desktops.
+- **Look**: the window's own acrylic with the shared tint (`Colors::shell`), as the switcher: the
+  overlay is one surface edge to edge, so no floating glass window under it. A light page is
+  shaded a little so white cards stand out. Minimized windows show their icon on a plate.
+- **The list follows**: the window watcher, a change of screen size, and once a second a look for
+  listed windows that no longer exist (a killed process's windows go without the event the
+  watcher hears).
+- Checked by hand in a test copy (`SHELLMAN_INSTANCE`, summoned by running the exe again;
+  `SHELLMAN_TEST_AT=x,y` or `@file` picks the monitor): dark, light, high contrast, solid; arrows,
+  Tab and Shift+Tab, Enter, Space, Delete, Esc (the window in front gets the foreground back),
+  click, middle click, toggling, a minimized window restored on pick; one copy moved between the
+  primary (150 %), the left and the top-left monitor (another scale) with windows opening and
+  being killed while showing, previews checked against the tiles each time; UI Automation: every
+  element named, focus following the keys. Not checked: Win+Tab itself (a test copy installs no
+  hook; `taskviewkey` is unit tested), the monitor chosen from the real window in front (a test
+  point stood in), "N of M" (more windows than fit), Remote Desktop, the text size (geometry is
+  in points and does not follow it yet).
+- Known limits: elevated windows can't be closed from it; no virtual desktops.
 
 ## Desktop
 

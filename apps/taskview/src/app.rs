@@ -19,6 +19,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
     IsIconic, IsWindow, PostMessageW, SetForegroundWindow, ShowWindowAsync, SW_RESTORE, WM_CLOSE,
 };
 
+/// While showing, how often to look for listed windows that are gone.
+const GONE_CHECK: Duration = Duration::from_secs(1);
 /// After showing, how long to wait for the foreground before "lost focus" means anything.
 const FOCUS_GRACE: Duration = Duration::from_millis(400);
 
@@ -41,6 +43,8 @@ struct Open {
     /// The selection moved by key: give its tile the keyboard focus (and the screen reader).
     focus: bool,
     more: usize,
+    /// The screen size in points the list was cut for (`fill`).
+    filled_for: egui::Vec2,
     /// The screen size in points the layout was made for.
     laid_for: Option<egui::Vec2>,
     /// What the previews were last placed for: the screen size in points, pixels per point and
@@ -50,6 +54,13 @@ struct Open {
     front: Option<isize>,
     since: Instant,
     had_focus: bool,
+}
+
+impl Open {
+    /// A listed window no longer exists.
+    fn gone(&self) -> bool {
+        self.windows.iter().any(|w| !unsafe { IsWindow(Some(HWND(w.hwnd as *mut _))) }.as_bool())
+    }
 }
 
 impl TaskView {
@@ -75,9 +86,15 @@ impl TaskView {
             egui::CentralPanel::default().frame(egui::Frame::new()).show(ctx, |_| {});
             return;
         }
-        if self.open.as_ref().is_some_and(|o| o.watcher.take_dirty()) {
+        // The list changed, or the screen did (the window library caught up with a move to
+        // another monitor): read the windows again, and cut them to what this screen holds.
+        let size = ctx.screen_rect().size();
+        if self.open.as_ref().is_some_and(|o| o.watcher.take_dirty() || o.filled_for != size || o.gone()) {
             self.refresh(ctx);
         }
+        // Windows of a process that was ended are destroyed without the event the watcher hears;
+        // look once a second while showing.
+        ctx.request_repaint_after(GONE_CHECK);
         if self.lost_focus(ctx) {
             self.close(false);
             return;
@@ -158,6 +175,7 @@ impl TaskView {
             sel: select::first(&ids, front),
             focus: true,
             more: 0,
+            filled_for: egui::Vec2::ZERO,
             laid_for: None,
             placed_for: None,
             layout: layout::arrange(0, ctx.screen_rect().size()),
@@ -188,7 +206,8 @@ impl TaskView {
 
     /// Cut the list to what fits, and preview the windows (keeping the previews already made).
     fn fill(&self, open: &mut Open, ctx: &egui::Context) {
-        let cap = layout::capacity(ctx.screen_rect().size());
+        open.filled_for = ctx.screen_rect().size();
+        let cap = layout::capacity(open.filled_for);
         open.more = open.windows.len().saturating_sub(cap);
         open.windows.truncate(cap);
         open.sel = open.sel.min(open.windows.len().saturating_sub(1));

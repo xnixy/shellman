@@ -19,8 +19,8 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 /// Whether the window has Windows' acrylic behind it; without it the window paints a solid page.
-/// (Not the floating glass of the other apps: its window would be larger than the monitor, and
-/// Windows draws a caption strip over a window it takes for a full-screen app.)
+/// The overlay is one surface edge to edge, so the window's own backdrop does what the floating
+/// glass under the other apps' islands does, as for the switcher, with no second window.
 pub static GLASS: AtomicBool = AtomicBool::new(false);
 
 fn main() -> eframe::Result {

@@ -145,7 +145,7 @@ fn draw_tile(ui: &mut egui::Ui, window: &AppWindow, app: &str, tile: &Tile, sele
     if close.clicked() {
         return Some(TileAction::Close);
     }
-    let close = close.on_hover_text("Close window");
+    // No tooltip: it would open over the preview, which the compositor paints on top of.
     if resp.middle_clicked() {
         return Some(TileAction::Close);
     }
