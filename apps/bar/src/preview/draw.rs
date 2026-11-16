@@ -43,8 +43,11 @@ pub fn draw(ctx: &Context, view: &View, icons: Icons) -> Option<Action> {
         let c = colors();
         let full = ui.max_rect();
         if !view.composed {
-            let f = shellman_ui::glass::content_frame(false, &super::style());
-            ui.painter().rect(full, f.corner_radius, f.fill, f.stroke, egui::StrokeKind::Inside);
+            // As the other bar windows paint theirs: high contrast, solid and Remote Desktop
+            // each get their own fill and outline.
+            let style = super::style();
+            let island = shellman_ui::glass::Island::new(full, style.radius);
+            ui.painter().extend(shellman_ui::glass::islands::solid_shapes(&[island], &style));
         }
         let tile_radius = egui::CornerRadius::same(TILE_RADIUS);
         // Nearly opaque shades of the glass's own tint: Windows blends the window over its glass
@@ -52,6 +55,8 @@ pub fn draw(ctx: &Context, view: &View, icons: Icons) -> Option<Action> {
         let base = super::style().tint.to_opaque();
         let shade = |t: f32, a: u8| with_alpha(mix(base, c.text, t), a);
         let (hover, plate, pressable) = (shade(0.10, 200), shade(0.07, 220), shade(0.2, 230));
+        // High contrast: the icon plate is the window colour (outlined where it is painted).
+        let plate = if c.high_contrast { c.bg } else { plate };
         for (i, (window, tile)) in view.windows.iter().zip(&view.layout.tiles).enumerate() {
             let outer = at(tile.outer);
             let over = ui.rect_contains_pointer(outer);
@@ -67,6 +72,9 @@ pub fn draw(ctx: &Context, view: &View, icons: Icons) -> Option<Action> {
             if !view.live.get(i).copied().unwrap_or(false) {
                 // Minimized, or one the compositor won't show: the app's icon on a plate.
                 ui.painter().rect_filled(picture, tile_radius, plate);
+                if c.high_contrast {
+                    ui.painter().rect_stroke(picture, tile_radius, egui::Stroke::new(1.0_f32, c.muted), egui::StrokeKind::Inside);
+                }
                 paint_icon(ui, icon, picture.center(), BIG_ICON.min(picture.height() * 0.6));
             }
             let label = at(tile.label);

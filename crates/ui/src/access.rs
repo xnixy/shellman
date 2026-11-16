@@ -118,8 +118,12 @@ pub fn publish(ctx: &egui::Context) {
     let attached = BRIDGES.with(|b| b.borrow().get(&vp).map(|b| b.hwnd));
     let alive = attached.is_some_and(|h| win::is_window(h));
     if !alive {
-        // A window made again (or never seen): a bridge for the one there now.
-        BRIDGES.with(|b| b.borrow_mut().remove(&vp));
+        // A window made again (or never seen): a bridge for the one there now. The old one is
+        // forgotten, not dropped: dropping restores the window procedure, which panics if
+        // Windows refuses (and the window is gone anyway).
+        if let Some(old) = BRIDGES.with(|b| b.borrow_mut().remove(&vp)) {
+            std::mem::forget(old);
+        }
         let Some(title) = ctx.input(|i| i.viewport().title.clone()) else { return };
         let Some(hwnd) = win::own_window(&title) else { return };
         let active = Arc::new(AtomicBool::new(false));

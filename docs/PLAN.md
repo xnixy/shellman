@@ -168,32 +168,42 @@ what each still needs:
     no unnamed interactive element in any of them. Top bar 9 (Start, Calendar, Quick controls,
     Notifications, 5 tray), dock 6, calendar 47 (42 days, 2 texts, 3 buttons), notifications 19,
     launcher 28 (24 tiles) and its results, quick controls 22, Task View 12, each shelf 4 and an
-    open fan 11, Today 2, the desktop menu 8. Screen-reader clicks (UIA Toggle / Invoke) opened
-    the calendar, the notifications and a stack. Not probed live: the switcher (shows only while
-    Alt is held, on its hook) and the previews (hover only); both are named in code. Remaining
-    `Custom` nodes are egui's root and Task View's backdrop (named "Task View").
+    open fan 11, Today 2, the desktop menu 8. Screen-reader clicks worked through the bridge:
+    UIA Toggle opened the calendar, the notifications and a stack, UIA Invoke turned the calendar
+    to the next month; closing and opening the calendar again keeps its tree. Not probed live:
+    the switcher (shows only while Alt is held, on its hook) and the previews (hover only); both
+    are named in code. Remaining `Custom` nodes are egui's own (the root window's, and the
+    launcher's scroll area) and Task View's backdrop (named "Task View").
   - *Keyboard*: quick controls and Task View take the keyboard (focus rings on every painted
-    control; Tab order is egui's). The launcher keeps its field focused and moves a selection
-    with the arrows, which screen readers see as the selected tile or row. The bar, dock, shelf,
-    previews and switcher never take the keyboard (no-activate windows; the switcher reads Alt+Tab
+    control; Tab order is egui's; checked in quick controls: Tab goes Wi-Fi, its switch,
+    Ethernet, Focus, its switch, Mute, the outputs, with the ring drawn). The notifications'
+    reply field takes the keyboard when clicked. The launcher keeps its field focused and moves a selection
+    with the arrows, which screen readers see as the selected tile or row. The bar, dock, calendar,
+    notifications (outside the reply field), shelf, previews and switcher never take the keyboard (no-activate windows; the switcher reads Alt+Tab
     on its hook): reachable by screen reader (UIA) but not by Tab. Win+1-9 reaches dock icons.
   - *High contrast*: Windows' colours, every island outlined (`solid_shapes`), no hover washes
     (`theme::contrast_outline`: 1 px text outline for hover, 2 px highlight outline for the
     selected tile, result, day or row), highlight only under highlight text (menus' lit row,
     switches and tiles that are on, the bell's count). Shared: chips and round icons (the close
     one is highlight, not red), the slider (outlined track, highlight fill, text-coloured knob),
-    popup menus. Checked with `SHELLMAN_HIGH_CONTRAST` on the top bar, dock and quick controls;
-    `SHELLMAN_REMOTE` / `SHELLMAN_SOLID` on the top bar (opaque islands with their hairline).
-  - *Text size: not followed*, on purpose. The top bar is 32 pt and the dock's icons fixed to fit
-    one row of a monitor's band (and reserve that band); the launcher's grid is 6 columns of a
-    fixed width; the switcher and Task View lay tiles out in pixels per monitor; the shelf's
-    stacks and widgets sit at fixed places on the desktop; quick controls are sized to fit the
-    screen's height. Scaling text inside those fixed boxes would clip names; scaling the boxes
-    needs each surface's layout (and the reserved bands) to take a factor. Windowed apps follow
-    it; these surfaces follow the monitor's DPI only.
-  - *Still to do*: Settings › Desktop's stack chips should be checkboxes (they say no state); the
-    "1 h" chip reads only "1 h"; previews and the switcher to be probed live; the bar's own
-    right-click menus are the shared popup (named) but were not opened in the probe.
+    popup menus. The previews now paint their panel with `solid_shapes` like the other bar
+    windows. Looked at with `SHELLMAN_HIGH_CONTRAST`: top bar, dock, calendar, notifications,
+    launcher, quick controls; with `SHELLMAN_REMOTE` / `SHELLMAN_SOLID`: the top bar (opaque
+    islands with their hairline). Written but not looked at in high contrast: the popup menu's
+    lit row, the shelf and its fan, Today / Now playing, Task View, the switcher, the previews.
+  - *Text size: not followed* (none of these calls `env::follow_text_scale`; they follow the
+    monitor's DPI only). Not followed on purpose where the geometry is a band or a fixed place:
+    the top bar is 32 pt and the dock one row of icons, each reserving its band of the work
+    area; the switcher and Task View lay tiles out in pixels per monitor; the shelf's stacks and
+    widgets sit at fixed places on the desktop. Not tried yet where it may fit: the launcher (a
+    fixed 6-column grid and a centred window) and quick controls (a fixed-width panel whose
+    height is fitted to the screen); both need their window size to take the factor, as
+    `env::scaled_window` does for windowed apps.
+  - *Still to do*: text size for the launcher and quick controls (above); Settings › Desktop's
+    stack chips should be checkboxes (they say no state); the "1 h" chip reads only "1 h"; the
+    previews and the switcher to be probed live; the high contrast looks listed above as not
+    looked at; the bar's own right-click menus are the shared popup (named) but were not opened
+    in the probe.
 
 ## Bar plan: a top bar and a dock
 
