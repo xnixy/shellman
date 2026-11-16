@@ -16,6 +16,8 @@ png.workspace = true
 roxmltree = "0.21"
 serde.workspace = true
 serde_json.workspace = true
+# The Firefox look records its loader files' SHA-256, as install.ps1 does (already built for updates).
+sha2 = "0.10"
 # Task Manager (`procs`): counters, process memory, and the GPUs' names and memory sizes.
 windows = { workspace = true, features = ["Win32_System_Performance", "Win32_System_ProcessStatus", "Win32_Graphics_Dxgi", "Win32_Graphics_Dxgi_Common", "Win32_System_WinRT", "Win32_System_UpdateAgent", "Win32_Networking_WinHttp", "Win32_Security_Credentials"] }
 # Windows Update (`system::wu_api`, generated): its lists are this crate's vector views.
