@@ -69,9 +69,10 @@ impl super::TerminalApp {
                 continue;
             }
             let tab = self.tabs.get(i).unwrap();
-            let title = tab_title(&tab.session);
+            let title = tab_title(&tab.pane().session);
             let shown = i == active;
-            let (activity, bell) = if shown { (false, false) } else { tab.session.marks() };
+            // A tab not shown is marked when any of its panes had output or a bell.
+            let (activity, bell) = if shown { (false, false) } else { tab.panes.iter().map(|p| p.session.marks()).fold((false, false), |a, m| (a.0 || m.0, a.1 || m.1)) };
             let mark = if bell { Mark::Bell } else if activity { Mark::Activity } else { Mark::None };
             let id = tab.id;
             let r = ts::tab(ui, rect, clip, &Tab { id: Id::new(("term-tab", id)), title: &title, icon: Some(TERMINAL), active: shown, closable: true, mark });

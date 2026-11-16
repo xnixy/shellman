@@ -119,15 +119,23 @@ pub fn tab(ui: &mut Ui, rect: Rect, clip: Rect, t: &Tab) -> TabResponse {
     let c = colors();
     let h = rect.height();
     let resp = ui.interact(rect.intersect(clip), t.id, Sense::click_and_drag());
-    let hovered = resp.hovered() || resp.dragged();
+    // A screen reader reads it as a selectable item with its title, selected when shown; with
+    // the keyboard on it, it has a ring.
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, t.active, t.title));
+    let hovered = resp.hovered() || resp.dragged() || resp.has_focus();
     let r = CornerRadius::same((h / 2.0) as u8);
     let (soft, soft_hover, line) = soft_colors(c.light);
     let p = ui.painter().with_clip_rect(clip);
-    if t.active {
+    if c.high_contrast {
+        // Highlight only as an outline, never a fill under ordinary text.
+        let stroke = if t.active { egui::Stroke::new(2.0_f32, c.accent_fill) } else { egui::Stroke::new(1.0_f32, c.text) };
+        p.rect_stroke(rect, r, stroke, egui::StrokeKind::Inside);
+    } else if t.active {
         p.rect(rect, r, soft_hover, line, egui::StrokeKind::Inside);
     } else if hovered {
         p.rect_filled(rect, r, soft);
     }
+    theme::focus_ring(ui, &resp, rect, h / 2.0);
     let icon_at = egui::pos2(rect.left() + 16.0, rect.center().y);
     if let Some(g) = t.icon {
         p.text(icon_at, Align2::CENTER_CENTER, g, icon_font(12.0), if t.active { c.accent_text } else { c.muted });
@@ -140,6 +148,8 @@ pub fn tab(ui: &mut Ui, rect: Rect, clip: Rect, t: &Tab) -> TabResponse {
     let mut close = false;
     if show_close && clip.contains_rect(cr) {
         let b = ui.interact(cr, t.id.with("close"), Sense::click());
+        b.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, format!("Close {}", t.title)));
+        theme::focus_ring(ui, &b, cr, 10.0);
         if b.hovered() {
             p.circle_filled(cr.center(), 10.0, theme::with_alpha(c.text, 30));
         }

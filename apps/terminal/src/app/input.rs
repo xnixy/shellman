@@ -8,6 +8,7 @@
 
 use crate::keys::{self, Key, Local, Mods};
 use crate::select;
+use crate::splits::{Axis, Dir};
 use alacritty_terminal::term::TermMode;
 
 #[derive(Default)]
@@ -22,6 +23,7 @@ pub enum Shortcut {
     NewTab,
     /// Ctrl+Shift+1..9: a new tab of the n-th profile (from 0).
     NewTabOf(usize),
+    /// Ctrl+Shift+W: close the focused pane (the tab, when it is its only one).
     CloseTab,
     NextTab,
     PrevTab,
@@ -32,6 +34,27 @@ pub enum Shortcut {
     ZoomReset,
     /// Ctrl+Shift+F: find in the scrollback.
     Find,
+    /// Alt+Shift+plus: split the focused pane, the new one to the right.
+    SplitAcross,
+    /// Alt+Shift+minus: split it, the new one below.
+    SplitDown,
+    /// Alt+Shift+D: split it whichever way suits its shape.
+    SplitAuto,
+    /// Alt+arrow: focus the pane that way (only with more than one pane).
+    FocusPane(Dir),
+    /// Alt+Shift+arrow: move the divider beside the focused pane (only with more than one).
+    ResizePane(Dir),
+    /// Ctrl+F6: the keyboard leaves the terminal for its tabs and buttons (Tab moves through
+    /// them, Enter presses one, Esc comes back).
+    FocusChrome,
+}
+
+impl Shortcut {
+    /// Whether it means anything only in a tab of several panes: in a tab of one, the key is
+    /// the program's (Alt+arrows are word moves in some shells).
+    pub fn needs_panes(self) -> bool {
+        matches!(self, Shortcut::FocusPane(_) | Shortcut::ResizePane(_))
+    }
 }
 
 /// The shortcut for a key, if it is one. `physical` is the key's place on the keyboard, for the
@@ -54,7 +77,29 @@ pub fn shortcut(key: egui::Key, physical: Option<egui::Key>, m: Mods) -> Option<
     };
     let ctrl_shift = m.ctrl && m.shift && !m.alt;
     let ctrl_only = m.ctrl && !m.shift && !m.alt;
+    let alt_shift = m.alt && m.shift && !m.ctrl;
+    let alt_only = m.alt && !m.shift && !m.ctrl;
+    let arrow = match key {
+        K::ArrowLeft => Some(Dir::Left),
+        K::ArrowRight => Some(Dir::Right),
+        K::ArrowUp => Some(Dir::Up),
+        K::ArrowDown => Some(Dir::Down),
+        _ => None,
+    };
+    if let Some(d) = arrow {
+        return if alt_only {
+            Some(Shortcut::FocusPane(d))
+        } else if alt_shift {
+            Some(Shortcut::ResizePane(d))
+        } else {
+            None
+        };
+    }
     Some(match key {
+        K::Equals | K::Plus if alt_shift => Shortcut::SplitAcross,
+        K::Minus if alt_shift => Shortcut::SplitDown,
+        K::D if alt_shift => Shortcut::SplitAuto,
+        K::F6 if ctrl_only => Shortcut::FocusChrome,
         K::T if ctrl_shift => Shortcut::NewTab,
         K::W if ctrl_shift => Shortcut::CloseTab,
         K::F if ctrl_shift => Shortcut::Find,
@@ -97,6 +142,11 @@ fn egui_key(vk: u16) -> Option<egui::Key> {
         0xBB => K::Equals,
         0x6B => K::Plus,
         0xBD | 0x6D => K::Minus,
+        0x25 => K::ArrowLeft,
+        0x26 => K::ArrowUp,
+        0x27 => K::ArrowRight,
+        0x28 => K::ArrowDown,
+        0x75 => K::F6,
         _ => return None,
     })
 }
@@ -104,8 +154,9 @@ fn egui_key(vk: u16) -> Option<egui::Key> {
 /// Whether the terminal keeps a key while the console takes whole key events (win32-input-mode):
 /// its shortcuts, paste, copying its own selection (Ctrl+C, Ctrl+Insert, Enter, Escape only while
 /// there is one), paging through the history, and Alt+F4 / Alt+Space for the window. Everything
-/// else goes to the console. `vk` is the virtual-key code.
-pub fn keeps(vk: u16, m: Mods, selection: bool) -> bool {
+/// else goes to the console. `vk` is the virtual-key code; `panes`: the shown tab has more than
+/// one pane (the keys between panes are the terminal's only then).
+pub fn keeps(vk: u16, m: Mods, selection: bool, panes: bool) -> bool {
     const ENTER: u16 = 0x0D;
     const ESCAPE: u16 = 0x1B;
     const SPACE: u16 = 0x20;
@@ -115,8 +166,10 @@ pub fn keeps(vk: u16, m: Mods, selection: bool) -> bool {
     const F4: u16 = 0x73;
     let only = |shift: bool, ctrl: bool, alt: bool| m == Mods { shift, ctrl, alt };
     if let Some(k) = egui_key(vk) {
-        if shortcut(k, Some(k), m).is_some() {
-            return true;
+        if let Some(s) = shortcut(k, Some(k), m) {
+            if panes || !s.needs_panes() {
+                return true;
+            }
         }
     }
     match vk {
@@ -135,6 +188,7 @@ pub fn keeps(vk: u16, m: Mods, selection: bool) -> bool {
 
 /// The open tab whose id is `id`: where input typed into it goes. None once it closed (input
 /// for it is dropped, never sent to whichever tab is shown now).
+#[cfg(test)]
 pub fn typing_tab<T>(tabs: &crate::tabs::Tabs<T>, id: u64, id_of: impl Fn(&T) -> u64) -> Option<&T> {
     tabs.iter().find(|t| id_of(t) == id)
 }
@@ -152,9 +206,9 @@ impl super::TerminalApp {    /// Keys, typed text and pastes go to the shell of 
             }
             return;
         }
-        if self.find.has_focus(ctx) {
-            // The find pill has the keyboard (it takes Enter and Escape itself); the terminal's
-            // own shortcuts still work.
+        if self.find.has_focus(ctx) || self.chrome_has_focus(ctx) {
+            // The find pill, or a tab or button (Ctrl+F6), has the keyboard (Tab, Enter and
+            // Escape are egui's then); the terminal's own shortcuts still work.
             let events = ctx.input(|i| i.events.clone());
             for event in events {
                 if let egui::Event::Key { key, physical_key, pressed: true, modifiers, .. } = event {
@@ -182,14 +236,14 @@ impl super::TerminalApp {    /// Keys, typed text and pastes go to the shell of 
         let whole_keys = self.win32_keys.as_ref().is_some_and(|g| g.active());
         for event in events {
             // The tab typed into, if it is still open.
-            let Some(tab) = typing_tab(&self.tabs, target, |t| t.id) else {
+            let Some(tab) = super::typing_pane(&self.tabs, target) else {
                 // Gone: only the terminal's own shortcuts still count.
                 if let egui::Event::Key { key, physical_key, pressed: true, modifiers, .. } = event {
                     let mods = Mods { shift: modifiers.shift, ctrl: modifiers.ctrl, alt: modifiers.alt };
                     if let Some(s) = shortcut(key, physical_key, mods) {
                         out.clear();
                         self.run(ctx, s);
-                        target = self.tabs.current().id;
+                        target = self.tabs.current().pane().id;
                     }
                 }
                 continue;
@@ -212,11 +266,12 @@ impl super::TerminalApp {    /// Keys, typed text and pastes go to the shell of 
                         out.extend(keys::text_bytes(&c.to_string(), true));
                     }
                     let mods = Mods { shift: modifiers.shift, ctrl: modifiers.ctrl, alt: modifiers.alt };
-                    if let Some(s) = shortcut(key, physical_key, mods) {
+                    let panes = self.tabs.current().panes.len() > 1;
+                    if let Some(s) = shortcut(key, physical_key, mods).filter(|s| panes || !s.needs_panes()) {
                         // What was typed before goes first, to the tab it was typed in.
                         self.flush(&mut out, &mut typed, target);
                         self.run(ctx, s);
-                        target = self.tabs.current().id;
+                        target = self.tabs.current().pane().id;
                         continue;
                     }
                     let has_selection = session.with_term(select::has);
@@ -300,19 +355,19 @@ impl super::TerminalApp {    /// Keys, typed text and pastes go to the shell of 
     fn flush(&mut self, out: &mut Vec<u8>, typed: &mut bool, target: u64) {
         let bytes = std::mem::take(out);
         let was_typed = std::mem::take(typed);
-        let Some(tab) = typing_tab(&self.tabs, target, |t| t.id) else { return };
+        let Some(tab) = super::typing_pane(&self.tabs, target) else { return };
         let s = &tab.session;
         if was_typed && s.with_term(|t| t.selection.is_some()) {
             s.with_term_mut(|t| t.selection = None);
         }
         s.write(bytes);
-        if was_typed && target == self.tabs.current().id {
+        if was_typed && target == self.tabs.current().pane().id {
             self.view.restart_blink();
         }
     }
     /// Put the selection on the clipboard.
     pub(super) fn copy_selection(&self, ctx: &egui::Context) -> bool {
-        match self.tabs.current().session.with_term(select::text) {
+        match self.tabs.current().pane().session.with_term(select::text) {
             Some(text) if !text.is_empty() => {
                 ctx.copy_text(text);
                 true
@@ -321,7 +376,7 @@ impl super::TerminalApp {    /// Keys, typed text and pastes go to the shell of 
         }
     }
 
-    fn run(&mut self, ctx: &egui::Context, s: Shortcut) {
+    pub(super) fn run(&mut self, ctx: &egui::Context, s: Shortcut) {
         match s {
             Shortcut::NewTab => self.new_tab(None),
             Shortcut::NewTabOf(i) => {
@@ -329,7 +384,7 @@ impl super::TerminalApp {    /// Keys, typed text and pastes go to the shell of 
                     self.new_tab(Some(i));
                 }
             }
-            Shortcut::CloseTab => self.close_tab(ctx, self.tabs.active()),
+            Shortcut::CloseTab => self.close_pane(ctx),
             Shortcut::NextTab | Shortcut::PrevTab => {
                 let to = self.tabs.stepped(s == Shortcut::NextTab);
                 self.select_tab(to);
@@ -339,6 +394,12 @@ impl super::TerminalApp {    /// Keys, typed text and pastes go to the shell of 
             Shortcut::ZoomOut => self.zoom(Some(-1.0)),
             Shortcut::ZoomReset => self.zoom(None),
             Shortcut::Find => self.find.show(),
+            Shortcut::SplitAcross => self.split(Some(Axis::Across)),
+            Shortcut::SplitDown => self.split(Some(Axis::Down)),
+            Shortcut::SplitAuto => self.split(None),
+            Shortcut::FocusPane(d) => self.focus_towards(d),
+            Shortcut::ResizePane(d) => self.nudge_pane(d),
+            Shortcut::FocusChrome => self.focus_chrome(ctx),
         }
     }
 }
@@ -465,19 +526,19 @@ mod tests {
         const SHIFT: Mods = Mods { shift: true, ctrl: false, alt: false };
         const ALT: Mods = Mods { shift: false, ctrl: false, alt: true };
         // Its shortcuts, by key code.
-        assert!(keeps(0x54, CTRL_SHIFT, false)); // Ctrl+Shift+T
-        assert!(keeps(0x09, CTRL, false)); // Ctrl+Tab
-        assert!(keeps(0x33, CTRL_ALT, false)); // Ctrl+Alt+3
-        assert!(keeps(0xBB, CTRL, false)); // Ctrl+=
-        assert!(keeps(0x21, SHIFT, false)); // Shift+PgUp
-        assert!(keeps(0x56, CTRL, false) && keeps(0x2D, SHIFT, false)); // paste
-        assert!(keeps(0x73, ALT, false)); // Alt+F4
+        assert!(keeps(0x54, CTRL_SHIFT, false, false)); // Ctrl+Shift+T
+        assert!(keeps(0x09, CTRL, false, false)); // Ctrl+Tab
+        assert!(keeps(0x33, CTRL_ALT, false, false)); // Ctrl+Alt+3
+        assert!(keeps(0xBB, CTRL, false, false)); // Ctrl+=
+        assert!(keeps(0x21, SHIFT, false, false)); // Shift+PgUp
+        assert!(keeps(0x56, CTRL, false, false) && keeps(0x2D, SHIFT, false, false)); // paste
+        assert!(keeps(0x73, ALT, false, false)); // Alt+F4
         // Ctrl+C is the console's (PSReadLine copies its own selection, or it interrupts),
         // unless the terminal has a selection.
         assert!(!keys_kept(0x43, CTRL));
-        assert!(keeps(0x43, CTRL, true));
-        assert!(keeps(0x43, CTRL_SHIFT, false));
-        assert!(!keeps(0x0D, Mods::NONE, false) && keeps(0x0D, Mods::NONE, true));
+        assert!(keeps(0x43, CTRL, true, false));
+        assert!(keeps(0x43, CTRL_SHIFT, false, false));
+        assert!(!keeps(0x0D, Mods::NONE, false, false) && keeps(0x0D, Mods::NONE, true, false));
         // Everything else goes whole: Shift+arrows, Ctrl+Alt letters, plain typing.
         assert!(!keys_kept(0x25, SHIFT));
         assert!(!keys_kept(0x41, CTRL_ALT));
@@ -486,7 +547,34 @@ mod tests {
     }
 
     fn keys_kept(vk: u16, m: Mods) -> bool {
-        keeps(vk, m, false)
+        keeps(vk, m, false, false)
+    }
+
+    #[test]
+    fn pane_keys() {
+        const ALT: Mods = Mods { shift: false, ctrl: false, alt: true };
+        const ALT_SHIFT: Mods = Mods { shift: true, ctrl: false, alt: true };
+        assert_eq!(shortcut(K::Plus, None, ALT_SHIFT), Some(Shortcut::SplitAcross));
+        assert_eq!(shortcut(K::Equals, None, ALT_SHIFT), Some(Shortcut::SplitAcross));
+        assert_eq!(shortcut(K::Minus, None, ALT_SHIFT), Some(Shortcut::SplitDown));
+        assert_eq!(shortcut(K::D, None, ALT_SHIFT), Some(Shortcut::SplitAuto));
+        assert_eq!(shortcut(K::ArrowLeft, None, ALT), Some(Shortcut::FocusPane(Dir::Left)));
+        assert_eq!(shortcut(K::ArrowDown, None, ALT_SHIFT), Some(Shortcut::ResizePane(Dir::Down)));
+        assert_eq!(shortcut(K::ArrowLeft, None, Mods::NONE), None);
+        assert_eq!(shortcut(K::ArrowLeft, None, CTRL), None);
+        // Whole key events: splits are always the terminal's; Alt+arrows only with panes to
+        // move between (else PSReadLine and readline have them).
+        assert!(keeps(0xBB, ALT_SHIFT, false, false));
+        assert!(keeps(0x44, ALT_SHIFT, false, false));
+        assert!(!keeps(0x25, ALT, false, false));
+        assert!(keeps(0x25, ALT, false, true));
+        assert!(keeps(0x28, ALT_SHIFT, false, true));
+        assert!(!keeps(0x25, Mods::NONE, false, true));
+        // Ctrl+F6 leaves the terminal for its tabs and buttons, also with whole key events.
+        assert_eq!(shortcut(K::F6, None, CTRL), Some(Shortcut::FocusChrome));
+        assert_eq!(shortcut(K::F6, None, Mods::NONE), None);
+        assert!(keeps(0x75, CTRL, false, false));
+        assert!(!keeps(0x75, Mods::NONE, false, false));
     }
 
     #[test]

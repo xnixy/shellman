@@ -32,6 +32,8 @@ pub struct Gate {
     active: AtomicBool,
     /// The shown tab has a selection (Ctrl+C, Enter and Escape are then the terminal's).
     selection: AtomicBool,
+    /// The shown tab has more than one pane (Alt+arrows are then the terminal's).
+    panes: AtomicBool,
     /// Encoded key events not yet sent, in order.
     queue: Mutex<Vec<u8>>,
     composer: Mutex<Composer>,
@@ -42,8 +44,9 @@ pub struct Gate {
 
 impl Gate {
     /// Called every frame: whether keys go to the console whole, and whether there is a selection.
-    pub fn set(&self, active: bool, selection: bool) {
+    pub fn set(&self, active: bool, selection: bool, panes: bool) {
         self.active.store(active, Ordering::Release);
+        self.panes.store(panes, Ordering::Release);
         self.selection.store(selection, Ordering::Release);
     }
 
@@ -69,6 +72,7 @@ pub fn install(hwnd: isize, ctx: egui::Context) -> Arc<Gate> {
     let gate = Arc::new(Gate {
         active: AtomicBool::new(false),
         selection: AtomicBool::new(false),
+        panes: AtomicBool::new(false),
         queue: Mutex::new(Vec::new()),
         composer: Mutex::new(Composer::default()),
         swallowing: AtomicBool::new(false),
@@ -153,7 +157,7 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPA
                     }
                     return DefSubclassProc(hwnd, msg, wparam, lparam);
                 }
-                if super::input::keeps(key.vk, mods(), gate.selection.load(Ordering::Acquire)) {
+                if super::input::keeps(key.vk, mods(), gate.selection.load(Ordering::Acquire), gate.panes.load(Ordering::Acquire)) {
                     gate.swallowing.store(false, Ordering::Release);
                     return DefSubclassProc(hwnd, msg, wparam, lparam);
                 }
@@ -180,7 +184,7 @@ unsafe extern "system" fn proc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPA
                 }
                 let modifier = keys::is_modifier(key.vk);
                 // A key the terminal kept had no key-down sent: no key-up either.
-                if !modifier && super::input::keeps(key.vk, mods(), gate.selection.load(Ordering::Acquire)) {
+                if !modifier && super::input::keeps(key.vk, mods(), gate.selection.load(Ordering::Acquire), gate.panes.load(Ordering::Acquire)) {
                     return DefSubclassProc(hwnd, msg, wparam, lparam);
                 }
                 let ch = if modifier { 0 } else { char_of(key) };

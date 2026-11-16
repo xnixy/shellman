@@ -22,6 +22,7 @@ mod render;
 mod select;
 mod session;
 mod snapshot;
+mod splits;
 mod stats;
 mod tabs;
 

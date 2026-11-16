@@ -1,6 +1,6 @@
 //! The terminal's own settings, `terminal.json` in shellman's config folder (`%APPDATA%\shellman`,
 //! or `SHELLMAN_CONFIG_DIR`). Written with its defaults the first time, so there is a file to
-//! edit; a Settings page comes later. `default_terminal` / `custom_terminal` are read by every
+//! edit; Settings › Terminal edits it too (`apps/settings/src/sections/terminal.rs`). `default_terminal` / `custom_terminal` are read by every
 //! app (`shellman_core::terminal`), not just this one.
 
 use serde::{Deserialize, Serialize};
@@ -16,6 +16,9 @@ pub struct Config {
     pub font_family: String,
     /// The grid's font size in points.
     pub font_size: f32,
+    /// The 16 colours' scheme by name (`palette::Scheme`): "shellman" (made for the glass),
+    /// "campbell", "one-half" or "tango"; an unknown name is shellman's.
+    pub color_scheme: String,
     /// Lines of history kept above the screen.
     pub scrollback: usize,
     /// Copy a selection as soon as it is made.
@@ -43,6 +46,7 @@ impl Default for Config {
             default_profile: "Windows PowerShell".into(),
             font_family: String::new(),
             font_size: 12.0,
+            color_scheme: "shellman".into(),
             scrollback: 10_000,
             copy_on_select: false,
             new_instance: NewInstance::Window,

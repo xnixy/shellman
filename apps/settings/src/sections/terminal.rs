@@ -84,6 +84,7 @@ pub fn show(ui: &mut egui::Ui, st: &mut State) {
 
     page::group(ui, "Default profile", |ui| profile(ui, st));
     page::group(ui, "Font", |ui| font(ui, st));
+    page::group(ui, "Colours", |ui| colours(ui, st));
     page::group(ui, "History and copying", |ui| history(ui, st));
     page::group(ui, "New terminal opens in", |ui| {
         ui.label(theme::muted("Starting the terminal while one is open.").size(12.5));
@@ -150,6 +151,29 @@ fn font(ui: &mut egui::Ui, st: &mut State) {
         }
     }
     if changed {
+        let f = f.clone();
+        st.saver.run(move || f.save());
+    }
+}
+
+fn colours(ui: &mut egui::Ui, st: &mut State) {
+    use shellman_core::terminal::file::COLOR_SCHEMES;
+    let v = &mut st.terminal;
+    let Some(f) = v.file.as_mut() else { return };
+    ui.label(theme::muted("The 16 colours programs use. Text in them is kept readable on the glass.").size(12.5));
+    let current = f.color_scheme();
+    let shown = COLOR_SCHEMES.iter().find(|(n, _)| *n == current).map_or(COLOR_SCHEMES[0].1, |(_, label)| label);
+    let mut picked = None;
+    let resp = egui::ComboBox::from_id_salt("terminal-colours").width(300.0_f32.min(ui.available_width())).selected_text(shown).show_ui(ui, |ui| {
+        for (name, label) in COLOR_SCHEMES {
+            if ui.selectable_label(name == current, label).clicked() {
+                picked = Some(name);
+            }
+        }
+    });
+    resp.response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::ComboBox, true, format!("Colour scheme, {shown}")));
+    if let Some(name) = picked.filter(|n| *n != current) {
+        f.set("color_scheme", name);
         let f = f.clone();
         st.saver.run(move || f.save());
     }
