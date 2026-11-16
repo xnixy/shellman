@@ -93,8 +93,10 @@ The same from a terminal, for the developer loop: `target\release\shellman-setup
 
 ## Known problems
 
-- With shellman as the shell, Windows does not start packaged apps' background tasks at
-  sign-in (found with Dolby Access OEM, which stopped running). Not fixed.
+- With shellman as the shell, Windows did not start packaged apps' background tasks (found
+  with Dolby Access OEM, which stopped running). The session now tells Windows the sign-in is
+  complete the way Microsoft's own shells do, but this has not yet been confirmed at a real
+  sign-in.
 - A dock pin for an app whose window belongs to a helper process (Steam) shows the wrong icon
   or does not start the app after a restart. Unfinished work is on the `wip/dock-pins` branch.
 - Opening shellman's own apps and panels is slow after a few idle minutes. Unfinished work is
