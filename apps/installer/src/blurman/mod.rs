@@ -123,7 +123,7 @@ fn via_winget() -> Result<(), String> {
         return Ok(());
     }
     let text = String::from_utf8_lossy(&out.stdout);
-    let last = text.lines().map(str::trim).filter(|l| !l.is_empty()).last().unwrap_or("").to_string();
+    let last = text.lines().map(str::trim).rfind(|l| !l.is_empty()).unwrap_or("").to_string();
     Err(format!("winget ended with {} {last}", out.status.code().unwrap_or(-1)))
 }
 
