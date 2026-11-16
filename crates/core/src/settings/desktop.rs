@@ -5,6 +5,7 @@
 use crate::calendar::CalendarRef;
 use crate::weather::Units;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 pub const NAME: &str = "desktop";
@@ -225,12 +226,55 @@ impl Default for WidgetSettings {
     }
 }
 
+
+/// Which edge of the work area a position is measured from, on one axis.
+#[derive(Clone, Copy, Default, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub enum Anchor {
+    /// The left or top.
+    #[default]
+    Start,
+    /// The middle: the offset is from the work area's centre to the piece's centre.
+    Middle,
+    /// The right or bottom.
+    End,
+}
+
+/// A position on one axis: whole points from an edge (or the middle) of the work area, inward.
+/// Whole points so a file never holds a NaN, and measured from an edge so a piece kept on the
+/// right stays on the right when the resolution, the scale or the bars change.
+#[derive(Clone, Copy, Default, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub struct Pin {
+    pub from: Anchor,
+    pub by: i32,
+}
+
+/// Where a widget was put: its top-left corner, by `x` and `y`.
+#[derive(Clone, Copy, Default, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub struct Spot {
+    pub x: Pin,
+    pub y: Pin,
+}
+
+/// One monitor's arrangement from Edit desktop…; None (or no entry) is the design's place. The
+/// shelf keeps to its edge (`shelf.edge`, for every monitor) and moves up and down; Now playing
+/// at None sits under Today.
+#[derive(Clone, Copy, Default, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Arrangement {
+    pub shelf: Option<Pin>,
+    pub today: Option<Spot>,
+    pub playing: Option<Spot>,
+}
+
 #[derive(Clone, Default, PartialEq, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct DesktopSettings {
     pub style: Style,
     pub shelf: ShelfSettings,
     pub widgets: WidgetSettings,
+    /// Where Edit desktop… put things, per monitor: `primary` for the primary monitor (whatever
+    /// its name today), else Windows' device name. Entries of monitors not plugged in are kept.
+    pub arrange: BTreeMap<String, Arrangement>,
 }
 
 impl DesktopSettings {
@@ -369,6 +413,26 @@ mod tests {
         assert!(back.widgets.weather.is_set());
         assert!(back.widgets.calendar.shows("https://x/cal/") && !back.widgets.calendar.shows("https://x/other/"));
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn arrangements_round_trip_and_old_files_have_none() {
+        let old: DesktopSettings = serde_json::from_str(r#"{ "shelf": { "edge": "Right" } }"#).unwrap();
+        assert!(old.arrange.is_empty());
+        let mut s = DesktopSettings::default();
+        s.arrange.insert(
+            "primary".into(),
+            Arrangement {
+                shelf: Some(Pin { from: Anchor::Start, by: 120 }),
+                today: Some(Spot { x: Pin { from: Anchor::End, by: 40 }, y: Pin { from: Anchor::End, by: 16 } }),
+                playing: None,
+            },
+        );
+        let text = serde_json::to_string(&s).unwrap();
+        assert_eq!(serde_json::from_str::<DesktopSettings>(&text).unwrap(), s);
+        let partial: Arrangement = serde_json::from_str(r#"{ "shelf": { "from": "Middle", "by": -30 } }"#).unwrap();
+        assert_eq!(partial.shelf, Some(Pin { from: Anchor::Middle, by: -30 }));
+        assert_eq!(partial.today, None);
     }
 
     #[test]

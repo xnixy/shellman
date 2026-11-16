@@ -12,7 +12,7 @@ accent color, fast.
 | `apps/launcher` | Start menu and search | working: Spotlight-style panel, app grid, ranked search, most used, the Win key (through the switcher's hook) |
 | `apps/switcher` | Alt+Tab, Task View | working: Alt+Tab with live previews. Next: Task View (Win+Tab) |
 | `apps/desktop` | wallpaper window | working: wallpaper per monitor; keeps Windows' modern-app host running; hands a right-click to the shelf |
-| `apps/shelf` | desktop icons, the desktop's right-click menu | stage 1 working: the shelf on every monitor or the primary only (drop zone, Desktop / Downloads / Recent stacks that fan open, drag out, drop in), the right-click menu on every monitor, Settings › Desktop; stage 2 working: the Today and Now playing widgets top right (primary or every monitor), Edit desktop…. Next: arrange mode |
+| `apps/shelf` | desktop icons, the desktop's right-click menu | stage 1 working: the shelf on every monitor or the primary only (drop zone, Desktop / Downloads / Recent stacks that fan open, drag out, drop in), the right-click menu on every monitor, Settings › Desktop; stage 2 working: the Today and Now playing widgets top right (primary or every monitor); arrange mode (Edit desktop…: drag the shelf and each widget, snapping, saved per monitor) |
 | `apps/tasks` | Task Manager (Ctrl+Shift+Esc, through the switcher's hook) | working: Processes (apps and background, grouped, sort, search, End task / End process tree / details), Performance (CPU, memory, GPUs, disks, network), Services (read-only: status, startup type, PID, description, sort, search, go to process; read through the SCM in `crates/core/src/services`, off the UI thread, only while the page shows). End task / tree try unelevated first and, only when Windows refuses, go through `shellman-elevate`'s `end-processes <pid>:<start time>...` behind the UAC prompt (the helper rechecks start time and refuses critical processes); critical processes stay un-endable. Reads through `crates/core/src/procs` |
 | `apps/terminal` | Windows Terminal | stage 2: tabs, selection, mouse, profiles; `-d`/`-p`/`-e`/`--hold`; shellman's "Open Terminal here" opens it; can be Windows' default terminal (`--register-default-terminal`). Next: Settings controls, find, splits |
 | `apps/settings` | Settings pages for the shell | working: Appearance, Desktop, Dock, Top bar, Launcher, About; rebuilt Windows pages: Sound, Display, Apps, Startup, Fonts, Mouse & keyboard, Power, Date, time & region, Storage, Default apps (changes through Windows Settings), Windows Update |
@@ -375,8 +375,8 @@ Rule: **the top bar is the system, the dock is apps.** Both are windows of one p
 - No icon grid. The design (`docs/design/desktop-concepts.html`, "Shelf + Widgets") puts a shelf
   on the left edge and two widgets top right; "Clean" (wallpaper only) is the other style.
   Settings in `desktop.json` (`settings::desktop`): style, shelf on/off, edge, stacks, where
-  dropped files go, and the widgets (on/off each, which displays, the calendar account without its
-  password, the weather's place and units).
+  dropped files go, the widgets (on/off each, which displays, the calendar account without its
+  password, the weather's place and units), and where Edit desktop… put things (`arrange`).
 
 ### The shelf: its own process
 
@@ -396,7 +396,7 @@ of the Control Center).
   `desktop.json`: `Primary` or `All`, default `All`). Every shelf shows the same stacks from the
   same folder watches and thumbnails (one process); one fan is open at a time, on the shelf it
   was opened from. Each is placed in its own monitor's pixels, on the edge setting's side of its
-  work area, centred between its bars.
+  work area, centred between its bars unless arrange mode moved it up or down.
 - Windows: the root viewport carries the primary's shelf (and hears the desktop's menu request);
   every other monitor gets an immediate viewport of its own, keyed by device name
   (`shellman shelf <device>`, never the root's title). Monitors come from
@@ -453,9 +453,8 @@ the foreground (it received the click, so it may), and posts the shelf window a 
 with the point (`core::desktop_menu`; `--menu x y` starts a shelf that opens it when none runs).
 The shelf shows shellman's glass popup menu there, the component the dock's menu uses: New (Folder,
 Text document, Markdown note), Paste (greyed with nothing to paste), Open in Files, Open Terminal
-here, Edit desktop…, Change wallpaper…, Desktop settings, Display settings. "Edit desktop…" opens
-Settings on the Desktop page (`--page desktop`, as "Desktop settings" does); the design's arrange
-mode (dragging the shelf and widgets about) is not built: the widgets are a fixed stack top right.
+here, Edit desktop…, Change wallpaper…, Desktop settings, Display settings. "Edit desktop…" starts
+arrange mode (below); "Desktop settings" opens Settings on the Desktop page (`--page desktop`).
 It works on every monitor: shellman's wallpaper window covers each monitor (one per monitor in
 the desktop process), each hands its right-click over with the point, and the popup takes the
 work area and scale of the monitor at that point (checked at 150% left of the primary and 300%
@@ -473,21 +472,75 @@ every frame); a monitor-sized topmost window also made the bar hide as for a ful
 from it: never a window as large as a monitor for a popup, never create glass per click, never a
 size that has not been checked.
 
+### Arrange mode
+
+"Edit desktop…" puts the shelf and the widgets into arrange mode, as the design's caption says
+(`apps/shelf/src/arrange`). Each piece on each monitor (the shelf, Today, Now playing) can be
+dragged to a new place on its monitor; Reset, Cancel and Done are on a bar at the bottom middle
+of the monitor the menu was opened on.
+
+- Pieces are the real windows, moved while dragged (from the pointer's screen position, since
+  the window moves under it; the drag ends when the button is let go, read from Windows): no
+  overlay, as a window the size of a monitor is not allowed. While arranging, every piece is
+  raised above the apps, wears an accent ring (heavier when chosen), fans stay shut, the drop
+  zone and the widgets' buttons do nothing, a shelf steps aside for no fullscreen app, and Now
+  playing shows a stand-in ("Shows when music or a video plays") when nothing plays.
+- The shelf keeps to an edge and moves up and down; dragged past the middle of its monitor it
+  goes to the other edge. The edge is still one for every monitor (`shelf.edge`, the same setting
+  as Settings › Desktop's), the height is per monitor. A widget goes anywhere on its monitor.
+- Snapping (`arrange::place`, 12 pt): a widget to the work area's sides (40 pt in) and top and
+  bottom (16 pt in), its middle, and the other pieces' edges (lined up, or 16 pt beside); the
+  shelf to the middle, 16 pt from the top or bottom, and the widgets' tops, bottoms and middles.
+  Now playing dropped right under Today is tied to it again (it follows Today's height, as by
+  default).
+- Saved on Done in `desktop.json` → `arrange`, per monitor: `primary` for the primary monitor
+  (whatever Windows calls it after docking), else the device name; entries of unplugged monitors
+  are kept for when they come back, and a monitor without one gets the design's places. A place is
+  whole points from an edge or the middle of the work area (`Pin { from: Start | Middle | End, by
+  }`, the edge it is nearer to when saved), so a piece by the right edge stays by the right edge
+  at another resolution, scale or bar layout. Turning it into a rectangle always cuts it back into
+  the work area, and a widget that would then lie over the shelf or the other widget moves to the
+  nearest free side of it. Cancel or Esc puts back what was there; Reset puts the design's places
+  (left edge, centred; widgets top right) until Done.
+- Windows: each widget now has its own window per monitor (`shellman shelf today|playing
+  <device>`), as big as the widget at its tallest plus the shadow (Today about 452x500 pt, Now playing
+  452x158 pt), moved up when that would pass the monitor's bottom, never the monitor. A shelf
+  window is still as tall as its fans need, worked out for the shelf's height.
+- Keyboard and screen readers: the bar is the one window of arrange mode that takes the focus
+  (the menu pick lets the shelf process take it). Tab goes through a chip per piece and the
+  buttons; with a chip focused the arrow keys move its piece 10 pt (Shift: 1 pt), Left and Right
+  put the shelf on that edge; Enter (nothing focused) is Done, Esc is Cancel. eframe 0.31 gives
+  AccessKit only its root window, so the bar has its own adapter (`accesskit_windows`, the
+  version eframe uses) fed a small tree: radio buttons named with where each piece is ("Today:
+  40 pt from the right, 16 pt from the top"), Reset / Cancel / Done buttons, the help line.
+  Screen readers can press the buttons and choose a piece.
+- The bar is an immediate viewport made the first time and kept; out of arrange mode it is
+  cloaked with no islands (never hidden), its glass attached once. Idle cost unchanged (0.03 s of
+  CPU in 10 s after leaving arrange mode).
+- `--arrange` starts a (test) shelf in arrange mode.
+- Checked by hand on 15 Nov in a test copy (one 3840x2160 monitor at 150%): the pieces' windows
+  placed and raised, saved places restored at the start, the bar's names through UI Automation,
+  Reset, Done (saved, windows back at desktop level) and Cancel (file untouched) pressed through
+  UI Automation, a piece chosen through UI Automation. Not yet by hand: dragging with the mouse
+  and the arrow keys (the test copy, started from a background process, never had the
+  foreground; posted keys did not reach it), several monitors, and a monitor change while
+  arranging; those are covered by the unit tests only.
+
 ### The widgets (stage 2)
 
-Today and Now playing, as the design's "Shelf + Widgets": a fixed stack top right of the work
-area (372 pt wide, 40 pt from the right, 16 pt under the top bar, 16 pt apart, radius 22), real
-glass islands following the glass slider, dark and light.
+Today and Now playing, as the design's "Shelf + Widgets": stacked top right of the work area
+until arranged (372 pt wide, 40 pt from the right, 16 pt under the top bar, 16 pt apart, radius
+22), real glass islands following the glass slider, dark and light.
 
 - Where: in the shelf process (`apps/shelf/src/widgets`), not an app of their own: it already has
   desktop-level glass windows that never activate, are never in Alt+Tab, step aside for a
   fullscreen app per monitor, and follow `desktop.json` live. Each monitor with widgets gets one
-  more viewport (`shellman shelf widgets <device>`), deferred, so it is drawn when it asks and
+  viewport per widget (`shellman shelf today|playing <device>`), deferred, so it is drawn when it asks and
   not with every frame of the shelves; its state lives on the window thread. It has the shelf windows' manners
-  (`window::prepare_other`), its glass attached once. Size (`widgets::place`): the widgets'
-  column plus the shadow, as tall as the tallest stack (Today with three rows and a heading, then
-  Now playing), cut to the work area: 452x569 pt (678x854 px at 150%), never the monitor (and at most half its width),
-  through `glass::guard::window` unchanged; worked out per monitor and scale, never per frame.
+  (`window::prepare_other`), its glass attached once. Size (`arrange::place::widget_window`): the
+  widget plus the shadow, as tall as it can grow (Today with three rows and a heading), cut to the
+  monitor: never the monitor (and at most half its width), through `glass::guard::window`
+  unchanged; moved only when where the widget should be changes.
   Only the islands show and take clicks; an island changes size only when its content does.
 - On: Settings › Desktop › "Show widgets on" (`widgets.on`: `Primary` default, or `All`).
   Off in Clean, with "Show widgets" off, or with both widgets off.

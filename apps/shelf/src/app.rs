@@ -7,6 +7,7 @@
 //! for a frame, so the process sleeps. Nothing animates at rest; a fan opening or closing asks
 //! for frames for its 160 ms and stops.
 
+use crate::arrange::{self, bar::{self, Bar}, place as arrange_place, Item};
 use crate::draw::{self, Event, FanView, Scene, StackView};
 use crate::drop;
 use crate::folders::Folders;
@@ -17,7 +18,8 @@ use crate::views::{self, View};
 use crate::widgets::Widgets;
 use crate::{actions, displays, log, wallpaper, window};
 use shellman_core::outside;
-use shellman_core::settings::desktop::{DesktopSettings, ShelfOn, Stack};
+use shellman_core::monitors::Monitor;
+use shellman_core::settings::desktop::{DesktopSettings, Edge, ShelfOn, Stack};
 use shellman_core::thumbs::Thumbs;
 use shellman_core::transfer::{self, COPY, LINK, MOVE};
 use shellman_core::watch::Watcher;
@@ -66,11 +68,17 @@ pub struct Shelf {
     menu: PopupMenu<Action>,
     /// Today and Now playing, top right.
     widgets: Widgets,
+    /// Arrange mode's bar (Reset, Cancel, Done).
+    bar: Bar,
+    /// Where the desktop last asked for its menu (arrange mode's bar goes on that monitor).
+    menu_at: Option<(i32, i32)>,
+    /// Start in arrange mode once the windows are laid out (`--arrange`).
+    arrange_at_start: bool,
     _windows: WindowWatcher,
 }
 
 impl Shelf {
-    pub fn new(ctx: &egui::Context, hwnd: isize, panel: GlassPanel, look: Appearance, drop: Arc<Mutex<drop::Shared>>) -> Self {
+    pub fn new(ctx: &egui::Context, hwnd: isize, panel: GlassPanel, look: Appearance, drop: Arc<Mutex<drop::Shared>>, arrange_at_start: bool) -> Self {
         let config_watch = Watcher::quick(ctx.clone());
         config_watch.set_dirs(shellman_core::config::config_dir().into_iter().collect());
         let windows = WindowWatcher::start(window::request_check);
@@ -100,6 +108,9 @@ impl Shelf {
             drag_on: None,
             menu: PopupMenu::new(),
             widgets,
+            bar: Bar::new(),
+            menu_at: None,
+            arrange_at_start,
             _windows: windows,
         }
     }
@@ -120,6 +131,8 @@ impl Shelf {
         log::line(format!("monitors: {}; shelves on {on:?}", names.join("; ")));
         views::sync(&mut self.views, primary, others, ctx);
         self.widgets.lay_out(&monitors);
+        arrange::forget_pieces();
+        self.bar.follow(&monitors);
         self.laid_out = true;
         // Whether a fullscreen app covers each window's monitor.
         window::request_check();
@@ -257,9 +270,66 @@ impl Shelf {
             Action::Wallpaper => {
                 std::thread::spawn(wallpaper::change);
             }
-            Action::EditDesktop | Action::DesktopSettings => actions::settings("desktop"),
+            Action::EditDesktop => self.begin_arrange(),
+            Action::DesktopSettings => actions::settings("desktop"),
             Action::DisplaySettings => actions::settings("display"),
         }
+    }
+
+    /// The shelf's edge now: arrange mode's while arranging.
+    fn edge(&self) -> Edge {
+        arrange::edge(&self.settings)
+    }
+
+    /// Start arrange mode, its bar on the monitor the menu was opened on (or the primary).
+    fn begin_arrange(&mut self) {
+        if arrange::active() {
+            return;
+        }
+        self.close_fan(false);
+        let monitors = crate::test_monitor::restrict(shellman_core::monitors::all());
+        let at = self.menu_at;
+        let on: Option<Monitor> = at
+            .and_then(|(x, y)| monitors.iter().find(|m| m.rect.left <= x && x < m.rect.right && m.rect.top <= y && y < m.rect.bottom))
+            .or_else(|| monitors.iter().find(|m| m.primary))
+            .or(monitors.first())
+            .cloned();
+        let Some(on) = on else {
+            log::line("arrange: no monitor");
+            return;
+        };
+        log::line(format!("arrange: started, bar on {}", on.device));
+        arrange::begin(&self.settings);
+        self.bar.show(on);
+    }
+
+    /// What the bar asked for.
+    fn arrange_action(&mut self, action: bar::Action, ctx: &egui::Context) {
+        match action {
+            bar::Action::Reset => {
+                log::line("arrange: reset");
+                arrange::reset();
+            }
+            bar::Action::Cancel => {
+                log::line("arrange: cancelled");
+                arrange::cancel();
+                self.bar.hide();
+            }
+            bar::Action::Done => {
+                self.bar.hide();
+                let Some((arranged, edge)) = arrange::end() else { return };
+                // Saved over what is in the file now (Settings may have changed something since).
+                let mut s = DesktopSettings::try_load().unwrap_or_else(|_| self.settings.clone());
+                s.arrange = arranged;
+                s.shelf.edge = edge;
+                s.save();
+                log::line(format!("arrange: saved {} monitor(s), shelf on the {edge:?} edge", s.arrange.len()));
+                // What the file watcher will read back, so it changes nothing.
+                self.widgets.apply(&s, ctx);
+                self.settings = s;
+            }
+        }
+        ctx.request_repaint();
     }
 
     /// The local offset from UTC now, in seconds.
@@ -281,7 +351,9 @@ impl Shelf {
     fn shelf_frame(&mut self, ctx: &egui::Context, view: usize, placed: displays::Placement) -> (Vec<Island>, Option<RECT>) {
         let stacks = self.settings.stacks();
         let window = ctx.screen_rect();
-        let layout = geometry::layout(window, placed.area, self.settings.shelf.edge, stacks.len());
+        let edge = self.edge();
+        let layout = geometry::layout_at(window, placed.shelf_top, edge, stacks.len());
+        let arranging = arrange::active();
         // The fan eases open and shut, on the shelf it was opened from.
         let mine = self.fan_on.is_some_and(|(v, _)| v == self.current);
         let t = ctx.animate_bool_with_time(egui::Id::new("fan").with(self.current), mine && self.open.is_some(), FAN_TIME);
@@ -297,7 +369,7 @@ impl Shelf {
             (Some(k), Some((shown, _))) => {
                 let i = stacks.iter().position(|s| *s == k).unwrap_or(0);
                 let anchor = layout.stacks[i].center().y;
-                let at = |t: f32| geometry::fan_at(layout.shelf, anchor, shown.len(), self.settings.shelf.edge, placed.area, t);
+                let at = |t: f32| geometry::fan_at(layout.shelf, anchor, shown.len(), edge, placed.area, t);
                 if t < 1.0 {
                     moving = geometry::swept(&at(0.0), &at(1.0), ctx.pixels_per_point());
                 }
@@ -333,7 +405,30 @@ impl Shelf {
                     now: now_utc + offset,
                     offset,
                 };
-                let events = draw::paint(ui, &scene, &mut self.thumbs);
+                let mut events = draw::paint(ui, &scene, &mut self.thumbs);
+                if arranging {
+                    // A piece to drag, not to use: on top of the stacks, which do nothing now.
+                    events.clear();
+                    if let Some(m) = self.views[view].monitor.clone() {
+                        let key = arrange_place::key(&m);
+                        let resp = ui
+                            .interact(layout.shelf, egui::Id::new("arrange shelf").with(self.current), egui::Sense::drag())
+                            .on_hover_cursor(egui::CursorIcon::Grab);
+                        let a = arrange::arrangement(&self.settings, &key);
+                        let rect = arrange_place::shelf_rect(arrange_place::work(&m), edge, stacks.len(), a.shelf);
+                        if resp.drag_started() {
+                            arrange::start_drag(&key, Item::Shelf, rect, m.scale);
+                        }
+                        arrange::ring(ui.painter(), layout.shelf, geometry::RADIUS, arrange::is_selected(&key, Item::Shelf));
+                        arrange::report(arrange::Piece {
+                            key,
+                            item: Item::Shelf,
+                            display: arrange_place::display_name(&m),
+                            rect,
+                            work: arrange_place::work(&m),
+                        });
+                    }
+                }
                 if !composed {
                     ui.painter().set(under, egui::Shape::Vec(glass::islands::solid_shapes(&islands, &style)));
                 }
@@ -353,7 +448,8 @@ impl Shelf {
             outside::set_rects(&inside);
         }
         if let Ok(mut d) = drop.lock() {
-            d.zone = Some(shelf_px);
+            // Nothing is dropped on a shelf being arranged.
+            d.zone = (!arranging).then_some(shelf_px);
             d.dest = self.folders.drop_target(&self.settings.shelf.drop_to).map(|p| {
                 let name = self.settings.shelf.drop_to.label();
                 (p, name)
@@ -376,11 +472,31 @@ impl Shelf {
         let id = self.views[view].id;
         self.hwnd = hwnd;
         self.current = id;
-        if self.views[view].placed.is_none() {
-            let (edge, stacks) = (self.settings.shelf.edge, self.settings.stacks().len());
-            self.views[view].place(edge, stacks);
+        let arranging = arrange::active();
+        let stacks = self.settings.stacks().len();
+        if let (true, Some(m)) = (arranging, self.views[view].monitor.clone()) {
+            let key = arrange_place::key(&m);
+            if let Some(moved) = arrange::dragged(&key, Item::Shelf) {
+                let work = arrange_place::work(&m);
+                let h = geometry::shelf_height(stacks);
+                let top = arrange_place::snap_shelf(moved.top(), h, work, &arrange::others(&key, Item::Shelf));
+                arrange::edit(&key, |a| a.shelf = Some(arrange_place::pin_for(top, work.top(), work.bottom(), h)));
+                arrange::set_edge(arrange_place::edge_at(arrange::cursor_on(&m).x, work));
+                ctx.request_repaint();
+            }
         }
-        let shown = self.settings.shelf_shown() && !window::covered(hwnd) && self.views[view].monitor.is_some();
+        let pin = self.views[view].monitor.as_ref().and_then(|m| arrange::arrangement(&self.settings, &arrange_place::key(m)).shelf);
+        let want = (self.edge(), stacks, pin);
+        if self.views[view].placed.is_none() || self.views[view].placed_for != Some(want) {
+            self.views[view].place(want.0, want.1, want.2);
+        }
+        // Above the apps while arranging or while its fan is open; at desktop level otherwise.
+        if arranging {
+            window::set_raised(hwnd, true);
+        } else if !self.fan_on.is_some_and(|(v, _)| v == id) {
+            window::set_raised(hwnd, false);
+        }
+        let shown = self.settings.shelf_shown() && (arranging || !window::covered(hwnd)) && self.views[view].monitor.is_some();
         if self.dragging && self.drag_on == Some(id) && !ctx.input(|i| i.pointer.any_down()) {
             self.dragging = false;
             self.drag_on = None;
@@ -434,6 +550,9 @@ impl eframe::App for Shelf {
         if window::take_layout() || !self.laid_out {
             self.lay_out(ctx);
         }
+        if std::mem::take(&mut self.arrange_at_start) {
+            self.begin_arrange();
+        }
         self.stacks.set_active(self.settings.shelf_shown(), &self.folders);
         self.stacks.poll();
         self.thumbs.poll(ctx);
@@ -442,6 +561,7 @@ impl eframe::App for Shelf {
         // The desktop asked for its menu: an open fan closes first.
         if let Some(at) = window::take_menu() {
             self.close_fan(false);
+            self.menu_at = Some(at);
             let can_paste = transfer::clip::state().can_paste();
             log::line(format!("menu at {at:?}"));
             self.menu.open(ctx, Anchor::at(at.0, at.1), menu::popup_entries(&menu::entries(can_paste)));
@@ -458,6 +578,12 @@ impl eframe::App for Shelf {
                 self.view_frame(ctx, view);
                 shellman_ui::font_atlas::end_frame(ctx);
             });
+        }
+        if let Some(action) = self.bar.frame(ctx) {
+            self.arrange_action(action, ctx);
+        }
+        if arrange::dragging() {
+            ctx.request_repaint();
         }
         self.widgets.frame(ctx);
         self.hwnd = self.views[0].hwnd.unwrap_or(self.hwnd);

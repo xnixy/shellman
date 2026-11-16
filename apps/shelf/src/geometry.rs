@@ -60,14 +60,22 @@ pub struct Layout {
 }
 
 /// The shelf in a window `window` (points, its whole client area), on `edge`, vertically
-/// centred in `area` (the space between the top bar and the dock, in the window's points).
+/// centred in `area` (as it is until Edit desktop… moves it) (the space between the top bar and the dock, in the window's points).
+#[cfg(test)]
 pub fn layout(window: Rect, area: Rect, edge: Edge, stacks: usize) -> Layout {
+    let h = shelf_height(stacks);
+    let y = (area.center().y - h / 2.0).clamp(area.top(), (area.bottom() - h).max(area.top()));
+    layout_at(window, y, edge, stacks)
+}
+
+/// The shelf in a window `window` on `edge`, its top at `y` (window points): where Edit
+/// desktop… put it (`arrange::place::shelf_top`).
+pub fn layout_at(window: Rect, y: f32, edge: Edge, stacks: usize) -> Layout {
     let h = shelf_height(stacks);
     let x = match edge {
         Edge::Left => window.left() + EDGE_GAP,
         Edge::Right => window.right() - EDGE_GAP - SHELF_W,
     };
-    let y = (area.center().y - h / 2.0).clamp(area.top(), (area.bottom() - h).max(area.top()));
     let shelf = Rect::from_min_size(pos2(x, y), vec2(SHELF_W, h));
     let inner = SHELF_W - 2.0 * PAD;
     let drop = Rect::from_min_size(pos2(x + PAD, y + PAD), vec2(inner, DROP_H));

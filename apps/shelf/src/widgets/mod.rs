@@ -1,11 +1,13 @@
 //! The desktop's widgets (stage 2 of "Shelf + Widgets"): Today (date, weather, next events) and
 //! Now playing, stacked top right of the primary monitor (or every monitor, as Settings ›
 //! Desktop › "Show widgets on" says), each a real glass island following the glass slider.
+//! Edit desktop… moves either anywhere on its monitor (`crate::arrange`); Now playing stays
+//! under Today until it is moved away from there.
 //!
 //! They live in the shelf process: it already owns desktop-level glass windows per monitor that
 //! sit under every app, never take the focus and step aside for a fullscreen app, and it follows
-//! `desktop.json` live. Each monitor with widgets gets one small window of its own (`view`),
-//! sized once to the tallest stack (`place`), never the monitor.
+//! `desktop.json` live. Each widget gets one small window of its own per monitor (`view`), as
+//! big as the widget at its tallest, never the monitor.
 //!
 //! Idle costs nothing: frames run when data arrives (the feeds worker, the media session), when
 //! the pointer is over a widget, once a minute for the date and the "in 5 min" chips, and once a
@@ -19,6 +21,7 @@ mod paint;
 pub mod place;
 mod view;
 
+use crate::arrange::{self, place as arrange_place, Item};
 use crate::{actions, displays, log, window};
 use feeds::{CalConfig, Config, Feeds, WeatherConfig};
 use icons::Icons;
@@ -137,7 +140,10 @@ impl State {
     /// to read. True when the windows must be laid out again (which monitors, or on/off).
     pub fn apply(&mut self, settings: &DesktopSettings, ctx: &egui::Context) -> bool {
         let shown = settings.widgets_shown();
-        let relayout = shown != self.settings.widgets_shown() || settings.widgets.on != self.settings.widgets.on;
+        let relayout = shown != self.settings.widgets_shown()
+            || settings.widgets.on != self.settings.widgets.on
+            || settings.widgets.today != self.settings.widgets.today
+            || settings.widgets.now_playing != self.settings.widgets.now_playing;
         let w = &settings.widgets;
         if shown && w.today {
             let targets = self.targets.clone();
@@ -184,14 +190,18 @@ impl State {
         let want: Vec<Monitor> = if self.settings.widgets_shown() { displays::targets(self.settings.widgets.on, monitors) } else { Vec::new() };
         let names: Vec<&str> = want.iter().map(|m| m.device.as_str()).collect();
         log::line(format!("widgets on: {}", if names.is_empty() { "none".to_owned() } else { names.join(", ") }));
-        self.views.retain(|v| want.iter().any(|m| m.device == v.device));
+        let w = &self.settings.widgets;
+        let kinds: Vec<Item> = [(w.today, Item::Today), (w.now_playing, Item::Playing)].into_iter().filter(|k| k.0).map(|k| k.1).collect();
+        self.views.retain(|v| kinds.contains(&v.kind) && want.iter().any(|m| m.device == v.device));
         for m in want {
-            match self.views.iter_mut().find(|v| v.device == m.device) {
-                Some(v) => {
-                    v.monitor = m;
-                    v.placed = None;
+            for kind in &kinds {
+                match self.views.iter_mut().find(|v| v.device == m.device && v.kind == *kind) {
+                    Some(v) => {
+                        v.monitor = m.clone();
+                        v.placed = None;
+                    }
+                    None => self.views.push(WidgetView::new(m.clone(), *kind)),
                 }
-                None => self.views.push(WidgetView::new(m)),
             }
         }
         if let Ok(mut t) = self.targets.lock() {
@@ -243,8 +253,47 @@ impl State {
         let playing = if w.now_playing { self.playing.as_ref().map(|n| model::now_playing(n, now)) } else { None };
         let mut events = Vec::new();
         let art = self.art.as_ref().map(|(_, t)| t.clone());
+        let arranging = arrange::active();
+        let now_playing_on = w.now_playing;
         let Some(view) = self.views.iter_mut().find(|v| v.id == id) else { return };
-        let visible = view_frame(ctx, view, today.as_ref(), playing.as_ref(), art.as_ref(), &mut self.icons, &mut events);
+        // Where both widgets of this monitor are now (each window draws its own; Now playing
+        // under Today needs Today's height, and neither may lie over the shelf).
+        let m = view.monitor.clone();
+        let key = arrange_place::key(&m);
+        let work = arrange_place::work(&m);
+        let today_h = today.as_ref().map(|t| place::today_height(t.shape()));
+        // While arranging, Now playing shows a stand-in when nothing plays, so it can be moved.
+        let playing_h = (playing.is_some() || (arranging && now_playing_on)).then(place::playing_height);
+        let settings = &self.settings;
+        let rects = || {
+            let a = arrange::arrangement(settings, &key);
+            let edge = arrange::edge(settings);
+            let shelf = arrange::shelf_on(settings, &m, edge, a.shelf);
+            (shelf, arrange_place::widgets(work, shelf, &a, today_h, playing_h))
+        };
+        if arranging {
+            if let Some(moved) = arrange::dragged(&key, view.kind) {
+                let (shelf, (t, p)) = rects();
+                let other = if view.kind == Item::Today { p } else { t };
+                let others: Vec<egui::Rect> = shelf.into_iter().chain(other).collect();
+                arrange::store_widget(&key, view.kind, arrange_place::snap_widget(moved, work, &others), work);
+                ctx.request_repaint();
+                ctx.request_repaint_of(egui::ViewportId::ROOT);
+            }
+        }
+        let (_, (t, p)) = rects();
+        let island = if view.kind == Item::Today { t } else { p };
+        if arranging {
+            if let Some(r) = island {
+                arrange::report(arrange::Piece { key: key.clone(), item: view.kind, display: arrange_place::display_name(&m), rect: r, work });
+            }
+        }
+        let want = island.and_then(|r| arrange_place::widget_window(&m, r, view::max_height(view.kind)));
+        let draw = Draw { island, want, key: &key, arranging, today: today.as_ref(), playing: playing.as_ref(), art: art.as_ref() };
+        let visible = view_frame(ctx, view, &draw, &mut self.icons, &mut events);
+        if arranging {
+            events.clear();
+        }
         for e in events {
             match e {
                 paint::Event::Media(a) => {
@@ -266,44 +315,59 @@ impl State {
     }
 }
 
+/// What one widget window draws this time.
+struct Draw<'a> {
+    /// Its widget on the monitor (monitor points); None when it shows nothing.
+    island: Option<egui::Rect>,
+    /// Where its window should be for that.
+    want: Option<arrange_place::WidgetPlacement>,
+    key: &'a str,
+    arranging: bool,
+    today: Option<&'a model::TodayModel>,
+    playing: Option<&'a model::NowModel>,
+    art: Option<&'a egui::TextureHandle>,
+}
+
 /// One widget window's frame. True when it shows anything.
-fn view_frame(
-    ctx: &egui::Context,
-    view: &mut WidgetView,
-    today: Option<&model::TodayModel>,
-    playing: Option<&model::NowModel>,
-    art: Option<&egui::TextureHandle>,
-    icons: &mut Icons,
-    events: &mut Vec<paint::Event>,
-) -> bool {
+fn view_frame(ctx: &egui::Context, view: &mut WidgetView, d: &Draw, icons: &mut Icons, events: &mut Vec<paint::Event>) -> bool {
     crate::theme_for(ctx);
     if !view.adopt() {
         ctx.request_repaint();
         return false;
     }
     let Some(hwnd) = view.hwnd else { return false };
-    if view.placed.is_none() {
-        view.place();
-    }
+    view.place(d.want);
+    // Above the apps while arranging; at desktop level otherwise.
+    window::set_raised(hwnd, d.arranging);
     // Laid out only at the scale of the monitor it was placed on.
     let placed = view.placed.filter(|p| (p.scale - ctx.pixels_per_point()).abs() < 0.01);
     if view.placed.is_some() && placed.is_none() {
         ctx.request_repaint();
     }
-    let shown = placed.is_some() && !window::covered(hwnd) && (today.is_some() || playing.is_some());
+    let shown = placed.is_some() && d.island.is_some() && (d.arranging || !window::covered(hwnd));
     let mut islands = Vec::new();
-    if let (true, Some(p)) = (shown, placed) {
-        let (t, n) = place::stack(p.column, today.map(model::TodayModel::shape), playing.is_some());
-        islands.extend(t.iter().chain(n.iter()).map(|r| Island::new(*r, place::RADIUS)));
+    if let (true, Some(p), Some(on_monitor)) = (shown, placed, d.island) {
+        let r = egui::Rect::from_min_size(p.origin, on_monitor.size());
+        islands.push(Island::new(r, place::RADIUS));
         let style = Style::from_theme(place::RADIUS);
         let composed = view.panel.as_ref().is_some_and(GlassPanel::composed);
+        let kind = view.kind;
+        let (id, scale) = (view.id, view.monitor.scale);
         egui::CentralPanel::default().frame(egui::Frame::new()).show(ctx, |ui| {
             let under = ui.painter().add(egui::Shape::Noop);
-            if let (Some(r), Some(m)) = (t, today) {
-                paint::today(ui, r, m, icons, events);
+            match (kind, d.today, d.playing) {
+                (Item::Today, Some(m), _) => paint::today(ui, r, m, icons, events),
+                (Item::Playing, _, Some(m)) => paint::playing(ui, r, m, d.art, icons, events),
+                (Item::Playing, _, None) => paint::playing_stand_in(ui, r),
+                _ => {}
             }
-            if let (Some(r), Some(m)) = (n, playing) {
-                paint::playing(ui, r, m, art, icons, events);
+            if d.arranging {
+                // A piece to drag, on top of its buttons (which do nothing now).
+                let resp = ui.interact(r, egui::Id::new("arrange widget").with(id), egui::Sense::drag()).on_hover_cursor(egui::CursorIcon::Grab);
+                if resp.drag_started() {
+                    arrange::start_drag(d.key, kind, on_monitor, scale);
+                }
+                arrange::ring(ui.painter(), r, place::RADIUS, arrange::is_selected(d.key, kind));
             }
             if !composed {
                 ui.painter().set(under, egui::Shape::Vec(glass::islands::solid_shapes(&islands, &style)));

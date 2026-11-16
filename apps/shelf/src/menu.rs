@@ -5,8 +5,8 @@
 //! menu uses: one small window per process, made once and then only placed, shown and put away
 //! (a first version on a monitor-sized window, its glass made per click, crashed the compositor
 //! on 12 Nov). The entries are plain data (`entries`); the pick comes back as an [`Action`].
-//! "Edit desktop…" opens Settings on the Desktop page (where the widgets are set up); arranging
-//! the shelf and widgets by dragging is not built yet.
+//! "Edit desktop…" starts arrange mode (`crate::arrange`): the shelf and the widgets can be
+//! dragged about. "Desktop settings" opens Settings on the Desktop page.
 
 use shellman_ui::menu::popup;
 use shellman_ui::theme::glyph;

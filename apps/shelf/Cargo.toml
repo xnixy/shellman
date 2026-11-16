@@ -7,6 +7,10 @@ license.workspace = true
 publish = false
 
 [dependencies]
+# The arrange bar's own screen reader tree (eframe only gives its root window one); the versions
+# eframe already uses.
+accesskit = "0.17.1"
+accesskit_windows = "0.24.1"
 eframe.workspace = true
 egui.workspace = true
 raw-window-handle.workspace = true
