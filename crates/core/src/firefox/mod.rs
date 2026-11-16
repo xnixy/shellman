@@ -3,6 +3,7 @@
 //! `install.ps1` / `uninstall.ps1` do, in Rust. Settings › Appearance, the install wizard and the
 //! uninstaller use it.
 //!
+//! - [`actions`]: what a button press does (loader, then profile), for Settings and the installer.
 //! - [`detect`]: installations (folder and id), the profiles folder, whether Firefox holds a
 //!   profile, whether a folder is writable.
 //! - [`profiles`]: `profiles.ini` (read only) and each installation's own profile.
@@ -14,6 +15,7 @@
 //! The files come from [`Source`]: the `firefox` folder the installer puts in shellman's install
 //! folder, or `integrations\firefox` in a source checkout.
 
+pub mod actions;
 pub mod detect;
 pub mod loader;
 pub mod look;

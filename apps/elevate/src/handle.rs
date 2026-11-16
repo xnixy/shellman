@@ -1,6 +1,7 @@
 //! One handler per operation. Each does its single thing and says whether it worked.
 
 use shellman_core::elevate::ops::Op;
+use shellman_core::firefox;
 use shellman_core::procs::{end, Key};
 use shellman_core::registry::{Hive, Real};
 use shellman_core::startup::{approved, win};
@@ -32,5 +33,12 @@ pub fn run(op: &Op) -> bool {
         // A Store app started from here, elevated, runs as administrator when it is a desktop
         // program in a package. The id was checked to be an app id and nothing else.
         Op::LaunchApp { id } => shellman_core::apps_index::activate::activate_with(id, ""),
+        // The Firefox look's loader: the folder of the machine-wide installation with that id,
+        // found in HKLM, and only the loader text built into shellman.
+        Op::FirefoxLoader { install, id } => match firefox::detect::machine_install(&Real, id) {
+            Some(dir) if *install => firefox::loader::write(&dir).is_ok(),
+            Some(dir) => firefox::loader::remove(&dir).is_ok(),
+            None => false,
+        },
     }
 }
