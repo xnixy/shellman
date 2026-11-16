@@ -6,6 +6,7 @@
 //! UI, which runs the switcher (`switcher`) and draws it (`panel`) only while it is open.
 
 mod activate;
+mod dockkey;
 mod keys;
 mod notifykey;
 mod layout;

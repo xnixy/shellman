@@ -12,7 +12,7 @@ impl App {
 }
 
 /// The whole rule list: words in the name, and what the shortcut points at.
-pub(super) fn is_noise(name: &str, id: &str) -> bool {
+pub(crate) fn is_noise(name: &str, id: &str) -> bool {
     let name = name.to_lowercase();
     const WORDS: [&str; 12] = [
         "help",

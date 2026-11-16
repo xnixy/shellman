@@ -17,7 +17,7 @@ pub use drives::{drives, Drive};
 pub use link::{link_target, make_link};
 pub use listing::{attrs_not_local, entry_for, list_dir, not_local, Entry, ATTR_NOT_LOCAL};
 pub use names::{check_name, create_new_dir, create_new_file, natural_cmp, rename_no_replace, unique_child, unique_file};
-pub use shell::{open, shell_op, shell_op_mapped, Op};
+pub use shell::{open, open_with_args, shell_op, shell_op_mapped, Op};
 
 pub fn format_size(bytes: u64) -> String {
     const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];

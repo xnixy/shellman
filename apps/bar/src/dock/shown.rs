@@ -42,11 +42,11 @@ mod tests {
     use crate::dock::items::Section;
 
     fn item(app: &str, windows: &[isize]) -> Item {
-        Item { section: Section::Running, app_id: app.into(), exe: None, windows: windows.to_vec() }
+        Item { windows: windows.to_vec(), ..Item::new(Section::Running, app, None) }
     }
 
     fn window(hwnd: isize, title: &str) -> AppWindow {
-        AppWindow { hwnd, title: title.into(), app_id: "a".into(), exe: None, minimized: false }
+        AppWindow { hwnd, title: title.into(), app_id: "a".into(), exe: None, minimized: false, relaunch: None }
     }
 
     #[test]

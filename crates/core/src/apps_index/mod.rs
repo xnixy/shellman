@@ -9,7 +9,7 @@ pub mod admin;
 mod enumerate;
 mod launch;
 mod merge;
-mod noise;
+pub(crate) mod noise;
 pub mod pin;
 mod startmenu;
 

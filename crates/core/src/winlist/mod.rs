@@ -8,6 +8,7 @@ pub mod fullscreen;
 mod identity;
 mod watch;
 
+pub use identity::Relaunch;
 pub use watch::WindowWatcher;
 
 use identity::Identity;
@@ -31,6 +32,10 @@ pub struct AppWindow {
     pub app_id: String,
     pub exe: Option<PathBuf>,
     pub minimized: bool,
+    /// How the window asks to be started again (`System.AppUserModel.RelaunchCommand` and its
+    /// name and icon), when it says. Steam's client window, run by a helper program, names
+    /// `steam.exe` here; browsers' web apps name the browser and their own id.
+    pub relaunch: Option<Relaunch>,
 }
 
 impl AppWindow {
@@ -75,6 +80,7 @@ impl WindowList {
                 app_id: id.app_id.clone(),
                 exe: id.exe.clone(),
                 minimized: unsafe { IsIconic(hwnd).as_bool() },
+                relaunch: id.relaunch.clone(),
             });
         }
         // Forget windows that are gone, so handles reused later get a fresh identity.

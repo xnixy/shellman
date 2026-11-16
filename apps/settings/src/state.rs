@@ -5,7 +5,7 @@ use crate::saver::Saver;
 use crate::sections::{WidgetsView, AppsView, DisplayView, FontsView, IconsView, MouseView, PowerView, DateTimeView, StorageView, DefaultAppsView, Section, SoundView, StartupView, TerminalView, UpdatesView};
 use shellman_core::settings::bar::BarSettings;
 use shellman_core::settings::desktop::DesktopSettings;
-use shellman_core::settings::dock::{self, DockSettings};
+use shellman_core::settings::dock::DockSettings;
 use shellman_core::settings::launcher::LauncherSettings;
 use shellman_core::settings::shell::ShellSettings;
 use shellman_core::system::app_name;
@@ -96,14 +96,13 @@ impl State {
             .dock
             .pins
             .iter()
-            .map(|p| app_name::display_name(&p.app_id, p.exe.as_deref()))
+            .map(|p| p.name.clone().unwrap_or_else(|| app_name::display_name(&p.app_id, p.exe.as_deref())))
             .collect();
     }
 
     /// The icon to show for a pin, if it has a source.
     pub fn pin_icon(&self, index: usize) -> Option<std::path::PathBuf> {
-        let pin = self.dock.pins.get(index)?;
-        dock::icon_source(&pin.app_id, pin.exe.as_deref())
+        self.dock.pins.get(index)?.icon_source()
     }
 
     /// Make this window wear the look.

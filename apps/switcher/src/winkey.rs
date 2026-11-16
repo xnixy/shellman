@@ -2,9 +2,10 @@
 //!
 //! Windows opens Start when Win is pressed and released with no other key in between (with the
 //! modern-app host running, its Start menu is there to open). Win's press is never held back
-//! here, so every Win shortcut (Win+E, Win+R, Win+Shift+S, Win+arrows, Win+1...) reaches Windows
-//! exactly as typed; holding back the press would mean replaying it, in order, before whatever
-//! key follows. Only the release of a lone tap is changed: it is swallowed, and in its place the
+//! here, so every Win shortcut (Win+E, Win+R, Win+Shift+S, Win+arrows...) reaches Windows
+//! exactly as typed (shellman's own Win shortcuts, Win+N and Win+1 ... 9, are taken by their
+//! modules after this one has seen them); holding back the press would mean replaying it, in
+//! order, before whatever key follows. Only the release of a lone tap is changed: it is swallowed, and in its place the
 //! hook sends one press of an unused key (0xE8) and then the release. Windows saw "another key"
 //! while Win was down, so no Start menu; the launcher is summoned instead.
 //!

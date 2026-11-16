@@ -110,7 +110,7 @@ pub fn plan_icon(icon: &Icon, files: &[PathBuf], is_dir: impl Fn(&Path) -> bool)
 /// a shortcut's target, read by the caller.
 pub fn pin_for(path: &Path, is_dir: bool, target: Option<PathBuf>) -> Option<Pin> {
     let ext = path.extension().map(|e| e.to_string_lossy().to_lowercase());
-    let pin = |p: &Path| Pin { app_id: p.to_string_lossy().to_lowercase(), exe: Some(p.to_path_buf()) };
+    let pin = |p: &Path| Pin::new(p.to_string_lossy().to_lowercase(), Some(p.to_path_buf()));
     if is_dir {
         return Some(pin(path));
     }

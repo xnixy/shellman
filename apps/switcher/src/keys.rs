@@ -4,7 +4,8 @@
 //! keeps it waiting too long, so the callback only decides (from the key and a flag) whether to
 //! swallow the key, and hands what it saw to the UI. It never waits on the UI. Only Alt+Tab and
 //! Alt+Shift+Tab are taken; while the switcher is open, also Esc, Enter and the arrow keys; and
-//! the release of a lone Win tap, which opens the launcher (`winkey`). Every other key passes
+//! the release of a lone Win tap, which opens the launcher (`winkey`); and, while shellman is the
+//! shell, Ctrl+Shift+Esc (`taskkey`), Win+N (`notifykey`) and Win+1 ... 9 (`dockkey`). Every other key passes
 //! untouched. The hook belongs to this process: if it ends, Windows' own Alt+Tab
 //! is back.
 
@@ -199,6 +200,10 @@ unsafe extern "system" fn on_key(code: i32, wparam: WPARAM, lparam: LPARAM) -> L
         }
         // Win+Tab: shellman's Task View (`taskviewkey`).
         if crate::taskviewkey::on_key(vk, down, mods) {
+            return LRESULT(1);
+        }
+        // Win+1 ... Win+9: the dock's pinned apps (`dockkey`).
+        if crate::dockkey::on_key(vk, down, mods) {
             return LRESULT(1);
         }
     }

@@ -150,7 +150,7 @@ mod tests {
     use super::*;
 
     fn item(section: Section) -> Item {
-        Item { section, app_id: String::new(), exe: None, windows: Vec::new() }
+        Item::new(section, "", None)
     }
 
     const M: Metrics = Metrics { icon: 48.0, pad: 11.0, height: 70.0, radius: 24.0 };

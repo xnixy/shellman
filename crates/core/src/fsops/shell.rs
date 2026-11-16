@@ -17,6 +17,18 @@ pub fn open(path: &Path) {
     }
 }
 
+/// Run a program with a command line after it (a dock pin's saved launch, such as a Squirrel
+/// app's `Update.exe --processStart App.exe`). Its folder is the working folder.
+pub fn open_with_args(program: &Path, args: &str) {
+    let p = HSTRING::from(program.as_os_str());
+    let a = HSTRING::from(args);
+    let dir = program.parent().map(|d| HSTRING::from(d.as_os_str()));
+    let dir = dir.as_ref().map_or(PCWSTR::null(), |d| PCWSTR(d.as_ptr()));
+    unsafe {
+        ShellExecuteW(None, &HSTRING::from("open"), &p, &a, dir, SW_SHOWNORMAL);
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Op {
     /// To the Recycle Bin. Should an item be unable to go there (see `recycle::unrecyclable`),

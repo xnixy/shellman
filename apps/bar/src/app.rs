@@ -317,6 +317,8 @@ pub struct Host {
     dismiss: Option<shellman_core::dismiss::Watch>,
     /// Set by Win+N (the switcher's hook signals a named event).
     summoned: Arc<std::sync::atomic::AtomicBool>,
+    /// The number of a Win+1 ... 9 not yet acted on, 0 for none (named events too).
+    dock_key: Arc<std::sync::atomic::AtomicU8>,
 }
 
 impl Host {
@@ -339,6 +341,7 @@ impl Host {
             live_configured: false,
             dismiss: None,
             summoned: notify::summon::start(host::request_frame),
+            dock_key: crate::dock::numkey::start(host::request_frame),
         }
     }
 
@@ -450,6 +453,10 @@ impl eframe::App for Host {
         }
         // Reads the window list again if it may have changed, and wakes the bars that show it.
         shared.dock.catch_up(ctx);
+        match self.dock_key.swap(0, std::sync::atomic::Ordering::AcqRel) {
+            0 => {}
+            n => shared.dock.win_key(n),
+        }
         // The dock's height follows its icon size, and its reserved band with it.
         let sizes = bars::sizes(shared.dock.height());
         let reassert = host::take_reassert();
