@@ -462,6 +462,11 @@ pub struct Target {
 
 impl Dock {
     /// The app window in front, if it is one the dock knows.
+    /// The app windows the dock lists.
+    pub fn windows(&self) -> &[AppWindow] {
+        &self.windows
+    }
+
     pub fn front_window(&self) -> Option<&AppWindow> {
         let front = self.front?;
         self.windows.iter().find(|w| w.hwnd == front)
@@ -482,6 +487,8 @@ impl Dock {
         self.bin.poll();
         if DOCKS_CHANGED.swap(false, std::sync::atomic::Ordering::AcqRel) {
             self.wake.docks();
+            // Progress and calls for attention show in the top bar's "now" pill too.
+            self.wake.tops();
         }
         let icons = self.thumbs.poll(ctx);
         let renamed = self.watcher.take_front_renamed();

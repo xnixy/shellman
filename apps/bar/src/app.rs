@@ -156,6 +156,8 @@ impl Shared {
                 self.notify.close_list();
                 self.calendar.open_on(day, front_hwnd, device);
             }
+            // The copy dialog, or the app asking for attention (coming forward answers it).
+            Some(topbar::now::Asked::Window(hwnd)) => notify::window::raise(hwnd),
             None => {}
         }
         // The whole window stays the bar's: a click between the islands lands on it and does
@@ -198,11 +200,13 @@ impl Shared {
     fn now_pill(&self, settings: &BarSettings) -> Option<topbar::now::pick::Shown> {
         let live = &self.live;
         let snapshot = live.cal.snapshot.as_ref().filter(|_| live.calendar_set_up());
+        let tasks = topbar::now::feed::tasks(self.dock.windows());
         let inputs = topbar::now::pick::Inputs {
             settings: settings.now,
             events: snapshot.map(|s| (s.instances.as_slice(), s.calendars.as_slice())),
             media: live.playing.as_ref(),
             paused_since: live.paused_since,
+            tasks: &tasks,
             now: now_utc(),
             h24: live.h24(),
         };

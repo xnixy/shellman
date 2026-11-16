@@ -87,13 +87,18 @@ pub fn on_message(msg: u32, wparam: usize, lparam: isize) -> Option<LRESULT> {
                 // A value without a state means normal progress, as Explorer has it.
                 if w.progress == Progress::None {
                     w.progress = Progress::Normal;
+                    w.progress_since = Some(Instant::now());
                 }
             }
             Message::State { hwnd, state } => {
                 let w = s.windows.entry(hwnd).or_default();
+                if w.progress == Progress::None && state != Progress::None {
+                    w.progress_since = Some(Instant::now());
+                }
                 w.progress = state;
                 if state == Progress::None {
                     w.done = 0.0;
+                    w.progress_since = None;
                 }
             }
             Message::Overlay { hwnd, .. } => {
