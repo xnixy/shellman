@@ -1215,7 +1215,10 @@ beside Explorer for tests.
     without it: deleting `FSIAInProgress`, message 0x5BD to `Shell_TrayWnd`, setting
     `ShellLauncherReadyEvent`, two private user32 ordinals, and `BiChangeSessionState(5)` in the
     ContentDeliveryManager logon task, right before it registers its OEM-preinstall background
-    task.
+    task (CustomShellHost links the same logon-task code). That none of these is needed is not
+    proven: what state 5 does inside the service was not found. If tasks still do not start at
+    a shellman sign-in, adding `BiChangeSessionState(5)` before the publishes is the first thing
+    to try.
   - The session-scoped state's change stamp says whether this session was announced already
     (Explorer, the host, or an earlier session process after `update --restart`): then only the
     call is made, which is harmless there (it answers 0x8007054F, `ERROR_INTERNAL_ERROR`,
@@ -1223,7 +1226,8 @@ beside Explorer for tests.
     times over 52 s while it fails (0x8007054F included: it may also mean the service does not
     know the session yet); every step's result is logged.
   - Measured beside Explorer (15 Nov): both stamps 2, so the session would skip the publishes;
-    the call answers 0x8007054F. Not yet seen: the log of a fresh shellman sign-in (stamp 0,
+    the call answers 0x8007054F (what the service means by it is still unknown). The publish
+    code ran once against a temporary WNF state of its own (stamp 0 to 1; `live_publish`). Not yet seen: the log of a fresh shellman sign-in (stamp 0,
     publishes succeed, the call's answer) and whether Dolby's tasks then start, with the
     modern-app host on and with it off.
   - Packaged apps' startup tasks are a separate thing, run by the session itself ("Startup

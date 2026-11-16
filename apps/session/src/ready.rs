@@ -19,8 +19,10 @@
 //!   on purpose: deleting `FSIAInProgress` (first-sign-in animation), message 0x5BD to
 //!   `Shell_TrayWnd`, `ShellLauncherReadyEvent`, two private user32 ordinals; and earlier, in the
 //!   ContentDeliveryManager logon task, `BiChangeSessionState(5)` right before registering
-//!   ContentDeliveryManager's OEM preinstall background task. rdpinit makes none of these, so
-//!   none is needed for background tasks.
+//!   ContentDeliveryManager's OEM preinstall background task (CustomShellHost, Shell Launcher,
+//!   links the same logon-task code). rdpinit makes none of these. That none is needed is not
+//!   proven: what state 5 does inside the service was not found, so if tasks still do not start
+//!   at a shellman sign-in, `BiChangeSessionState(5)` before the publishes is the first suspect.
 //!
 //! The two states are Microsoft's shell family (`SHEL`), well-known, not persistent: the first
 //! machine-scoped (sequence 3), the second session-scoped (sequence 71). Their names are not in
@@ -246,6 +248,35 @@ mod tests {
         } else {
             println!("session not announced: not calling from a test");
         }
+    }
+
+    /// Live: runs `publish` and `stamp` on a temporary user-scoped WNF state of its own, which
+    /// nothing subscribes to, then deletes it. `cargo test -p shellman-session live_publish -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn live_publish() {
+        use windows::core::w;
+        use windows::Win32::Security::Authorization::{ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1};
+        use windows::Win32::Security::PSECURITY_DESCRIPTOR;
+        type Create = unsafe extern "system" fn(*mut u64, u32, u32, u8, *const u8, u32, *const core::ffi::c_void) -> i32;
+        type Delete = unsafe extern "system" fn(*const u64) -> i32;
+        let create: Create = unsafe { std::mem::transmute(ntdll(s!("NtCreateWnfStateName")).unwrap()) };
+        let delete: Delete = unsafe { std::mem::transmute(ntdll(s!("NtDeleteWnfStateName")).unwrap()) };
+        let mut sd = PSECURITY_DESCRIPTOR::default();
+        unsafe { ConvertStringSecurityDescriptorToSecurityDescriptorW(w!("D:(A;;GA;;;WD)"), SDDL_REVISION_1, &mut sd, None) }.unwrap();
+        let mut name = 0u64;
+        // Temporary lifetime (3), user scope (2), not persistent, 4 KB.
+        let st = unsafe { create(&mut name, 3, 2, 0, std::ptr::null(), 0x1000, sd.0) };
+        println!("create -> 0x{:08X}, name 0x{name:016X}", st as u32);
+        assert!(st >= 0);
+        let before = stamp(name);
+        let published = publish(name);
+        let after = stamp(name);
+        println!("stamp before {before:?}, publish {published:?}, stamp after {after:?}");
+        let st = unsafe { delete(&name) };
+        println!("delete -> 0x{:08X}", st as u32);
+        assert_eq!(published, Ok(()));
+        assert_eq!((before, after), (Ok(0), Ok(1)));
     }
 
     #[test]
