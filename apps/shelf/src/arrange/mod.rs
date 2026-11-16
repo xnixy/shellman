@@ -115,13 +115,60 @@ pub fn cancel() -> Option<(BTreeMap<String, Arrangement>, Edge)> {
     SESSION.with(|s| s.try_borrow_mut().ok()?.take().map(|s| s.original))
 }
 
-/// Everything back to the design's places (until Done).
+/// The pieces on screen back to the design's places (until Done): the shelf on the left,
+/// centred, the widgets top right. Monitors not plugged in keep theirs.
 pub fn reset() {
     with(|s| {
-        s.working.clear();
+        let here: Vec<String> = s.pieces.keys().map(|(k, _)| k.clone()).collect();
+        s.working.retain(|k, _| !here.contains(k));
         s.edge = Edge::default();
         s.drag = None;
     });
+}
+
+/// What a widget being dragged snaps to: the shelf and the other widget, except Now playing
+/// tied under Today (`tied`) when Today moves: it moves with Today, and as a target it would be
+/// Today's own last place, so Today would stick there.
+pub fn targets(item: Item, shelf: Option<Rect>, today: Option<Rect>, playing: Option<Rect>, tied: bool) -> Vec<Rect> {
+    let other = match item {
+        Item::Today => playing.filter(|_| !tied),
+        _ => today,
+    };
+    shelf.into_iter().chain(other).collect()
+}
+
+/// The arrow keys pressed this frame (with or without Shift), as a direction, taken from the
+/// input so egui does not also move the focus.
+pub fn arrows(i: &mut egui::InputState) -> egui::Vec2 {
+    let mut d = egui::Vec2::ZERO;
+    for (key, v) in [
+        (egui::Key::ArrowLeft, egui::vec2(-1.0, 0.0)),
+        (egui::Key::ArrowRight, egui::vec2(1.0, 0.0)),
+        (egui::Key::ArrowUp, egui::vec2(0.0, -1.0)),
+        (egui::Key::ArrowDown, egui::vec2(0.0, 1.0)),
+    ] {
+        while i.consume_key(egui::Modifiers::NONE, key) || i.consume_key(egui::Modifiers::SHIFT, key) {
+            d += v;
+        }
+    }
+    d
+}
+
+/// Move piece `p` one keyboard step in direction `d` (`fine`: 1 pt, else 10 pt); Left and
+/// Right put the shelf on that edge.
+pub fn step(p: &Piece, d: egui::Vec2, fine: bool) {
+    if d == egui::Vec2::ZERO {
+        return;
+    }
+    if p.item == Item::Shelf && d.x != 0.0 {
+        set_edge(if d.x < 0.0 { Edge::Left } else { Edge::Right });
+    }
+    nudge(p, d * if fine { 1.0 } else { 10.0 });
+}
+
+/// The piece chosen last (by a drag or its chip), as last drawn.
+pub fn chosen() -> Option<Piece> {
+    with(|s| s.selected.as_ref().and_then(|k| s.pieces.get(k)).cloned()).flatten()
 }
 
 /// The arrangement in force for the monitor `key`: the working copy while arranging, else the
@@ -309,9 +356,68 @@ mod tests {
         assert!(!active());
         assert_eq!(edge(&s), Edge::Left);
         begin(&s);
+        let r = Rect::from_min_size(pos2(20.0, 100.0), vec2(104.0, 400.0));
+        report(Piece { key: place::PRIMARY.into(), item: Item::Shelf, display: "d".into(), rect: r, work: r });
         reset();
         let (done, e) = end().unwrap();
         assert!(done.is_empty() && e == Edge::Left);
+    }
+
+    #[test]
+    fn today_follows_a_slow_drag_with_now_playing_tied_under_it() {
+        let s = DesktopSettings::default();
+        begin(&s);
+        let work = Rect::from_min_max(pos2(0.0, 40.0), pos2(2560.0, 1372.0));
+        let size = |h: f32| vec2(crate::widgets::place::WIDTH, h);
+        let rects = || place::widgets(work, None, &arrangement(&s, "K"), Some(250.0), Some(78.0));
+        let (t0, _) = rects();
+        let from = t0.unwrap();
+        // As the frames do: the pointer moves 2 pt a frame down and left; each frame snaps the
+        // dragged place against the targets and keeps it.
+        for i in 1..=60 {
+            let (t, p) = rects();
+            report(Piece { key: "K".into(), item: Item::Today, display: "d".into(), rect: t.unwrap(), work });
+            let moved = from.translate(vec2(-2.0 * i as f32, 2.0 * i as f32));
+            let tied = arrangement(&s, "K").playing.is_none();
+            let snapped = place::snap_widget(moved, work, &targets(Item::Today, None, t, p, tied));
+            store_widget("K", Item::Today, snapped, work);
+            let (t, p) = rects();
+            let (t, p) = (t.unwrap(), p.unwrap());
+            if i > 8 {
+                // Past the margins' pull it follows the pointer exactly, Now playing under it.
+                assert!((t.min - moved.min).length() < 0.6, "frame {i}: {:?} vs {:?}", t.min, moved.min);
+            }
+            assert!(place::is_under(p, t));
+        }
+        let _ = size;
+        // Tied: no target; untied: Now playing is one.
+        let r = Rect::from_min_size(pos2(0.0, 0.0), vec2(10.0, 10.0));
+        assert!(targets(Item::Today, None, Some(r), Some(r), true).is_empty());
+        assert_eq!(targets(Item::Today, Some(r), Some(r), Some(r), false).len(), 2);
+        assert_eq!(targets(Item::Playing, None, Some(r), Some(r), true).len(), 1);
+        let _ = end();
+    }
+
+    #[test]
+    fn reset_keeps_unplugged_monitors_and_keys_step_the_chosen_piece() {
+        let mut s = DesktopSettings::default();
+        s.arrange.insert("away".into(), Arrangement { shelf: Some(Pin::default()), ..Default::default() });
+        s.arrange.insert("K".into(), Arrangement { shelf: Some(Pin::default()), ..Default::default() });
+        s.shelf.edge = Edge::Right;
+        begin(&s);
+        let work = Rect::from_min_max(pos2(0.0, 40.0), pos2(2560.0, 1372.0));
+        let shelf = Rect::from_min_size(pos2(2436.0, 400.0), vec2(104.0, 400.0));
+        report(Piece { key: "K".into(), item: Item::Shelf, display: "d".into(), rect: shelf, work });
+        reset();
+        assert_eq!(edge(&s), Edge::Left);
+        assert!(arrangement(&s, "K").shelf.is_none());
+        assert!(arrangement(&s, "away").shelf.is_some());
+        select("K", Item::Shelf);
+        let p = chosen().unwrap();
+        step(&p, vec2(1.0, 1.0), false);
+        assert_eq!(edge(&s), Edge::Right);
+        assert_eq!(place::start(arrangement(&s, "K").shelf.unwrap(), work.top(), work.bottom(), 400.0), 410.0);
+        let _ = end();
     }
 
     #[test]

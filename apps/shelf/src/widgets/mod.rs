@@ -274,8 +274,8 @@ impl State {
         if arranging {
             if let Some(moved) = arrange::dragged(&key, view.kind) {
                 let (shelf, (t, p)) = rects();
-                let other = if view.kind == Item::Today { p } else { t };
-                let others: Vec<egui::Rect> = shelf.into_iter().chain(other).collect();
+                let tied = arrange::arrangement(settings, &key).playing.is_none();
+                let others = arrange::targets(view.kind, shelf, t, p, tied);
                 arrange::store_widget(&key, view.kind, arrange_place::snap_widget(moved, work, &others), work);
                 ctx.request_repaint();
                 ctx.request_repaint_of(egui::ViewportId::ROOT);

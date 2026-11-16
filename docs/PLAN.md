@@ -501,7 +501,7 @@ of the monitor the menu was opened on.
   at another resolution, scale or bar layout. Turning it into a rectangle always cuts it back into
   the work area, and a widget that would then lie over the shelf or the other widget moves to the
   nearest free side of it. Cancel or Esc puts back what was there; Reset puts the design's places
-  (left edge, centred; widgets top right) until Done.
+  (left edge, centred; widgets top right) for the monitors plugged in, until Done.
 - Windows: each widget now has its own window per monitor (`shellman shelf today|playing
   <device>`), as big as the widget at its tallest plus the shadow (Today about 452x500 pt, Now playing
   452x158 pt), moved up when that would pass the monitor's bottom, never the monitor. A shelf
@@ -509,7 +509,10 @@ of the monitor the menu was opened on.
 - Keyboard and screen readers: the bar is the one window of arrange mode that takes the focus
   (the menu pick lets the shelf process take it). Tab goes through a chip per piece and the
   buttons; with a chip focused the arrow keys move its piece 10 pt (Shift: 1 pt), Left and Right
-  put the shelf on that edge; Enter (nothing focused) is Done, Esc is Cancel. eframe 0.31 gives
+  put the shelf on that edge, and with no chip focused they move the piece chosen last (by
+  dragging it); Enter (nothing focused) is Done, Esc is Cancel. egui 0.31 counts a widget as
+  focused only while its window has the focus (`Response::has_focus`), so the keys need the bar
+  to be the foreground window. eframe 0.31 gives
   AccessKit only its root window, so the bar has its own adapter (`accesskit_windows`, the
   version eframe uses) fed a small tree: radio buttons named with where each piece is ("Today:
   40 pt from the right, 16 pt from the top"), Reset / Cancel / Done buttons, the help line.
@@ -521,10 +524,13 @@ of the monitor the menu was opened on.
 - Checked by hand on 15 Nov in a test copy (one 3840x2160 monitor at 150%): the pieces' windows
   placed and raised, saved places restored at the start, the bar's names through UI Automation,
   Reset, Done (saved, windows back at desktop level) and Cancel (file untouched) pressed through
-  UI Automation, a piece chosen through UI Automation. Not yet by hand: dragging with the mouse
-  and the arrow keys (the test copy, started from a background process, never had the
-  foreground; posted keys did not reach it), several monitors, and a monitor change while
-  arranging; those are covered by the unit tests only.
+  UI Automation, a piece chosen through UI Automation; 0.03 s of CPU in 10 s afterwards. Not yet
+  by hand: dragging with the mouse, the arrow keys (the test copy, started from a background
+  process, never got the foreground: posted keys reached egui with the Today chip focused in its
+  memory, but `has_focus` is false in an unfocused window), the bar taking the focus after a real
+  menu pick, several monitors, and a monitor change while arranging. Those are covered by unit
+  tests only (placement, snapping, a frame-by-frame drag, keyboard steps, restoring on other
+  monitors).
 
 ### The widgets (stage 2)
 

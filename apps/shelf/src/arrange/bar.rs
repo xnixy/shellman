@@ -34,9 +34,6 @@ use windows::Win32::UI::WindowsAndMessaging::{
 pub const W: f32 = 660.0;
 pub const H: f32 = 136.0;
 pub const RADIUS: f32 = 22.0;
-/// How far the arrow keys move a piece, and with Shift.
-const STEP: f32 = 10.0;
-const FINE: f32 = 1.0;
 
 /// What the bar asks for.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -247,6 +244,15 @@ impl Bar {
             p.set_style(style);
             p.set_islands_only(&islands, ctx.pixels_per_point(), None);
         }
+        // With no chip focused (a piece chosen by dragging it), the arrows move the chosen one.
+        if ctx.memory(|m| m.focused().is_none()) {
+            let fine = ctx.input(|i| i.modifiers.shift);
+            let d = ctx.input_mut(super::arrows);
+            if let (true, Some(p)) = (d != vec2(0.0, 0.0), super::chosen()) {
+                super::step(&p, d, fine);
+                ctx.request_repaint_of(egui::ViewportId::ROOT);
+            }
+        }
         if ctx.input_mut(|i| i.consume_key(Modifiers::NONE, Key::Escape)) {
             out = Some(Action::Cancel);
         }
@@ -295,7 +301,7 @@ fn content(ui: &mut egui::Ui, island: Rect, focus_chip: Option<usize>, drawn: &m
                     let button = if *action == Action::Done { theme::primary_button(name) } else { theme::secondary_button(name) };
                     let mut resp = ui.add(button);
                     if *action == Action::Reset {
-                        resp = resp.on_hover_text("Put everything back where it started");
+                        resp = resp.on_hover_text("Put the shelf and widgets back in their usual places");
                     }
                     if resp.clicked() {
                         out = Some(*action);
@@ -357,20 +363,10 @@ fn chip(ui: &mut egui::Ui, p: &Piece, several: bool, focus: bool) -> Control {
         if !selected {
             super::select(&p.key, p.item);
         }
-        let step = if ui.input(|i| i.modifiers.shift) { FINE } else { STEP };
-        let mut d = vec2(0.0, 0.0);
-        ui.input_mut(|i| {
-            for (key, v) in [(Key::ArrowLeft, vec2(-1.0, 0.0)), (Key::ArrowRight, vec2(1.0, 0.0)), (Key::ArrowUp, vec2(0.0, -1.0)), (Key::ArrowDown, vec2(0.0, 1.0))] {
-                if i.consume_key(Modifiers::NONE, key) || i.consume_key(Modifiers::SHIFT, key) {
-                    d += v;
-                }
-            }
-        });
+        let fine = ui.input(|i| i.modifiers.shift);
+        let d = ui.input_mut(super::arrows);
         if d != vec2(0.0, 0.0) {
-            if p.item == Item::Shelf && d.x != 0.0 {
-                super::set_edge(if d.x < 0.0 { shellman_core::settings::desktop::Edge::Left } else { shellman_core::settings::desktop::Edge::Right });
-            }
-            super::nudge(p, d * step);
+            super::step(p, d, fine);
             ui.ctx().request_repaint_of(egui::ViewportId::ROOT);
         }
     }
