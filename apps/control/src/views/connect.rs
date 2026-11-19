@@ -3,7 +3,7 @@
 //! opens the matching Settings page.
 
 use super::kit::{self, clipped_text, label_font, small_font, CHIP, GAP, TILE_INSET, TILE_RADIUS};
-use egui::{Align2, Color32, CornerRadius, Pos2, Rect, Sense, Ui, Vec2};
+use egui::{Align2, CornerRadius, Pos2, Rect, Sense, Ui, Vec2};
 use shellman_core::system::radios::{Connectivity, Kind, Switch};
 use shellman_core::system::status::Network;
 use shellman_ui::chips::soft_colors;
@@ -151,7 +151,9 @@ fn tile(ui: &mut Ui, rect: Rect, t: &Tile, links: bool) -> Option<Asked> {
     let (soft, soft_hover, line) = soft_colors(c.light);
     let body_hover = links && body.hovered() && !chip_resp.hovered();
     let (fill, stroke, ink, detail) = if t.on {
-        let fill = if body_hover { theme::mix(on_fill, Color32::WHITE, 0.08) } else { on_fill };
+        // Hovered, the accent leans toward the text colour, which keeps its ink readable; high
+        // contrast keeps Windows' highlight pair as it is.
+        let fill = if body_hover && !c.high_contrast { theme::mix(on_fill, c.text, 0.08) } else { on_fill };
         (fill, egui::Stroke::NONE, on_fg, with_alpha(on_fg, 215))
     } else {
         (if body_hover { soft_hover } else { soft }, line, c.text, c.muted)

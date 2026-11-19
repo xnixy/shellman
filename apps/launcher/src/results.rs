@@ -1,12 +1,13 @@
 //! The ranked result list shown while typing: icon and name per row, the selected row (the top
-//! hit at first) an accent row with an "Enter" hint, and a "Run" row last.
+//! hit at first) marked with the field fill and an "Enter" hint, and a "Run" row last.
 
 use crate::fade::Fade;
 use egui::text::{LayoutJob, TextFormat};
 use egui::{Color32, Painter, Rect};
 use shellman_core::apps_index::App;
 use shellman_core::thumbs::Thumbs;
-use shellman_ui::theme::{colors, glyph, icon_font};
+use shellman_ui::chips::soft_colors;
+use shellman_ui::theme::{colors, glyph, icon_font, shape};
 
 /// A row's height; the results island is as tall as its rows.
 pub const ROW_H: f32 = 58.0;
@@ -109,17 +110,19 @@ fn draw_row(
 ) {
     let c = colors();
     let row = rect.shrink2(egui::vec2(0.0, 2.0));
-    // The selected row is a rounded accent fill, its text on the accent. High contrast: a
-    // highlight outline around ordinary text, and a text outline for hover.
-    let fill = selected && !c.high_contrast;
-    let ink = if fill { c.on_accent } else { c.text };
-    if fill {
-        p.rect_filled(row, 14.0, c.accent_fill);
-    } else if c.high_contrast && (selected || hovered) {
+    // Glasshouse's chosen row: the field fill inside a hairline, ordinary text on it (the accent
+    // is kept for what is on). High contrast: a highlight outline around ordinary text, and a
+    // text outline for hover.
+    let ink = c.text;
+    let radius = shape::corner(shape::TILE);
+    let (soft, soft_hover, line) = soft_colors(c.light);
+    if c.high_contrast && (selected || hovered) {
         let stroke = if selected { egui::Stroke::new(2.0_f32, c.row_selected) } else { egui::Stroke::new(1.0_f32, c.text) };
-        p.rect_stroke(row, 14.0, stroke, egui::StrokeKind::Inside);
+        p.rect_stroke(row, radius, stroke, egui::StrokeKind::Inside);
+    } else if selected {
+        p.rect(row, radius, soft_hover, line, egui::StrokeKind::Inside);
     } else if hovered {
-        p.rect_filled(row, 12.0, c.text.gamma_multiply(0.08));
+        p.rect_filled(row, radius, soft);
     }
     let icon = Rect::from_center_size(
         egui::pos2(row.left() + 14.0 + ICON / 2.0, row.center().y),
@@ -141,7 +144,7 @@ fn draw_row(
             crate::icon::paint(p, icon, &apps[index], thumbs);
             name(p, name_at, name_w, &apps[index].name, apps[index].alias().as_deref(), Some(query), ink);
             let kind = kind_of(&apps[index]);
-            sub(p, sub_at, kind, ink, fill);
+            sub(p, sub_at, kind);
         }
         Item::Run => {
             crate::icon::plate(p, icon);
@@ -153,7 +156,7 @@ fn draw_row(
                 c.accent_text,
             );
             name(p, name_at, name_w, &format!("Run \"{}\"", query.trim()), None, None, ink);
-            sub(p, sub_at, "Run this command", ink, fill);
+            sub(p, sub_at, "Run this command");
         }
     }
     if selected {
@@ -222,9 +225,8 @@ fn run_name(query: &str) -> String {
 }
 
 /// The small line under a name, fainter than it.
-fn sub(p: &Painter, at: egui::Pos2, text: &str, ink: Color32, selected: bool) {
-    let color = if selected { ink.gamma_multiply(0.8) } else { colors().muted };
-    p.text(at, egui::Align2::LEFT_CENTER, text, egui::FontId::proportional(11.5), color);
+fn sub(p: &Painter, at: egui::Pos2, text: &str) {
+    p.text(at, egui::Align2::LEFT_CENTER, text, egui::FontId::proportional(11.5), colors().muted);
 }
 
 /// "Enter", at the right end of the selected row: what the key will do. With Ctrl and Shift

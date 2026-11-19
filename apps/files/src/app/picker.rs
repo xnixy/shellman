@@ -3,7 +3,7 @@
 //! writes the response for the asking app and closes the window.
 //!
 //! Browsing works as ever (the rail, the path, search, the views, new folder); tabs are hidden
-//! and the bottom pill holds the name, the file type and the buttons (see `pick_band`).
+//! and the bottom bar holds the name, the file type and the buttons (see `pick_band`).
 
 use super::actions::Action;
 use super::tab::{Loc, Only};
@@ -29,7 +29,7 @@ pub(crate) struct Picker {
     /// A filter typed into the name field (`*.log`), shown instead of the type's until the type
     /// is chosen again.
     pub(super) typed_filter: Option<String>,
-    /// An existing file the user chose to save over: the pill asks first.
+    /// An existing file the user chose to save over: the bottom bar asks first.
     pub(super) replace: Option<PathBuf>,
     /// Since when the picker has been waiting for the app to accept a choice.
     pub(super) waiting: Option<f64>,
@@ -40,7 +40,7 @@ pub(crate) struct Picker {
     /// The selection's fingerprint when the field last followed it.
     sel_sig: Option<(u64, u64, usize, Option<usize>)>,
     last_poll: f64,
-    /// Whether the details island shows; hidden in a picker until asked for.
+    /// Whether the details box shows; hidden in a picker until asked for.
     pub(super) details: bool,
 }
 

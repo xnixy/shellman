@@ -1,4 +1,4 @@
-//! The islands of the Performance page, one function each.
+//! The boxes of the Performance page, one function each.
 
 use super::{spoken, stats, title, STATS_W};
 use crate::app::State;
@@ -15,24 +15,24 @@ const HEAD: f32 = 34.0;
 const CORE_W: f32 = 96.0;
 const CORE_H: f32 = 46.0;
 
-type Island<'a> = dyn FnMut(&mut egui::Ui, f32, &str, &mut dyn FnMut(&mut egui::Ui, Rect)) + 'a;
+type Boxed<'a> = dyn FnMut(&mut egui::Ui, f32, &str, &mut dyn FnMut(&mut egui::Ui, Rect)) + 'a;
 
-pub fn all(ui: &mut egui::Ui, st: &State, island: &mut Island) {
-    cpu(ui, st, island);
-    memory(ui, st, island);
+pub fn all(ui: &mut egui::Ui, st: &State, boxed: &mut Boxed) {
+    cpu(ui, st, boxed);
+    memory(ui, st, boxed);
     for g in &st.system.gpus {
-        gpu(ui, st, g, island);
+        gpu(ui, st, g, boxed);
     }
     for d in &st.system.disks {
-        disk(ui, st, d, island);
+        disk(ui, st, d, boxed);
     }
     for n in &st.system.nets {
-        net(ui, st, n, island);
+        net(ui, st, n, boxed);
     }
 }
 
 /// The graph's rect and the numbers' rect, side by side under the title; the numbers go under
-/// the graph when the island is narrow.
+/// the graph when the box is narrow.
 fn split(rect: Rect) -> (Rect, Rect) {
     let body = Rect::from_min_max(pos2(rect.left(), rect.top() + HEAD), rect.max);
     if body.width() > STATS_W * 2.2 {
@@ -45,7 +45,7 @@ fn split(rect: Rect) -> (Rect, Rect) {
     }
 }
 
-/// How tall an island with `rows` rows of numbers is, for its width.
+/// How tall a box with `rows` rows of numbers is, for its width.
 fn height(ui: &egui::Ui, rows: usize, extra: f32) -> f32 {
     let wide = ui.available_width() - 40.0 > STATS_W * 2.2;
     let numbers = rows as f32 * 44.0;
@@ -53,7 +53,7 @@ fn height(ui: &egui::Ui, rows: usize, extra: f32) -> f32 {
     40.0 + HEAD + body + extra
 }
 
-fn cpu(ui: &mut egui::Ui, st: &State, island: &mut Island) {
+fn cpu(ui: &mut egui::Ui, st: &State, boxed: &mut Boxed) {
     static NAME: OnceLock<String> = OnceLock::new();
     let name = NAME.get_or_init(|| shellman_core::procs::cpu_name().unwrap_or_default());
     let s = &st.system;
@@ -70,7 +70,7 @@ fn cpu(ui: &mut egui::Ui, st: &State, island: &mut Island) {
         ("Up time", format::duration(s.uptime_secs)),
     ];
     let spoken_name = format!("{}. {cores} logical processors", spoken("CPU", name, &pairs));
-    island(ui, height(ui, 3, extra), &spoken_name, &mut |ui, rect| {
+    boxed(ui, height(ui, 3, extra), &spoken_name, &mut |ui, rect| {
         let p = ui.painter().with_clip_rect(rect.expand(4.0));
         title(&p, rect, "CPU", name);
         let (g, numbers) = split(Rect::from_min_max(rect.min, pos2(rect.right(), rect.bottom() - extra)));
@@ -90,7 +90,7 @@ fn cpu(ui: &mut egui::Ui, st: &State, island: &mut Island) {
     });
 }
 
-fn memory(ui: &mut egui::Ui, st: &State, island: &mut Island) {
+fn memory(ui: &mut egui::Ui, st: &State, boxed: &mut Boxed) {
     let m = st.system.memory;
     let about = format!("{} installed", format::bytes(m.total));
     let pairs = [
@@ -100,7 +100,7 @@ fn memory(ui: &mut egui::Ui, st: &State, island: &mut Island) {
         ("Cached", format::bytes(m.cached)),
         ("In use", if m.total > 0 { format!("{:.0}%", m.used() as f64 / m.total as f64 * 100.0) } else { "—".into() }),
     ];
-    island(ui, height(ui, 3, 0.0), &spoken("Memory", &about, &pairs), &mut |ui, rect| {
+    boxed(ui, height(ui, 3, 0.0), &spoken("Memory", &about, &pairs), &mut |ui, rect| {
         let p = ui.painter().with_clip_rect(rect.expand(4.0));
         title(&p, rect, "Memory", &about);
         let (g, numbers) = split(rect);
@@ -109,7 +109,7 @@ fn memory(ui: &mut egui::Ui, st: &State, island: &mut Island) {
     });
 }
 
-fn gpu(ui: &mut egui::Ui, st: &State, g: &shellman_core::procs::Gpu, island: &mut Island) {
+fn gpu(ui: &mut egui::Ui, st: &State, g: &shellman_core::procs::Gpu, boxed: &mut Boxed) {
     let empty = Ring::default();
     let rings = st.histories.gpus.get(&g.name);
     let of = |used: u64, total: u64| if total > 0 { format!("{} / {}", format::bytes(used), format::bytes(total)) } else { format::bytes(used) };
@@ -119,7 +119,7 @@ fn gpu(ui: &mut egui::Ui, st: &State, g: &shellman_core::procs::Gpu, island: &mu
         ("Dedicated memory", of(g.dedicated_used, g.dedicated_total)),
         ("Shared memory", of(g.shared_used, g.shared_total)),
     ];
-    island(ui, height(ui, 2, 0.0), &spoken("GPU", &g.name, &pairs), &mut |ui, rect| {
+    boxed(ui, height(ui, 2, 0.0), &spoken("GPU", &g.name, &pairs), &mut |ui, rect| {
         let p = ui.painter().with_clip_rect(rect.expand(4.0));
         title(&p, rect, "GPU", &g.name);
         let (graph_rect, numbers) = split(rect);
@@ -136,7 +136,7 @@ fn disk_title(name: &str) -> String {
     }
 }
 
-fn disk(ui: &mut egui::Ui, st: &State, d: &shellman_core::procs::Disk, island: &mut Island) {
+fn disk(ui: &mut egui::Ui, st: &State, d: &shellman_core::procs::Disk, boxed: &mut Boxed) {
     let empty = Ring::default();
     let rings = st.histories.disks.get(&d.name);
     let name = disk_title(&d.name);
@@ -146,7 +146,7 @@ fn disk(ui: &mut egui::Ui, st: &State, d: &shellman_core::procs::Disk, island: &
         ("Read", format::rate_any(d.read)),
         ("Write", format::rate_any(d.write)),
     ];
-    island(ui, height(ui, 2, 0.0), &spoken(&name, "Active time", &pairs), &mut |ui, rect| {
+    boxed(ui, height(ui, 2, 0.0), &spoken(&name, "Active time", &pairs), &mut |ui, rect| {
         let p = ui.painter().with_clip_rect(rect.expand(4.0));
         title(&p, rect, &name, "Active time");
         let (g, numbers) = split(rect);
@@ -155,7 +155,7 @@ fn disk(ui: &mut egui::Ui, st: &State, d: &shellman_core::procs::Disk, island: &
     });
 }
 
-fn net(ui: &mut egui::Ui, st: &State, n: &shellman_core::procs::Net, island: &mut Island) {
+fn net(ui: &mut egui::Ui, st: &State, n: &shellman_core::procs::Net, boxed: &mut Boxed) {
     let empty = Ring::default();
     let rings = st.histories.nets.get(&n.name);
     let pairs = [
@@ -163,7 +163,7 @@ fn net(ui: &mut egui::Ui, st: &State, n: &shellman_core::procs::Net, island: &mu
         ("Send (dashed)", format::bits(n.send)),
         ("IPv4 address", if n.address.is_empty() { "—".into() } else { n.address.clone() }),
     ];
-    island(ui, height(ui, 2, 0.0), &spoken(&n.name, &n.description, &pairs), &mut |ui, rect| {
+    boxed(ui, height(ui, 2, 0.0), &spoken(&n.name, &n.description, &pairs), &mut |ui, rect| {
         let p = ui.painter().with_clip_rect(rect.expand(4.0));
         title(&p, rect, &n.name, &n.description);
         let (g, numbers) = split(rect);

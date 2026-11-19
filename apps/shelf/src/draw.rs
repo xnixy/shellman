@@ -9,7 +9,6 @@ use crate::text;
 use egui::{pos2, vec2, Align2, Color32, CornerRadius, FontId, Pos2, Rect, Sense, Shape, Stroke, Ui};
 use shellman_core::settings::desktop::Stack;
 use shellman_core::thumbs::{self, Thumbs};
-use shellman_ui::glass::islands::shows_as;
 use shellman_ui::theme::{self, colors, glyph, icon_font, semibold_font};
 use shellman_ui::widgets::draw_text;
 use std::path::PathBuf;
@@ -51,27 +50,30 @@ pub enum Event {
     DragOut(PathBuf),
 }
 
-/// The text colour, faint, as hover and the open stack's backing.
-fn soft(alpha_light: u8, alpha_dark: u8) -> Color32 {
-    let c = colors();
-    if c.high_contrast {
+/// One of Glasshouse's faint fills of the text colour (`row_hover`, `field`). The theme's colours
+/// already show as meant over the glass (see `shows_as`).
+fn wash(fill: Color32) -> Color32 {
+    if colors().high_contrast {
         // No washes: hovered and open things are outlined instead (`theme::contrast_outline`).
         return Color32::TRANSPARENT;
     }
-    shows_as(theme::with_alpha(c.text, if c.light { alpha_light } else { alpha_dark }))
+    fill
 }
 
+/// Hover, the open stack's backing and a drag's "Keep".
 fn hover_fill() -> Color32 {
-    soft(15, 23)
+    wash(colors().row_hover)
 }
 
-/// The paper a document's icon sits on.
+/// The paper a document's icon sits on: Glasshouse's popup sheet (white on light, near-black on
+/// dark, the window colour in high contrast).
 fn paper() -> Color32 {
-    if colors().light {
-        Color32::from_rgb(248, 249, 252)
-    } else {
-        Color32::from_rgb(226, 230, 238)
-    }
+    colors().popup
+}
+
+/// The 1 px edge around a card: a hairline (the text colour in high contrast).
+fn card_edge() -> Color32 {
+    colors().hairline
 }
 
 /// Whether an item's picture is a photo-like preview (fills its card) rather than an icon (sits
@@ -91,7 +93,7 @@ pub fn paint(ui: &mut Ui, scene: &Scene, thumbs: &mut Thumbs) -> Vec<Event> {
         let back = rect.shrink2(vec2(0.0, 2.0));
         theme::focus_ring(ui, &resp, back, geometry::STACK_RADIUS);
         if resp.hovered() || active {
-            ui.painter().rect_filled(back, CornerRadius::same(geometry::STACK_RADIUS as u8), hover_fill());
+            ui.painter().rect_filled(back, geometry::STACK_RADIUS, hover_fill());
         }
         theme::contrast_outline(ui, back, geometry::STACK_RADIUS, resp.hovered(), active);
         if resp.hovered() {
@@ -114,7 +116,7 @@ fn drop_zone(ui: &Ui, rect: Rect, keep: bool) {
     let p = ui.painter();
     let line = if keep { c.text } else { theme::with_alpha(c.muted, 190) };
     if keep {
-        p.rect_filled(rect, CornerRadius::same(geometry::DROP_RADIUS as u8), hover_fill());
+        p.rect_filled(rect, geometry::DROP_RADIUS, hover_fill());
     }
     let mut outline: Vec<Pos2> =
         cards::outline(rect.size() - vec2(1.5, 1.5), geometry::DROP_RADIUS).iter().map(|v| rect.center() + *v).collect();
@@ -172,7 +174,7 @@ fn stack_line(view: &StackView, scene: &Scene) -> String {
 /// One card: the item's preview filling it, or its icon on paper.
 #[allow(clippy::too_many_arguments)]
 fn card(p: &egui::Painter, item: &Item, center: Pos2, side: f32, radius: f32, angle: f32, opacity: f32, thumbs: &mut Thumbs) {
-    let rim = Color32::from_white_alpha(60);
+    let rim = card_edge();
     let size = vec2(side, side);
     let texture = thumbs.get(&item.path, true).map(|t| (t.id(), t.size_vec2()));
     match texture {
@@ -206,7 +208,7 @@ fn fan_pills(ui: &Ui, fan: &FanView, scene: &Scene, thumbs: &mut Thumbs, events:
         });
         theme::focus_ring(ui, &resp, *rect, rect.height() / 2.0);
         if resp.hovered() && fan.t >= 1.0 {
-            p.rect_filled(*rect, CornerRadius::same((rect.height() / 2.0) as u8), soft(12, 18));
+            p.rect_filled(*rect, theme::shape::pill(*rect), hover_fill());
             theme::contrast_outline(ui, *rect, rect.height() / 2.0, true, false);
             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
         }
@@ -216,10 +218,10 @@ fn fan_pills(ui: &Ui, fan: &FanView, scene: &Scene, thumbs: &mut Thumbs, events:
             let texture = thumbs.get(&item.path, true).map(|t| (t.id(), t.size_vec2()));
             match texture {
                 Some((id, tex)) if is_preview(item) => {
-                    cards::card(p, center, vec2(d, d), d / 2.0, 0.0, Fill::Picture(id, cards::cover_uv(tex)), Color32::from_white_alpha(40), fan.t);
+                    cards::card(p, center, vec2(d, d), d / 2.0, 0.0, Fill::Picture(id, cards::cover_uv(tex)), card_edge(), fan.t);
                 }
                 other => {
-                    cards::tile(p, center, vec2(d, d), d / 2.0, 0.0, fade(soft(16, 26)));
+                    cards::tile(p, center, vec2(d, d), d / 2.0, 0.0, fade(wash(c.field)));
                     if let Some((id, tex)) = other {
                         let fit = 26.0 / tex.x.max(tex.y).max(1.0);
                         cards::picture(p, center, tex * fit, 0.0, id, fan.t);

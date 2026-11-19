@@ -1,4 +1,4 @@
-//! "Move to…" and "Copy to…": a small island over the command bar listing where the selection
+//! "Move to…" and "Copy to…": a small menu over the bottom bar listing where the selection
 //! can go (the places it went last, newest first, then the rail's places and pins), and "Choose
 //! folder…", which opens Files' own picker in folder mode as a separate window and waits for
 //! its answer on a worker. The move or copy itself is the shell's, as for paste, with its

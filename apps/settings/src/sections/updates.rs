@@ -91,7 +91,9 @@ pub fn show(ui: &mut egui::Ui, st: &mut State) {
     v.poll();
     let Some(snap) = v.snap.clone() else {
         page::group(ui, "", |ui| {
-            ui.label(theme::muted("Asking Windows Update..."));
+            page::row_with(ui, |ui| {
+                ui.label(theme::muted("Asking Windows Update..."));
+            });
         });
         return;
     };
@@ -102,7 +104,6 @@ pub fn show(ui: &mut egui::Ui, st: &mut State) {
         let (optional, pending): (Vec<_>, Vec<_>) = snap.updates.iter().partition(|u| u.facts.optional());
         if !pending.is_empty() {
             page::group(ui, "Updates", |ui| {
-                ui.spacing_mut().item_spacing.y = 4.0;
                 for u in &pending {
                     update_row(ui, u, None);
                 }
@@ -110,9 +111,9 @@ pub fn show(ui: &mut egui::Ui, st: &mut State) {
         }
         if !optional.is_empty() {
             page::group(ui, "Optional updates", |ui| {
-                ui.label(theme::muted("Windows installs these only if you ask.").size(12.0));
-                ui.add_space(8.0);
-                ui.spacing_mut().item_spacing.y = 4.0;
+                page::row_with(ui, |ui| {
+                    ui.label(theme::muted("Windows installs these only if you ask.").size(12.5));
+                });
                 for u in &optional {
                     let asked = v.asked.contains(&u.id);
                     let label = if asked { "Asked" } else { "Download and install" };
@@ -124,8 +125,9 @@ pub fn show(ui: &mut egui::Ui, st: &mut State) {
                     }
                 }
                 if !snap.v2 {
-                    ui.add_space(6.0);
-                    ui.label(theme::muted("This version of Windows installs optional updates only from its own Settings.").size(12.0));
+                    page::row_with(ui, |ui| {
+                        ui.add(egui::Label::new(theme::muted("This version of Windows installs optional updates only from its own Settings.").size(12.5)).wrap());
+                    });
                 }
             });
         }
@@ -138,44 +140,49 @@ pub fn show(ui: &mut egui::Ui, st: &mut State) {
 fn status(ui: &mut egui::Ui, v: &mut UpdatesView, snap: &Snapshot, head: Headline, now: i64) {
     let c = colors();
     page::group(ui, "", |ui| {
-        ui.horizontal(|ui| {
-            let (disc, _) = ui.allocate_exact_size(Vec2::splat(44.0), Sense::hover());
-            let (fill, ink) = match head {
-                Headline::RestartNeeded => (c.accent_fill, c.on_accent),
-                Headline::Unavailable => (c.control, c.muted),
-                _ => (c.control, c.accent_text),
-            };
-            ui.painter().circle_filled(disc.center(), 22.0, fill);
-            ui.painter().text(disc.center(), Align2::CENTER_CENTER, head_glyph(head), icon_font(20.0), ink);
-            ui.add_space(10.0);
-            ui.vertical(|ui| {
-                ui.add_space(2.0);
-                ui.label(RichText::new(head.text(date)).size(18.0).strong().color(c.text));
-                let sub = match (&snap.unavailable, snap.last_check) {
-                    (Some(why), _) => why.clone(),
-                    (None, Some(t)) => checked_text(wu::local(t), wu::local(now)),
-                    (None, None) => "Not checked yet".to_owned(),
+        page::row_with(ui, |ui| {
+            ui.horizontal(|ui| {
+                let (disc, _) = ui.allocate_exact_size(Vec2::splat(44.0), Sense::hover());
+                let (fill, ink) = match head {
+                    Headline::RestartNeeded => (c.accent_fill, c.on_accent),
+                    Headline::Unavailable => (c.field, c.muted),
+                    _ => (c.field, c.accent_text),
                 };
-                ui.label(theme::muted(sub).size(12.5));
+                ui.painter().circle_filled(disc.center(), 22.0, fill);
+                ui.painter().text(disc.center(), Align2::CENTER_CENTER, head_glyph(head), icon_font(20.0), ink);
+                ui.add_space(10.0);
+                ui.vertical(|ui| {
+                    ui.add_space(2.0);
+                    ui.label(RichText::new(head.text(date)).size(18.0).strong().color(c.text));
+                    let sub = match (&snap.unavailable, snap.last_check) {
+                        (Some(why), _) => why.clone(),
+                        (None, Some(t)) => checked_text(wu::local(t), wu::local(now)),
+                        (None, None) => "Not checked yet".to_owned(),
+                    };
+                    ui.label(theme::muted(sub).size(12.5));
+                });
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| primary(ui, v, head));
             });
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| primary(ui, v, head));
         });
         let active: Vec<f32> = snap.updates.iter().filter_map(|u| u.facts.progress).collect();
         if !active.is_empty() {
-            ui.add_space(10.0);
-            let (r, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 4.0), Sense::hover());
-            bar(ui, r, active.iter().sum::<f32>() / active.len() as f32);
+            page::row_with(ui, |ui| {
+                let (r, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 4.0), Sense::hover());
+                bar(ui, r, active.iter().sum::<f32>() / active.len() as f32);
+            });
         }
         if v.confirm_restart {
             confirm_restart(ui, v);
         }
         if let Some(n) = &snap.notice {
-            ui.add_space(8.0);
-            ui.label(theme::muted(n).size(12.0));
+            page::row_with(ui, |ui| {
+                ui.add(egui::Label::new(theme::muted(n).size(12.5)).wrap());
+            });
         }
         if snap.pause.until.is_some() && !snap.pause.windows_agrees {
-            ui.add_space(8.0);
-            ui.label(theme::muted("Windows takes in the pause at its next check, in a moment.").size(12.0));
+            page::row_with(ui, |ui| {
+                ui.add(egui::Label::new(theme::muted("Windows takes in the pause at its next check, in a moment.").size(12.5)).wrap());
+            });
         }
     });
 }
@@ -222,21 +229,20 @@ fn primary(ui: &mut egui::Ui, v: &mut UpdatesView, head: Headline) {
 
 /// Restarting ends every app, so the page asks first.
 fn confirm_restart(ui: &mut egui::Ui, v: &mut UpdatesView) {
-    ui.add_space(14.0);
-    page::label(ui, "Restart now?");
-    ui.label(theme::muted("Your PC restarts right away to finish installing. Save your work first; an app with unsaved work can still stop the restart and ask you.").size(12.5));
-    ui.add_space(8.0);
-    ui.horizontal(|ui| {
-        if button(ui, "Restart now", true, true).clicked() {
-            v.restart_refused = !power::update_and_restart();
-        }
+    let detail = "Your PC restarts right away to finish installing. Save your work first; an app with unsaved work can still stop the restart and ask you.";
+    page::row(ui, "Restart now?", detail, |ui| {
+        // Right to left: Restart now is the row's last button.
         if button(ui, "Cancel", false, true).clicked() {
             v.confirm_restart = false;
         }
+        if button(ui, "Restart now", true, true).clicked() {
+            v.restart_refused = !power::update_and_restart();
+        }
     });
     if v.restart_refused {
-        ui.add_space(6.0);
-        ui.label(theme::muted("Windows refused to restart.").size(12.0));
+        page::row_with(ui, |ui| {
+            ui.label(theme::muted("Windows refused to restart.").size(12.5));
+        });
     }
 }
 
@@ -245,39 +251,35 @@ fn pause_group(ui: &mut egui::Ui, v: &mut UpdatesView, snap: &Snapshot, now: i64
     page::group(ui, "Pause updates", |ui| {
         match snap.pause.until.filter(|t| *t > now) {
             Some(until) => {
-                ui.label(format!("Paused until {}.", date(until)));
-                ui.add_space(8.0);
-                if row_button(ui, "Resume updates", true).clicked() {
+                let resume = page::row(ui, &format!("Paused until {}.", date(until)), "", |ui| row_button(ui, "Resume updates", true).clicked());
+                if resume {
                     if let Some(w) = v.watch() {
                         w.resume();
                     }
                 }
             }
             None => {
-                ui.label(theme::muted("While paused, Windows does not download or install updates.").size(12.5));
-                ui.add_space(10.0);
                 let choices: Vec<(u32, String)> = logic::pause_weeks(snap.pause.max_days).into_iter().map(|w| (w, if w == 1 { "1 week".to_owned() } else { format!("{w} weeks") })).collect();
                 if !choices.iter().any(|(w, _)| *w == v.weeks) {
                     v.weeks = 1;
                 }
                 let opts: Vec<(u32, &str)> = choices.iter().map(|(w, t)| (*w, t.as_str())).collect();
-                ui.horizontal(|ui| {
-                    page::segmented(ui, &mut v.weeks, &opts);
-                    ui.add_space(8.0);
-                    if row_button(ui, "Pause", true).clicked() {
-                        if let Some(w) = v.watch() {
-                            w.pause(v.weeks);
+                page::stacked(ui, "Pause for", "While paused, Windows does not download or install updates.", |ui| {
+                    ui.horizontal(|ui| {
+                        page::segmented(ui, &mut v.weeks, &opts);
+                        ui.add_space(8.0);
+                        if row_button(ui, "Pause", true).clicked() {
+                            if let Some(w) = v.watch() {
+                                w.pause(v.weeks);
+                            }
                         }
-                    }
+                    });
                 });
             }
         }
-        if v.settings_opens {
-            ui.add_space(14.0);
-            if link_row(ui, "More options in Windows Settings").clicked() {
-                // Starts Windows' host for Settings first when it is not running.
-                super::winlink::open_link(SETTINGS_URI.to_owned());
-            }
+        if v.settings_opens && link_row(ui, "More options in Windows Settings").clicked() {
+            // Starts Windows' host for Settings first when it is not running.
+            super::winlink::open_link(SETTINGS_URI.to_owned());
         }
     });
 }
@@ -297,16 +299,21 @@ fn history_group(ui: &mut egui::Ui, v: &mut UpdatesView) {
         if !v.history_open {
             return;
         }
-        ui.add_space(10.0);
         match &v.history {
             None => {
-                ui.label(theme::muted("Reading the history...").size(12.5));
+                page::row_with(ui, |ui| {
+                    ui.label(theme::muted("Reading the history...").size(12.5));
+                });
             }
             Some(Err(e)) => {
-                ui.label(theme::muted(e).size(12.5));
+                page::row_with(ui, |ui| {
+                    ui.add(egui::Label::new(theme::muted(e).size(12.5)).wrap());
+                });
             }
             Some(Ok(list)) if list.is_empty() => {
-                ui.label(theme::muted("Nothing has been installed yet.").size(12.5));
+                page::row_with(ui, |ui| {
+                    ui.label(theme::muted("Nothing has been installed yet.").size(12.5));
+                });
             }
             Some(Ok(list)) => {
                 for g in Group::ALL {
@@ -314,12 +321,12 @@ fn history_group(ui: &mut egui::Ui, v: &mut UpdatesView) {
                     if rows.is_empty() {
                         continue;
                     }
-                    page::label(ui, &format!("{} ({})", g.label(), rows.len()));
-                    ui.spacing_mut().item_spacing.y = 4.0;
+                    page::row_with(ui, |ui| {
+                        ui.label(theme::muted(format!("{} ({})", g.label(), rows.len())).size(12.5));
+                    });
                     for e in rows {
                         history_row(ui, e, &date(e.when));
                     }
-                    ui.add_space(12.0);
                 }
             }
         }

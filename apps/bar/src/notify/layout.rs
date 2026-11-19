@@ -10,9 +10,9 @@
 use egui::{pos2, vec2, Rect};
 use shellman_core::notify::Toast;
 
-/// A toast island's width (the mockup's 360) and corner radius (its `.r`, 22).
+/// A toast island's width (the mockup's 360) and corner radius (Glasshouse's island).
 pub const CARD_W: f32 = 360.0;
-pub const RADIUS: f32 = 22.0;
+pub const RADIUS: f32 = shellman_ui::theme::shape::ISLAND;
 /// Room around the islands inside the window, for their shadows.
 pub const EDGE: f32 = 16.0;
 /// From the clock island's lower edge to the first island under it.

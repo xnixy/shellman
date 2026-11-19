@@ -819,7 +819,7 @@ mod tests {
         assert_eq!(a.levels[1].top - b.levels[1].top, 80);
         // Scrolled out of view above: it stays level with the menu's top, not above it.
         let c = lay_out(Anchor::at(100, 100), work, 1.0, &[&main, &sub], &[-500.0]).unwrap();
-        assert_eq!(c.levels[1].top, 100 - 8);
+        assert_eq!(c.levels[1].top, 100 - draw::PAD as i32);
     }
 
     #[test]

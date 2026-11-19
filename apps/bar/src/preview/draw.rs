@@ -5,12 +5,14 @@
 use super::layout::Layout;
 use egui::{Context, TextureId, Vec2};
 use shellman_core::winlist::AppWindow;
-use shellman_ui::theme::{colors, glyph, icon_font, mix, with_alpha};
+use shellman_ui::theme::{colors, glyph, icon_font, mix, shape, with_alpha};
 use shellman_ui::widgets::draw_text;
 use std::path::Path;
 
-/// Concentric with the panel's corner, a tile's padding in.
-const TILE_RADIUS: u8 = 10;
+/// Glasshouse's grid tile, for the hover wash.
+const TILE_RADIUS: f32 = shape::TILE;
+/// The icon plate in the picture's place: concentric with the tile, `layout::PAD` outside it.
+const PLATE_RADIUS: f32 = TILE_RADIUS - super::layout::PAD;
 const BIG_ICON: f32 = 48.0;
 const SMALL_ICON: f32 = 18.0;
 
@@ -49,7 +51,7 @@ pub fn draw(ctx: &Context, view: &View, icons: Icons) -> Option<Action> {
             let island = shellman_ui::glass::Island::new(full, style.radius);
             ui.painter().extend(shellman_ui::glass::islands::solid_shapes(&[island], &style));
         }
-        let tile_radius = egui::CornerRadius::same(TILE_RADIUS);
+        let tile_radius = shape::corner(TILE_RADIUS);
         // Nearly opaque shades of the glass's own tint: Windows blends the window over its glass
         // in linear light, where a faint translucent white comes out far brighter than drawn.
         let base = super::style().tint.to_opaque();
@@ -62,18 +64,18 @@ pub fn draw(ctx: &Context, view: &View, icons: Icons) -> Option<Action> {
             let over = ui.rect_contains_pointer(outer);
             let resp = ui.interact(outer, egui::Id::new(("preview tile", window.hwnd)), egui::Sense::click());
             shellman_ui::theme::speak(&resp, egui::WidgetType::Button, || shellman_ui::widgets::window_name(&window.title));
-            shellman_ui::theme::focus_ring(ui, &resp, outer, TILE_RADIUS as f32);
+            shellman_ui::theme::focus_ring(ui, &resp, outer, TILE_RADIUS);
             if over && !c.high_contrast {
                 ui.painter().rect_filled(outer, tile_radius, hover);
             }
-            shellman_ui::theme::contrast_outline(ui, outer, TILE_RADIUS as f32, over, false);
+            shellman_ui::theme::contrast_outline(ui, outer, TILE_RADIUS, over, false);
             let icon = window.icon_source().and_then(|p| icons(ui.ctx(), &p));
             let picture = at(tile.preview);
             if !view.live.get(i).copied().unwrap_or(false) {
                 // Minimized, or one the compositor won't show: the app's icon on a plate.
-                ui.painter().rect_filled(picture, tile_radius, plate);
+                ui.painter().rect_filled(picture, shape::corner(PLATE_RADIUS), plate);
                 if c.high_contrast {
-                    ui.painter().rect_stroke(picture, tile_radius, egui::Stroke::new(1.0_f32, c.muted), egui::StrokeKind::Inside);
+                    ui.painter().rect_stroke(picture, PLATE_RADIUS, egui::Stroke::new(1.0_f32, c.muted), egui::StrokeKind::Inside);
                 }
                 paint_icon(ui, icon, picture.center(), BIG_ICON.min(picture.height() * 0.6));
             }

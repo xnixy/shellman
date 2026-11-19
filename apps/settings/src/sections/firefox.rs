@@ -6,7 +6,9 @@
 //! again every few seconds while the page shows, so closing Firefox clears the "Firefox is open"
 //! line without a click.
 
+use crate::page;
 use crate::sections::updates_rows::row_button;
+use shellman_ui::widgets::toggle;
 use shellman_core::firefox::detect::{self, Install, Profiles};
 use shellman_core::firefox::look::{self, Status};
 use shellman_core::firefox::{actions, Source};
@@ -132,8 +134,11 @@ fn install_for(s: &Scan, profile: &Path) -> Option<Install> {
     s.installs.iter().find(|i| s.profiles.default_for(i).is_some_and(|d| d == profile)).or(s.installs.first()).cloned()
 }
 
+/// A muted line as a row of the group.
 fn muted(ui: &mut egui::Ui, text: &str) {
-    ui.add(egui::Label::new(theme::muted(text).size(12.0)).wrap());
+    page::row_with(ui, |ui| {
+        ui.add(egui::Label::new(theme::muted(text).size(12.5)).wrap());
+    });
 }
 
 fn status_text(row: &Row) -> &'static str {
@@ -157,7 +162,7 @@ pub fn group(ui: &mut egui::Ui, v: &mut FirefoxView) {
         return;
     }
     let folders: Vec<String> = s.installs.iter().map(|i| i.dir.display().to_string()).collect();
-    muted(ui, &format!("Firefox is installed ({}). The Islands look: floating glass pills and rounded islands, no window frame.", folders.join(", ")));
+    page::row(ui, "Firefox", &format!("Installed ({}). The Islands look: floating glass pills and rounded islands, no window frame.", folders.join(", ")), |_| {});
     if s.source.is_none() {
         muted(ui, "The look's files are missing from shellman's folder (firefox). Reinstall shellman to get them back.");
         return;
@@ -166,7 +171,6 @@ pub fn group(ui: &mut egui::Ui, v: &mut FirefoxView) {
         muted(ui, "Firefox has no profiles yet. Start Firefox once, then come back.");
         return;
     }
-    ui.add_space(4.0);
 
     // The profile: the default until another is picked.
     let chosen = v.chosen.clone().or_else(|| s.default.clone());
@@ -176,16 +180,18 @@ pub fn group(ui: &mut egui::Ui, v: &mut FirefoxView) {
         if default { format!("{} (default)", r.name) } else { r.name.clone() }
     };
     let shown = row.as_ref().map(label).unwrap_or_else(|| "Choose a profile".into());
-    let resp = egui::ComboBox::from_id_salt("firefox-profile").width(300.0_f32.min(ui.available_width())).selected_text(&shown).show_ui(ui, |ui| {
-        for r in &s.rows {
-            let selected = row.as_ref().is_some_and(|c| c.path == r.path);
-            if ui.selectable_label(selected, label(r)).on_hover_text(r.path.display().to_string()).clicked() {
-                v.chosen = Some(r.path.clone());
-                v.note = None;
+    page::row(ui, "Profile", "", |ui| {
+        let resp = egui::ComboBox::from_id_salt("firefox-profile").width(300.0_f32.min(ui.available_width() * 0.6)).selected_text(&shown).show_ui(ui, |ui| {
+            for r in &s.rows {
+                let selected = row.as_ref().is_some_and(|c| c.path == r.path);
+                if ui.selectable_label(selected, label(r)).on_hover_text(r.path.display().to_string()).clicked() {
+                    v.chosen = Some(r.path.clone());
+                    v.note = None;
+                }
             }
-        }
+        });
+        resp.response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::ComboBox, true, format!("Firefox profile, {shown}")));
     });
-    resp.response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::ComboBox, true, format!("Firefox profile, {shown}")));
     let Some(row) = row else {
         muted(ui, "Firefox does not say which profile it opens by default; choose one.");
         return;
@@ -200,28 +206,26 @@ pub fn group(ui: &mut egui::Ui, v: &mut FirefoxView) {
             Status::Installed { scripts } | Status::Outdated { scripts } => scripts,
         };
     }
-    ui.add_space(4.0);
-    muted(ui, status_text(&row));
-    if row.in_use {
-        ui.add(egui::Label::new(theme::muted("Firefox is open with this profile. Close Firefox to change the look.").size(12.0).color(theme::colors().danger)).wrap());
-    }
-    ui.add_space(6.0);
     // Busy until a read after the work shows what is there now (the last one may be older).
     let busy = v.work.is_some() || v.resync_from.is_some();
     ui.add_enabled_ui(!busy, |ui| {
-        theme::setting_row(
+        page::row(
             ui,
             "With scripts",
             "Accent and glass follow shellman live, and more, smaller islands. Firefox then runs shellman's script files from the profile with full browser rights. Putting their loader in Firefox's folder asks for administrator rights once.",
-            &mut v.scripts,
+            |ui| toggle(ui, &mut v.scripts, "With scripts"),
         );
     });
-    ui.add_space(6.0);
 
     let installed_scripts = matches!(row.status, Status::Installed { scripts: true } | Status::Outdated { scripts: true });
     let can = !busy && !row.in_use;
     let mut press = None;
-    ui.horizontal(|ui| {
+    page::row(ui, "Islands look", status_text(&row), |ui| {
+        // Right to left: what is under way at the row's end, then the buttons last to first.
+        if busy {
+            ui.label(theme::muted("Working…").size(12.5));
+            ui.add(egui::Spinner::new().size(14.0));
+        }
         match row.status {
             Status::NotInstalled => {
                 if row_button(ui, "Install", can).clicked() {
@@ -229,20 +233,21 @@ pub fn group(ui: &mut egui::Ui, v: &mut FirefoxView) {
                 }
             }
             _ => {
+                if row_button(ui, "Remove", can).clicked() {
+                    press = Some(false);
+                }
                 let stale = matches!(row.status, Status::Outdated { .. }) || installed_scripts != v.scripts;
                 if stale && row_button(ui, "Update", can).clicked() {
                     press = Some(true);
                 }
-                if row_button(ui, "Remove", can).clicked() {
-                    press = Some(false);
-                }
             }
         }
-        if busy {
-            ui.add(egui::Spinner::new().size(14.0));
-            ui.label(theme::muted("Working…").size(12.0));
-        }
     });
+    if row.in_use {
+        page::row_with(ui, |ui| {
+            ui.add(egui::Label::new(theme::muted("Firefox is open with this profile. Close Firefox to change the look.").size(12.5).color(theme::colors().danger)).wrap());
+        });
+    }
     match press {
         Some(true) => {
             let (src, profile, profiles, installs) = (s.source.clone().expect("checked"), row.path.clone(), s.profiles.clone(), s.installs.clone());
@@ -258,7 +263,9 @@ pub fn group(ui: &mut egui::Ui, v: &mut FirefoxView) {
     match &v.note {
         Some(Ok(msg)) => muted(ui, msg),
         Some(Err(msg)) => {
-            ui.add(egui::Label::new(egui::RichText::new(msg).size(12.0).color(theme::colors().danger)).wrap());
+            page::row_with(ui, |ui| {
+                ui.add(egui::Label::new(egui::RichText::new(msg).size(12.5).color(theme::colors().danger)).wrap());
+            });
         }
         None => {}
     }

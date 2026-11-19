@@ -9,7 +9,7 @@ use shellman_core::notify::Toast;
 use shellman_ui::chips::{chip, chip_width, round_icon, soft_colors, Chip};
 use shellman_ui::glass::{islands, Island};
 use shellman_ui::theme::{self, colors, glyph, icon_font, mix, semibold_font, with_alpha};
-use shellman_ui::widgets::draw_text;
+use shellman_ui::widgets::{draw_text, paint_switch, SWITCH};
 use std::collections::HashMap;
 use std::path::Path;
 use std::time::SystemTime;
@@ -234,8 +234,9 @@ fn draw_card(ui: &mut Ui, card: &Card, replies: &mut HashMap<u32, String>, icons
         let send_w = chip_width(ui, label, false, Chip::Accent).max(64.0);
         let send = Rect::from_min_size(pos2(r.right() - send_w, r.top()), vec2(send_w, r.height()));
         let field = Rect::from_min_max(r.min, pos2(send.left() - BUTTON_GAP, r.bottom()));
+        // Glasshouse's text field: the faint fill inside a hairline, 12 pt round.
         let (fill, _, line) = soft_colors(c.light);
-        ui.painter().rect(field, (field.height() / 2.0) as u8, fill, line, egui::StrokeKind::Inside);
+        ui.painter().rect(field, theme::shape::corner(theme::shape::FIELD), fill, line, egui::StrokeKind::Inside);
         let text = replies.entry(t.id).or_default();
         let edit = egui::TextEdit::singleline(text)
             .id(egui::Id::new(("toast reply", t.id)))
@@ -275,27 +276,13 @@ fn controls(ui: &mut Ui, rect: Rect, view: &View, events: &mut Vec<Event>) {
     } else {
         right -= 8.0;
     }
-    // The switch, as in the mockup (38 by 22).
-    let track = Rect::from_min_size(pos2(right - 38.0, mid - 11.0), vec2(38.0, 22.0));
+    // Glasshouse's switch, the same one every settings row shows.
+    let track = Rect::from_min_size(pos2(right - SWITCH.x, mid - SWITCH.y / 2.0), SWITCH);
     let resp = ui.interact(track.expand(4.0), egui::Id::new("notifications dnd"), Sense::click());
     // A switch: egui 0.31 has no Switch role, a checkbox stands in.
     theme::speak_selected(&resp, egui::WidgetType::Checkbox, view.dnd, || "Do not disturb".to_owned());
-    theme::focus_ring(ui, &resp, track, 11.0);
-    let t = ui.ctx().animate_bool(resp.id, view.dnd);
-    let knob = pos2(track.left() + 11.0 + 16.0 * t, mid);
-    if c.high_contrast {
-        // Outlined; on is highlight with a highlight-text knob, off the window with a text knob.
-        let (fill, dot) = if view.dnd { (c.accent_fill, c.on_accent) } else { (c.bg, c.text) };
-        ui.painter().rect(track, 11, fill, egui::Stroke::new(1.0_f32, c.text), egui::StrokeKind::Inside);
-        ui.painter().circle_filled(knob, 7.0, dot);
-    } else {
-        // Off: the mockup's faint white track (#ffffff22), with a hairline so it reads on any glass.
-        let (_, off, line) = soft_colors(c.light);
-        let line = egui::Stroke::new(line.width, with_alpha(line.color, (line.color.a() as f32 * (1.0 - t)) as u8));
-        ui.painter().rect(track, 11, mix(off, c.accent_fill, t), line, egui::StrokeKind::Inside);
-        // The knob is `on_accent` when on: a white one vanished on a light accent.
-        ui.painter().circle_filled(knob, 8.0, mix(Color32::WHITE, c.on_accent, t));
-    }
+    theme::focus_ring(ui, &resp, track, SWITCH.y / 2.0);
+    paint_switch(ui, track, resp.id, view.dnd, resp.hovered());
     if resp.on_hover_text(if view.dnd { "Turn do not disturb off" } else { "Do not disturb: notifications are listed, not shown" }).clicked() {
         events.push(Event::ToggleDnd);
     }

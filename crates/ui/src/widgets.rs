@@ -142,15 +142,15 @@ pub fn switch(ui: &mut Ui, on: &mut bool, label: &str) -> egui::Response {
     let galley = ui
         .painter()
         .layout_no_wrap(label.to_owned(), FontId::proportional(13.5), c.text);
-    let size = Vec2::new(36.0 + 10.0 + galley.size().x, 20.0_f32.max(galley.size().y));
+    let size = Vec2::new(SWITCH.x + 10.0 + galley.size().x, SWITCH.y.max(galley.size().y));
     let (rect, mut resp) = ui.allocate_exact_size(size, Sense::click());
     crate::access::describe(&resp, || egui::WidgetInfo::selected(egui::WidgetType::Checkbox, true, *on, label));
     if resp.clicked() {
         *on = !*on;
         resp.mark_changed();
     }
-    let track = Rect::from_min_size(egui::pos2(rect.left(), rect.center().y - 10.0), Vec2::new(36.0, 20.0));
-    theme::focus_ring(ui, &resp, track, 10.0);
+    let track = Rect::from_min_size(egui::pos2(rect.left(), rect.center().y - SWITCH.y / 2.0), SWITCH);
+    theme::focus_ring(ui, &resp, track, SWITCH.y / 2.0);
     paint_switch(ui, track, resp.id, *on, resp.hovered());
     let pos = egui::pos2(track.right() + 10.0, rect.center().y - galley.size().y / 2.0);
     ui.painter().galley(pos, galley, c.text);
@@ -177,34 +177,45 @@ pub fn name_field(resp: &egui::Response, name: &str, typed: Option<&str>) {
 /// A switch alone (its label is beside it in the row, see `theme::setting_row`); `name` is what a
 /// screen reader calls it.
 pub fn toggle(ui: &mut Ui, on: &mut bool, name: &str) -> egui::Response {
-    let (rect, mut resp) = ui.allocate_exact_size(Vec2::new(36.0, 20.0), Sense::click());
+    let (rect, mut resp) = ui.allocate_exact_size(SWITCH, Sense::click());
     crate::access::describe(&resp, || egui::WidgetInfo::selected(egui::WidgetType::Checkbox, true, *on, name));
     if resp.clicked() {
         *on = !*on;
         resp.mark_changed();
     }
-    theme::focus_ring(ui, &resp, rect, 10.0);
+    theme::focus_ring(ui, &resp, rect, SWITCH.y / 2.0);
     paint_switch(ui, rect, resp.id, *on, resp.hovered());
     resp
 }
 
-/// The track turns to the accent as the knob slides over; the knob turns `on_accent` (a white
-/// knob would vanish on a light accent). In high contrast: outlined, Windows' own pairs.
-fn paint_switch(ui: &Ui, track: Rect, id: Id, on: bool, hovered: bool) {
+/// A switch's track: Glasshouse's 40x22 pill, its knob 3 pt in from the ends.
+pub const SWITCH: Vec2 = Vec2::new(40.0, 22.0);
+const KNOB_INSET: f32 = 3.0;
+
+/// Off: the field fill with a hairline and a grey knob. On: the accent with an `on_accent` knob
+/// (a white knob would vanish on a light accent). The knob slides as it flips and swells a little
+/// under the pointer. In high contrast: outlined, Windows' own pairs.
+pub fn paint_switch(ui: &Ui, track: Rect, id: Id, on: bool, hovered: bool) {
     let c = colors();
     let t = ui.ctx().animate_bool_responsive(id, on);
     let p = ui.painter();
-    let x = track.left() + 10.0 + 16.0 * t;
-    let r = if hovered { 7.5 } else { 7.0 };
+    let r = track.height() / 2.0 - KNOB_INSET;
+    let x = track.left() + KNOB_INSET + r + (track.width() - 2.0 * (KNOB_INSET + r)) * t;
+    let round = CornerRadius::same((track.height() / 2.0) as u8);
+    let knob_r = if hovered { r + 0.5 } else { r };
     if c.high_contrast {
         let (fill, knob) = if on { (c.accent_fill, c.on_accent) } else { (c.bg, c.text) };
-        p.rect_filled(track, CornerRadius::same(10), fill);
-        p.rect_stroke(track, CornerRadius::same(10), egui::Stroke::new(1.0_f32, c.text), egui::StrokeKind::Inside);
-        p.circle_filled(egui::pos2(x, track.center().y), r - 1.0, knob);
+        p.rect_filled(track, round, fill);
+        p.rect_stroke(track, round, egui::Stroke::new(1.0_f32, c.text), egui::StrokeKind::Inside);
+        p.circle_filled(egui::pos2(x, track.center().y), knob_r - 1.0, knob);
         return;
     }
-    p.rect_filled(track, CornerRadius::same(10), theme::mix(c.track, c.accent_fill, t));
-    p.circle_filled(egui::pos2(x, track.center().y), r, theme::mix(c.muted, c.on_accent, t));
+    let off = c.track;
+    p.rect_filled(track, round, theme::mix(off, c.accent_fill, t));
+    if t < 1.0 {
+        p.rect_stroke(track, round, egui::Stroke::new(1.0_f32, theme::with_alpha(c.hairline, ((1.0 - t) * c.hairline.a() as f32) as u8)), egui::StrokeKind::Inside);
+    }
+    p.circle_filled(egui::pos2(x, track.center().y), knob_r, theme::mix(c.muted, c.on_accent, t));
 }
 
 /// One line of text in a box, cut with an ellipsis when it does not fit.

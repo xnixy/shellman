@@ -16,13 +16,13 @@
   --shellman-accent: #0067c0;
   --shellman-on-accent: #ffffff;
   --shellman-island-opacity: 0.43;
-  /* dark: shellman's neutral grey 10 with 6% of the accent mixed in */
-  --shellman-island-fill: #0a1015;
+  /* dark: Glasshouse's near-black page (#07080a) with 2% of the accent mixed in */
+  --shellman-island-fill: #070a0e;
 }
 
 @media (prefers-color-scheme: light) {
   :root {
-    /* light: grey 238 with 6% accent */
-    --shellman-island-fill: #e0e6eb;
+    /* light: Glasshouse's off-white page (#f4f4f1) with 2% accent */
+    --shellman-island-fill: #f2f3f2;
   }
 }

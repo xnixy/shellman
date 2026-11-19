@@ -19,7 +19,7 @@ pub struct Settings {
     pub window: Option<crate::placement::Rect>,
     /// Where items were last moved or copied to with Move to… and Copy to…, newest first.
     pub recent_dests: Vec<PathBuf>,
-    /// Whether the details island shows on the right.
+    /// Whether the details box shows on the right.
     pub details: bool,
 }
 

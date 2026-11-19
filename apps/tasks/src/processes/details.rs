@@ -3,8 +3,7 @@
 
 use crate::app::State;
 use egui::{pos2, vec2, Align2, FontId, Rect};
-use shellman_ui::glass::islands::shows_as;
-use shellman_ui::theme::{self, colors};
+use shellman_ui::theme::{colors, shape};
 
 pub const DETAILS_H: f32 = 132.0;
 
@@ -15,7 +14,9 @@ pub fn show(ui: &mut egui::Ui, rect: Rect, proc: usize, st: &mut State) {
     let details = st.details.entry(key).or_insert_with(|| shellman_core::procs::Control::details(&control, key)).clone();
     let p = &st.list.procs[proc];
     let card = rect.shrink2(vec2(6.0, 4.0));
-    ui.painter().rect_filled(card, 14.0, shows_as(theme::with_alpha(c.text, if c.light { 10 } else { 8 })));
+    // A well inside the list's box: a tile, in the faint text fill (the window colour in high
+    // contrast).
+    ui.painter().rect_filled(card, shape::TILE, c.well);
     let inner = card.shrink2(vec2(16.0, 10.0));
     let unknown = |s: Option<String>| s.unwrap_or_else(|| "Not readable".into());
     let parent = st

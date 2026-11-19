@@ -7,7 +7,7 @@ use crate::theme::{colors, with_alpha};
 use egui::{pos2, vec2, Color32, Id, Rect, Response, Sense, Stroke, Ui};
 
 /// Thickness of the track, in points.
-pub const TRACK_H: f32 = 6.0;
+pub const TRACK_H: f32 = 4.0;
 /// Diameter of the knob.
 pub const KNOB: f32 = 18.0;
 /// The widget is as tall as this, so the knob has room to be grabbed.

@@ -1,5 +1,5 @@
-//! Find in the scrollback (Ctrl+Shift+F): a glass pill in the top row, between the tabs and the
-//! window buttons, as Files' search pill sits in its bar. Typing searches as it goes; Enter goes
+//! Find in the scrollback (Ctrl+Shift+F): a small popover at the top right of the terminal, over
+//! the grid. Typing searches as it goes; Enter goes
 //! to the next match up (older), Shift+Enter down; "Aa" makes it case-sensitive; Esc closes.
 //!
 //! The text is found with `alacritty_terminal`'s own search (its regex DFAs over the grid; the
@@ -19,13 +19,10 @@ use shellman_ui::chips::round_icon;
 use shellman_ui::theme::{self, colors, glyph, icon_font};
 use std::time::{Duration, Instant};
 
-/// The pill's width (narrower when the window is).
+/// The box's width (narrower when the window is), and its height.
 pub const WIDTH: f32 = 440.0;
-/// The room the tabs keep beside the pill: one tab and the + and profile buttons.
-const TABS_MIN: f32 = 170.0;
-/// Narrower than this, the pill takes the whole row (the tabs give way while it is open).
-const PILL_MIN: f32 = 300.0;
-/// The pill's parts, in points: the search glyph, the field at its smallest, the count, the
+pub const HEIGHT: f32 = 44.0;
+/// The box's parts, in points: the search glyph, the field at its smallest, the count, the
 /// case toggle, and the up, down and close buttons.
 const GLYPH_W: f32 = 36.0;
 const FIELD_MIN: f32 = 80.0;
@@ -33,14 +30,13 @@ const COUNT_W: f32 = 86.0;
 const CASE_W: f32 = 36.0;
 const BUTTONS_W: f32 = 3.0 * 32.0 + 6.0;
 
-/// The pill's width in a row `row` wide (beside the tabs, `gap` from them), and whether it
-/// takes the whole row.
-pub fn pill_width(row: f32, gap: f32) -> (f32, bool) {
-    let beside = (row - gap - TABS_MIN).min(WIDTH);
-    if beside >= PILL_MIN { (beside, false) } else { (row.max(0.0), true) }
+/// The box's width in a body `body` wide: its full width, less the room it keeps from the
+/// body's edges, down to the narrowest that holds the field and the buttons.
+pub fn box_width(body: f32) -> f32 {
+    (body - 24.0).clamp(GLYPH_W + FIELD_MIN + BUTTONS_W, WIDTH)
 }
 
-/// Which of the optional parts fit a pill `w` wide: the count goes first, then the case
+/// Which of the optional parts fit a box `w` wide: the count goes first, then the case
 /// toggle; the field always keeps its smallest width.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Parts {
@@ -99,14 +95,14 @@ pub struct Find {
 
 
 impl Find {
-    /// Open (or, when open, put the keyboard back in) the pill.
+    /// Open (or, when open, put the keyboard back in) the box.
     pub fn show(&mut self) {
         self.open = true;
         self.focus = true;
         self.generation += 1;
     }
 
-    /// The query was set from outside the pill (`SHELLMAN_TERMINAL_SCRIPT`): count afresh.
+    /// The query was set from outside the box (`SHELLMAN_TERMINAL_SCRIPT`): count afresh.
     pub fn changed_by_script(&mut self) {
         self.tab = None;
     }
@@ -249,9 +245,9 @@ impl Find {
     }
 }
 
-/// What the pill asks of the app this frame.
+/// What the box asks of the app this frame.
 #[derive(Default)]
-pub struct PillOut {
+pub struct BoxOut {
     /// The query or the case changed.
     pub changed: bool,
     /// Up (older) or down.
@@ -259,14 +255,14 @@ pub struct PillOut {
     pub close: bool,
 }
 
-/// Draw the pill's contents in `rect` (its island is added by the caller).
-pub fn pill(ui: &mut egui::Ui, rect: Rect, find: &mut Find) -> PillOut {
+/// Draw the box's contents in `rect` (its fill and island are the caller's).
+pub fn contents(ui: &mut egui::Ui, rect: Rect, find: &mut Find) -> BoxOut {
     let c = colors();
-    let mut out = PillOut::default();
+    let mut out = BoxOut::default();
     let id = Id::new(EDIT);
     let focused = ui.memory(|m| m.has_focus(id));
     if focused {
-        ui.painter().rect_stroke(rect.shrink(1.0), egui::CornerRadius::same((rect.height() / 2.0) as u8), Stroke::new(1.0_f32, theme::with_alpha(c.accent_fill, 190)), egui::StrokeKind::Inside);
+        ui.painter().rect_stroke(rect.shrink(1.0), theme::shape::corner(theme::shape::POPOVER - 1.0), Stroke::new(1.0_f32, theme::with_alpha(c.accent_fill, 190)), egui::StrokeKind::Inside);
     }
     ui.painter().text(egui::pos2(rect.left() + 18.0, rect.center().y), Align2::LEFT_CENTER, glyph::SEARCH, icon_font(12.0), c.muted);
     let show = parts(rect.width());
@@ -363,14 +359,13 @@ mod tests {
     use alacritty_terminal::vte::ansi::Processor;
 
     #[test]
-    fn the_pill_never_overflows_its_row() {
-        // Wide: the full pill beside the tabs.
-        assert_eq!(pill_width(1200.0, 12.0), (WIDTH, false));
-        // Narrower: it gives way, keeping the tabs their room, down to its smallest.
-        let (w, alone) = pill_width(560.0, 12.0);
-        assert!(!alone && w + 12.0 + TABS_MIN <= 560.0 + 0.01 && w >= PILL_MIN);
-        // The narrowest window (420 wide leaves a 274 row): the whole row.
-        assert_eq!(pill_width(274.0, 12.0), (274.0, true));
+    fn the_box_never_overflows_its_body() {
+        // Wide: the full box.
+        assert_eq!(box_width(1200.0), WIDTH);
+        // Narrower: it keeps its distance from the edges.
+        assert_eq!(box_width(400.0), 376.0);
+        // The narrowest window: what holds the field and the buttons.
+        assert_eq!(box_width(100.0), GLYPH_W + FIELD_MIN + BUTTONS_W);
         // Parts drop out in order, the field always keeps its smallest width.
         assert_eq!(parts(WIDTH), Parts { count: true, case: true });
         assert_eq!(parts(274.0), Parts { count: false, case: true });

@@ -1,25 +1,23 @@
-//! Picker mode's pills: at the top, the title (where the tabs would be) with New folder; at the
-//! bottom, in place of the selection pill, the name field, the file type, and the main button
-//! (accent) with Cancel. The bottom pill turns into the question "Replace <name>?" before a
+//! Picker mode's rows: under the header, the title (where the tabs would be) with New folder; in
+//! the bottom bar, in place of the selection's, the name field, the file type, and the main
+//! button (accent) with Cancel. The bottom bar turns into the question "Replace <name>?" before a
 //! save over an existing file, and says so while the app checks a choice.
 
 use super::actions::Action;
 use super::tab::Loc;
 use crate::pick::button;
-use egui::{Align, Align2, CornerRadius, FontId, Id, Key, Rect, RichText, Stroke, Ui, Vec2};
+use egui::{Align, Align2, FontId, Id, Key, Rect, RichText, Stroke, Ui, Vec2};
 use shellman_pick::Mode;
 use shellman_ui::chips::{chip, chip_width, soft_colors, Chip, CHIP_H};
 use shellman_ui::menu::popup::{Anchor, Entry};
-use shellman_ui::theme::{self, colors, glyph, icon_font, semibold_font};
+use shellman_ui::theme::{self, colors, glyph, icon_font, semibold_font, shape};
 use shellman_ui::widgets::draw_text;
 use std::path::Path;
 
-/// Inside the pills, at each end, and between their parts.
-const LEAD: f32 = 16.0;
-const PAD: f32 = 8.0;
+/// At the title row's start: past the tab strip's padding, so the glyph lines up with the folder.
+const LEAD: f32 = shellman_ui::tab_strip::PAD;
+/// Between the rows' parts.
 const SPACE: f32 = 8.0;
-/// The bottom pill is no wider than this.
-const MAX_W: f32 = 900.0;
 const FIELD_H: f32 = 30.0;
 const TYPE_MAX_W: f32 = 240.0;
 /// Segoe's chevron pointing down, for the type list.
@@ -45,7 +43,7 @@ fn button_chip(ui: &mut Ui, rect: Rect, id: &str, label: &str, kind: Chip, enabl
 }
 
 impl super::FileMan {
-    /// The title pill at the left of `row`; returns it.
+    /// The title at the left of `row` (`Plan::tabs_row`); returns the room it takes.
     pub(super) fn pick_title(&mut self, ui: &mut Ui, row: Rect, actions: &mut Vec<Action>) -> Rect {
         let c = colors();
         let Some(p) = self.picker() else { return Rect::NOTHING };
@@ -66,10 +64,10 @@ impl super::FileMan {
         };
         let can_add = self.tabs[self.active].loc.dir().is_some();
         let add_w = if can_add { chip_width(ui, "New folder", true, Chip::Soft) + SPACE } else { 0.0 };
-        let wanted = LEAD + 22.0 + title_w + client_w + add_w + PAD + 4.0;
-        let pill = super::plan::from_left(row, wanted);
-        let y = pill.center().y;
-        let mut x = pill.left() + LEAD;
+        let wanted = LEAD + 22.0 + title_w + client_w + add_w + 4.0;
+        let area = super::plan::from_left(row, wanted);
+        let y = area.center().y;
+        let mut x = area.left() + LEAD;
         ui.painter().text(
             egui::pos2(x + 7.0, y),
             Align2::CENTER_CENTER,
@@ -78,10 +76,10 @@ impl super::FileMan {
             c.accent_text,
         );
         x += 22.0;
-        let room = (pill.right() - add_w - PAD - x).max(0.0);
+        let room = (area.right() - add_w - x).max(0.0);
         draw_text(
             ui,
-            Rect::from_min_size(egui::pos2(x, pill.top()), Vec2::new(title_w.min(room), pill.height())),
+            Rect::from_min_size(egui::pos2(x, area.top()), Vec2::new(title_w.min(room), area.height())),
             &title,
             semibold_font(13.5),
             c.text,
@@ -89,10 +87,10 @@ impl super::FileMan {
         );
         x += title_w + SPACE * 2.0;
         if !client.is_empty() {
-            let w = (pill.right() - add_w - PAD - x).max(0.0);
+            let w = (area.right() - add_w - x).max(0.0);
             draw_text(
                 ui,
-                Rect::from_min_size(egui::pos2(x, pill.top()), Vec2::new(w, pill.height())),
+                Rect::from_min_size(egui::pos2(x, area.top()), Vec2::new(w, area.height())),
                 &client,
                 FontId::proportional(12.5),
                 c.muted,
@@ -102,7 +100,7 @@ impl super::FileMan {
         if can_add {
             let w = add_w - SPACE;
             let r = Rect::from_min_size(
-                egui::pos2(pill.right() - PAD - w, y - CHIP_H / 2.0),
+                egui::pos2(area.right() - w, y - CHIP_H / 2.0),
                 Vec2::new(w, CHIP_H),
             );
             if chip(ui, r, Id::new("pick-new-folder"), "New folder", Some(glyph::NEW_FOLDER), Chip::Soft)
@@ -112,25 +110,25 @@ impl super::FileMan {
                 actions.push(Action::NewFolder);
             }
         }
-        pill
+        area
     }
 
-    /// The bottom pill in `band`; returns it.
-    pub(super) fn pick_band(&mut self, ui: &mut Ui, band: Rect) -> Option<Rect> {
-        let pill = super::plan::centred(band, MAX_W);
-        let p = self.picker()?;
+    /// The bottom bar in `band`, the hairline above it.
+    pub(super) fn pick_band(&mut self, ui: &mut Ui, band: Rect) {
+        super::band::hairline(ui, band);
+        let bar = band.shrink2(Vec2::new(super::plan::INSET, 0.0));
+        let Some(p) = self.picker() else { return };
         if p.waiting.is_some() {
-            self.pick_waiting(ui, pill);
+            self.pick_waiting(ui, bar);
         } else if let Some(path) = p.replace.clone() {
-            self.pick_replace(ui, pill, &path);
+            self.pick_replace(ui, bar, &path);
         } else {
-            self.pick_fields(ui, pill);
+            self.pick_fields(ui, bar);
         }
-        Some(pill)
     }
 
     /// The name field, the type list, and the buttons.
-    fn pick_fields(&mut self, ui: &mut Ui, pill: Rect) {
+    fn pick_fields(&mut self, ui: &mut Ui, bar: Rect) {
         let c = colors();
         let selected = self.pick_selection();
         let in_folder = self.tabs[self.active].loc.dir().is_some();
@@ -148,7 +146,7 @@ impl super::FileMan {
                 .get(p.type_index)
                 .map_or_else(String::new, |t| t.name.clone()),
         };
-        let y = pill.center().y;
+        let y = bar.center().y;
         let main_w = chip_width(ui, &main, false, Chip::Accent);
         let cancel_w = chip_width(ui, cancel, false, Chip::Soft);
         let type_w = if show_types {
@@ -159,7 +157,7 @@ impl super::FileMan {
         let label_w = text_width(ui, &label, FontId::proportional(12.5));
 
         // From the right: Cancel, the main button, the type list.
-        let mut right = pill.right() - PAD;
+        let mut right = bar.right();
         let cancel_r = Rect::from_min_size(egui::pos2(right - cancel_w, y - CHIP_H / 2.0), Vec2::new(cancel_w, CHIP_H));
         right -= cancel_w + SPACE;
         let main_r = Rect::from_min_size(egui::pos2(right - main_w, y - CHIP_H / 2.0), Vec2::new(main_w, CHIP_H));
@@ -168,7 +166,7 @@ impl super::FileMan {
         if show_types {
             right -= type_w + SPACE;
         }
-        let mut x = pill.left() + LEAD;
+        let mut x = bar.left();
         ui.painter().text(
             egui::pos2(x, y),
             Align2::LEFT_CENTER,
@@ -208,7 +206,8 @@ impl super::FileMan {
         } else {
             line
         };
-        ui.painter().rect(rect, CornerRadius::same((FIELD_H / 2.0) as u8), fill, stroke, egui::StrokeKind::Inside);
+        // A field: Glasshouse's 12 pt rounded square.
+        ui.painter().rect(rect, shape::corner(shape::FIELD), fill, stroke, egui::StrokeKind::Inside);
         let p = self.pick.as_mut().unwrap();
         let hint = match p.session.req.mode {
             Mode::Save => "Name to save as",
@@ -267,33 +266,33 @@ impl super::FileMan {
         }
     }
     /// "Replace <name>?" with Replace (red) and Back.
-    fn pick_replace(&mut self, ui: &mut Ui, pill: Rect, path: &Path) {
+    fn pick_replace(&mut self, ui: &mut Ui, bar: Rect, path: &Path) {
         let c = colors();
         let name = path
             .file_name()
             .map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned());
         let question = format!("Replace {name}?");
         let note = "It's already there; saving will write over it.";
-        let y = pill.center().y;
+        let y = bar.center().y;
         let back = "Back";
         let replace = "Replace";
         let back_w = chip_width(ui, back, false, Chip::Soft);
         let replace_w = chip_width(ui, replace, false, Chip::Danger);
-        let back_r = Rect::from_min_size(egui::pos2(pill.right() - PAD - back_w, y - CHIP_H / 2.0), Vec2::new(back_w, CHIP_H));
+        let back_r = Rect::from_min_size(egui::pos2(bar.right() - back_w, y - CHIP_H / 2.0), Vec2::new(back_w, CHIP_H));
         let replace_r = Rect::from_min_size(
             egui::pos2(back_r.left() - SPACE - replace_w, y - CHIP_H / 2.0),
             Vec2::new(replace_w, CHIP_H),
         );
-        let mut x = pill.left() + LEAD;
+        let mut x = bar.left();
         ui.painter().text(egui::pos2(x + 7.0, y), Align2::CENTER_CENTER, glyph::INFO, icon_font(13.0), c.warn);
         x += 24.0;
         let room = replace_r.left() - SPACE - x;
         let q_w = text_width(ui, &question, semibold_font(13.5)).min(room);
-        draw_text(ui, Rect::from_min_size(egui::pos2(x, pill.top()), Vec2::new(q_w, pill.height())), &question, semibold_font(13.5), c.text, false);
+        draw_text(ui, Rect::from_min_size(egui::pos2(x, bar.top()), Vec2::new(q_w, bar.height())), &question, semibold_font(13.5), c.text, false);
         x += q_w + SPACE * 1.5;
         draw_text(
             ui,
-            Rect::from_min_max(egui::pos2(x, pill.top()), egui::pos2(replace_r.left() - SPACE, pill.bottom())),
+            Rect::from_min_max(egui::pos2(x, bar.top()), egui::pos2(replace_r.left() - SPACE, bar.bottom())),
             note,
             FontId::proportional(12.5),
             c.muted,
@@ -311,13 +310,13 @@ impl super::FileMan {
     }
 
     /// While the app checks the choice: a note, and Cancel.
-    fn pick_waiting(&mut self, ui: &mut Ui, pill: Rect) {
+    fn pick_waiting(&mut self, ui: &mut Ui, bar: Rect) {
         let c = colors();
-        let y = pill.center().y;
+        let y = bar.center().y;
         let cancel_w = chip_width(ui, "Cancel", false, Chip::Soft);
-        let cancel_r = Rect::from_min_size(egui::pos2(pill.right() - PAD - cancel_w, y - CHIP_H / 2.0), Vec2::new(cancel_w, CHIP_H));
+        let cancel_r = Rect::from_min_size(egui::pos2(bar.right() - cancel_w, y - CHIP_H / 2.0), Vec2::new(cancel_w, CHIP_H));
         ui.painter().text(
-            egui::pos2(pill.left() + LEAD, y),
+            egui::pos2(bar.left(), y),
             Align2::LEFT_CENTER,
             "Checking with the app…",
             FontId::proportional(12.5),

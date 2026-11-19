@@ -4,7 +4,7 @@
 
 use crate::page;
 use crate::state::State;
-use egui::{Align, CornerRadius, FontId, Layout, Sense, UiBuilder, Vec2};
+use egui::{Align, FontId, Layout, Sense, UiBuilder, Vec2};
 use shellman_core::startup::rows::Row;
 use shellman_core::startup::worker::{Page, StartupPage};
 use shellman_core::thumbs::Thumbs;
@@ -13,7 +13,8 @@ use shellman_ui::widgets::{draw_text, toggle};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-const ROW_H: f32 = 56.0;
+/// The height of an item's content; the list adds its own padding around it.
+const ROW_H: f32 = 36.0;
 const ICON: f32 = 28.0;
 
 /// The page's live state. The worker starts when the page is first drawn and ends when another
@@ -60,15 +61,18 @@ pub fn show(ui: &mut egui::Ui, st: &mut State) {
     let Some(handle) = handle.as_ref() else { return };
     if !*loaded {
         page::group(ui, "", |ui| {
-            ui.label(theme::muted("Reading the startup apps..."));
+            page::row_with(ui, |ui| {
+                ui.label(theme::muted("Reading the startup apps..."));
+            });
         });
         return;
     }
     page::group(ui, "Starts when you sign in", |ui| {
         if page.rows.is_empty() {
-            ui.label(theme::muted("No app is set to start when you sign in."));
+            page::row_with(ui, |ui| {
+                ui.label(theme::muted("No app is set to start when you sign in."));
+            });
         }
-        ui.spacing_mut().item_spacing.y = 4.0;
         for r in &page.rows {
             let key = r.key();
             let mut on = pending.get(&key).copied().unwrap_or(r.item.enabled);
@@ -78,51 +82,56 @@ pub fn show(ui: &mut egui::Ui, st: &mut State) {
             }
         }
         if let Some(why) = &page.notice {
-            ui.add_space(8.0);
-            ui.label(theme::muted(why).size(12.0));
+            page::row_with(ui, |ui| {
+                ui.add(egui::Label::new(theme::muted(why).size(12.5)).wrap());
+            });
         }
     });
     page::group(ui, "", |ui| {
-        ui.label(theme::muted("Startup tasks of Store apps are not listed here.").size(12.0));
+        page::row_with(ui, |ui| {
+            ui.add(egui::Label::new(theme::muted("Startup tasks of Store apps are not listed here.").size(12.5)).wrap());
+        });
     });
 }
 
-/// One item: icon, name over command, and the switch. True when the switch was pressed.
+/// One item of the list: icon, name over command, and the switch. True when the switch was
+/// pressed.
 fn row(ui: &mut egui::Ui, r: &Row, on: &mut bool, thumbs: &mut Thumbs) -> bool {
     let c = colors();
-    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), ROW_H), Sense::hover());
-    ui.painter().rect_filled(rect, CornerRadius::same(10), c.control);
-    // An item whose program is gone, and one that is off, are dimmer than one that will run.
-    let (text, sub) = if r.missing || !*on { (c.muted, theme::with_alpha(c.muted, 170)) } else { (c.text, c.muted) };
+    page::item(ui, false, |ui| {
+        let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), ROW_H), Sense::hover());
+        // An item whose program is gone, and one that is off, are dimmer than one that will run.
+        let (text, sub) = if r.missing || !*on { (c.muted, theme::with_alpha(c.muted, 170)) } else { (c.text, c.muted) };
 
-    let icon = egui::Rect::from_center_size(egui::pos2(rect.left() + 14.0 + ICON / 2.0, rect.center().y), Vec2::splat(ICON));
-    let image = r.exe.as_ref().filter(|_| !r.missing).and_then(|p| shellman_ui::app_icon::get(ui.ctx(), p, true, thumbs));
-    match image {
-        Some((id, size)) => {
-            let scale = (ICON / size.x).min(ICON / size.y);
-            let tint = if *on && !r.missing { egui::Color32::WHITE } else { theme::with_alpha(egui::Color32::WHITE, 120) };
-            egui::Image::from_texture((id, size))
-                .tint(tint)
-                .paint_at(ui, egui::Rect::from_center_size(icon.center(), size * scale));
+        let icon = egui::Rect::from_center_size(egui::pos2(rect.left() + ICON / 2.0, rect.center().y), Vec2::splat(ICON));
+        let image = r.exe.as_ref().filter(|_| !r.missing).and_then(|p| shellman_ui::app_icon::get(ui.ctx(), p, true, thumbs));
+        match image {
+            Some((id, size)) => {
+                let scale = (ICON / size.x).min(ICON / size.y);
+                let tint = if *on && !r.missing { egui::Color32::WHITE } else { theme::with_alpha(egui::Color32::WHITE, 120) };
+                egui::Image::from_texture((id, size))
+                    .tint(tint)
+                    .paint_at(ui, egui::Rect::from_center_size(icon.center(), size * scale));
+            }
+            None => {
+                ui.painter().text(icon.center(), egui::Align2::CENTER_CENTER, glyph::APP, icon_font(18.0), c.muted);
+            }
         }
-        None => {
-            ui.painter().text(icon.center(), egui::Align2::CENTER_CENTER, glyph::APP, icon_font(18.0), c.muted);
+
+        let switch_w = 46.0;
+        let text_left = icon.right() + 12.0;
+        let text_right = rect.right() - switch_w - 8.0;
+        let mut title = r.title.clone();
+        if r.missing {
+            title.push_str("  (Missing)");
         }
-    }
+        let line = |top: f32, bottom: f32| egui::Rect::from_min_max(egui::pos2(text_left, top), egui::pos2(text_right, bottom));
+        draw_text(ui, line(rect.top(), rect.center().y), &title, FontId::proportional(13.5), text, false);
+        draw_text(ui, line(rect.center().y, rect.bottom()), &r.detail(), FontId::proportional(12.0), sub, false);
 
-    let switch_w = 46.0;
-    let text_left = icon.right() + 12.0;
-    let text_right = rect.right() - switch_w - 16.0;
-    let mut title = r.title.clone();
-    if r.missing {
-        title.push_str("  (Missing)");
-    }
-    let line = |top: f32, bottom: f32| egui::Rect::from_min_max(egui::pos2(text_left, top), egui::pos2(text_right, bottom));
-    draw_text(ui, line(rect.top() + 7.0, rect.center().y), &title, FontId::proportional(14.0), text, false);
-    draw_text(ui, line(rect.center().y, rect.bottom() - 7.0), &r.detail(), FontId::proportional(11.5), sub, false);
-
-    let controls = egui::Rect::from_min_max(egui::pos2(rect.right() - switch_w - 8.0, rect.top()), egui::pos2(rect.right() - 8.0, rect.bottom()));
-    let mut child = ui.new_child(UiBuilder::new().max_rect(controls).layout(Layout::right_to_left(Align::Center)));
-    // Named by the item, so a screen reader says which program the switch starts.
-    toggle(&mut child, on, &r.title).changed()
+        let controls = egui::Rect::from_min_max(egui::pos2(rect.right() - switch_w, rect.top()), rect.right_bottom());
+        let mut child = ui.new_child(UiBuilder::new().max_rect(controls).layout(Layout::right_to_left(Align::Center)));
+        // Named by the item, so a screen reader says which program the switch starts.
+        toggle(&mut child, on, &r.title).changed()
+    })
 }

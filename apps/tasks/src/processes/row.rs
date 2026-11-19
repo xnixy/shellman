@@ -8,8 +8,7 @@ use egui::{pos2, vec2, Align2, Color32, FontId, Rect, Sense};
 use shellman_core::procs::policy::{self, Verdict};
 use shellman_core::procs::sort::Column;
 use shellman_core::procs::{format, Key, Proc, Status};
-use shellman_ui::glass::islands::shows_as;
-use shellman_ui::theme::{self, colors, glyph, icon_font, semibold_font};
+use shellman_ui::theme::{self, colors, glyph, icon_font, semibold_font, shape};
 
 pub const ROW_H: f32 = 30.0;
 const ICON: f32 = 18.0;
@@ -167,20 +166,19 @@ fn draw(
     if c.high_contrast {
         // Highlight only under highlight text: the selected row is outlined instead.
         if selected {
-            ui.painter().rect_stroke(row_rect, 10.0, egui::Stroke::new(2.0_f32, c.accent_fill), egui::StrokeKind::Inside);
+            ui.painter().rect_stroke(row_rect, shape::MENU_ROW, egui::Stroke::new(2.0_f32, c.accent_fill), egui::StrokeKind::Inside);
         }
     } else {
-        // Given as they should show over the glass (see `glass::islands::shows_as`).
         let fill = if selected {
-            shows_as(theme::with_alpha(c.accent_fill, if c.light { 40 } else { 52 }))
+            c.row_selected
         } else if resp.hovered() {
-            shows_as(c.row_hover)
+            c.row_hover
         } else {
             Color32::TRANSPARENT
         };
-        ui.painter().rect_filled(row_rect, 10.0, fill);
+        ui.painter().rect_filled(row_rect, shape::MENU_ROW, fill);
     }
-    theme::focus_ring(ui, &resp, row_rect, 10.0);
+    theme::focus_ring(ui, &resp, row_rect, shape::MENU_ROW);
     // Tab into the list selects its first row.
     let tabbed_in = resp.gained_focus() && !selected;
 

@@ -2,13 +2,15 @@
 //! is playing anything.
 
 use super::kit::{self, clipped_text, label_font, small_font};
-use egui::{Align2, CornerRadius, Pos2, Rect, Sense, TextureHandle, Ui, Vec2};
+use egui::{Align2, Pos2, Rect, Sense, TextureHandle, Ui, Vec2};
 use shellman_core::system::media::{Action, MediaWatch, NowPlaying};
 use shellman_core::system::media_art::Art;
-use shellman_ui::theme::{colors, glyph, icon_font, with_alpha};
+use shellman_ui::theme::{colors, glyph, icon_font, shape, with_alpha};
 use std::sync::Arc;
 
 const ART: f32 = 48.0;
+/// The art's corners, as round as a field's: a small picture, not a tile.
+const ART_RADIUS: egui::CornerRadius = egui::CornerRadius::same(shape::FIELD as u8);
 
 #[derive(Default)]
 pub struct MediaView {
@@ -37,11 +39,11 @@ impl MediaView {
             match texture {
                 Some(id) => {
                     egui::Image::new((id, art.size()))
-                        .corner_radius(CornerRadius::same(10))
+                        .corner_radius(ART_RADIUS)
                         .paint_at(ui, art);
                 }
                 None => {
-                    ui.painter().rect_filled(art, CornerRadius::same(10), kit::well(false));
+                    ui.painter().rect_filled(art, ART_RADIUS, kit::field(false));
                     ui.painter().text(art.center(), Align2::CENTER_CENTER, glyph::MUSIC, icon_font(20.0), c.muted);
                 }
             }
@@ -66,7 +68,7 @@ impl MediaView {
                 shellman_ui::theme::speak(&resp, egui::WidgetType::Button, || name.to_owned());
                 shellman_ui::theme::focus_ring(ui, &resp, r, size / 2.0);
                 if enabled && resp.hovered() {
-                    ui.painter().circle_filled(r.center(), size / 2.0, kit::well(false));
+                    ui.painter().circle_filled(r.center(), size / 2.0, kit::field(false));
                     kit::outline_circle(ui, r.center(), size / 2.0, true);
                 }
                 let fg = if enabled { c.text } else { with_alpha(c.muted, 110) };

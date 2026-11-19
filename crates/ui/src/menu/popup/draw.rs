@@ -1,6 +1,6 @@
-//! How a popup menu measures and looks (the Islands mockups' menu, `docs/design`): a rounded
-//! glass island with 8 pt of padding, 40 pt rows with an icon, the label and a quiet hint or
-//! chevron, 12 pt rounded highlights, hairline separators and small headings. A level taller
+//! How a popup menu measures and looks (Glasshouse's popover): a rounded
+//! glass island with 6 pt of padding, 36 pt rows with an icon, the label and a quiet hint or
+//! chevron, 10 pt rounded highlights, hairline separators and small headings. A level taller
 //! than its monitor scrolls, with a thin bar on the right.
 
 use super::model::{Row, RowKind};
@@ -9,10 +9,10 @@ use egui::text::{LayoutJob, TextFormat, TextWrapping};
 use egui::{pos2, vec2, Align2, Color32, CornerRadius, FontId, Painter, Pos2, Rect, Stroke, TextureId, Vec2};
 
 /// The island's padding and corner radius.
-pub const PAD: f32 = 8.0;
-pub const RADIUS: f32 = 20.0;
-pub const ROW_H: f32 = 40.0;
-const ROW_RADIUS: u8 = 12;
+pub const PAD: f32 = 6.0;
+pub const RADIUS: f32 = crate::theme::shape::POPOVER;
+pub const ROW_H: f32 = 36.0;
+const ROW_RADIUS: u8 = crate::theme::shape::MENU_ROW as u8;
 const SEPARATOR_H: f32 = 13.0;
 const HEADING_H: f32 = 28.0;
 const NOTE_H: f32 = 34.0;

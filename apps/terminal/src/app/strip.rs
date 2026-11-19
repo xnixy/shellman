@@ -1,11 +1,10 @@
-//! The tabs on their pill (drawn by `shellman_ui::tab_strip`, the look Files' tabs have), the +
+//! The tabs in the header bar (drawn by `shellman_ui::tab_strip`, the look Files' tabs have), the +
 //! button and the profile menu beside it.
 
 use shellman_ui::chips::round_icon;
-use shellman_ui::glass::islands::shows_as;
 use shellman_ui::menu::{self, Icon};
 use shellman_ui::tab_strip::{self as ts, Mark, Tab};
-use shellman_ui::theme::{colors, glyph};
+use shellman_ui::theme::{colors, glyph, shape};
 use egui::{Id, Order, Rect, Sense, Stroke};
 
 /// The terminal glyph (Segoe Fluent's command prompt).
@@ -42,8 +41,8 @@ enum Do {
 }
 
 impl super::TerminalApp {
-    /// Draw the tabs at the left of `row`; returns the pill they are on.
-    pub(super) fn tab_strip(&mut self, ui: &mut egui::Ui, row: Rect) -> Rect {
+    /// Draw the tabs and the + and profile buttons at the left of `row`.
+    pub(super) fn tab_strip(&mut self, ui: &mut egui::Ui, row: Rect) {
         let n = self.tabs.len();
         let active = self.tabs.active();
         let mut s = ts::strip(n, 2, row.width(), row.height(), self.strip.scroll);
@@ -127,7 +126,6 @@ impl super::TerminalApp {
             }
             None => {}
         }
-        pill
     }
 
     /// The profile menu, when open: a glass island under its button. Returns where it is.
@@ -145,12 +143,8 @@ impl super::TerminalApp {
             ui.set_min_size(rect.size());
             ui.set_max_size(rect.size());
             let _ = ui.interact(rect, Id::new("profile-menu-bg"), Sense::click_and_drag());
-            let fill = if c.light {
-                shows_as(egui::Color32::from_rgb(246, 247, 250))
-            } else {
-                shows_as(egui::Color32::from_rgb(30, 33, 42))
-            };
-            ui.painter().rect(rect, egui::CornerRadius::same(14), fill, Stroke::new(1.0_f32, c.hairline), egui::StrokeKind::Inside);
+            // Glasshouse's popover: the popup sheet, rounded as every menu is, inside a hairline.
+            ui.painter().rect(rect, shape::corner(shape::POPOVER), c.popup, Stroke::new(1.0_f32, c.hairline), egui::StrokeKind::Inside);
             let inner = rect.shrink(8.0);
             let mut child = ui.new_child(egui::UiBuilder::new().max_rect(inner));
             menu::flat_popup(&mut child);

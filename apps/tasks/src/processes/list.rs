@@ -1,4 +1,4 @@
-//! The list island: the column headers (a click sorts), and the rows below, only those in view
+//! The list box: the column headers (a click sorts), and the rows below, only those in view
 //! drawn. While the pointer is over it the order is held, so rows never move from under it.
 
 use super::row::{self, Press, COLUMNS, ROW_H};
@@ -11,7 +11,7 @@ use shellman_core::procs::sort::Column;
 use shellman_ui::theme::{self, colors, glyph, icon_font};
 
 const HEADER_H: f32 = 40.0;
-/// Room left and right of the rows inside the island.
+/// Room left and right of the rows inside the box.
 pub const PAD: f32 = 12.0;
 
 pub fn show(ui: &mut egui::Ui, rect: Rect, st: &mut State) {
@@ -19,8 +19,8 @@ pub fn show(ui: &mut egui::Ui, rect: Rect, st: &mut State) {
     headers(ui, header.shrink2(vec2(PAD, 0.0)), st);
     let c = colors();
     ui.painter().line_segment(
-        [pos2(rect.left() + 18.0, header.bottom()), pos2(rect.right() - 18.0, header.bottom())],
-        Stroke::new(1.0_f32, c.hairline),
+        [pos2(rect.left(), header.bottom()), pos2(rect.right(), header.bottom())],
+        Stroke::new(1.0_f32, if c.high_contrast { c.text } else { c.hairline }),
     );
     let body = Rect::from_min_max(pos2(rect.left() + PAD - 4.0, header.bottom() + 2.0), pos2(rect.right() - 4.0, rect.bottom() - 10.0));
     let over = ui.rect_contains_pointer(rect);
@@ -100,7 +100,7 @@ fn headers(ui: &mut egui::Ui, rect: Rect, st: &mut State) {
         let resp = ui.interact(cell, egui::Id::new(("header", title)), Sense::click());
         let current = sort.column == column;
         resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, header_name(title, current, sort.descending)));
-        theme::focus_ring(ui, &resp, cell.shrink(2.0), 8.0);
+        theme::focus_ring(ui, &resp, cell.shrink(2.0), theme::shape::MENU_ROW);
         let color = if current || resp.hovered() { c.text } else { c.muted };
         let right = column != Column::Name && column != Column::Status;
         let font = FontId::proportional(12.5);

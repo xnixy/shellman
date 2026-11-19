@@ -190,7 +190,7 @@ impl Section {
 }
 
 impl Section {
-    /// Whether the page lays itself out in `page::group`s. Any other page is put on one island
+    /// Whether the page lays itself out in `page::group`s. Any other page is put in one box
     /// by the window, so a new page needs no groups to look right.
     pub fn grouped(self) -> bool {
         matches!(

@@ -45,8 +45,8 @@ const WARM_FRAMES: u8 = 2;
 const WARM_CAP: u8 = 20;
 /// Space kept free at the work area's sides, in points.
 const EDGE: f32 = 8.0;
-/// The panel's corner radius: a little tighter than the dock's, it is a smaller surface.
-pub const RADIUS: f32 = 18.0;
+/// The panel's corner radius: Glasshouse's popover, a little tighter than the dock's island.
+pub const RADIUS: f32 = shellman_ui::theme::shape::POPOVER;
 /// The least time between two changes of a panel's size.
 const RESIZE_GAP: Duration = Duration::from_millis(40);
 

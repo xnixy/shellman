@@ -50,15 +50,17 @@ pub fn soft_colors(light: bool) -> (Color32, Color32, Stroke) {
     if c.high_contrast {
         return (c.bg, c.bg, Stroke::new(1.0_f32, c.text));
     }
+    // Glasshouse's field fill: a faint wash of the text colour, deeper under the pointer, and a
+    // hairline where a chip needs an edge.
     let white = |a: u8| shows_as(Color32::from_rgba_unmultiplied(255, 255, 255, a));
     if light {
         (
-            white(110),
-            white(170),
-            Stroke::new(1.0_f32, Color32::from_black_alpha(18)),
+            Color32::from_black_alpha(18),
+            Color32::from_black_alpha(30),
+            Stroke::new(1.0_f32, Color32::from_black_alpha(26)),
         )
     } else {
-        (white(14), white(28), Stroke::new(1.0_f32, white(26)))
+        (white(22), white(36), Stroke::new(1.0_f32, white(23)))
     }
 }
 
@@ -90,18 +92,21 @@ pub fn chip(
             c.text,
         ),
         Chip::Accent => {
-            let fill = if hovered {
-                theme::mix(c.accent_fill, Color32::WHITE, 0.12)
+            // Under the pointer it leans toward the text colour (darker on light, lighter on
+            // dark), so `on_accent` keeps its contrast, as the bell and calendar do.
+            let fill = if hovered && !c.high_contrast {
+                theme::mix(c.accent_fill, c.text, 0.12)
             } else {
                 c.accent_fill
             };
             (fill, Stroke::NONE, c.on_accent)
         }
+        // Glasshouse's destructive action: red text on a faint red wash, inside a hairline.
         Chip::Danger => {
-            let a = if hovered { 90 } else { 56 };
+            let a = if hovered { 46 } else { 22 };
             (
-                shows_as(theme::with_alpha(c.danger, a)),
-                Stroke::NONE,
+                shows_as(theme::with_alpha(c.danger_text, a)),
+                line,
                 c.danger_text,
             )
         }
@@ -188,56 +193,68 @@ pub fn round_icon(
     resp
 }
 
-/// Minimize, maximize (or restore) and close, side by side in `rect` from its right end, each a
-/// round button `rect.height()` wide. They act on the window themselves.
+/// The width of one window button, as Windows draws its own.
+pub const CAPTION_W: f32 = 46.0;
+/// Minimize, maximize and close side by side.
+pub const CAPTIONS_W: f32 = CAPTION_W * 3.0;
+
+/// Minimize, maximize (or restore) and close, side by side across `rect` (a third each), as
+/// Windows 11 draws its own: thin glyphs, a faint square wash under the pointer, and close turning
+/// Windows' red with a white glyph. They stay native in every look, so a shellman window sits
+/// beside other apps' windows without standing out. They act on the window themselves.
 pub fn window_buttons(ui: &mut Ui, rect: Rect) {
-    let d = rect.height();
+    buttons(ui, rect, None);
+}
+
+/// The window buttons flush in the window's top right corner, as Windows places its own: square,
+/// the close button's outer corner rounded with the window's `corner` radius (0 when maximized).
+pub fn window_buttons_flush(ui: &mut Ui, rect: Rect, corner: f32) {
+    buttons(ui, rect, Some(corner));
+}
+
+fn buttons(ui: &mut Ui, rect: Rect, flush: Option<f32>) {
+    let w = rect.width() / 3.0;
     let maximized = ui.input(|i| i.viewport().maximized.unwrap_or(false));
-    let at = |i: f32| {
-        Rect::from_min_size(
-            egui::pos2(rect.right() - d * (i + 1.0), rect.top()),
-            Vec2::splat(d),
-        )
-    };
-    let size = if maximized {
-        glyph::RESTORE
-    } else {
-        glyph::MAXIMIZE
-    };
+    let at = |i: f32| Rect::from_min_size(egui::pos2(rect.right() - w * (i + 1.0), rect.top()), Vec2::new(w, rect.height()));
     let ctx = ui.ctx().clone();
-    if round_icon(
-        ui,
-        at(0.0),
-        egui::Id::new("window-close"),
-        glyph::CHROME_CLOSE,
-        true,
-        true,
-        "Close",
-    )
-    .on_hover_text("Close")
-    .clicked()
-    {
+    // Floating in an island: each a softly rounded square. Flush: square, the close button's
+    // outer corner following the window's.
+    let (round, close_round) = match flush {
+        None => (CornerRadius::same(6), CornerRadius::same(6)),
+        Some(r) => {
+            let r = r.round().clamp(0.0, 255.0) as u8;
+            (CornerRadius::ZERO, CornerRadius { nw: 0, ne: r, sw: 0, se: 0 })
+        }
+    };
+    if caption(ui, at(0.0), "window-close", glyph::CHROME_CLOSE, true, "Close", close_round).clicked() {
         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
     }
-    let tip = if maximized { "Restore" } else { "Maximize" };
-    if round_icon(ui, at(1.0), egui::Id::new("window-max"), size, true, false, tip)
-        .on_hover_text(tip)
-        .clicked()
-    {
+    let (g, tip) = if maximized { (glyph::RESTORE, "Restore") } else { (glyph::MAXIMIZE, "Maximize") };
+    if caption(ui, at(1.0), "window-max", g, false, tip, round).clicked() {
         ctx.send_viewport_cmd(egui::ViewportCommand::Maximized(!maximized));
     }
-    if round_icon(
-        ui,
-        at(2.0),
-        egui::Id::new("window-min"),
-        glyph::MINIMIZE,
-        true,
-        false,
-        "Minimize",
-    )
-    .on_hover_text("Minimize")
-    .clicked()
-    {
+    if caption(ui, at(2.0), "window-min", glyph::MINIMIZE, false, "Minimize", round).clicked() {
         ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
     }
+}
+
+/// One window button.
+fn caption(ui: &mut Ui, rect: Rect, id: &str, g: char, close: bool, name: &str, round: CornerRadius) -> egui::Response {
+    let c = colors();
+    let resp = ui.interact(rect, egui::Id::new(id), Sense::click());
+    crate::access::describe(&resp, || egui::WidgetInfo::labeled(egui::WidgetType::Button, true, name));
+    let resp = resp.on_hover_text(name);
+    theme::focus_ring(ui, &resp, rect, 6.0);
+    let (hovered, pressed) = (resp.hovered(), resp.is_pointer_button_down_on());
+    // Windows' own close red, and its pressed shade.
+    let red = if pressed { Color32::from_rgb(200, 60, 49) } else { Color32::from_rgb(196, 43, 28) };
+    let (fill, fg) = match (hovered, close, c.high_contrast) {
+        (true, _, true) => (c.accent_fill, c.on_accent),
+        (true, true, false) => (red, Color32::WHITE),
+        (true, false, false) => (if pressed { c.press_soft } else { c.hover_soft }, c.text),
+        _ => (Color32::TRANSPARENT, c.text),
+    };
+    ui.painter().rect_filled(rect, round, fill);
+    ui.painter().text(rect.center(), Align2::CENTER_CENTER, g, icon_font(10.0), fg);
+    resp
 }

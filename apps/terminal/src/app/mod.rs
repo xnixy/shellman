@@ -1,9 +1,10 @@
-//! The window: a pill of tabs and a pill of window buttons on top, and the terminal island below,
-//! the desktop showing between them. egui draws the chrome; the grid is drawn by the renderer
-//! inside the island, through a paint callback.
+//! The window: one sheet of glass (`shellman_ui::sheet`) with no sidebar. The tabs sit in its
+//! header bar with Windows' own buttons flush in the corner, and the terminal fills the body.
+//! egui draws the chrome; the grid is drawn by the renderer inside the body, through a paint
+//! callback.
 //!
-//! Each tab owns one or more panes (`splits::Panes`), each a shell (`Session`) on an island of
-//! its own; a small pool of renderers draws the shown tab's panes, one each, and is reused
+//! Each tab owns one or more panes (`splits::Panes`), each a shell (`Session`) in a rectangle
+//! of the body (a box of its own once there are several); a small pool of renderers draws the shown tab's panes, one each, and is reused
 //! whichever tab is shown. A frame happens only
 //! when something changed: new output in the shown tab (its pty thread wakes the window), input,
 //! a resize, the theme, or the cursor's blink (a timer, only while a program asked for a blinking
@@ -33,25 +34,30 @@ use egui::{pos2, vec2, Rect};
 use shellman_ui::appearance::Appearance;
 use shellman_ui::glass::islands::{self, Island};
 use shellman_ui::glass::{GlassPanel, Style};
+use shellman_ui::sheet::{self, Sheet};
 use shellman_ui::theme::{self, AccentChoice};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 
-/// Space between the window's edge and the islands, and between islands.
-const MARGIN: f32 = 12.0;
-/// The row of tabs and the window buttons beside it (as Files').
+/// The row the tabs sit in, inside the header bar (the strip's tabs are 10 less).
 const TABS_H: f32 = 40.0;
-/// The window buttons' pill.
-const BUTTON_H: f32 = 30.0;
-const CONTROLS_W: f32 = BUTTON_H * 3.0 + 20.0;
-/// The terminal island's corner radius.
-pub const RADIUS: f32 = 22.0;
-/// Space between the island's edge and the grid. More than the corner's inset (about 0.3 of the
-/// radius), so the grid's square corners never reach the rounded ones.
+/// Space between the header's edges and the tabs, and between the tabs and the window buttons.
+const TABS_GAP: f32 = 8.0;
+/// The window's corner radius (Windows 11's, 0 when maximized).
+pub const RADIUS: f32 = sheet::RADIUS;
+/// Space between the body's edge and a box around a pane, once there are several panes.
+const MARGIN: f32 = 8.0;
+/// How far find sits in from the body's top and right edges.
+const FIND_GAP: f32 = 12.0;
+/// A pane's box when there are several: its corners, and the outline of the focused one.
+const PANE_RADIUS: f32 = shellman_ui::theme::shape::FIELD;
+/// Space between a pane's edge and the grid. More than the corner's inset (about 0.3 of the
+/// radius), so the grid's square corners never reach the rounded ones: the window's own corners
+/// at the bottom of the body, a pane box's when there are several.
 const PADDING: f32 = 14.0;
 
-/// One shell on its own island in a tab.
+/// One shell in a tab.
 pub struct Pane {
     id: u64,
     session: Session,
@@ -93,7 +99,8 @@ impl Slot {
 /// Where a shown pane was laid out last frame.
 #[derive(Clone, Copy)]
 struct Placed {
-    island: Rect,
+    /// The pane's whole rectangle: where the pointer is the terminal's.
+    pane: Rect,
     grid: Rect,
 }
 
@@ -519,54 +526,43 @@ impl TerminalApp {
         let mut list: Vec<Island> = Vec::new();
         egui::CentralPanel::default().frame(egui::Frame::new()).show(ctx, |ui| {
             let screen = ctx.screen_rect();
-            // A solid window (high contrast, SHELLMAN_SOLID) shows the page under the gaps.
-            let page = ui.painter().add(egui::Shape::Noop);
             let under = ui.painter().add(egui::Shape::Noop);
-            islands::drag_gaps(ui, screen);
+            let sheet = Sheet::new(ctx, screen, 0.0);
+            list.push(sheet.island());
+            sheet.paint(ui);
 
-            let top = screen.top() + MARGIN;
-            let right = screen.right() - MARGIN;
-            let controls = Rect::from_min_max(pos2(right - CONTROLS_W, top), pos2(right, top + TABS_H));
-            let mut row = Rect::from_min_max(pos2(screen.left() + MARGIN, top), pos2(controls.left() - MARGIN, top + TABS_H));
-            // Find's pill, in the row between the tabs and the window buttons; in a narrow window
-            // it takes the whole row while it is open.
-            let mut tabs_shown = true;
-            if self.find.open {
-                let (w, alone) = find::pill_width(row.width(), MARGIN);
-                let pill = Rect::from_min_max(pos2(row.right() - w, top), row.max);
-                row.max.x = pill.left() - MARGIN;
-                tabs_shown = !alone;
-                list.push(Island::pill(pill));
-                self.find_pill(ui, pill);
-            }
-            if tabs_shown {
-                let pill = self.tab_strip(ui, row);
-                list.push(Island::pill(pill));
-            }
-            list.push(Island::pill(controls));
-            let buttons = Rect::from_center_size(controls.center(), vec2(BUTTON_H * 3.0, BUTTON_H));
-            shellman_ui::chips::window_buttons(ui, buttons);
+            // The header: dragging empty space moves the window, a double click maximizes it
+            // (the sheet's), and the tabs go over it. The title is the tab's, so the bar has none.
+            sheet.header(ui, "");
+            let buttons = sheet.header.right() - shellman_ui::chips::CAPTIONS_W;
+            let top = sheet.header.top() + (sheet::HEADER_H - TABS_H) / 2.0;
+            let row = Rect::from_min_max(pos2(sheet.header.left() + TABS_GAP, top), pos2(buttons - TABS_GAP, top + TABS_H));
+            self.tab_strip(ui, row);
 
-            // The panes, each an island; the gaps between them are dividers.
-            let room = Rect::from_min_max(pos2(screen.left() + MARGIN, controls.bottom() + MARGIN), screen.max - vec2(MARGIN, MARGIN));
+            // The panes in the body; the gaps between them are dividers.
+            let several = self.tabs.current().panes.len() > 1;
+            let room = if several { sheet.body.shrink(MARGIN) } else { sheet.body };
             self.pane_layout = self.tabs.current().panes.layout(room);
             self.dividers(ui, room);
             let n = self.pane_layout.panes.len();
             self.ensure_slots(n);
             self.placed.clear();
+            let c = theme::colors();
             for i in 0..n {
-                let island = self.pane_layout.panes[i];
-                list.push(Island::new(island, RADIUS));
-                let grid = self.fit(i, island.shrink(PADDING), ppp);
-                self.placed.push(Placed { island, grid });
+                let pane = self.pane_layout.panes[i];
+                if several && !c.high_contrast {
+                    ui.painter().rect(pane, theme::shape::corner(PANE_RADIUS), c.card, egui::Stroke::new(1.0_f32, c.hairline), egui::StrokeKind::Inside);
+                }
+                let grid = self.fit(i, pane.shrink(PADDING), ppp);
+                self.placed.push(Placed { pane, grid });
             }
             // A press on another pane focuses it, before the pointer acts on the focused one.
             self.focus_pressed(ctx);
             let focus = self.tabs.current().panes.focus();
-            let island = self.placed[focus].island;
+            let pane = self.placed[focus].pane;
             self.grid = self.placed[focus].grid;
             self.name_panes(ui);
-            self.pointer(ctx, island);
+            self.pointer(ctx, pane);
 
             let started = Instant::now();
             let mut rows = 0;
@@ -575,19 +571,21 @@ impl TerminalApp {
                 ui.painter().add(self.slots[i].renderer.paint(self.placed[i].grid));
             }
             self.stats.frame(cpu, started.elapsed(), rows);
-            if n > 1 {
+            if several {
                 // The focused pane is outlined (in high contrast, in the highlight colour).
-                let c = theme::colors();
-                ui.painter().rect_stroke(island.shrink(1.0), egui::CornerRadius::same(RADIUS as u8), egui::Stroke::new(2.0_f32, c.accent_fill), egui::StrokeKind::Inside);
+                ui.painter().rect_stroke(pane.shrink(1.0), theme::shape::corner(PANE_RADIUS), egui::Stroke::new(2.0_f32, c.accent_fill), egui::StrokeKind::Inside);
             }
 
+            if self.find.open {
+                let w = find::box_width(sheet.body.width());
+                let rect = Rect::from_min_size(pos2(sheet.body.right() - FIND_GAP - w, sheet.body.top() + FIND_GAP), vec2(w, find::HEIGHT));
+                list.push(Island::new(rect, theme::shape::POPOVER));
+                self.find_box(ctx, rect);
+            }
             if let Some(popup) = self.profile_menu(ctx) {
-                list.push(Island::new(popup, 14.0));
+                list.push(Island::new(popup, shellman_ui::theme::shape::POPOVER));
             }
             list.extend(shellman_ui::hover::islands(ctx));
-            if let Some(shape) = islands::solid_window(screen) {
-                ui.painter().set(page, shape);
-            }
             if !self.panel.composed() {
                 ui.painter().set(under, egui::Shape::Vec(islands::under(screen, &list, &self.panel.style())));
             }
@@ -650,7 +648,7 @@ impl TerminalApp {
         if !ctx.layer_id_at(pos).is_none_or(|l| l.order == egui::Order::Background) {
             return;
         }
-        if let Some(i) = self.placed.iter().position(|p| p.island.contains(pos)) {
+        if let Some(i) = self.placed.iter().position(|p| p.pane.contains(pos)) {
             self.focus_pane(i);
         }
     }
@@ -671,7 +669,7 @@ impl TerminalApp {
             let title = strip::tab_title(&p.session);
             let name = if n > 1 { format!("Terminal pane {} of {n}, {title}", i + 1) } else { format!("Terminal, {title}") };
             let id = ids[i];
-            let resp = ui.interact(placed.island, id, egui::Sense::click_and_drag());
+            let resp = ui.interact(placed.pane, id, egui::Sense::click_and_drag());
             resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Other, true, i == focus, &name));
             if i == focus {
                 if held.is_none_or(|h| ids.contains(&h) && h != id) && !self.strip.menu_open() {
@@ -717,9 +715,19 @@ impl TerminalApp {
         ctx.request_repaint_after(std::time::Duration::from_millis(300));
     }
 
-    /// Find's pill: its contents, what was asked of it, and counting on, in the focused pane.
-    fn find_pill(&mut self, ui: &mut egui::Ui, rect: Rect) {
-        let out = find::pill(ui, rect, &mut self.find);
+    /// Find's box: its contents, what was asked of it, and counting on, in the focused pane. It
+    /// floats over the grid's top right corner, a popover of its own like the profile menu.
+    fn find_box(&mut self, ctx: &egui::Context, rect: Rect) {
+        let c = theme::colors();
+        let mut out = None;
+        egui::Area::new(egui::Id::new("find-box")).order(egui::Order::Foreground).fixed_pos(rect.min).show(ctx, |ui| {
+            ui.set_min_size(rect.size());
+            ui.set_max_size(rect.size());
+            let _ = ui.interact(rect, egui::Id::new("find-box-bg"), egui::Sense::click_and_drag());
+            ui.painter().rect(rect, theme::shape::corner(theme::shape::POPOVER), c.popup, egui::Stroke::new(1.0_f32, c.hairline), egui::StrokeKind::Inside);
+            out = Some(find::contents(ui, rect, &mut self.find));
+        });
+        let Some(out) = out else { return };
         if out.close {
             self.find.close();
             self.tabs.current().pane().session.mark_dirty();
@@ -736,11 +744,11 @@ impl TerminalApp {
             }
             more
         });
-        // The pill drew the count before this step: one more frame shows what it found.
+        // The box drew the count before this step: one more frame shows what it found.
         if more || self.find.generation != generation {
-            ui.ctx().request_repaint();
+            ctx.request_repaint();
         } else if let Some(due) = self.find.recount_due(seq) {
-            ui.ctx().request_repaint_after(due);
+            ctx.request_repaint_after(due);
         }
     }
 

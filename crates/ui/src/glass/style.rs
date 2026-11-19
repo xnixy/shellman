@@ -137,13 +137,11 @@ impl Style {
         for (lift, extra) in luminosity.lift.iter_mut().zip(extra) {
             *lift += extra;
         }
+        // Glasshouse's light top edge (its `rim`), and a soft shadow.
         let (rim, shadow) = if c.light {
-            (
-                Color32::from_white_alpha(150),
-                Color32::from_black_alpha(46),
-            )
+            (c.rim, Color32::from_black_alpha(46))
         } else {
-            (Color32::from_white_alpha(34), Color32::from_black_alpha(90))
+            (c.rim, Color32::from_black_alpha(90))
         };
         Self {
             radius,
@@ -373,6 +371,9 @@ mod tests {
     #[test]
     fn matches_what_files_shows() {
         // Files' sidebar, measured with a black accent, over solid windows (dark and light).
+        // The light rows were measured with the old grey-238 tint; Glasshouse's lighter page
+        // (#f4f4f1) raised them, and these are what the same window tint gives now (to measure
+        // again on Windows).
         let cases = [
             (false, 0.0, [0.0; 3], 14.0),
             (false, 0.325, [0.0; 3], 21.0),
@@ -380,10 +381,10 @@ mod tests {
             (false, 0.325, [1.0; 3], 45.0),
             (false, 1.0, [1.0; 3], 87.0),
             (false, 1.0, [0.5; 3], 61.0),
-            (true, 0.0, [0.0; 3], 228.0),
-            (true, 1.0, [0.0; 3], 231.0),
-            (true, 0.0, [1.0; 3], 239.0),
-            (true, 1.0, [0.25; 3], 244.0),
+            (true, 0.0, [0.0; 3], 242.0),
+            (true, 1.0, [0.0; 3], 242.0),
+            (true, 0.0, [1.0; 3], 253.0),
+            (true, 1.0, [0.25; 3], 254.5),
             (true, 1.0, [1.0; 3], 255.0),
         ];
         for (light, glass, back, files) in cases {

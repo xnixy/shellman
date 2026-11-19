@@ -1,4 +1,4 @@
-//! The details island on the right (shown with the path bar's details button): a large preview
+//! The details box at the right of the folder (shown with the header's details button): a large preview
 //! of the selection, its name and what it is, its tags, the facts (dates, where it is, its size),
 //! and Open. For several items, how many and how big they are together. What takes reading is
 //! read by `details`' worker; this only draws what has arrived.
@@ -9,16 +9,16 @@ use super::rows::file_icon;
 use super::tab::Loc;
 use super::text;
 use crate::tags::COUNT;
-use egui::{Align2, Color32, CornerRadius, FontId, Id, Rect, Sense, Ui, UiBuilder, Vec2};
+use egui::{Align2, FontId, Id, Rect, Sense, Ui, UiBuilder, Vec2};
 use shellman_core::fsops::{self, Entry};
 use shellman_core::thumbs;
 use shellman_ui::chips::{chip, chip_width, Chip, CHIP_H};
 use shellman_ui::glass::islands::shows_as;
-use shellman_ui::theme::{self, colors, glyph, icon_font, semibold_font};
+use shellman_ui::theme::{self, colors, glyph, icon_font, semibold_font, shape};
 use shellman_ui::widgets::{self, draw_text};
 use std::path::PathBuf;
 
-/// Inside the island.
+/// Inside the box.
 const PAD: f32 = 18.0;
 /// The facts' label column.
 const LABEL_W: f32 = 84.0;
@@ -61,7 +61,7 @@ pub(super) fn subline(e: &Entry, pixels: Option<(u32, u32)>, online_only: bool) 
 }
 
 impl super::FileMan {
-    /// Whether the details island shows: the setting, or in a picker only when asked for there.
+    /// Whether the details box shows: the setting, or in a picker only when asked for there.
     pub(super) fn details_on(&self) -> bool {
         match &self.pick {
             Some(p) => p.details,
@@ -94,9 +94,9 @@ impl super::FileMan {
         }
     }
 
-    /// Draw the island's contents in `rect`; `back`: they show in the folder's place (a narrow
+    /// Draw the box's contents in `rect`; `back`: they show in the folder's place (a narrow
     /// window), with a back arrow to the folder.
-    pub(super) fn details_island(&mut self, ui: &mut Ui, rect: Rect, back: bool, actions: &mut Vec<Action>) {
+    pub(super) fn details_pane(&mut self, ui: &mut Ui, rect: Rect, back: bool, actions: &mut Vec<Action>) {
         let mut rect = rect;
         if back {
             let b = Rect::from_min_size(rect.min + Vec2::new(12.0, 10.0), Vec2::splat(30.0));
@@ -113,7 +113,7 @@ impl super::FileMan {
             );
             rect.min.y = b.bottom() - 6.0;
         }
-        // The whole island read as one piece; its buttons are named on their own.
+        // The whole box read as one piece; its buttons are named on their own.
         let resp = ui.interact(rect, Id::new("details-island"), Sense::hover());
         let sel = self.details_contents(ui, rect, actions);
         let spoken = self.details_spoken(&sel);
@@ -131,7 +131,7 @@ impl super::FileMan {
         }
     }
 
-    /// The island's contents; hands back the selection it was given, to keep for next frame.
+    /// The box's contents; hands back the selection it was given, to keep for next frame.
     fn details_contents(&mut self, ui: &mut Ui, rect: Rect, actions: &mut Vec<Action>) -> Vec<Entry> {
         let c = colors();
         let tab = &self.tabs[self.active];
@@ -164,15 +164,9 @@ impl super::FileMan {
         let preview = Rect::from_min_size(inner.min, Vec2::new(inner.width(), preview_h));
         let mut y = preview.bottom() + 16.0;
 
-        // The preview.
-        let well = CornerRadius::same(14);
-        let soft = if c.high_contrast {
-            c.bg
-        } else if c.light {
-            Color32::from_black_alpha(10)
-        } else {
-            shows_as(Color32::from_rgba_unmultiplied(255, 255, 255, 10))
-        };
+        // The preview: a tile in Glasshouse's well fill (the window colour in high contrast).
+        let well = shape::corner(shape::TILE);
+        let soft = c.well;
 
         match sel.as_slice() {
             [] => {
@@ -330,10 +324,10 @@ impl super::FileMan {
     /// One item's preview: its picture, its first lines, a folder, or its type's glyph.
     fn details_preview(&mut self, ui: &Ui, r: Rect, e: &Entry, lines: Option<&[String]>) {
         let c = colors();
-        let well = CornerRadius::same(14);
+        let well = shape::corner(shape::TILE);
         let p = ui.painter();
         if e.is_dir {
-            p.rect_filled(r, well, shows_as(Color32::from_rgba_unmultiplied(255, 255, 255, if c.light { 120 } else { 10 })));
+            p.rect_filled(r, well, c.well);
             let w = r.width() * 0.34;
             widgets::folder_icon(p, Rect::from_center_size(r.center(), Vec2::new(w, w * 0.74)), c.accent_text, |x| x);
             return;
@@ -343,23 +337,22 @@ impl super::FileMan {
             .flatten();
         if let (Some((id, size)), false) = (thumb, thumbs::is_program(&e.name)) {
             // The whole picture, fitted, on a faint well.
-            p.rect_filled(r, well, shows_as(Color32::from_rgba_unmultiplied(255, 255, 255, 8)));
+            p.rect_filled(r, well, c.well);
             let fit = (r.width() / size.x).min(r.height() / size.y);
             let at = Rect::from_center_size(r.center(), size * fit);
             egui::Image::from_texture((id, size)).corner_radius(well).paint_at(ui, at);
             return;
         }
         if let Some(lines) = lines {
-            // A page: light, with the first lines in small monospace, as the design's documents.
-            let page = Color32::from_rgb(244, 245, 249);
-            p.rect_filled(r, well, page);
+            // A page: the popup sheet inside a hairline, with the first lines in small monospace.
+            p.rect(r, well, c.popup, egui::Stroke::new(1.0_f32, c.hairline), egui::StrokeKind::Inside);
             let font = FontId::monospace(10.5);
             let mut y = r.top() + 12.0;
             for line in lines {
                 if y + 13.0 > r.bottom() - 8.0 {
                     break;
                 }
-                draw_text(ui, Rect::from_min_size(egui::pos2(r.left() + 14.0, y), Vec2::new(r.width() - 28.0, 13.0)), line, font.clone(), Color32::from_rgb(70, 78, 96), false);
+                draw_text(ui, Rect::from_min_size(egui::pos2(r.left() + 14.0, y), Vec2::new(r.width() - 28.0, 13.0)), line, font.clone(), c.muted, false);
                 y += 13.5;
             }
             return;
@@ -429,9 +422,11 @@ impl super::FileMan {
             let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width().max(220.0), 32.0), Sense::click());
             let tag_name = self.tags.store.name(i).to_owned();
             resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Checkbox, true, on, &tag_name));
-            theme::focus_ring(ui, &resp, rect, 6.0);
+            theme::focus_ring(ui, &resp, rect, shape::MENU_ROW);
             if resp.hovered() && !self.tag_edit {
-                ui.painter().rect_filled(rect, CornerRadius::same(6), theme::with_alpha(c.text, if c.light { 18 } else { 12 }));
+                // A menu row's hover: the faint wash, an outline in high contrast.
+                ui.painter().rect_filled(rect, shape::MENU_ROW, c.row_hover);
+                theme::contrast_outline(ui, rect, shape::MENU_ROW, true, false);
             }
             ui.painter().circle_filled(egui::pos2(rect.left() + 19.0, rect.center().y), 5.5, super::tag_ui::colour(i));
             let text_rect = Rect::from_min_max(egui::pos2(rect.left() + 38.0, rect.top() + 3.0), egui::pos2(rect.right() - 34.0, rect.bottom() - 3.0));

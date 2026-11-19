@@ -57,7 +57,7 @@ fn run(start: args::Start, session: Option<pick::Session>) -> eframe::Result {
     let owner = session.as_ref().map_or(0, |s| s.req.owner);
     let size = if picking { placement::PICK_SIZE } else { placement::DEFAULT_SIZE };
     // Larger with Windows' text size, as far as the screen allows (egui's zoom does the rest):
-    // the islands need their least size in zoomed points too (see `app::plan`).
+    // the layout needs its least size in zoomed points too (see `app::plan`).
     let z = theme::env::text_scale();
     let (size, min) = theme::env::scaled_window([size.0, size.1], [placement::MIN_SIZE.0, placement::MIN_SIZE.1], z, theme::env::work_area_points());
     let mut viewport = egui::ViewportBuilder::default()
@@ -119,10 +119,10 @@ fn run(start: args::Start, session: Option<pick::Session>) -> eframe::Result {
                         placement::move_to(hwnd, at);
                     }
                     // No frame and no window backdrop: the window is transparent, and its
-                    // islands are pieces of glass under it (see `app::layout`). The resize edges
+                    // sheet is a piece of glass under it (see `app::layout`). The resize edges
                     // and Snap stay.
                     window::frameless(hwnd);
-                    panel = Some(GlassPanel::attach_window(hwnd, Style::from_theme(app::RADIUS)));
+                    panel = Some(GlassPanel::attach_window(hwnd, Style::from_theme(shellman_ui::sheet::RADIUS)));
                 }
             }
             let _built = shellman_core::timing::span("app built");

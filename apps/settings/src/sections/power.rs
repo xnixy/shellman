@@ -68,7 +68,9 @@ pub fn show(ui: &mut egui::Ui, st: &mut State) {
     st.power.poll();
     let Some(snap) = st.power.snap.clone() else {
         page::group(ui, "", |ui| {
-            ui.label(theme::muted("Reading the power settings..."));
+            page::row_with(ui, |ui| {
+                ui.label(theme::muted("Reading the power settings..."));
+            });
         });
         return;
     };
@@ -82,10 +84,10 @@ pub fn show(ui: &mut egui::Ui, st: &mut State) {
     if snap.mode.is_some() || snap.plans.len() > 1 {
         page::group(ui, "Power plan", |ui| {
             if snap.plans.len() > 1 {
-                page::label(ui, "Plan");
                 let mut pick = None;
                 let rows: Vec<(String, bool)> = snap.plans.iter().map(|p| (p.name.clone(), Some(p.guid) == snap.active)).collect();
-                if let Some(k) = dropdown(ui, "power-plan", 300.0, &snap.active_name(), &rows) {
+                let picked = page::row(ui, "Plan", "", |ui| dropdown(ui, "power-plan", 300.0_f32.min(ui.available_width() * 0.6), &snap.active_name(), &rows));
+                if let Some(k) = picked {
                     let g = snap.plans[k].guid;
                     if Some(g) != snap.active {
                         pick = Some(g);
@@ -96,45 +98,34 @@ pub fn show(ui: &mut egui::Ui, st: &mut State) {
                 }
             }
             if let Some(mut mode) = snap.mode {
-                if snap.plans.len() > 1 {
-                    ui.add_space(14.0);
-                }
-                page::label(ui, "Power mode");
                 let opts: Vec<_> = pw::Mode::ALL.iter().map(|m| (*m, m.label())).collect();
-                if page::segmented(ui, &mut mode, &opts) && Some(mode) != snap.mode {
+                if page::row(ui, "Power mode", "", |ui| page::segmented(ui, &mut mode, &opts)) && Some(mode) != snap.mode {
                     v.spawn(&ctx, Some(Box::new(move || pw::set_mode(mode))));
                 }
             }
         });
     }
     page::group(ui, "Screen and sleep", |ui| {
-        let mut first = true;
         for key in [Key::ScreenOff, Key::Sleep] {
-            if !logic::applies(key, &caps) {
-                continue;
+            if logic::applies(key, &caps) {
+                row(ui, v, &snap, key, battery);
             }
-            if !first {
-                ui.add_space(12.0);
-            }
-            first = false;
-            row(ui, v, &snap, key, battery);
         }
         notice(ui, v);
     });
     let buttons: Vec<Key> = [Key::LidClose, Key::PowerButton].into_iter().filter(|k| logic::applies(*k, &caps)).collect();
     if !buttons.is_empty() {
         page::group(ui, "Buttons and lid", |ui| {
-            for (i, key) in buttons.iter().enumerate() {
-                if i > 0 {
-                    ui.add_space(12.0);
-                }
+            for key in &buttons {
                 row(ui, v, &snap, *key, battery);
             }
         });
     }
     if let Some(s) = status.filter(|_| battery) {
         page::group(ui, "Battery", |ui| {
-            ui.label(logic::battery_text(&s));
+            page::row_with(ui, |ui| {
+                ui.label(logic::battery_text(&s));
+            });
         });
         ui.ctx().request_repaint_after(Duration::from_secs(5));
     }
@@ -142,26 +133,20 @@ pub fn show(ui: &mut egui::Ui, st: &mut State) {
 
 fn notice(ui: &mut egui::Ui, v: &PowerView) {
     if let Some(n) = &v.notice {
-        ui.add_space(8.0);
-        ui.label(theme::muted(n).size(12.0));
+        page::row_with(ui, |ui| {
+            ui.add(egui::Label::new(theme::muted(n).size(12.5)).wrap());
+        });
     }
 }
 
-/// One setting: its label, and a picker for plugged in (and on battery when there is one).
+/// One setting: a row with a picker for plugged in, and (when there is a battery) a second row
+/// for on battery.
 fn row(ui: &mut egui::Ui, v: &mut PowerView, snap: &Snapshot, key: Key, battery: bool) {
-    page::label(ui, key.label());
     let pair = snap.pair(key);
-    ui.horizontal_wrapped(|ui| {
-        if battery {
-            ui.label(theme::muted("Plugged in").size(12.0));
-        }
-        picker(ui, v, snap, key, Source::Ac, pair.ac);
-        if battery {
-            ui.add_space(16.0);
-            ui.label(theme::muted("On battery").size(12.0));
-            picker(ui, v, snap, key, Source::Dc, pair.dc);
-        }
-    });
+    page::row(ui, key.label(), if battery { "Plugged in" } else { "" }, |ui| picker(ui, v, snap, key, Source::Ac, pair.ac));
+    if battery {
+        page::row(ui, key.label(), "On battery", |ui| picker(ui, v, snap, key, Source::Dc, pair.dc));
+    }
 }
 
 fn picker(ui: &mut egui::Ui, v: &mut PowerView, snap: &Snapshot, key: Key, source: Source, value: Option<u32>) {

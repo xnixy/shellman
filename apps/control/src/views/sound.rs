@@ -2,9 +2,10 @@
 //! click makes another the default), and the microphone's mute.
 
 use super::kit::{self, chip, clipped_text, label_font, small_font, CHIP, GAP};
-use egui::{Align2, CornerRadius, Pos2, Rect, Sense, Ui, Vec2};
+use egui::{Align2, Pos2, Rect, Sense, Ui, Vec2};
 use shellman_core::system::audio::Sound;
 use shellman_core::system::audio_watch::SoundWatch;
+use shellman_ui::theme::shape::{self, MENU_ROW};
 use shellman_ui::theme::{colors, glyph, icon_font};
 
 const ROW: f32 = 28.0;
@@ -106,11 +107,11 @@ impl SoundView {
                 output_name(&o.name, i == 0, expanded)
             });
             let back = rect.expand2(Vec2::new(4.0, 0.0));
-            shellman_ui::theme::focus_ring(ui, &resp, back, 8.0);
+            shellman_ui::theme::focus_ring(ui, &resp, back, MENU_ROW);
             if resp.hovered() {
-                ui.painter().rect_filled(back, CornerRadius::same(8), kit::well(false));
+                ui.painter().rect_filled(back, shape::corner(MENU_ROW), kit::row_hover());
             }
-            shellman_ui::theme::contrast_outline(ui, back, 8.0, resp.hovered(), false);
+            shellman_ui::theme::contrast_outline(ui, back, MENU_ROW, resp.hovered(), false);
             if is_default && self.expanded {
                 let at = Pos2::new(rect.left() + 8.0, rect.center().y);
                 ui.painter().text(at, Align2::CENTER_CENTER, glyph::CHECK, icon_font(12.0), c.text);
@@ -184,11 +185,11 @@ pub(super) fn settings_link(ui: &mut Ui, text: &str) -> bool {
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), ROW), Sense::click());
     shellman_ui::theme::speak(&resp, egui::WidgetType::Link, || text.to_owned());
     let back = rect.expand2(Vec2::new(4.0, 0.0));
-    shellman_ui::theme::focus_ring(ui, &resp, back, 8.0);
+    shellman_ui::theme::focus_ring(ui, &resp, back, MENU_ROW);
     if resp.hovered() {
-        ui.painter().rect_filled(back, CornerRadius::same(8), kit::well(false));
+        ui.painter().rect_filled(back, shape::corner(MENU_ROW), kit::row_hover());
     }
-    shellman_ui::theme::contrast_outline(ui, back, 8.0, resp.hovered(), false);
+    shellman_ui::theme::contrast_outline(ui, back, MENU_ROW, resp.hovered(), false);
     let color = if resp.hovered() { c.text } else { c.muted };
     let at = Pos2::new(rect.right() - 8.0, rect.center().y);
     ui.painter().text(at, Align2::CENTER_CENTER, glyph::OPEN_EXTERNAL, icon_font(10.0), color);

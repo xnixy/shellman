@@ -12,7 +12,7 @@
 :root {
   --sm-gap: 12px;
   --sm-edge: 12px;
-  --sm-radius: 22px;
+  --sm-radius: 20px;
   --sm-pill-h: 46px;
 
   --sm-fill: color-mix(in srgb, var(--shellman-island-fill) calc(var(--shellman-island-opacity) * 100%), transparent);
@@ -20,24 +20,25 @@
   --sm-accent-soft: color-mix(in srgb, var(--shellman-accent) 22%, transparent);
   --sm-accent-ring: color-mix(in srgb, var(--shellman-accent) 55%, transparent);
 
-  --sm-soft: #ffffff0d;
-  --sm-soft-hover: #ffffff17;
-  --sm-hair: #ffffff1f;
-  --sm-hair-soft: #ffffff12;
-  --sm-text: #eef1f6;
-  --sm-muted: #aab3c5;
-  --sm-shadow: 0 8px 24px #0000004d, inset 0 1px 0 #ffffff14;
+  /* Glasshouse: faint fills of the text colour, hairlines, a light top edge (the rim). */
+  --sm-soft: #f4f5f717;
+  --sm-soft-hover: #f4f5f724;
+  --sm-hair: #ffffff17;
+  --sm-hair-soft: #ffffff10;
+  --sm-text: #f4f5f7;
+  --sm-muted: #a4a8b0;
+  --sm-shadow: 0 8px 24px #0000004d, inset 0 1px 0 #ffffff29;
 }
 
 @media (prefers-color-scheme: light) {
   :root {
-    --sm-soft: #00000009;
-    --sm-soft-hover: #00000012;
+    --sm-soft: #1b1c1f12;
+    --sm-soft-hover: #1b1c1f1e;
     --sm-hair: #0000001a;
-    --sm-hair-soft: #0000000f;
-    --sm-text: #1c2230;
-    --sm-muted: #4d586b;
-    --sm-shadow: 0 8px 24px #00000022, inset 0 1px 0 #ffffff80;
+    --sm-hair-soft: #00000010;
+    --sm-text: #1b1c1f;
+    --sm-muted: #55575c;
+    --sm-shadow: 0 8px 24px #00000022, inset 0 1px 0 #ffffffb3;
   }
 }
 
@@ -509,7 +510,7 @@ sidebar-main {
 }
 
 #tabbrowser-tabs[orient="vertical"] {
-  --tab-border-radius: 14px;
+  --tab-border-radius: 12px;
   --tab-min-height: 36px;
   --tab-block-margin: 2px;
   align-items: stretch;
@@ -518,13 +519,13 @@ sidebar-main {
 
 #tabbrowser-tabs[orient="vertical"] .tab-background,
 #tabbrowser-tabs[orient="vertical"] .tabbrowser-tab:not([visuallyselected]):hover > .tab-stack > .tab-background {
-  border-radius: 14px !important;
+  border-radius: 12px !important;
 }
 
 /* pinned tabs, the new-tab button and the bottom tool buttons use the same soft chips */
 #tabbrowser-tabs[orient="vertical"] #vertical-tabs-newtab-button,
 #vertical-tabs-newtab-button {
-  border-radius: 14px !important;
+  border-radius: 12px !important;
   background: var(--sm-soft) !important;
   border: 1px solid var(--sm-hair-soft) !important;
   color: var(--sm-text);

@@ -12,7 +12,8 @@ use shellman_ui::theme::{colors, glyph, icon_font};
 /// The picture's size, in points.
 const SIZE: Vec2 = Vec2::new(140.0, 112.0);
 const CARD: Rect = Rect { min: Pos2::new(8.0, 8.0), max: Pos2::new(132.0, 104.0) };
-const RADIUS: f32 = 18.0;
+/// A tile, as Files' cards are.
+const RADIUS: f32 = shellman_ui::theme::shape::TILE;
 
 /// A canvas of premultiplied RGBA, `scale` pixels to the point.
 struct Canvas {
@@ -136,12 +137,13 @@ pub fn render(ctx: &egui::Context, path: &std::path::Path, scale: f32) -> Option
     let c = colors();
     let scale = scale.clamp(1.0, 4.0);
     let mut cv = Canvas::new(SIZE, scale);
-    let css = |r, g, b, a| Color32::from_rgba_unmultiplied(r, g, b, a);
-    let (fill, line) = if c.light { (css(255, 255, 255, 240), css(0, 0, 0, 34)) } else { (css(46, 48, 56, 240), css(255, 255, 255, 40)) };
-    cv.rounded(CARD, RADIUS, fill, line, 1.0);
+    // The popup sheet, a touch see-through, inside a hairline. A picture, not the window, so the
+    // colours go in as they are (no `shows_as`).
+    let fill = shellman_ui::theme::with_alpha(c.popup, 240);
+    cv.rounded(CARD, RADIUS, fill, c.hairline, 1.0);
     let (g, tint) = if path.is_dir() { (glyph::FOLDER_FILL, c.accent_fill) } else { (glyph::FILE, c.text) };
     let well = Rect::from_min_max(CARD.min + Vec2::splat(9.0), egui::pos2(CARD.max.x - 9.0, CARD.max.y - 28.0));
-    cv.rounded(well, 12.0, shellman_ui::theme::with_alpha(tint, if c.light { 34 } else { 44 }), Color32::TRANSPARENT, 0.0);
+    cv.rounded(well, RADIUS - 6.0, shellman_ui::theme::with_alpha(tint, if c.light { 34 } else { 44 }), Color32::TRANSPARENT, 0.0);
     cv.text(ctx, well.center(), &g.to_string(), icon_font(26.0), tint, well.width());
     cv.text(ctx, egui::pos2(CARD.center().x, CARD.max.y - 15.0), &name, FontId::proportional(11.5), c.text, CARD.width() - 18.0);
     Some(Image {

@@ -13,9 +13,10 @@ use std::path::Path;
 /// Icons whose longest side is under this many pixels count as small ones.
 const SMALL_PX: f32 = 48.0;
 
-/// A faint rounded plate in the text colour: it suits light and dark, and shows glass through.
+/// A faint rounded plate: Glasshouse's field fill as it shows over the glass, so it suits light
+/// and dark and shows glass through (the window colour in high contrast).
 pub fn plate(p: &Painter, rect: Rect) {
-    p.rect_filled(rect, rect.width() * 0.22, colors().text.gamma_multiply(0.06));
+    p.rect_filled(rect, rect.width() * 0.22, shellman_ui::chips::soft_colors(colors().light).0);
 }
 
 /// Draw the app's icon in `rect`.

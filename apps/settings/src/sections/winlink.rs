@@ -5,8 +5,9 @@
 
 use crate::page;
 use crate::state::State;
-use egui::{RichText, Ui};
-use shellman_ui::theme::{self, colors};
+use egui::Ui;
+use shellman_ui::theme;
+use shellman_ui::widgets::toggle;
 
 /// Open a link (`ms-settings:`, `windowsdefender:`) from a thread of its own (ShellExecute may
 /// take a moment). Windows' Settings needs the host for modern apps: when it is not running, it is
@@ -55,45 +56,28 @@ pub fn button(ui: &mut Ui, uri: &str, host: bool, label: &str, name: Option<&str
 
 /// A read-only setting: its title and what Windows has now on the left, the button on the right.
 pub fn row(ui: &mut Ui, title: &str, value: &str, uri: &str, host: bool) {
-    let c = colors();
-    theme::trailing(
-        ui,
-        |ui| button(ui, uri, host, "Open in Windows Settings", Some(&format!("Open {title} in Windows Settings"))),
-        |ui| {
-            ui.vertical(|ui| {
-                ui.spacing_mut().item_spacing.y = 2.0;
-                ui.add(egui::Label::new(RichText::new(title).size(13.0).color(c.text)).wrap());
-                if !value.is_empty() {
-                    ui.add(egui::Label::new(RichText::new(value).size(11.5).color(c.muted)).wrap());
-                }
-            });
-        },
-    );
+    page::row(ui, title, value, |ui| button(ui, uri, host, "Open in Windows Settings", Some(&format!("Open {title} in Windows Settings"))));
 }
 
-/// Without the host (only when "Never" is chosen): an island saying why the buttons are off,
+/// Without the host (only when "Never" is chosen): a group saying why the buttons are off,
 /// with the choice.
 pub fn host_group(ui: &mut Ui, st: &mut State, host: bool) {
     if host {
         return;
     }
     page::group(ui, "Windows Settings", |ui| {
-        ui.add(egui::Label::new(theme::muted("Some of these settings change only in Windows' own Settings, which needs its host to open.").size(12.0)).wrap());
-        ui.add_space(10.0);
+        page::row_with(ui, |ui| {
+            ui.add(egui::Label::new(theme::muted("Some of these settings change only in Windows' own Settings, which needs its host to open.").size(12.5)).wrap());
+        });
         windows_apps_choice(ui, st);
     });
 }
 
-/// When Windows' host for Settings, Calculator and the Store runs: three chips and what is true
-/// now. The one control for it (About, and wherever a page needs Windows' Settings).
+/// When Windows' host for Settings, Calculator and the Store runs: three choices and what is true
+/// now, as one row. The one control for it (About, and wherever a page needs Windows' Settings).
 pub fn windows_apps_choice(ui: &mut Ui, st: &mut State) {
     use shellman_core::settings::shell::WindowsApps;
     let options = [(WindowsApps::WhenNeeded, "When needed"), (WindowsApps::Always, "Always"), (WindowsApps::Never, "Never")];
-    if let Some(choice) = shellman_ui::look_controls::choice_chips(ui, st.shell.windows_apps(), &options, true) {
-        st.shell.set_windows_apps(choice);
-        st.save_shell();
-    }
-    ui.add_space(6.0);
     let what = match st.shell.windows_apps() {
         WindowsApps::WhenNeeded => "Starts the first time you open one of them, until you sign out.",
         WindowsApps::Always => "Starts at every sign-in, so they open at once.",
@@ -105,7 +89,11 @@ pub fn windows_apps_choice(ui: &mut Ui, st: &mut State) {
         None if st.shell.windows_apps() == WindowsApps::Never => "Not running.".to_owned(),
         None => "Not running now.".to_owned(),
     };
-    ui.add(egui::Label::new(theme::muted(format!("{what} {now}")).size(12.0)).wrap());
+    let mut choice = st.shell.windows_apps();
+    if page::row(ui, "Windows' host for these apps", &format!("{what} {now}"), |ui| page::segmented(ui, &mut choice, &options)) {
+        st.shell.set_windows_apps(choice);
+        st.save_shell();
+    }
     // It may start or stop by itself (a click elsewhere, the desktop's supervisor).
     ui.ctx().request_repaint_after(std::time::Duration::from_secs(2));
 }
@@ -128,6 +116,6 @@ fn local_hm(t: std::time::SystemTime) -> String {
 pub fn setting(ui: &mut Ui, title: &str, detail: &str, on: bool, locked: Option<&str>) -> Option<bool> {
     let mut v = on;
     let detail = locked.unwrap_or(detail);
-    let changed = ui.add_enabled_ui(locked.is_none(), |ui| theme::setting_row(ui, title, detail, &mut v).changed()).inner;
+    let changed = page::row(ui, title, detail, |ui| ui.add_enabled_ui(locked.is_none(), |ui| toggle(ui, &mut v, title).changed()).inner);
     (changed && v != on).then_some(v)
 }

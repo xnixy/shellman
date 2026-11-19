@@ -14,30 +14,32 @@ use shellman_ui::theme::{self, colors, glyph, icon_font, semibold_font};
 use shellman_ui::widgets::toggle;
 
 const TILE_H: f32 = 150.0;
-const ROW_H: f32 = 46.0;
 
 pub fn show(ui: &mut Ui, st: &mut State) {
     page::heading(ui, "Desktop", "What sits on the wallpaper. Right-click the wallpaper for its menu, in either style.");
     let mut changed = false;
+    // The two styles are preview tiles in a grid, so they keep their own cards inside the box.
     page::group(ui, "Desktop style", |ui| {
-        ui.add_space(4.0);
-        let gap = 16.0;
-        let w = ((ui.available_width() - gap) / 2.0).max(120.0);
-        let top = ui.cursor().min;
-        for (i, style) in Style::ALL.into_iter().enumerate() {
-            let rect = Rect::from_min_size(pos2(top.x + i as f32 * (w + gap), top.y), vec2(w, TILE_H + 70.0));
-            if tile(ui, rect, style, st.desktop.style == style).clicked() && st.desktop.style != style {
-                st.desktop.style = style;
-                changed = true;
+        page::row_with(ui, |ui| {
+            let gap = 16.0;
+            let w = ((ui.available_width() - gap) / 2.0).max(120.0);
+            let top = ui.cursor().min;
+            for (i, style) in Style::ALL.into_iter().enumerate() {
+                let rect = Rect::from_min_size(pos2(top.x + i as f32 * (w + gap), top.y), vec2(w, TILE_H + 70.0));
+                if tile(ui, rect, style, st.desktop.style == style).clicked() && st.desktop.style != style {
+                    st.desktop.style = style;
+                    changed = true;
+                }
             }
-        }
-        ui.allocate_rect(Rect::from_min_size(top, vec2(2.0 * w + gap, TILE_H + 70.0)), Sense::hover());
+            ui.allocate_rect(Rect::from_min_size(top, vec2(2.0 * w + gap, TILE_H + 70.0)), Sense::hover());
+        });
     });
     let clean = st.desktop.style == Style::Clean;
     page::group(ui, "Shelf", |ui| {
         if clean {
-            ui.label(theme::muted("Clean shows no shelf. Pick Shelf + widgets to use it.").size(12.0));
-            ui.add_space(6.0);
+            page::row_with(ui, |ui| {
+                ui.add(egui::Label::new(theme::muted("Clean shows no shelf. Pick Shelf + widgets to use it.").size(12.5)).wrap());
+            });
         }
         ui.add_enabled_ui(!clean, |ui| {
             changed |= rows(ui, st);
@@ -60,32 +62,18 @@ pub fn show(ui: &mut Ui, st: &mut State) {
     }
 }
 
-/// One row: the label on the left, `add` on the right, a hairline above.
-pub(super) fn row(ui: &mut Ui, label: &str, first: bool, add: impl FnOnce(&mut Ui) -> bool) -> bool {
-    let c = colors();
-    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), ROW_H), Sense::hover());
-    if !first {
-        ui.painter().hline(rect.x_range(), rect.top(), Stroke::new(1.0_f32, c.hairline));
-    }
-    let text = if ui.is_enabled() { c.text } else { theme::with_alpha(c.muted, 150) };
-    ui.painter().text(pos2(rect.left(), rect.center().y), Align2::LEFT_CENTER, label, FontId::proportional(14.0), text);
-    let right = Rect::from_min_max(pos2(rect.left() + 160.0, rect.top()), rect.max);
-    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(right).layout(egui::Layout::right_to_left(egui::Align::Center)));
-    add(&mut child)
-}
-
 fn rows(ui: &mut Ui, st: &mut State) -> bool {
     let mut changed = false;
-    changed |= row(ui, "Show shelf", true, |ui| toggle(ui, &mut st.desktop.shelf.show, "Show shelf").changed());
-    changed |= row(ui, "Show shelf on", false, |ui| {
+    changed |= page::row(ui, "Show shelf", "", |ui| toggle(ui, &mut st.desktop.shelf.show, "Show shelf")).changed();
+    changed |= page::row(ui, "Show shelf on", "", |ui| {
         let options = ShelfOn::ALL.map(|o| (o, o.label()));
         page::segmented(ui, &mut st.desktop.shelf.on, &options)
     });
-    changed |= row(ui, "Edge", false, |ui| {
+    changed |= page::row(ui, "Edge", "", |ui| {
         let options = Edge::ALL.map(|e| (e, e.label()));
         page::segmented(ui, &mut st.desktop.shelf.edge, &options)
     });
-    changed |= row(ui, "Stacks", false, |ui| {
+    changed |= page::row(ui, "Stacks", "", |ui| {
         let mut toggled = None;
         ui.spacing_mut().item_spacing.x = 6.0;
         for stack in Stack::ALL.into_iter().rev() {
@@ -102,7 +90,7 @@ fn rows(ui: &mut Ui, st: &mut State) -> bool {
         }
         toggled.is_some()
     });
-    changed |= row(ui, "Dropped files go to", false, |ui| drop_to(ui, st));
+    changed |= page::row(ui, "Dropped files go to", "", |ui| drop_to(ui, st));
     changed
 }
 

@@ -3,7 +3,6 @@
 //! other apps watch, so they follow as you change things.
 
 mod app;
-mod flow;
 mod instance;
 mod page;
 mod pick;

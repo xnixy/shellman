@@ -10,7 +10,7 @@ use windows::Win32::Foundation::RECT;
 /// Most windows one panel shows.
 pub const MAX_WINDOWS: usize = 6;
 /// Space inside a tile around its picture and title.
-const PAD: f32 = 8.0;
+pub const PAD: f32 = 8.0;
 /// Space between the panel's edge and its tiles, and between tiles.
 const PANEL_PAD: f32 = 6.0;
 const GAP: f32 = 4.0;

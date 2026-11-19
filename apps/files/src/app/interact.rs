@@ -7,7 +7,7 @@ use super::tab::{Band, Tab};
 use egui::{
     Color32, Id, Key, Modifiers, PointerButton, Rect, ScrollArea, Sense, Ui, Vec2,
 };
-use shellman_ui::theme::{self, colors, glyph};
+use shellman_ui::theme::{self, colors, glyph, shape};
 use shellman_ui::widgets::select_range;
 use std::path::Path;
 
@@ -271,19 +271,19 @@ fn backdrop_id() -> Id {
     Id::new("folder-bg")
 }
 
-/// The space behind the items, all of the content island: a click clears the selection, a drag
-/// draws a rectangle that selects (see `rubber_band`), and a right click offers what can be done
-/// to the folder itself. Call before drawing items, so items sit on top of it. Its drags never
-/// reach the gaps under it, so the island never moves the window.
-pub(super) fn folder_backdrop(ui: &mut Ui, island: Rect, tab: &mut Tab, actions: &mut Vec<Action>) {
+/// The space behind the items, `ground` (the folder's part of the pane): a click clears the
+/// selection, a drag draws a rectangle that selects (see `rubber_band`), and a right click offers
+/// what can be done to the folder itself. Call before drawing items, so items sit on top of it.
+/// Its drags are its own: the folder never moves the window.
+pub(super) fn folder_backdrop(ui: &mut Ui, ground: Rect, tab: &mut Tab, actions: &mut Vec<Action>) {
     // Not a Tab stop: the items are.
-    let bg = ui.interact(island, backdrop_id(), Sense::CLICK | Sense::DRAG);
+    let bg = ui.interact(ground, backdrop_id(), Sense::CLICK | Sense::DRAG);
     let spoken = format!("{}, {}", tab.loc.title(), super::text::count(tab.view.len(), "item"));
     bg.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Other, true, &spoken));
     // Dropped on the empty space: into the folder shown (or the bin).
     match &tab.loc {
-        super::tab::Loc::Dir(p) => super::dnd::zone(ui, island, super::dnd::Dest::Dir(p.clone()), super::RADIUS),
-        super::tab::Loc::Bin => super::dnd::zone(ui, island, super::dnd::Dest::Bin, super::RADIUS),
+        super::tab::Loc::Dir(p) => super::dnd::zone(ui, ground, super::dnd::Dest::Dir(p.clone()), shape::TILE),
+        super::tab::Loc::Bin => super::dnd::zone(ui, ground, super::dnd::Dest::Bin, shape::TILE),
         _ => {}
     }
     if bg.clicked() && !click_mods(ui).ctrl {

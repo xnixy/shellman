@@ -9,7 +9,7 @@ pub const WIDTH: f32 = 372.0;
 pub const RIGHT: f32 = 40.0;
 /// From the work area's top (the top bar's lower edge) to the first widget.
 pub const TOP: f32 = 16.0;
-pub const RADIUS: f32 = 22.0;
+pub const RADIUS: f32 = shellman_ui::theme::shape::ISLAND;
 
 /// Today: padding (top, sides, bottom).
 pub const PAD_TOP: f32 = 22.0;

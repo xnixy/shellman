@@ -1,6 +1,7 @@
 //! Applying the palette to egui, and the shared frames and buttons.
 
 use super::icons::icon;
+use super::shape;
 use crate::glass::islands::shows_as;
 use super::{accent, colors, mix, with_alpha, Colors};
 use egui::{Color32, CornerRadius, Frame, Margin, RichText, Stroke, Theme, Ui, Vec2};
@@ -42,41 +43,44 @@ fn shell_visuals(c: &Colors) -> egui::Visuals {
         white(14),
         Color32::from_black_alpha(10),
     );
-    visuals.extreme_bg_color = pick(
-        with_alpha(mix(Color32::from_gray(18), c.accent, 0.06), 170),
-        Color32::from_rgba_unmultiplied(255, 255, 255, 210),
-    );
+    // Text fields: Glasshouse's field fill, no frame of their own.
+    visuals.extreme_bg_color = pick(white(20), Color32::from_black_alpha(16));
     visuals.widgets.noninteractive.fg_stroke.color = c.muted;
     // What is disabled keeps a visible shape: egui draws it with the non-interactive fill, which
     // on a light page would otherwise be as pale as the page.
-    visuals.widgets.noninteractive.weak_bg_fill = pick(white(10), Color32::from_black_alpha(6));
+    visuals.widgets.noninteractive.weak_bg_fill = pick(white(10), Color32::from_black_alpha(8));
     visuals.widgets.noninteractive.bg_stroke.color = c.hairline;
+    let field = shape::corner(shape::FIELD);
     let mut idle = visuals.widgets.inactive;
     idle.bg_fill = c.track;
-    // Buttons and combo boxes. On a light page a faint black would be a grey smudge, so they are
-    // a lifted white with a clear edge; on a dark one a faint white that shows as intended.
-    idle.weak_bg_fill = pick(white(18), Color32::from_rgba_unmultiplied(255, 255, 255, 170));
-    idle.bg_stroke = Stroke::new(1.0_f32, pick(white(36), Color32::from_black_alpha(40)));
-    idle.corner_radius = CornerRadius::same(8);
+    // Buttons and combo boxes: a faint fill of the text colour and no edge, as in Glasshouse.
+    // White through `shows_as` on dark, so it shows over glass as intended.
+    idle.weak_bg_fill = pick(white(22), Color32::from_black_alpha(18));
+    idle.bg_stroke = Stroke::NONE;
+    idle.corner_radius = field;
     idle.fg_stroke.color = c.text;
     let mut hovered = idle;
-    hovered.weak_bg_fill = pick(white(30), Color32::from_rgba_unmultiplied(255, 255, 255, 235));
+    hovered.weak_bg_fill = pick(white(36), Color32::from_black_alpha(30));
     hovered.bg_fill = mix(c.track, c.accent_fill, 0.25);
+    hovered.bg_stroke = Stroke::NONE;
     let mut active = hovered;
     active.bg_fill = c.accent_fill;
     active.weak_bg_fill = c.accent_fill;
     active.fg_stroke.color = c.on_accent;
+    // A text field with the keyboard: a 2 pt accent ring.
+    active.bg_stroke = Stroke::new(2.0_f32, c.accent_fill);
     visuals.widgets.inactive = idle;
     visuals.widgets.hovered = hovered;
     visuals.widgets.active = active;
     visuals.widgets.open = hovered;
-    visuals.selection.bg_fill = pick(c.accent_fill, mix(c.accent_fill, Color32::WHITE, 0.45));
-    visuals.selection.stroke = Stroke::new(1.0_f32, c.accent_text);
+    visuals.selection.bg_fill = pick(with_alpha(c.accent_fill, 110), with_alpha(c.accent_fill, 70));
+    visuals.selection.stroke = Stroke::new(2.0_f32, c.accent_fill);
     visuals.hyperlink_color = c.accent_text;
     visuals.text_cursor.stroke.color = c.accent_text;
-    visuals.window_corner_radius = CornerRadius::same(12);
-    visuals.menu_corner_radius = CornerRadius::same(10);
+    visuals.window_corner_radius = shape::corner(shape::DIALOG);
+    visuals.menu_corner_radius = shape::corner(shape::POPOVER);
     visuals.window_stroke = Stroke::new(1.0_f32, c.hairline);
+    visuals.window_fill = c.popup;
     visuals
 }
 
@@ -102,56 +106,68 @@ fn outline(v: &mut egui::Visuals, c: &Colors) {
     v.popup_shadow = egui::epaint::Shadow::NONE;
 }
 
+/// A dialog: Glasshouse's sheet, 24 pt round, a hairline and a light top edge.
 pub fn dialog() -> Frame {
     let c = colors();
     Frame::new()
         .fill(c.popup)
         .stroke(Stroke::new(1.0_f32, c.hairline))
-        .corner_radius(CornerRadius::same(12))
-        .inner_margin(Margin::same(20))
+        .corner_radius(shape::corner(shape::DIALOG))
+        .inner_margin(Margin::same(22))
+        .shadow(if c.high_contrast {
+            egui::epaint::Shadow::NONE
+        } else {
+            egui::epaint::Shadow { offset: [0, 18], blur: 50, spread: 0, color: Color32::from_black_alpha(if c.light { 56 } else { 110 }) }
+        })
 }
 
 pub fn muted(text: impl Into<String>) -> RichText {
     RichText::new(text).color(colors().muted)
 }
 
+/// The small heading over a group (Glasshouse's preferences-group title): upper case, spaced out,
+/// grey.
+pub fn group_heading(text: &str) -> RichText {
+    RichText::new(text.to_uppercase()).size(11.0).color(colors().muted).extra_letter_spacing(0.9)
+}
+
 /// The height of every pill button.
 pub const PILL_H: f32 = 30.0;
 
-/// The one thing to do in a view: an accent pill, semibold, `on_accent` text.
+/// The one thing to do in a view: Glasshouse's main button, a near-black pill on light and a
+/// near-white one on dark, semibold. Not the accent: the accent marks what is on or chosen.
 pub fn primary_button(text: &str) -> egui::Button<'static> {
     let c = colors();
-    egui::Button::new(RichText::new(text).font(super::semibold_font(13.0)).color(c.on_accent))
-        .fill(c.accent_fill)
+    egui::Button::new(RichText::new(text).font(super::semibold_font(13.0)).color(c.on_primary))
+        .fill(c.primary)
         .stroke(if c.high_contrast { Stroke::new(1.0_f32, c.text) } else { Stroke::NONE })
         .corner_radius(CornerRadius::same((PILL_H / 2.0) as u8))
         .min_size(Vec2::new(88.0, PILL_H))
 }
 
-/// Everything else: a soft pill with a hairline.
+/// Everything else: a pill in the field fill, no edge.
 pub fn secondary_button(text: &str) -> egui::Button<'static> {
     let c = colors();
-    let soft = if c.high_contrast {
-        c.bg
-    } else if c.light {
-        Color32::from_white_alpha(150)
-    } else {
-        Color32::from_white_alpha(14)
-    };
+    let soft = if c.high_contrast { c.bg } else { c.field };
     egui::Button::new(RichText::new(text).size(13.0).color(c.text))
         .fill(soft)
-        .stroke(Stroke::new(1.0_f32, if c.high_contrast { c.text } else { c.hairline }))
+        .stroke(if c.high_contrast { Stroke::new(1.0_f32, c.text) } else { Stroke::NONE })
         .corner_radius(CornerRadius::same((PILL_H / 2.0) as u8))
         .min_size(Vec2::new(80.0, PILL_H))
 }
 
-/// A destructive action (Uninstall, Delete): a red pill.
+/// A destructive action (Uninstall, Delete): Glasshouse's quiet red, red text in a pill with a
+/// hairline, so it never draws the eye before the action that matters.
 pub fn danger_button(text: &str) -> egui::Button<'static> {
     let c = colors();
-    let (fill, ink) = if c.high_contrast { (c.accent_fill, c.on_accent) } else { (c.danger, Color32::WHITE) };
+    let (fill, ink, edge) = if c.high_contrast {
+        (c.accent_fill, c.on_accent, c.text)
+    } else {
+        (with_alpha(c.danger_text, 16), c.danger_text, c.hairline)
+    };
     egui::Button::new(RichText::new(text).font(super::semibold_font(13.0)).color(ink))
         .fill(fill)
-        .stroke(if c.high_contrast { Stroke::new(1.0_f32, c.text) } else { Stroke::NONE })
+        .stroke(Stroke::new(1.0_f32, edge))
         .corner_radius(CornerRadius::same((PILL_H / 2.0) as u8))
         .min_size(Vec2::new(88.0, PILL_H))
 }
@@ -225,24 +241,26 @@ pub fn setting_row(ui: &mut Ui, title: &str, detail: &str, on: &mut bool) -> egu
     )
 }
 
-/// A checkbox: a 20 rounded square, accent-filled with an `on_accent` tick when checked.
+/// A checkbox: a 20 square rounded 6, in the field fill with a hairline, accent-filled with an
+/// `on_accent` tick when checked.
 pub fn checkbox(ui: &mut Ui, checked: &mut bool, label: &str) -> egui::Response {
     let c = colors();
     let galley = ui.painter().layout_no_wrap(label.to_string(), egui::FontId::proportional(13.0), c.text);
     let size = Vec2::new(20.0 + 10.0 + galley.size().x, 22.0_f32.max(galley.size().y));
     let (rect, mut resp) = ui.allocate_exact_size(size, egui::Sense::click());
     crate::access::describe(&resp, || egui::WidgetInfo::selected(egui::WidgetType::Checkbox, true, *checked, label));
-    focus_ring(ui, &resp, rect, 6.0);
+    let r = shape::CHECK;
+    let painter = ui.painter();
+    let bx = egui::Rect::from_min_size(egui::pos2(rect.left(), rect.center().y - 10.0), Vec2::splat(20.0));
+    focus_ring(ui, &resp, bx, r);
     if resp.clicked() {
         *checked = !*checked;
         resp.mark_changed();
     }
-    let painter = ui.painter();
-    let bx = egui::Rect::from_min_size(egui::pos2(rect.left(), rect.center().y - 10.0), Vec2::splat(20.0));
     if *checked {
-        painter.rect_filled(bx, 4.0, c.accent_fill);
+        painter.rect_filled(bx, r, c.accent_fill);
         if c.high_contrast {
-            painter.rect_stroke(bx, 4.0, Stroke::new(1.0_f32, c.text), egui::StrokeKind::Inside);
+            painter.rect_stroke(bx, r, Stroke::new(1.0_f32, c.text), egui::StrokeKind::Inside);
         }
         let tick = vec![
             egui::pos2(bx.left() + 5.0, bx.center().y + 0.5),
@@ -251,11 +269,12 @@ pub fn checkbox(ui: &mut Ui, checked: &mut bool, label: &str) -> egui::Response 
         ];
         painter.line(tick, Stroke::new(1.6_f32, c.on_accent));
     } else {
-        if resp.hovered() && !c.high_contrast {
-            painter.rect_filled(bx, 4.0, c.row_hover);
+        if !c.high_contrast {
+            painter.rect_filled(bx, r, if resp.hovered() { c.control_hover } else { c.field });
         }
-        let edge = if c.high_contrast { c.text } else { c.muted };
-        painter.rect_stroke(bx.shrink(0.5), 4.0, Stroke::new(1.0_f32, edge), egui::StrokeKind::Inside);
+        // The hairline alone would vanish on glass; a check box needs a 3:1 edge to be found.
+        let edge = if c.high_contrast { c.text } else { with_alpha(c.muted, 200) };
+        painter.rect_stroke(bx, r, Stroke::new(1.0_f32, edge), egui::StrokeKind::Inside);
     }
     painter.galley(egui::pos2(bx.right() + 10.0, rect.center().y - galley.size().y / 2.0), galley, c.text);
     resp

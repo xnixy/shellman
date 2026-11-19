@@ -39,7 +39,7 @@ pub fn accent_picker(ui: &mut Ui, current: AccentChoice) -> Option<AccentChoice>
                 pick = Some(AccentChoice::Preset(i));
             }
         }
-        // The eleventh swatch opens the picker, and shows the custom color once chosen.
+        // The last swatch opens the picker, and shows the custom color once chosen.
         let kind = match current {
             AccentChoice::Custom(v) => Swatch::Solid(Color32::from_rgb(v[0], v[1], v[2])),
             _ => Swatch::Add,

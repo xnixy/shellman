@@ -1,8 +1,8 @@
 //! Fonts: the font Windows uses everywhere, Fontman's window as one Settings page. A status
-//! island on top says what Windows uses now; one island below holds the tabs (Fontman's pages:
-//! the fonts, the preview, weights, tuning, which parts of Windows, and backups), scrolling inside
-//! itself; and a command pill at the bottom applies the choice. Reading and changing are done by
-//! the workers (`fonts_worker`); this file only draws what they last published.
+//! group on top says what Windows uses now; the tabs below (Fontman's pages: the fonts, the
+//! preview, weights, tuning, which parts of Windows, and backups) scroll inside themselves, each
+//! as boxed groups; and a command group at the bottom applies the choice. Reading and changing
+//! are done by the workers (`fonts_worker`); this file only draws what they last published.
 
 use super::fonts_logic::{self, Offer, Tab};
 use super::fonts_view::{Confirm, FontsView};
@@ -11,10 +11,12 @@ use crate::page;
 use crate::state::State;
 use egui::{Align, Layout, RichText};
 use shellman_sysfont::{settings, system};
-use shellman_ui::theme::{self, colors, semibold_font};
+use shellman_ui::theme::{self, colors};
 
-/// The command pill's island, frame included.
-const PILL_H: f32 = 32.0 + 40.0;
+/// The command group's height: one row of 32, a row's padding and the box's.
+const PILL_H: f32 = 32.0 + 2.0 * 14.0 + 2.0 * 6.0 + 2.0;
+/// The tab choice's height and the space under it.
+const TABS_H: f32 = 32.0 + 12.0;
 /// The least the tab's own scrolling area is given.
 const TAB_MIN_H: f32 = 200.0;
 
@@ -25,47 +27,33 @@ pub fn show(ui: &mut egui::Ui, st: &mut State) {
     v.poll(ui.ctx());
     page::group(ui, "", |ui| status(ui, v, &mut st.goto));
 
-    // The tabs' island fills what the status and the pill leave, and scrolls inside itself, so
-    // the pill stays at the bottom of the window.
-    let left = ui.clip_rect().bottom() - ui.cursor().top() - PILL_H - page::GROUP_GAP * 2.0;
-    let inner = (left - 40.0 - 44.0).max(TAB_MIN_H);
-    page::group(ui, "", |ui| {
-        page::segmented(ui, &mut v.tab, &Tab::ALL.map(|t| (t, t.label())));
-        ui.add_space(12.0);
-        let out = egui::ScrollArea::vertical()
-            .id_salt("fonts-tab")
-            .max_height(inner)
-            .min_scrolled_height(inner)
-            .auto_shrink([false, false])
-            .show(ui, |ui| match v.tab {
-                Tab::Fonts => fonts_list::show(ui, v),
-                Tab::Preview => fonts_tabs::preview(ui, v),
-                Tab::Weights => fonts_tabs::weights(ui, v),
-                Tab::Tune => fonts_tabs::tune(ui, v),
-                Tab::Coverage => fonts_tabs::coverage(ui, v),
-                Tab::Backups => fonts_tabs::backups(ui, v),
-            });
-        shellman_ui::widgets::name_scroll_bar(ui.ctx(), &out, "the fonts");
-    });
-    page::group(ui, "", |ui| command_pill(ui, v));
+    // The tabs fill what the status and the command group leave, and scroll inside themselves,
+    // so the command group stays at the bottom of the window.
+    let left = ui.clip_rect().bottom() - ui.cursor().top() - TABS_H - PILL_H - page::GROUP_GAP;
+    let inner = left.max(TAB_MIN_H);
+    page::segmented(ui, &mut v.tab, &Tab::ALL.map(|t| (t, t.label())));
+    ui.add_space(12.0);
+    let out = egui::ScrollArea::vertical()
+        .id_salt("fonts-tab")
+        .max_height(inner)
+        .min_scrolled_height(inner)
+        .auto_shrink([false, false])
+        .show(ui, |ui| match v.tab {
+            Tab::Fonts => fonts_list::show(ui, v),
+            Tab::Preview => fonts_tabs::preview(ui, v),
+            Tab::Weights => fonts_tabs::weights(ui, v),
+            Tab::Tune => fonts_tabs::tune(ui, v),
+            Tab::Coverage => fonts_tabs::coverage(ui, v),
+            Tab::Backups => fonts_tabs::backups(ui, v),
+        });
+    shellman_ui::widgets::name_scroll_bar(ui.ctx(), &out, "the fonts");
+    page::group(ui, "", |ui| page::row_with(ui, |ui| command_pill(ui, v)));
 }
 
 /// What Windows uses now, whether a restart is due, and the way back to Segoe UI.
 fn status(ui: &mut egui::Ui, v: &mut FontsView, goto: &mut Option<Section>) {
     let c = colors();
     let s = v.page.status.clone();
-    ui.horizontal(|ui| {
-        ui.label(RichText::new(fonts_logic::status_title(&s)).font(semibold_font(15.0)).color(c.text));
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            if s.restart_pending {
-                chip(ui, "Restart needed", c.warn);
-            }
-            if settings::dry_run() {
-                let note = format!("Dry run: nothing on this PC changes. The registry, fonts folder and window text are stand-ins in {}.", settings::dry_root().display());
-                chip(ui, "Dry run", c.accent_text).on_hover_text(note);
-            }
-        });
-    });
     let mut lines = Vec::new();
     if let Some(current) = &s.current {
         lines.push(format!("Since {}.", system::local_stamp(current.applied_at)));
@@ -73,49 +61,56 @@ fn status(ui: &mut egui::Ui, v: &mut FontsView, goto: &mut Option<Section>) {
     if let Some(text) = &v.page.window_text {
         lines.push(format!("Window text uses {}.", text.faces().join(", ")));
     }
-    if !lines.is_empty() {
-        ui.label(theme::muted(lines.join("  ")).size(12.5));
-    }
+    page::row(ui, &fonts_logic::status_title(&s), &lines.join("  "), |ui| {
+        if s.restart_pending {
+            chip(ui, "Restart needed", c.warn);
+        }
+        if settings::dry_run() {
+            let note = format!("Dry run: nothing on this PC changes. The registry, fonts folder and window text are stand-ins in {}.", settings::dry_root().display());
+            chip(ui, "Dry run", c.accent_text).on_hover_text(note);
+        }
+    });
     if s.restart_pending {
-        ui.add_space(4.0);
-        ui.label(theme::muted("Restart later: Windows shows the change everywhere after its next restart. Until then some parts keep the font they had.").size(12.0));
+        page::row_with(ui, |ui| {
+            ui.add(egui::Label::new(theme::muted("Restart later: Windows shows the change everywhere after its next restart. Until then some parts keep the font they had.").size(12.5)).wrap());
+        });
     }
     if s.drift {
-        ui.add_space(6.0);
-        ui.label(RichText::new("Windows put Segoe UI back since the font was last changed, probably during an update.").color(c.warn).size(12.5));
+        page::row_with(ui, |ui| {
+            ui.add(egui::Label::new(RichText::new("Windows put Segoe UI back since the font was last changed, probably during an update.").color(c.warn).size(12.5)).wrap());
+        });
     }
 
     let can_restore = s.current.is_some() || v.page.window_text_ours;
     if !(can_restore || s.drift || s.current.is_some()) {
         return;
     }
-    ui.add_space(8.0);
     if v.confirm == Some(Confirm::Restore) {
-        ui.horizontal(|ui| {
-            let needs = if settings::dry_run() { "In this dry run only the stand-ins change." } else { "Windows asks for administrator rights; restart to finish." };
-            ui.label(RichText::new(format!("Put Segoe UI back everywhere? {needs}")).size(13.0).color(c.text));
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if ui.add(theme::danger_button("Restore")).clicked() {
-                    v.run(Confirm::Restore);
-                }
-                if ui.button("Cancel").clicked() {
-                    v.confirm = None;
-                }
-            });
+        let needs = if settings::dry_run() { "In this dry run only the stand-ins change." } else { "Windows asks for administrator rights; restart to finish." };
+        page::row(ui, "Put Segoe UI back everywhere?", needs, |ui| {
+            // Right to left: Restore is the row's last button.
+            if ui.button("Cancel").clicked() {
+                v.confirm = None;
+            }
+            if ui.add(theme::danger_button("Restore")).clicked() {
+                v.run(Confirm::Restore);
+            }
         });
         return;
     }
-    ui.horizontal(|ui| {
-        let busy = v.busy();
-        if can_restore && ui.add_enabled(!busy, theme::primary_button("Restore Segoe UI")).clicked() {
-            v.confirm = Some(Confirm::Restore);
-        }
-        if s.drift && ui.add_enabled(!busy, egui::Button::new("Apply again")).clicked() {
-            v.apply_again();
-        }
-        if s.current.is_some() && ui.button("Use this font for shellman too").on_hover_text("Shellman's own font is set on the Appearance page.").clicked() {
-            *goto = Some(Section::Appearance);
-        }
+    page::row_with(ui, |ui| {
+        ui.horizontal(|ui| {
+            let busy = v.busy();
+            if can_restore && ui.add_enabled(!busy, theme::primary_button("Restore Segoe UI")).clicked() {
+                v.confirm = Some(Confirm::Restore);
+            }
+            if s.drift && ui.add_enabled(!busy, egui::Button::new("Apply again")).clicked() {
+                v.apply_again();
+            }
+            if s.current.is_some() && ui.button("Use this font for shellman too").on_hover_text("Shellman's own font is set on the Appearance page.").clicked() {
+                *goto = Some(Section::Appearance);
+            }
+        });
     });
 }
 
@@ -129,7 +124,7 @@ fn chip(ui: &mut egui::Ui, text: &str, color: egui::Color32) -> egui::Response {
         .response
 }
 
-/// The bottom pill: what is going on (or went wrong), and Apply.
+/// The bottom group's row: what is going on (or went wrong), and Apply.
 fn command_pill(ui: &mut egui::Ui, v: &mut FontsView) {
     let c = colors();
     let differs = v.family().is_some_and(|f| v.settings.differs_from_applied(&f.name));

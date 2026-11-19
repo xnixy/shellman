@@ -9,7 +9,7 @@ use crate::page;
 use crate::state::State;
 use egui::Id;
 use shellman_core::system::pointer::{self as p, Change, Pointer};
-use shellman_ui::widgets::switch;
+use shellman_ui::widgets::toggle;
 
 /// The most lines the wheel slider offers; "One screen" is its own switch.
 const LINES_SHOWN: (u32, u32) = (1, 20);
@@ -68,21 +68,29 @@ pub fn show(ui: &mut egui::Ui, st: &mut State) {
     }
     let (Some(mut s), Some(applied)) = (v.shown, v.applied) else { return };
     let mut held = false;
-    page::group(ui, "Mouse", |ui| {
+    page::group(ui, "Pointer", |ui| {
         let m = slider_row::show(ui, Id::new("mouse-speed"), "Pointer speed", p::fraction(s.speed, p::SPEED_RANGE), &format!("{} of 20", s.speed));
         if let Some(f) = m.value {
             s.speed = p::value_at(f, p::SPEED_RANGE);
         }
         held |= m.held;
-        ui.add_space(10.0);
-        switch(ui, &mut s.precision, "Enhance pointer precision");
-        ui.add_space(10.0);
-        page::label(ui, "Primary button");
+        let title = "Enhance pointer precision";
+        page::row(ui, title, "", |ui| toggle(ui, &mut s.precision, title));
+    });
+    page::group(ui, "Buttons", |ui| {
         let mut right = s.swapped;
-        if page::segmented(ui, &mut right, &[(false, "Left"), (true, "Right")]) {
+        if page::row(ui, "Primary button", "", |ui| page::segmented(ui, &mut right, &[(false, "Left"), (true, "Right")])) {
             s.swapped = right;
         }
-        ui.add_space(14.0);
+        let at = p::fraction(s.double_click_ms, p::DOUBLE_CLICK_RANGE);
+        let m = slider_row::show(ui, Id::new("mouse-dbl"), "Double-click speed", at, &format!("{} ms between clicks", s.double_click_ms));
+        if let Some(f) = m.value {
+            // Whole tens of milliseconds are plenty to tell apart.
+            s.double_click_ms = (p::value_at(f, p::DOUBLE_CLICK_RANGE) + 5) / 10 * 10;
+        }
+        held |= m.held;
+    });
+    page::group(ui, "Wheel", |ui| {
         let page_scroll = s.wheel_lines == p::WHEEL_PAGE;
         let at = if page_scroll { 0.15 } else { p::fraction(s.wheel_lines, LINES_SHOWN) };
         let m = slider_row::show(ui, Id::new("mouse-lines"), "Lines to scroll at a time", at, &p::wheel_label(s.wheel_lines));
@@ -90,24 +98,15 @@ pub fn show(ui: &mut egui::Ui, st: &mut State) {
             s.wheel_lines = p::value_at(f, LINES_SHOWN);
         }
         held |= m.held;
-        ui.add_space(6.0);
         let mut screen = page_scroll;
-        if switch(ui, &mut screen, "Scroll one screen at a time").changed() {
+        let title = "Scroll one screen at a time";
+        if page::row(ui, title, "", |ui| toggle(ui, &mut screen, title)).changed() {
             s.wheel_lines = if screen { p::WHEEL_PAGE } else { 3 };
         }
-        ui.add_space(10.0);
         let at = p::fraction(s.wheel_chars, LINES_SHOWN);
         let m = slider_row::show(ui, Id::new("mouse-chars"), "Characters to scroll sideways", at, &format!("{} characters", s.wheel_chars));
         if let Some(f) = m.value {
             s.wheel_chars = p::value_at(f, LINES_SHOWN);
-        }
-        held |= m.held;
-        ui.add_space(10.0);
-        let at = p::fraction(s.double_click_ms, p::DOUBLE_CLICK_RANGE);
-        let m = slider_row::show(ui, Id::new("mouse-dbl"), "Double-click speed", at, &format!("{} ms between clicks", s.double_click_ms));
-        if let Some(f) = m.value {
-            // Whole tens of milliseconds are plenty to tell apart.
-            s.double_click_ms = (p::value_at(f, p::DOUBLE_CLICK_RANGE) + 5) / 10 * 10;
         }
         held |= m.held;
     });
@@ -118,7 +117,6 @@ pub fn show(ui: &mut egui::Ui, st: &mut State) {
             s.repeat_delay = p::value_at(f, (0, p::DELAY_STEPS - 1));
         }
         held |= m.held;
-        ui.add_space(10.0);
         let at = p::fraction(s.repeat_rate, (0, p::RATE_STEPS - 1));
         let m = slider_row::show(ui, Id::new("kb-rate"), "Repeat rate", at, &p::rate_label(s.repeat_rate));
         if let Some(f) = m.value {

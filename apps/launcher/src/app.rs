@@ -27,7 +27,7 @@ const ISLAND_MARGIN: f32 = 20.0;
 const PILL_H: f32 = 58.0;
 const PILL_PAD: f32 = 24.0;
 const GAP: f32 = 12.0;
-const ISLAND_RADIUS: f32 = 22.0;
+const ISLAND_RADIUS: f32 = shellman_ui::theme::shape::ISLAND;
 const LIST_PAD: f32 = 10.0;
 /// Room above the rows (and the last row's room below), and above the grid's first label.
 const RESULTS_PAD_TOP: f32 = 16.0;
@@ -320,10 +320,13 @@ impl Launcher {
                 egui::pos2(bar.right() - PILL_PAD - 17.0, bar.center().y),
                 egui::vec2(34.0, 22.0),
             );
+            // A key cap in Glasshouse's field fill (as it shows over the glass); outlined in high
+            // contrast, which has no faint fills.
+            let radius = shellman_ui::theme::shape::corner(shellman_ui::theme::shape::FIELD);
             if c.high_contrast {
-                ui.painter().rect_stroke(chip, 7.0, egui::Stroke::new(1.0_f32, c.muted), egui::StrokeKind::Inside);
+                ui.painter().rect_stroke(chip, radius, egui::Stroke::new(1.0_f32, c.muted), egui::StrokeKind::Inside);
             } else {
-                ui.painter().rect_filled(chip, 7.0, c.text.gamma_multiply(0.08));
+                ui.painter().rect_filled(chip, radius, shellman_ui::chips::soft_colors(c.light).0);
             }
             ui.painter().text(
                 chip.center(),

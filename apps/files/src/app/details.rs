@@ -1,4 +1,4 @@
-//! What the details island knows about the selection, read on a worker so the window never
+//! What the details box knows about the selection, read on a worker so the window never
 //! waits: a text file's first lines, an image's size in pixels, when an item was made, and for a
 //! folder (or several items) how many items and how many bytes are inside, counted through every
 //! level. A new selection cancels the count under way, and an answer for an older selection is
@@ -34,7 +34,7 @@ pub(crate) struct Reading {
     pub(crate) online_only: bool,
 }
 
-/// What of a file is read for the island.
+/// What of a file is read for the details.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Peek {
     Nothing,
@@ -72,7 +72,7 @@ pub(crate) struct Total {
     pub(crate) partial: bool,
 }
 
-/// The island's state between frames.
+/// The details' state between frames.
 #[derive(Default)]
 pub(crate) struct Details {
     /// What the last request was for, its number, and the flag that cancels its count.
@@ -117,7 +117,7 @@ impl Details {
         }
     }
 
-    /// Stop any count and forget what was asked (the island was hidden).
+    /// Stop any count and forget what was asked (the details were hidden).
     pub(crate) fn stop(&mut self) {
         if let Some(c) = self.cancel.take() {
             c.store(true, Ordering::Relaxed);

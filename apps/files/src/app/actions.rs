@@ -61,7 +61,7 @@ pub(super) enum Action {
     ToggleTag(usize),
     /// Take every tag off the selection.
     ClearTags,
-    /// Show or hide the details island.
+    /// Show or hide the details box.
     ToggleDetails,
     /// Ctrl+Space: select or unselect the item under the cursor.
     ToggleCursor,

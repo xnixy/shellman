@@ -1,14 +1,11 @@
-//! The small pill at the top right: how the folder is sorted (and whether hidden items show),
-//! and the window buttons, drawn by Files since the window has no frame.
+//! The header's sort button: how the folder is sorted, and whether hidden items show.
 
 use super::actions::Action;
 use super::tab::SortKey;
-use egui::{Id, Rect, Ui, Vec2};
-use shellman_ui::chips::{chip, window_buttons, Chip, CHIP_H};
+use egui::{Id, Rect, Ui};
+use shellman_ui::chips::round_icon;
 use shellman_ui::menu::popup::{Anchor, Entry};
 use shellman_ui::theme::glyph;
-
-const PAD: f32 = 6.0;
 
 /// The keys the sort menu offers, with their names.
 const KEYS: [(SortKey, &str); 4] = [
@@ -19,28 +16,15 @@ const KEYS: [(SortKey, &str); 4] = [
 ];
 
 impl super::FileMan {
-    pub(super) fn window_controls(&mut self, ui: &mut Ui, pill: Rect) {
-        let inner = pill.shrink(PAD);
-        let sort = Rect::from_min_size(
-            egui::pos2(inner.left() + 2.0, inner.center().y - CHIP_H / 2.0),
-            Vec2::new(78.0, CHIP_H),
-        );
-        let resp = chip(
-            ui,
-            sort,
-            Id::new("sort"),
-            "Sort",
-            Some(glyph::SORT_DOWN),
-            Chip::Plain,
-        )
-        .on_hover_text("Sort, and hidden items");
+    /// A quiet round button at `rect` that opens the sort menu under it.
+    pub(super) fn sort_button(&mut self, ui: &mut Ui, rect: Rect) {
+        let tip = "Sort, and hidden items";
+        let resp = round_icon(ui, rect, Id::new("sort"), glyph::SORT_DOWN, true, false, tip).on_hover_text(tip);
         if resp.clicked() {
             let tab = &self.tabs[self.active];
             let entries = sort_entries(tab.sort, tab.ascending, self.settings.show_hidden);
             super::menu::request(Anchor::under(ui.ctx(), resp.rect), "sort", entries);
         }
-        let buttons = Rect::from_min_max(egui::pos2(sort.right() + 6.0, inner.top()), inner.max);
-        window_buttons(ui, buttons);
     }
 }
 

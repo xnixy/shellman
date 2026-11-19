@@ -1,16 +1,19 @@
 //! Drawing the panel: the dock's glass, one tile per window with its title and icon under the
-//! preview, and the selection in the accent color. Live previews are drawn by the compositor on
-//! top; under them nothing is painted.
+//! preview, and the selection as Glasshouse marks a chosen tile (a deeper field fill inside a
+//! hairline). Live previews are drawn by the compositor on top; under them nothing is painted.
 
 use crate::layout::{Layout, Rect};
 use shellman_core::thumbs::Thumbs;
 use shellman_core::winlist::AppWindow;
-use shellman_ui::theme::{colors, glyph, icon_font};
+use shellman_ui::theme::{colors, glyph, icon_font, shape};
 use shellman_ui::widgets::draw_text;
 
-/// Windows 11's window corner radius, which the panel's glass is cut to.
+/// Windows 11's window corner radius, which the panel's glass is cut to: DWM rounds the frosted
+/// window itself, so the panel follows it rather than Glasshouse's own radii.
 const RADIUS: u8 = 8;
-const TILE_RADIUS: u8 = 6;
+const TILE_RADIUS: f32 = shape::TILE;
+/// The icon plate in the preview's place: concentric with the tile, `INSET` outside it.
+const PLATE_RADIUS: f32 = TILE_RADIUS - crate::layout::INSET;
 const BIG_ICON: f32 = 48.0;
 const SMALL_ICON: f32 = 18.0;
 
@@ -54,22 +57,23 @@ pub fn draw(ctx: &egui::Context, view: &View, icons: &mut Thumbs) -> Option<usiz
             shellman_ui::theme::speak_selected(&resp, egui::WidgetType::SelectableLabel, i == view.sel, || {
                 shellman_ui::widgets::window_name(&window.title)
             });
-            let tile_radius = egui::CornerRadius::same(TILE_RADIUS);
+            let tile_radius = shape::corner(TILE_RADIUS);
             if i == view.sel {
-                // In high contrast `control_hover` is the window colour and the outline highlight.
-                ui.painter().rect_filled(outer, tile_radius, c.control_hover);
-                ui.painter().rect_stroke(outer, tile_radius, egui::Stroke::new(2.0_f32, c.accent_fill), egui::StrokeKind::Inside);
+                // A deeper field fill inside a hairline. High contrast has no fills: the window
+                // colour, outlined 2 px in highlight (`contrast_outline`).
+                ui.painter().rect(outer, tile_radius, c.control_hover, egui::Stroke::new(1.0_f32, c.hairline), egui::StrokeKind::Inside);
+                shellman_ui::theme::contrast_outline(ui, outer, TILE_RADIUS, false, true);
             } else if resp.hovered() {
-                ui.painter().rect_filled(outer, tile_radius, c.control);
-                shellman_ui::theme::contrast_outline(ui, outer, TILE_RADIUS as f32, true, false);
+                ui.painter().rect_filled(outer, tile_radius, c.row_hover);
+                shellman_ui::theme::contrast_outline(ui, outer, TILE_RADIUS, true, false);
             }
             let icon = window.icon_source().and_then(|p| shellman_ui::app_icon::get(ui.ctx(), &p, true, icons));
             let preview = at(tile.preview);
             if !view.live.get(i).copied().unwrap_or(false) {
                 // Minimized, or not previewable: the app's icon on a plate.
-                ui.painter().rect_filled(preview, tile_radius, c.control);
+                ui.painter().rect_filled(preview, shape::corner(PLATE_RADIUS), c.field);
                 if c.high_contrast {
-                    ui.painter().rect_stroke(preview, tile_radius, egui::Stroke::new(1.0_f32, c.muted), egui::StrokeKind::Inside);
+                    ui.painter().rect_stroke(preview, PLATE_RADIUS, egui::Stroke::new(1.0_f32, c.muted), egui::StrokeKind::Inside);
                 }
                 paint_icon(ui, icon, preview.center(), BIG_ICON.min(preview.height() * 0.6));
             }

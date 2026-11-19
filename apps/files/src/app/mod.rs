@@ -1,6 +1,6 @@
-//! The window, as islands of glass with the desktop between them: tabs and the window buttons
-//! across the top, the bar with the path under them, the places as a rail on the left, the
-//! folder in the middle, and the selection in a pill along the bottom (see `plan`).
+//! The window, as one sheet of glass: the places as a rail in the sidebar, the header bar with
+//! the path and the window buttons, the tabs under it, the folder straight on the pane with the
+//! details box beside it, and the selection in a bar along the bottom (see `plan`).
 
 mod actions;
 mod band;
@@ -47,8 +47,6 @@ use tab::{Loc, Tab};
 
 /// One row of the list (the design's 8 px above and below a line of text).
 const ROW_H: f32 = 34.0;
-/// The corner radius of the islands that are not pills (the list's), and of the item cards.
-pub(crate) const RADIUS: f32 = 22.0;
 
 /// A cheap fingerprint of a tab's selection: tab, listing, count, cursor and anchor.
 type SelSig = (u64, u64, usize, Option<usize>, Option<usize>);
@@ -105,7 +103,7 @@ enum Msg {
         items: Vec<PathBuf>,
         dest: PathBuf,
     },
-    /// The details island's reading of the selection.
+    /// The details' reading of the selection.
     Details(details::Reading),
     /// Which of the items to delete cannot go to the Recycle Bin; `ask` when the user is still to
     /// confirm the delete itself (a drop on the bin is its own confirmation).
@@ -199,7 +197,7 @@ pub(crate) struct FileMan {
     ctx: egui::Context,
     settings: crate::settings::Settings,
     hwnd: isize,
-    /// The glass under the islands; None when the window could not be found.
+    /// The glass under the window's sheet; None when the window could not be found.
     panel: Option<shellman_ui::glass::GlassPanel>,
     tabs: Vec<Tab>,
     active: usize,
@@ -229,7 +227,7 @@ pub(crate) struct FileMan {
     details_alone: bool,
     narrow: bool,
     /// The least window size at Windows' text size, and whether the window has been grown to it
-    /// (a size saved at a smaller text size is too small for the islands).
+    /// (a size saved at a smaller text size is too small for the layout).
     min_size: [f32; 2],
     grown: bool,
     /// The shared look, which the settings app edits; Files only follows it.
@@ -260,8 +258,8 @@ pub(crate) struct FileMan {
     pin_exists: pins::Exists,
     /// Picker mode: the window is another app's file dialog (see `picker`). None when browsing.
     pick: Option<picker::Picker>,
-    /// The content island as last laid out: the rubber band's ground.
-    content_island: egui::Rect,
+    /// The folder's part of the pane as last laid out: the rubber band's ground.
+    folder_rect: egui::Rect,
     /// Folder cards' item counts.
     counts: counts::Counts,
     tags: tag_ui::Tags,
@@ -269,11 +267,11 @@ pub(crate) struct FileMan {
     /// bring the active tab into view when either changes.
     tab_scroll: f32,
     tab_seen: (usize, usize),
-    /// The details island's state and its worker.
+    /// The details' state and their worker.
     details: details::Details,
     /// The tag list shows its names as fields, to rename them.
     tag_edit: bool,
-    /// The selection as the details island last worked it out, and its fingerprint.
+    /// The selection as the details last worked it out, and its fingerprint.
     details_sel: (Option<SelSig>, Vec<Entry>),
 }
 
@@ -379,7 +377,7 @@ impl FileMan {
             apps: places::Registered::new(&ctx_for_apps),
             pin_exists: pins::Exists::default(),
             pick,
-            content_island: egui::Rect::NOTHING,
+            folder_rect: egui::Rect::NOTHING,
             counts: counts::Counts::new(&ctx_for_apps),
             tags: tag_ui::Tags::load(),
             tab_scroll: 0.0,
@@ -914,7 +912,7 @@ impl eframe::App for FileMan {
         }
     }
 
-    /// Clear: the desktop shows between the islands.
+    /// Clear: the window is see-through but for its sheet of glass.
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
         [0.0, 0.0, 0.0, 0.0]
     }
@@ -960,7 +958,7 @@ impl eframe::App for FileMan {
         self.keyboard(ctx, &mut actions);
         self.dnd_begin(ctx, &mut actions);
 
-        // Before the layout, which hands the open dialog to the glass with the islands.
+        // Before the layout, which hands the open dialog to the glass with the sheet.
         self.dialogs(ctx);
         self.layout(ctx, &mut actions);
         self.timing_marks(ctx);

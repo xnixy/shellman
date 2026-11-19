@@ -56,7 +56,7 @@ fn turn(v: Vec2, angle: f32) -> Vec2 {
 }
 
 /// One card at `center`, `size` points, turned by `angle` radians, with a soft shadow under it
-/// and a faint rim. `opacity` dims it all.
+/// (none in high contrast, which has no shadows) and a 1 px `rim`. `opacity` dims it all.
 #[allow(clippy::too_many_arguments)]
 pub fn card(painter: &Painter, center: Pos2, size: Vec2, radius: f32, angle: f32, fill: Fill, rim: Color32, opacity: f32) {
     let local = outline(size, radius);
@@ -67,7 +67,8 @@ pub fn card(painter: &Painter, center: Pos2, size: Vec2, radius: f32, angle: f32
     const LAYERS: usize = 8;
     let blur = (size.x.min(size.y) * 0.22).clamp(3.0, 9.0);
     let drop = blur * 0.45;
-    for i in 0..LAYERS {
+    let layers = if shellman_ui::theme::colors().high_contrast { 0 } else { LAYERS };
+    for i in 0..layers {
         let grow = blur * (i as f32 + 1.0) / LAYERS as f32 - blur * 0.35;
         let layer: Vec<Pos2> = outline(size + Vec2::splat(2.0 * grow), radius + grow)
             .iter()

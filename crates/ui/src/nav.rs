@@ -1,11 +1,11 @@
 //! The sidebar's pieces, shared by Files (places) and the settings app (sections).
 
-use crate::theme::{self, colors, icon_font};
+use crate::theme::{self, colors, icon_font, shape};
 use crate::widgets::draw_text;
-use egui::{Align2, CornerRadius, FontId, Rect, RichText, Sense, Ui, Vec2};
+use egui::{Align2, FontId, Rect, Sense, Ui, Vec2};
 
-/// A row in a sidebar. The open one gets a soft lift and a small accent bar rather than a loud
-/// accent fill, so the sidebar stays quiet next to the page.
+/// A row in a sidebar. The open one gets Glasshouse's soft field fill, not the accent, so the
+/// sidebar stays quiet next to the page.
 pub fn nav_row(ui: &mut Ui, g: char, label: &str, active: bool) -> egui::Response {
     nav_row_with(ui, label, active, false, |p, slot, active| {
         let c = colors();
@@ -14,7 +14,7 @@ pub fn nav_row(ui: &mut Ui, g: char, label: &str, active: bool) -> egui::Respons
             Align2::LEFT_CENTER,
             g,
             icon_font(14.0),
-            if active { c.accent_text } else { c.muted },
+            if active { c.text } else { c.muted },
         );
     })
 }
@@ -30,24 +30,22 @@ pub fn nav_row_with(
 ) -> egui::Response {
     let c = colors();
     let (rect, resp) =
-        ui.allocate_exact_size(Vec2::new(ui.available_width(), 30.0), Sense::click());
+        ui.allocate_exact_size(Vec2::new(ui.available_width(), shape::NAV_ROW_H), Sense::click());
     let p = ui.painter();
-    if active {
-        p.rect_filled(rect, CornerRadius::same(8), theme::with_alpha(c.text, 18));
-        let bar = Rect::from_center_size(
-            egui::pos2(rect.left() + 4.0 + 1.5, rect.center().y),
-            Vec2::new(3.0, 16.0),
-        );
-        p.rect_filled(bar, CornerRadius::same(2), c.accent_fill);
+    let round = shape::corner(shape::NAV_ROW);
+    if c.high_contrast {
+        theme::contrast_outline(ui, rect, shape::NAV_ROW, resp.hovered(), active);
+    } else if active {
+        p.rect_filled(rect, round, c.field);
     } else if resp.hovered() {
-        p.rect_filled(rect, CornerRadius::same(8), theme::with_alpha(c.text, 10));
+        p.rect_filled(rect, round, c.row_hover);
     }
     let slot = Rect::from_center_size(
-        egui::pos2(rect.left() + 12.0 + 8.0, rect.center().y),
+        egui::pos2(rect.left() + 14.0 + 8.0, rect.center().y),
         Vec2::splat(16.0),
     );
     icon(p, slot, active);
-    let text_rect = Rect::from_min_max(egui::pos2(rect.left() + 36.0, rect.top()), rect.max);
+    let text_rect = Rect::from_min_max(egui::pos2(rect.left() + 40.0, rect.top()), rect.max);
     let text = if dim {
         theme::with_alpha(c.text, 90)
     } else {
@@ -57,14 +55,15 @@ pub fn nav_row_with(
     resp
 }
 
-/// A small heading over a group of sidebar rows.
+/// A small heading over a group of sidebar rows: upper case and spaced out, as Glasshouse's
+/// group titles.
 pub fn section_label(ui: &mut Ui, text: &str) {
-    ui.add_space(12.0);
+    ui.add_space(14.0);
     ui.horizontal(|ui| {
-        ui.add_space(12.0);
-        ui.label(RichText::new(text).size(11.0).color(colors().muted));
+        ui.add_space(14.0);
+        ui.label(theme::group_heading(text));
     });
-    ui.add_space(2.0);
+    ui.add_space(4.0);
 }
 
 /// The sidebar's top: it is title bar too, with the app's name and an accent dot. Dragging it

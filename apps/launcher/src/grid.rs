@@ -7,7 +7,7 @@
 use crate::fade::Fade;
 use shellman_core::apps_index::App;
 use shellman_core::thumbs::Thumbs;
-use shellman_ui::theme::colors;
+use shellman_ui::theme::{colors, shape};
 
 pub const COLS: usize = 6;
 const CELL_W: f32 = 112.0;
@@ -251,17 +251,19 @@ fn draw_cell(
 ) {
     let c = colors();
     let inner = rect.shrink2(egui::vec2(2.0, 0.0));
-    // High contrast: a highlight outline around ordinary text for the selected tile, a text
-    // outline for hover, never a fill.
-    let fill = selected && !c.high_contrast;
-    let ink = if fill { c.on_accent } else { c.text };
-    if fill {
-        p.rect_filled(inner, 14.0, c.accent_fill);
-    } else if c.high_contrast && (selected || hovered) {
+    // Glasshouse's chosen tile: the field fill inside a hairline, ordinary text on it (the accent
+    // is kept for what is on). High contrast: a highlight outline around ordinary text for the
+    // selected tile, a text outline for hover, never a fill.
+    let ink = c.text;
+    let radius = shape::corner(shape::TILE);
+    let (soft, soft_hover, line) = shellman_ui::chips::soft_colors(c.light);
+    if c.high_contrast && (selected || hovered) {
         let stroke = if selected { egui::Stroke::new(2.0_f32, c.row_selected) } else { egui::Stroke::new(1.0_f32, c.text) };
-        p.rect_stroke(inner, 14.0, stroke, egui::StrokeKind::Inside);
+        p.rect_stroke(inner, radius, stroke, egui::StrokeKind::Inside);
+    } else if selected {
+        p.rect(inner, radius, soft_hover, line, egui::StrokeKind::Inside);
     } else if hovered {
-        p.rect_filled(inner, 14.0, c.text.gamma_multiply(0.08));
+        p.rect_filled(inner, radius, soft);
     }
     let icon = egui::Rect::from_center_size(
         egui::pos2(rect.center().x, rect.top() + 10.0 + ICON / 2.0),

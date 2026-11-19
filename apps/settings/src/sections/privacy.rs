@@ -12,7 +12,6 @@ use crate::state::State;
 use egui::{Align2, RichText, Sense, Ui, Vec2};
 use shellman_core::registry::Real;
 use shellman_core::system::privacy::{self as p, Consent, Permission, SafeSearch, Snapshot};
-use shellman_ui::look_controls::choice_chips;
 use shellman_ui::theme::{self, colors, icon_font};
 use std::collections::HashMap;
 use std::path::Path;
@@ -76,7 +75,9 @@ pub fn show(ui: &mut Ui, st: &mut State) {
     st.privacy.live.refresh_every(ui.ctx(), Duration::from_secs(5));
     let Some(d) = st.privacy.live.shown.clone() else {
         page::group(ui, "", |ui| {
-            ui.label(theme::muted("Reading Windows' privacy settings..."));
+            page::row_with(ui, |ui| {
+                ui.label(theme::muted("Reading Windows' privacy settings..."));
+            });
         });
         return;
     };
@@ -85,27 +86,25 @@ pub fn show(ui: &mut Ui, st: &mut State) {
     let v = &mut st.privacy;
     if let Some(n) = v.live.notice.clone() {
         page::group(ui, "", |ui| {
-            ui.label(theme::muted(n).size(12.0));
+            page::row_with(ui, |ui| {
+                ui.add(egui::Label::new(theme::muted(n).size(12.5)).wrap());
+            });
         });
     }
     page::group(ui, "Security", |ui| {
-        ui.add(egui::Label::new(theme::muted("Virus and threat protection, the firewall and device security are kept by the Windows Security app.").size(12.0)).wrap());
-        ui.add_space(8.0);
-        winlink::button(ui, "windowsdefender:", host, "Open Windows Security", None);
-        ui.add_space(12.0);
+        page::row(ui, "Windows Security", "Virus and threat protection, the firewall and device security are kept by the Windows Security app.", |ui| {
+            winlink::button(ui, "windowsdefender:", host, "Open Windows Security", None);
+        });
         winlink::row(ui, "Find my device", "", "ms-settings:findmydevice", host);
-        ui.add_space(8.0);
         winlink::row(ui, "For developers", "", "ms-settings:developers", host);
     });
     page::group(ui, "General", |ui| {
         toggles(ui, v, &d.snap, p::GENERAL);
-        ui.add_space(8.0);
         winlink::row(ui, "More general settings", "", "ms-settings:privacy-general", host);
     });
     page::group(ui, "Speech, inking and typing", |ui| {
         let speech = if d.snap.managed.online_speech { "On" } else { "Off" };
         winlink::row(ui, "Online speech recognition", speech, "ms-settings:privacy-speech", host);
-        ui.add_space(8.0);
         winlink::row(ui, "Inking and typing personalisation", "", "ms-settings:privacy-speechtyping", host);
     });
     page::group(ui, "Diagnostics and feedback", |ui| {
@@ -116,7 +115,6 @@ pub fn show(ui: &mut Ui, st: &mut State) {
             None => "Windows did not say".to_owned(),
         };
         winlink::row(ui, "Diagnostic data", &diag, "ms-settings:privacy-feedback", host);
-        ui.add_space(8.0);
         let fb = if m.feedback.1 { format!("{}, set by your organisation", m.feedback.0) } else { m.feedback.0.clone() };
         winlink::row(ui, "Feedback frequency", &fb, "ms-settings:privacy-feedback", host);
     });
@@ -129,22 +127,17 @@ pub fn show(ui: &mut Ui, st: &mut State) {
     });
     page::group(ui, "Search permissions", |ui| {
         if let Some(ss) = d.snap.safe_search {
-            page::label(ui, "SafeSearch for web results");
             let opts: Vec<(SafeSearch, &str)> = SafeSearch::ALL.iter().map(|s| (*s, s.label())).collect();
-            if let Some(n) = choice_chips(ui, ss, &opts, true) {
+            let mut n = ss;
+            if page::row(ui, "SafeSearch for web results", "", |ui| page::segmented(ui, &mut n, &opts)) {
                 v.live.change(Job::SafeSearch(n), move |mut d| {
                     d.snap.safe_search = Some(n);
                     d
                 });
             }
-            ui.add_space(12.0);
         }
-        page::label(ui, "Cloud content search");
-        toggles(ui, v, &d.snap, &p::SEARCH_TOGGLES[..2]);
-        ui.add_space(12.0);
-        page::label(ui, "History and highlights");
-        toggles(ui, v, &d.snap, &p::SEARCH_TOGGLES[2..]);
-        ui.add_space(8.0);
+        // Cloud content search, then history and highlights.
+        toggles(ui, v, &d.snap, p::SEARCH_TOGGLES);
         winlink::row(ui, "Clear this device's search history", "", "ms-settings:search-permissions", host);
     });
     permissions(ui, v, &d, host);
@@ -152,10 +145,7 @@ pub fn show(ui: &mut Ui, st: &mut State) {
 
 /// Switch rows for `list`, each locked when a policy holds it.
 fn toggles(ui: &mut Ui, v: &mut PrivacyView, snap: &Snapshot, list: &'static [p::Toggle]) {
-    for (i, t) in list.iter().enumerate() {
-        if i > 0 {
-            ui.add_space(8.0);
-        }
+    for t in list {
         let (on, locked) = snap.toggle(t.id).unwrap_or((t.default_on, false));
         let lock = locked.then_some("Set by your organisation.");
         if let Some(n) = winlink::setting(ui, t.title, t.detail, on, lock) {
@@ -172,43 +162,40 @@ fn toggles(ui: &mut Ui, v: &mut PrivacyView, snap: &Snapshot, list: &'static [p:
 
 fn permissions(ui: &mut Ui, v: &mut PrivacyView, d: &Data, host: bool) {
     page::group(ui, "App permissions", |ui| {
-        ui.add(egui::Label::new(theme::muted("Windows keeps these itself and takes changes only in its own Settings. Open one to see which apps have it.").size(12.0)).wrap());
-        ui.add_space(8.0);
-        ui.spacing_mut().item_spacing.y = 2.0;
+        page::row_with(ui, |ui| {
+            ui.add(egui::Label::new(theme::muted("Windows keeps these itself and takes changes only in its own Settings. Open one to see which apps have it.").size(12.5)).wrap());
+        });
         for perm in &d.snap.permissions {
             let open = v.open == Some(perm.cap.key);
-            if disclosure(ui, perm.cap.name, &perm.summary(), open).clicked() {
+            let clicked = page::item(ui, false, |ui| disclosure(ui, perm.cap.name, &perm.summary(), open).clicked());
+            if clicked {
                 v.open = if open { None } else { Some(perm.cap.key) };
             }
             if open {
-                details(ui, perm, &d.names, host);
+                page::row_with(ui, |ui| details(ui, perm, &d.names, host));
             }
         }
     });
 }
 
 /// A permission's row: its name, a summary, and a chevron. Says to a screen reader what it is
-/// and whether it is open.
+/// and whether it is open. The hover wash is the list item's.
 fn disclosure(ui: &mut Ui, title: &str, summary: &str, open: bool) -> egui::Response {
     let c = colors();
     let w = ui.available_width();
-    let (rect, resp) = ui.allocate_exact_size(Vec2::new(w, 40.0), Sense::click());
+    let (rect, resp) = ui.allocate_exact_size(Vec2::new(w, 22.0), Sense::click());
     let name = format!("{title}, {summary}");
     theme::speak_selected(&resp, egui::WidgetType::CollapsingHeader, open, || name.clone());
-    theme::focus_ring(ui, &resp, rect, 10.0);
-    if resp.hovered() && !c.high_contrast {
-        ui.painter().rect_filled(rect, 10.0, c.row_hover);
-    }
-    theme::contrast_outline(ui, rect, 10.0, resp.hovered(), false);
+    theme::focus_ring(ui, &resp, rect.expand2(Vec2::new(6.0, 4.0)), theme::shape::TILE);
     let chevron = if open { '\u{E70E}' } else { '\u{E70D}' };
-    let right = rect.right() - 14.0;
+    let right = rect.right();
     ui.painter().text(egui::pos2(right, rect.center().y), Align2::RIGHT_CENTER, chevron, icon_font(11.0), c.muted);
     // The summary right-aligned before the chevron, the name left; the name keeps what is left.
-    let summary_g = ui.painter().layout_no_wrap(summary.to_owned(), egui::FontId::proportional(12.0), c.muted);
+    let summary_g = ui.painter().layout_no_wrap(summary.to_owned(), egui::FontId::proportional(12.5), c.muted);
     let sx = right - 24.0 - summary_g.size().x;
     let title_w = (sx - rect.left() - 24.0).max(40.0);
     let title_g = ui.painter().layout(title.to_owned(), egui::FontId::proportional(13.5), c.text, title_w);
-    ui.painter().galley(egui::pos2(rect.left() + 10.0, rect.center().y - title_g.size().y / 2.0), title_g, c.text);
+    ui.painter().galley(egui::pos2(rect.left(), rect.center().y - title_g.size().y / 2.0), title_g, c.text);
     if sx > rect.left() + 120.0 {
         ui.painter().galley(egui::pos2(sx, rect.center().y - summary_g.size().y / 2.0), summary_g, c.muted);
     }
@@ -228,7 +215,7 @@ fn consent_label(perm: &Permission, a: &p::AppConsent) -> &'static str {
 /// What an open permission shows: the switches' state, the apps, and the button.
 fn details(ui: &mut Ui, perm: &Permission, names: &HashMap<String, String>, host: bool) {
     let c = colors();
-    egui::Frame::new().inner_margin(egui::Margin { left: 18, right: 10, top: 4, bottom: 10 }).show(ui, |ui| {
+    egui::Frame::new().inner_margin(egui::Margin { left: 12, right: 0, top: 0, bottom: 0 }).show(ui, |ui| {
         ui.spacing_mut().item_spacing.y = 4.0;
         let line = |ui: &mut Ui, k: &str, val: &str| {
             theme::trailing(
@@ -246,7 +233,6 @@ fn details(ui: &mut Ui, perm: &Permission, names: &HashMap<String, String>, host
             line(ui, "Let desktop apps use it", state(desk));
         }
         if !perm.apps.is_empty() {
-            ui.add_space(6.0);
             page::label(ui, "Store apps");
             for a in &perm.apps {
                 let name = names.get(&a.family).cloned().unwrap_or_else(|| p::family_label(&a.family));
@@ -254,7 +240,6 @@ fn details(ui: &mut Ui, perm: &Permission, names: &HashMap<String, String>, host
             }
         }
         if !perm.desktop_apps.is_empty() {
-            ui.add_space(6.0);
             page::label(ui, "Desktop apps that used it");
             for d in &perm.desktop_apps {
                 let file = Path::new(&d.path).file_name().map_or(d.path.clone(), |f| f.to_string_lossy().into_owned());
@@ -268,7 +253,7 @@ fn details(ui: &mut Ui, perm: &Permission, names: &HashMap<String, String>, host
                 );
             }
         }
-        ui.add_space(8.0);
+        ui.add_space(4.0);
         winlink::button(ui, perm.cap.uri, host, "Open in Windows Settings", Some(&format!("Open {} permissions in Windows Settings", perm.cap.name)));
     });
 }

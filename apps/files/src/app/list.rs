@@ -1,4 +1,4 @@
-//! The details view, on its own island: a slim row of column titles (click one to sort by it,
+//! The details view, straight on the pane: a slim row of column titles (click one to sort by it,
 //! again to reverse) over a hairline, and one row per item.
 
 use super::actions::Action;
@@ -8,11 +8,10 @@ use super::select;
 use super::tab::{Loc, SortKey, Tab};
 use super::text;
 use super::ROW_H;
-use egui::{Align2, Color32, CornerRadius, FontId, Id, Rect, Sense, Stroke, Ui, Vec2};
+use egui::{Align2, Color32, FontId, Id, Rect, Sense, Stroke, Ui, Vec2};
 use shellman_core::fsops;
 use shellman_core::thumbs;
-use shellman_ui::glass::islands::shows_as;
-use shellman_ui::theme::{self, colors, glyph, icon_font, Colors};
+use shellman_ui::theme::{self, colors, glyph, icon_font, shape, Colors};
 use shellman_ui::widgets::draw_text;
 
 const HEADER_H: f32 = 26.0;
@@ -92,24 +91,17 @@ impl Columns {
     }
 }
 
-/// A row's fill, by its state: the accent at a quarter when selected, a faint lift when hovered.
-/// Given as CSS would show them over the glass (see `shows_as`).
+/// A row's fill, by its state: the selection's accent wash when selected, Glasshouse's faint hover
+/// when hovered. Given as they should show over the glass (see `shows_as`).
 pub(super) fn row_fill(c: &Colors, selected: bool, hovered: bool) -> Option<Color32> {
     // High contrast: no washes; the selected row is outlined where it is drawn.
     if c.high_contrast {
         return None;
     }
     if selected {
-        let a = if c.light { 44 } else { 64 };
-        return Some(shows_as(theme::with_alpha(c.accent_fill, a)));
+        return Some(c.row_selected);
     }
-    hovered.then(|| {
-        if c.light {
-            shows_as(Color32::from_black_alpha(10))
-        } else {
-            shows_as(Color32::from_rgba_unmultiplied(255, 255, 255, 12))
-        }
-    })
+    hovered.then(|| c.row_hover)
 }
 
 /// What a click on a column title does to the sort: the same column reverses it; another sorts
@@ -141,7 +133,7 @@ impl super::FileMan {
         let tagged = matches!(tab.loc, Loc::Tag(_));
         let cols = Columns::fit(width, bin);
         header(ui, tab, &cols, width);
-        interact::folder_backdrop(ui, self.content_island, tab, actions);
+        interact::folder_backdrop(ui, self.folder_rect, tab, actions);
         if interact::loading_state(ui, tab) || interact::empty_state(ui, tab) {
             return;
         }
@@ -159,7 +151,7 @@ impl super::FileMan {
                 let (rect, resp) =
                     ui.allocate_exact_size(Vec2::new(width, ROW_H), interact::item_sense(tab, r));
                 if !bin {
-                    super::dnd::item_zone(ui, rect, e, 10.0);
+                    super::dnd::item_zone(ui, rect, e, shape::MENU_ROW);
                 }
                 let dim = interact::fade(e.hidden, clip.is_cut(&e.path));
 
@@ -167,7 +159,7 @@ impl super::FileMan {
                 let selected = tab.selected.contains(&e.path);
                 let row_rect = rect.shrink2(Vec2::new(0.0, 1.0));
                 let p = ui.painter();
-                let radius = CornerRadius::same(10);
+                let radius = shape::corner(shape::MENU_ROW);
                 if let Some(fill) = row_fill(&c, selected, resp.hovered()) {
                     p.rect_filled(row_rect, radius, fill);
                 }
@@ -182,7 +174,7 @@ impl super::FileMan {
                 };
                 let name = text::spoken_item(e, &date, None);
                 has_focus |= interact::item_access(ui, &resp, &name, selected, take_focus);
-                theme::focus_ring(ui, &resp, row_rect, 10.0);
+                theme::focus_ring(ui, &resp, row_rect, shape::MENU_ROW);
                 if resp.gained_focus() && tab.selected.is_empty() {
                     tabbed_in = Some(r);
                 }
@@ -344,10 +336,10 @@ fn header(ui: &mut Ui, tab: &mut Tab, cols: &Columns, width: f32) {
             (true, false) => format!("{label}, sorted descending"),
         };
         resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &spoken));
-        theme::focus_ring(ui, &resp, r.shrink(2.0), 8.0);
+        theme::focus_ring(ui, &resp, r.shrink(2.0), shape::MENU_ROW);
         if resp.hovered() {
             ui.painter()
-                .rect_filled(r.shrink2(Vec2::new(2.0, 2.0)), CornerRadius::same(8), row_fill(&c, false, true).unwrap_or_default());
+                .rect_filled(r.shrink2(Vec2::new(2.0, 2.0)), shape::MENU_ROW, row_fill(&c, false, true).unwrap_or_default());
         }
         let right = key == SortKey::Size;
         let sorted = tab.sort == key;
@@ -408,14 +400,14 @@ mod tests {
     }
 
     #[test]
-    fn selected_rows_are_a_translucent_accent_converted_for_glass() {
+    fn selected_rows_are_the_selection_wash_converted_for_glass() {
         let c = Colors::new(false, Color32::from_rgb(59, 130, 246));
         let sel = row_fill(&c, true, false).unwrap();
-        assert_eq!(sel.a(), 64);
-        // Converted: brighter than the raw premultiplied colour would be.
-        assert_eq!(sel, shows_as(theme::with_alpha(c.accent_fill, 64)));
+        // The theme's selection, converted: brighter than the raw premultiplied colour would be.
+        assert_eq!(sel, c.row_selected);
+        assert!(sel.a() > 0);
         assert!(row_fill(&c, false, false).is_none());
-        assert!(row_fill(&c, false, true).is_some());
+        assert_eq!(row_fill(&c, false, true), Some(c.row_hover));
         // High contrast: no wash at all (the selected row is outlined where it is drawn).
         let hc = Colors::high_contrast();
         assert!(row_fill(&hc, true, true).is_none() && row_fill(&hc, false, true).is_none());

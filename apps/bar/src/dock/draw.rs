@@ -12,7 +12,7 @@ use shellman_core::taskbar_list::Progress;
 use egui::{Color32, Id, Pos2, Rect, Vec2};
 use shellman_core::thumbs::Thumbs;
 use shellman_ui::app_icon::{self, Kind};
-use shellman_ui::theme::{colors, glyph, icon_font, mix, with_alpha};
+use shellman_ui::theme::{colors, glyph, icon_font, mix, shape, with_alpha};
 
 /// How long icons and the glass take to move, and a new icon to fade in.
 pub const MOVE: f32 = 0.16;
@@ -454,25 +454,19 @@ fn paint_label(ui: &egui::Ui, scene: &Scene, named: Option<(String, f32)>, ink: 
     let rect = metrics::label_rect(center, galley.size().x, scene.glass.top(), window_w);
     // Rises a couple of points as it appears.
     let rect = rect.translate(egui::vec2(0.0, 3.0 * (1.0 - shown)));
+    // Glasshouse's tooltip: the popover surface inside a hairline, with a soft shadow (none in
+    // high contrast, where the hairline is the text colour and does the work).
     let c = colors();
-    let (fill, rim) = if c.light {
-        (Color32::from_rgba_unmultiplied(250, 250, 252, 246), Color32::from_black_alpha(26))
-    } else {
-        (Color32::from_rgba_unmultiplied(40, 40, 44, 246), Color32::from_white_alpha(28))
-    };
-    let shadow = egui::epaint::Shadow {
-        offset: [0, 1],
-        blur: 6,
-        spread: 0,
-        color: Color32::from_black_alpha(if c.light { 30 } else { 70 }).gamma_multiply(shown),
-    };
-    let radius = egui::CornerRadius::same(8);
-    ui.painter().add(shadow.as_shape(rect, radius));
+    let radius = shape::corner(shape::TOOLTIP);
+    if !c.high_contrast {
+        let shadow = egui::epaint::Shadow { offset: [0, 1], blur: 6, spread: 0, color: c.shadow.gamma_multiply(shown) };
+        ui.painter().add(shadow.as_shape(rect, radius));
+    }
     ui.painter().rect(
         rect,
         radius,
-        fill.gamma_multiply(shown),
-        egui::Stroke::new(1.0_f32, rim.gamma_multiply(shown)),
+        c.popup.gamma_multiply(shown),
+        egui::Stroke::new(1.0_f32, c.hairline.gamma_multiply(shown)),
         egui::StrokeKind::Inside,
     );
     let at = rect.center() - galley.size() / 2.0;

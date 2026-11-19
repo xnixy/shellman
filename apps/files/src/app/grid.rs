@@ -1,6 +1,6 @@
 //! The cards view: each item its own rounded card, with its preview filling the upper part and
 //! its name and a muted detail below, laid out in as many columns as fit. The cards have no
-//! panel behind them; they float on the window's faint glass.
+//! panel behind them; they sit straight on the window's pane.
 //!
 //! Only the lines on screen are laid out and drawn, and only their previews are asked for, so a
 //! folder of 100 000 photos scrolls as smoothly as one of ten.
@@ -11,11 +11,11 @@ use super::rows::file_icon;
 use super::select;
 use super::tab::Loc;
 use super::text;
-use egui::{Align2, Color32, CornerRadius, FontId, Id, Rect, Stroke, Ui, Vec2};
+use egui::{Align2, Color32, FontId, Id, Rect, Stroke, Ui, Vec2};
 use shellman_core::fsops::Entry;
 use shellman_core::thumbs;
 use shellman_ui::glass::islands::shows_as;
-use shellman_ui::theme::{self, colors, icon_font, semibold_font, Colors};
+use shellman_ui::theme::{self, colors, icon_font, semibold_font, shape, Colors};
 use shellman_ui::widgets::{self, draw_text};
 
 /// Smallest card width; cards stretch to fill the line exactly.
@@ -26,8 +26,9 @@ const GAP: f32 = 14.0;
 const INSET: f32 = 8.0;
 /// Below the preview: the name and the detail lines.
 const TEXT_H: f32 = 48.0;
-const CARD_RADIUS: u8 = super::RADIUS as u8;
-const PREVIEW_RADIUS: u8 = 14;
+/// A card is a tile; its preview is rounded to sit evenly inside it.
+const CARD_RADIUS: f32 = shape::TILE;
+const PREVIEW_RADIUS: f32 = CARD_RADIUS - INSET;
 
 /// Columns, card width and card height for a line `width` wide.
 pub(super) fn fit(width: f32) -> (usize, f32, f32) {
@@ -37,9 +38,10 @@ pub(super) fn fit(width: f32) -> (usize, f32, f32) {
     (cols, card_w, INSET + preview_h + TEXT_H)
 }
 
-/// A card's fill and line, by its state. Selected: the accent at a fifth, ringed by a lighter
-/// accent, as the design has it.
-fn card_look(c: &Colors, selected: bool, hovered: bool) -> (Color32, Stroke) {
+/// A card's fill and line, by its state: Glasshouse's card inside a hairline; selected, the
+/// selection's wash ringed in the accent. Given as they should show over the glass (see
+/// `shows_as`). Hover is a wash laid over the card where it is drawn.
+fn card_look(c: &Colors, selected: bool) -> (Color32, Stroke) {
     // High contrast: no tints; every card outlined in the text colour, the selected one in the
     // highlight.
     if c.high_contrast {
@@ -49,30 +51,10 @@ fn card_look(c: &Colors, selected: bool, hovered: bool) -> (Color32, Stroke) {
             (c.bg, Stroke::new(1.0_f32, c.text))
         };
     }
-    // As the design gives them (CSS colours), converted for the window (see `shows_as`).
-    let css = |r: u8, g: u8, b: u8, a: u8| shows_as(Color32::from_rgba_unmultiplied(r, g, b, a));
     if selected {
-        let [r, g, b, _] = c.accent_fill.to_array();
-        let fill = css(r, g, b, if c.light { 40 } else { 51 });
-        let ring = if c.light {
-            c.accent_fill
-        } else {
-            theme::mix(c.accent_fill, Color32::WHITE, 0.25)
-        };
-        return (fill, Stroke::new(2.0_f32, ring));
+        return (c.row_selected, Stroke::new(2.0_f32, c.accent_fill));
     }
-    let (fill, line) = if c.light {
-        (
-            css(255, 255, 255, if hovered { 170 } else { 120 }),
-            Color32::from_black_alpha(16),
-        )
-    } else {
-        (
-            css(255, 255, 255, if hovered { 18 } else { 10 }),
-            css(255, 255, 255, 16),
-        )
-    };
-    (fill, Stroke::new(1.0_f32, line))
+    (c.card, Stroke::new(1.0_f32, c.hairline))
 }
 
 impl super::FileMan {
@@ -90,7 +72,7 @@ impl super::FileMan {
         if interact::error_state(ui, tab) {
             return;
         }
-        interact::folder_backdrop(ui, self.content_island, tab, actions);
+        interact::folder_backdrop(ui, self.folder_rect, tab, actions);
         if interact::loading_state(ui, tab) || interact::empty_state(ui, tab) {
             return;
         }
@@ -128,23 +110,27 @@ impl super::FileMan {
                     // rubber band.
                     let resp = ui.interact(card, Id::new(("card", r)), interact::item_sense(tab, r));
                     if !bin {
-                        super::dnd::item_zone(ui, card, e, super::RADIUS);
+                        super::dnd::item_zone(ui, card, e, CARD_RADIUS);
                     }
                     let dim = interact::fade(e.hidden, clip.is_cut(&e.path));
                     let selected = tab.selected.contains(&e.path);
-                    let (fill, stroke) = card_look(&c, selected, resp.hovered());
+                    let (fill, stroke) = card_look(&c, selected);
                     ui.painter().rect(
                         card,
-                        CornerRadius::same(CARD_RADIUS),
+                        CARD_RADIUS,
                         fill,
                         stroke,
                         egui::StrokeKind::Inside,
                     );
+                    if resp.hovered() && !selected {
+                        // The hover wash (none in high contrast, where every card is outlined).
+                        ui.painter().rect_filled(card, CARD_RADIUS, c.row_hover);
+                    }
                     let items = if e.is_dir && !bin { counts.get(&e.path) } else { None };
                     let date = text::friendly_date(&e.modified_text, &days.0, &days.1);
                     let name = text::spoken_item(e, &date, items);
                     has_focus |= interact::item_access(ui, &resp, &name, selected, take_focus);
-                    theme::focus_ring(ui, &resp, card, CARD_RADIUS as f32);
+                    theme::focus_ring(ui, &resp, card, CARD_RADIUS);
                     if resp.gained_focus() && tab.selected.is_empty() {
                         tabbed_in = Some(r);
                     }
@@ -152,7 +138,7 @@ impl super::FileMan {
                     if tab.cursor == Some(r) && (many || (!selected && !tab.selected.is_empty())) {
                         ui.painter().rect_stroke(
                             card.shrink(3.0),
-                            CornerRadius::same(CARD_RADIUS - 3),
+                            CARD_RADIUS - 3.0,
                             Stroke::new(1.0_f32, theme::with_alpha(c.accent_text, 160)),
                             egui::StrokeKind::Inside,
                         );
@@ -255,12 +241,9 @@ fn paint_preview(
     c: &Colors,
     dim: &impl Fn(Color32) -> Color32,
 ) {
-    let well = if c.light {
-        Color32::from_black_alpha(10)
-    } else {
-        shows_as(Color32::from_rgba_unmultiplied(255, 255, 255, 8))
-    };
-    let radius = CornerRadius::same(PREVIEW_RADIUS);
+    // Glasshouse's well: a faint fill of the text colour (the window colour in high contrast).
+    let well = c.well;
+    let radius = shape::corner(PREVIEW_RADIUS);
     let p = ui.painter();
     if e.is_dir {
         p.rect_filled(rect, radius, well);
@@ -359,19 +342,21 @@ mod tests {
     #[test]
     fn selected_cards_are_ringed_and_tinted() {
         let c = Colors::new(false, Color32::from_rgb(59, 130, 246));
-        let (fill, stroke) = card_look(&c, true, false);
-        assert_eq!(stroke.width, 2.0);
+        let (fill, stroke) = card_look(&c, true);
+        assert_eq!((stroke.width, stroke.color), (2.0, c.accent_fill));
+        assert_eq!(fill, c.row_selected, "the selection's own wash");
         assert!(fill.a() > 0 && fill.a() < 80);
-        let (_, plain) = card_look(&c, false, false);
+        let (fill, plain) = card_look(&c, false);
         assert_eq!(plain.width, 1.0);
+        assert_eq!(fill, c.card);
     }
 
     #[test]
     fn high_contrast_cards_are_outlined_not_tinted() {
         let c = Colors::high_contrast();
-        let (fill, ring) = card_look(&c, true, true);
+        let (fill, ring) = card_look(&c, true);
         assert_eq!((fill, ring.color, ring.width), (c.bg, c.accent_fill, 2.0));
-        let (fill, line) = card_look(&c, false, true);
+        let (fill, line) = card_look(&c, false);
         assert_eq!((fill, line.color), (c.bg, c.text));
     }
 }

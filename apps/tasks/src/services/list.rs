@@ -1,16 +1,15 @@
-//! The services list island (headers that sort, the rows in view) and the card for the selected
+//! The services list box (headers that sort, the rows in view) and the card for the selected
 //! service under it.
 
 use crate::app::State;
 use egui::{pos2, vec2, Align2, Color32, FontId, Rect, Sense, Stroke, UiBuilder};
 use shellman_core::services::logic::Column;
 use shellman_core::services::{Service, State as Run};
-use shellman_ui::glass::islands::shows_as;
-use shellman_ui::theme::{self, colors, glyph, icon_font, semibold_font};
+use shellman_ui::theme::{self, colors, glyph, icon_font, semibold_font, shape};
 
 const HEADER_H: f32 = 40.0;
 const ROW_H: f32 = 30.0;
-/// Room left and right of the rows inside the island.
+/// Room left and right of the rows inside the box.
 const PAD: f32 = 12.0;
 
 /// The columns after the display name, with their widths, laid out from the right.
@@ -45,8 +44,8 @@ pub fn show(ui: &mut egui::Ui, rect: Rect, st: &mut State) {
     headers(ui, header.shrink2(vec2(PAD, 0.0)), st);
     let c = colors();
     ui.painter().line_segment(
-        [pos2(rect.left() + 18.0, header.bottom()), pos2(rect.right() - 18.0, header.bottom())],
-        Stroke::new(1.0_f32, c.hairline),
+        [pos2(rect.left(), header.bottom()), pos2(rect.right(), header.bottom())],
+        Stroke::new(1.0_f32, if c.high_contrast { c.text } else { c.hairline }),
     );
     let body = Rect::from_min_max(pos2(rect.left() + PAD - 4.0, header.bottom() + 2.0), pos2(rect.right() - 4.0, rect.bottom() - 10.0));
     st.services.take_focus = std::mem::take(&mut st.services.row_focus);
@@ -123,19 +122,19 @@ fn row(ui: &mut egui::Ui, rect: Rect, s: &Service, selected: bool, tab_stop: boo
     let row_rect = rect.shrink2(vec2(0.0, 1.0));
     if c.high_contrast {
         if selected {
-            ui.painter().rect_stroke(row_rect, 10.0, Stroke::new(2.0_f32, c.accent_fill), egui::StrokeKind::Inside);
+            ui.painter().rect_stroke(row_rect, shape::MENU_ROW, Stroke::new(2.0_f32, c.accent_fill), egui::StrokeKind::Inside);
         }
     } else {
         let fill = if selected {
-            shows_as(theme::with_alpha(c.accent_fill, if c.light { 40 } else { 52 }))
+            c.row_selected
         } else if resp.hovered() {
-            shows_as(c.row_hover)
+            c.row_hover
         } else {
             Color32::TRANSPARENT
         };
-        ui.painter().rect_filled(row_rect, 10.0, fill);
+        ui.painter().rect_filled(row_rect, shape::MENU_ROW, fill);
     }
-    theme::focus_ring(ui, &resp, row_rect, 10.0);
+    theme::focus_ring(ui, &resp, row_rect, shape::MENU_ROW);
     let tabbed_in = resp.gained_focus() && !selected;
 
     let font = FontId::proportional(13.0);
@@ -185,7 +184,7 @@ fn headers(ui: &mut egui::Ui, rect: Rect, st: &mut State) {
         let resp = ui.interact(cell, egui::Id::new(("service-header", title)), Sense::click());
         let current = sort.column == column;
         resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, crate::processes::header_name(title, current, sort.descending)));
-        theme::focus_ring(ui, &resp, cell.shrink(2.0), 8.0);
+        theme::focus_ring(ui, &resp, cell.shrink(2.0), shape::MENU_ROW);
         let color = if current || resp.hovered() { c.text } else { c.muted };
         let right = column == Column::Pid;
         let (anchor, x) = if right { (Align2::RIGHT_CENTER, cell.right() - 8.0) } else { (Align2::LEFT_CENTER, cell.left() + 8.0) };

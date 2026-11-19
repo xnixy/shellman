@@ -212,7 +212,9 @@ pub fn draw(ui: &mut Ui, rect: Rect, view: &mut View, data: &Data) -> Option<Ask
             let (soft, soft_hover, line) = soft_colors(c.light);
             let hc = c.high_contrast;
             if today {
-                let fill = if resp.hovered() && !hc { mix(c.accent_fill, Color32::WHITE, 0.12) } else { c.accent_fill };
+                // Hovered, the accent leans toward the text colour: darker on light, lighter on
+                // dark, so its ink keeps (or gains) contrast either way.
+                let fill = if resp.hovered() && !hc { mix(c.accent_fill, c.text, 0.12) } else { c.accent_fill };
                 ui.painter().circle_filled(round.center(), 15.0, fill);
                 if hc && chosen {
                     // Highlight under highlight text already; the chosen ring sits outside it.

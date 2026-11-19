@@ -1,12 +1,15 @@
 //! The control centre's building blocks: tiles, round glyph chips, thin sliders and round
-//! buttons. Borderless, in the text colour at low strength, with the accent for things that
-//! are on.
+//! buttons. Glasshouse's quiet look: borderless, in the field fill (the text colour, faint), with
+//! the accent only for things that are on.
 
 use egui::{Align2, Color32, FontId, Pos2, Rect, Response, Sense, Ui, Vec2};
-use shellman_ui::theme::{self, colors, icon_font, with_alpha, Colors};
+use shellman_ui::chips::soft_colors;
+use shellman_ui::theme::{self, colors, icon_font, Colors};
 
 /// Spacing, in points.
 pub const GAP: f32 = 10.0;
+/// A quick-setting tile is a card set in an island: a little tighter than the island's own
+/// corner (`shape::ISLAND`), so the two read as nested.
 pub const TILE_RADIUS: u8 = 18;
 pub const TILE_INSET: f32 = 12.0;
 pub const CHIP: f32 = 30.0;
@@ -20,42 +23,24 @@ pub fn small_font() -> FontId {
     FontId::proportional(11.5)
 }
 
-/// The panel's translucent fills. The window is composited so that a translucent colour lifts
-/// the blurred backdrop much more than its alpha suggests (measured on the dark panel: white at
-/// 7% opacity lifted it by a quarter of the way to white), so the alphas here are small and
-/// were picked by eye on screen captures. A light tile's white is at 1% opacity; black, which
-/// only dims, behaves as its alpha says. Dark panels get a mid grey, not white, which keeps the
-/// steps between alphas fine; light panels get white for raised tiles and black for what sinks.
-fn veil(dark_alpha: u8, light: (u8, bool)) -> Color32 {
-    if colors().high_contrast {
-        // No veils in high contrast: things are outlined instead.
-        return Color32::TRANSPARENT;
-    }
-    if colors().light {
-        let base = if light.1 { Color32::WHITE } else { Color32::BLACK };
-        with_alpha(base, light.0)
+/// The fill of something quiet set on an island (a chip, a round button, a pill, the art's
+/// plate): Glasshouse's field, the text colour faint, a step deeper under the pointer. Taken from
+/// the shared chips, so it shows over the glass as faint as drawn (see
+/// `glass::islands::shows_as`) and is the window colour in high contrast, where things are
+/// outlined instead.
+pub fn field(hovered: bool) -> Color32 {
+    let (rest, hover, _) = soft_colors(colors().light);
+    if hovered {
+        hover
     } else {
-        with_alpha(Color32::from_gray(120), dark_alpha)
+        rest
     }
 }
 
-/// A tile's fill: faintly lighter than the glass, a little more under the pointer.
-pub fn tile_fill(hovered: bool) -> Color32 {
-    if hovered {
-        veil(15, (4, true))
-    } else {
-        veil(10, (2, true))
-    }
-}
-
-/// Something set into a tile or the panel: a chip, a slider's track, a round button at rest;
-/// `hovered` is the stronger step.
-pub fn well(hovered: bool) -> Color32 {
-    if hovered {
-        veil(22, (34, false))
-    } else {
-        veil(13, (20, false))
-    }
+/// Behind a hovered row in a list: Glasshouse's row hover, as it shows over the glass. Nothing in
+/// high contrast, where the row is outlined instead (`theme::contrast_outline`).
+pub fn row_hover() -> Color32 {
+    colors().row_hover
 }
 
 /// A full-width block holding `add`. It has no fill or padding of its own: it sits in an island
@@ -68,27 +53,24 @@ pub fn tile<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
     .inner
 }
 
-/// The fill and glyph colour of something that is on. The accent, unless it would hardly stand
-/// out from the panel (an accent of pure black on dark, or white on light); then the text colour.
+/// The fill and glyph colour of something that is on: the accent fill with its ink. The theme
+/// already falls back to the text colour where the accent would hardly show (black on dark, white
+/// on light), and in high contrast it is highlight under highlight text.
 pub fn on_colors(c: &Colors) -> (Color32, Color32) {
-    if c.high_contrast {
-        // Highlight under highlight text, the one pair Windows allows on it.
-        return (c.accent_fill, c.on_accent);
-    }
-    if contrast(c.accent, c.bg) >= 1.6 {
-        (c.accent, c.on_accent)
-    } else {
-        (c.text, c.bg)
-    }
+    (c.accent_fill, c.on_accent)
 }
 
 /// A round chip with a glyph: filled with the "on" colour when on, faint text when off.
 pub fn chip(ui: &Ui, center: Pos2, glyph: char, on: bool, hovered: bool) {
     let c = colors();
     let (on_fill, on_fg) = on_colors(&c);
-    let (mut fill, fg) = if on { (on_fill, on_fg) } else { (well(false), c.text) };
-    if hovered {
-        fill = if on { theme::mix(fill, c.text, 0.12) } else { well(true) };
+    let (mut fill, fg) = if on { (on_fill, on_fg) } else { (field(false), c.text) };
+    if hovered && !on {
+        fill = field(true);
+    } else if hovered && !c.high_contrast {
+        // On, the accent leans toward the text colour, which keeps its ink readable; high
+        // contrast keeps Windows' highlight pair and shows hover by the outline.
+        fill = theme::mix(fill, c.text, 0.12);
     }
     ui.painter().circle_filled(center, CHIP / 2.0, fill);
     outline_circle(ui, center, CHIP / 2.0, hovered);
@@ -152,8 +134,8 @@ pub fn round_button(ui: &mut Ui, glyph: char, size: f32, active: bool, tip: &str
     let (on_fill, on_fg) = on_colors(&c);
     let (fill, fg) = match (active, resp.hovered()) {
         (true, _) => (on_fill, on_fg),
-        (false, true) => (well(true), c.text),
-        (false, false) => (tile_fill(false), c.text),
+        (false, true) => (field(true), c.text),
+        (false, false) => (field(false), c.text),
     };
     ui.painter().circle_filled(rect.center(), size / 2.0, fill);
     if !active {
@@ -172,27 +154,10 @@ pub fn clipped_text(ui: &Ui, pos: Pos2, anchor: Align2, text: &str, font: FontId
     ui.painter().galley(rect.min, galley, color);
 }
 
-/// WCAG contrast ratio between two colours (1 = none, 21 = black on white).
-pub fn contrast(a: Color32, b: Color32) -> f32 {
-    let (la, lb) = (luminance(a), luminance(b));
-    (la.max(lb) + 0.05) / (la.min(lb) + 0.05)
-}
-
-fn luminance(c: Color32) -> f32 {
-    let ch = |v: u8| {
-        let v = v as f32 / 255.0;
-        if v <= 0.04045 {
-            v / 12.92
-        } else {
-            ((v + 0.055) / 1.055).powf(2.4)
-        }
-    };
-    0.2126 * ch(c.r()) + 0.7152 * ch(c.g()) + 0.0722 * ch(c.b())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use shellman_ui::theme::contrast;
 
     #[test]
     fn black_and_white_accents_fall_back_to_text() {

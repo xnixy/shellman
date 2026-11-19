@@ -1,5 +1,5 @@
 //! The Fonts page's decisions, kept apart from drawing so they are tested without a window: which
-//! families the list shows and in what order, what the status island says, what the Apply button
+//! families the list shows and in what order, what the status group says, what the Apply button
 //! offers, and how the sliders map to Fontman's values.
 
 use shellman_sysfont::fonts::catalog::{Family, Origin};
@@ -74,7 +74,7 @@ pub fn preview_key(family: &Family, tune: &Tune, overrides: &BTreeMap<String, Fa
     format!("{}|{:?}|{:?}|{:?}", family.name, family.origin, tune, overrides)
 }
 
-/// The status island's first line.
+/// The status group's first line.
 pub fn status_title(status: &Status) -> String {
     match &status.current {
         Some(current) if current.summary.is_empty() => format!("Windows uses {}.", current.family),

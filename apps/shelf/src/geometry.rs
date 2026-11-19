@@ -13,11 +13,13 @@ use shellman_core::settings::desktop::Edge;
 pub const EDGE_GAP: f32 = 20.0;
 pub const SHELF_W: f32 = 104.0;
 pub const PAD: f32 = 10.0;
-pub const RADIUS: f32 = 30.0;
+/// The shelf is an island of glass.
+pub const RADIUS: f32 = shellman_ui::theme::shape::ISLAND;
 pub const DROP_H: f32 = 84.0;
-pub const DROP_RADIUS: f32 = 20.0;
+/// The drop well and a stack's highlight are tiles inside it.
+pub const DROP_RADIUS: f32 = shellman_ui::theme::shape::TILE;
 pub const STACK_H: f32 = 118.0;
-pub const STACK_RADIUS: f32 = 18.0;
+pub const STACK_RADIUS: f32 = shellman_ui::theme::shape::TILE;
 /// The box the three cards of a stack sit in.
 pub const CARDS: f32 = 52.0;
 

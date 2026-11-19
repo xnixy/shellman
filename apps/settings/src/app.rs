@@ -1,6 +1,6 @@
-//! The window: islands of glass with the desktop showing between them. A pill rail of sections
-//! at the left, a title pill on top, and the page below it as one island per group, scrolling
-//! under the title pill.
+//! The window: one sheet of glass (`shellman_ui::sheet`), Glasshouse's app window. The sections
+//! down the sidebar, a header bar over the page with its title, the search box and Windows' own
+//! buttons, and the page under it in boxed groups.
 
 use crate::instance::Instance;
 use crate::page;
@@ -8,22 +8,23 @@ use crate::search::{self, Hit};
 use crate::sections::Section;
 use crate::state::State;
 use egui::{pos2, vec2, Align2, Rect, Sense, UiBuilder};
-use shellman_ui::chips::{self, Chip};
 use shellman_ui::glass::islands::{self, Island};
+use shellman_ui::sheet::Sheet;
 use shellman_ui::glass::{GlassPanel, Style};
 use shellman_ui::appearance::RailApp;
 use shellman_ui::rail;
-use shellman_ui::theme::{self, colors, glyph, icon_font, semibold_font, AccentChoice};
+use shellman_ui::theme::{self, colors, glyph, icon_font, shape, AccentChoice};
 use std::time::Duration;
 
-/// Space between the window's edge and the islands, and between islands.
-const MARGIN: f32 = 12.0;
-const TITLE_H: f32 = 46.0;
-const BUTTON_H: f32 = 30.0;
 /// The page's column is kept to a readable width, however wide the window.
-const COLUMN_MAX: f32 = 860.0;
-/// The search field in the title pill.
-const SEARCH_W: f32 = 210.0;
+const COLUMN_MAX: f32 = 820.0;
+/// The page's room on either side of its column, and above it.
+const PAGE_PAD: f32 = 32.0;
+/// The sidebar is at least this wide when it shows names.
+const SIDEBAR_MIN: f32 = 240.0;
+/// The search field in the header bar.
+const SEARCH_W: f32 = 260.0;
+const SEARCH_H: f32 = 32.0;
 const SEARCH_ID: &str = "settings-search";
 /// How long to wait before reading the files again if our own saves were still going.
 const RELOAD_RETRY: Duration = Duration::from_millis(100);
@@ -106,39 +107,35 @@ impl SettingsApp {
     }
 
     fn layout(&mut self, ctx: &egui::Context) {
-        self.panel.set_style(Style::from_theme(page::GROUP_RADIUS));
+        self.panel.set_style(Style::from_theme(shellman_ui::sheet::RADIUS));
         let mut list: Vec<Island> = Vec::new();
         egui::CentralPanel::default().frame(egui::Frame::new()).show(ctx, |ui| {
             let screen = ctx.screen_rect();
             let under = ui.painter().add(egui::Shape::Noop);
-            islands::drag_gaps(ui, screen);
+            let entries = self.rail_entries();
+            let mode = rail::mode(screen.width(), self.st.look.rail_folded(RailApp::Settings));
+            let rail_w = rail::width(ui, &entries, mode);
+            let side_w = if mode.icons_only() { rail_w } else { rail_w.max(SIDEBAR_MIN) };
+            let sheet = Sheet::new(ctx, screen, side_w);
+            list.push(sheet.island());
+            sheet.paint(ui);
 
-            // The title pill and the page share one column; the rail stands left of it.
-            let rail_w = rail::width(ui, &self.rail_entries(), rail::mode(screen.width(), self.st.look.rail_folded(RailApp::Settings)));
-            let left = screen.left() + MARGIN + rail_w + MARGIN;
-            let room = screen.right() - MARGIN - left;
-            let buttons_w = BUTTON_H * 3.0;
-            let width = room.min(COLUMN_MAX);
-            // Wider than the column, the window buttons sit at the window's corner instead.
-            let apart = room > width + MARGIN + buttons_w + 16.0;
-            let title = Rect::from_min_size(pos2(left, screen.top() + MARGIN), vec2(width, TITLE_H));
-            let content_top = title.bottom() + MARGIN;
+            let rest = sheet.sidebar_head(ui, if mode.icons_only() { "" } else { "Settings" });
+            self.rail(ui, &mut list, rest, screen, &entries, mode);
 
-            list.push(Island::pill(title));
-            self.title(ui, title, !apart);
-            if apart {
-                let corner = Rect::from_min_size(
-                    pos2(screen.right() - MARGIN - buttons_w - 16.0, title.top()),
-                    vec2(buttons_w + 16.0, TITLE_H),
-                );
-                list.push(Island::pill(corner));
-                chips::window_buttons(ui, Rect::from_center_size(corner.center(), vec2(buttons_w, BUTTON_H)));
+            let tools = sheet.header(ui, self.section.label());
+            let width = tools.width().min(SEARCH_W);
+            if width > 90.0 {
+                let field = Rect::from_center_size(pos2(tools.left() + 8.0 + width / 2.0, tools.center().y), vec2(width, SEARCH_H));
+                self.search_field(ui, field);
             }
-            // The rail runs the window's whole height, level with the title pill.
-            self.rail(ui, &mut list, screen, title.top());
 
-            let area = Rect::from_min_max(pos2(left, content_top), pos2(left + width, screen.bottom() - MARGIN));
-            self.page(ui, area, &mut list);
+            // The page's column, centred in the pane under the header.
+            let body = sheet.body;
+            let width = (body.width() - 2.0 * PAGE_PAD).clamp(0.0, COLUMN_MAX);
+            let left = body.center().x - width / 2.0;
+            let area = Rect::from_min_max(pos2(body.left(), body.top() + 8.0), body.max);
+            self.page(ui, area, left, width);
 
             if !self.panel.composed() {
                 ui.painter().set(under, egui::Shape::Vec(islands::under(screen, &list, &self.panel.style())));
@@ -147,38 +144,19 @@ impl SettingsApp {
         self.panel.set_islands(&list, ctx.pixels_per_point());
     }
 
-    /// The pill on top: "Settings / <page>", the search field, and the window buttons when
-    /// `buttons` is set.
-    fn title(&mut self, ui: &mut egui::Ui, rect: Rect, buttons: bool) {
-        let c = colors();
-        let y = rect.center().y;
-        let name = ui.painter().text(pos2(rect.left() + 22.0, y), Align2::LEFT_CENTER, "Settings", semibold_font(15.0), c.text);
-        let slash = ui.painter().text(pos2(name.right() + 10.0, y), Align2::LEFT_CENTER, "/", egui::FontId::proportional(15.0), c.muted);
-        let label = self.section.label();
-        let w = chips::chip_width(ui, label, false, Chip::Accent);
-        let chip = Rect::from_center_size(pos2(slash.right() + 10.0 + w / 2.0, y), vec2(w, chips::CHIP_H));
-        chips::chip(ui, chip, egui::Id::new("title-chip"), label, None, Chip::Accent);
-        let mut right = rect.right() - 12.0;
-        if buttons {
-            chips::window_buttons(ui, Rect::from_min_max(pos2(rect.right() - 10.0 - BUTTON_H * 3.0, y - BUTTON_H / 2.0), pos2(rect.right() - 10.0, y + BUTTON_H / 2.0)));
-            right -= BUTTON_H * 3.0 + 4.0;
-        }
-        // The field takes what the name leaves, up to its width.
-        let room = right - (chip.right() + 16.0);
-        if room > 90.0 {
-            let field = Rect::from_min_max(pos2(right - room.min(SEARCH_W), y - chips::CHIP_H / 2.0 - 1.0), pos2(right, y + chips::CHIP_H / 2.0 + 1.0));
-            self.search_field(ui, field);
-        }
-    }
-
-    /// The search box: a soft pill with a glass glyph. Enter goes to the best match, Esc clears.
+    /// The search box: Glasshouse's field with a glass glyph. Enter goes to the best match, Esc
+    /// clears.
     fn search_field(&mut self, ui: &mut egui::Ui, field: Rect) {
         let c = colors();
         let id = egui::Id::new(SEARCH_ID);
-        let (soft, hover, line) = chips::soft_colors(c.light);
         let focused = ui.memory(|m| m.has_focus(id));
-        let fill = if focused || ui.rect_contains_pointer(field) { hover } else { soft };
-        ui.painter().rect(field, field.height() / 2.0, fill, line, egui::StrokeKind::Inside);
+        page::field_fill(ui, field);
+        if !c.high_contrast && (focused || ui.rect_contains_pointer(field)) {
+            ui.painter().rect_filled(field, shape::corner(shape::FIELD), c.row_hover);
+        }
+        if focused && !c.high_contrast {
+            ui.painter().rect_stroke(field, shape::corner(shape::FIELD), egui::Stroke::new(2.0_f32, c.accent_fill), egui::StrokeKind::Inside);
+        }
         ui.painter().text(pos2(field.left() + 16.0, field.center().y), Align2::CENTER_CENTER, glyph::SEARCH, icon_font(13.0), c.muted);
         let edit_rect = Rect::from_min_max(pos2(field.left() + 30.0, field.top()), pos2(field.right() - 12.0, field.bottom()));
         let edit = egui::TextEdit::singleline(&mut self.query)
@@ -212,13 +190,11 @@ impl SettingsApp {
         self.query.clear();
     }
 
-    /// The rail of sections (shared with the other apps): icon and name each, folded to icons
-    /// by the user or by a narrow window.
-    fn rail(&mut self, ui: &mut egui::Ui, list: &mut Vec<Island>, screen: Rect, top: f32) {
-        let entries = self.rail_entries();
+    /// The sections down the sidebar (the rail shared with the other apps), in `column`: icon
+    /// and name each, folded to icons by the user or by a narrow window.
+    fn rail(&mut self, ui: &mut egui::Ui, list: &mut Vec<Island>, column: Rect, screen: Rect, entries: &[rail::Entry<'static>], mode: rail::Mode) {
         let solid = (!self.panel.composed()).then(|| self.panel.style());
-        let mode = rail::mode(screen.width(), self.st.look.rail_folded(RailApp::Settings));
-        let out = rail::show(ui, list, screen, top, &entries, Some(self.section.slug()), mode, solid.as_ref(), page::GROUP_RADIUS);
+        let out = rail::show_in(ui, list, column, screen, entries, Some(self.section.slug()), mode, solid.as_ref());
         if let Some(i) = out.clicked {
             self.section = Section::ALL[i];
             self.query.clear();
@@ -235,80 +211,89 @@ impl SettingsApp {
         Section::ALL.iter().map(|s| rail::Entry::item(s.slug(), s.glyph(), s.label())).collect()
     }
 
-    /// The page, scrolling under the title pill: its groups become islands, clipped to `area`.
-    fn page(&mut self, ui: &mut egui::Ui, area: Rect, list: &mut Vec<Island>) {
+    /// The page, scrolling in `area` (the pane under the header), laid out in a column `width`
+    /// wide from `left`.
+    fn page(&mut self, ui: &mut egui::Ui, area: Rect, left: f32, width: f32) {
         page::begin_frame();
         let searching = !self.query.trim().is_empty();
         ui.scope_builder(UiBuilder::new().max_rect(area), |ui| {
             ui.spacing_mut().scroll = egui::style::ScrollStyle::floating();
-            // Dragging the gaps between islands moves the window, so the area must not take it.
             let out = egui::ScrollArea::vertical().auto_shrink([false, false]).drag_to_scroll(false).show(ui, |ui| {
-                if searching {
-                    self.results(ui);
-                    return;
-                }
-                // A page that declares no groups goes on one island as a whole.
-                if self.section.grouped() {
-                    self.section.show(ui, &mut self.st);
-                } else {
-                    page::group(ui, "", |ui| self.section.show(ui, &mut self.st));
-                }
-                // The workers run only while their page is shown.
-                if self.section != Section::Sound {
-                    self.st.sound.stop();
-                }
-                if self.section != Section::Display {
-                    self.st.display.stop();
-                }
-                if self.section != Section::Power {
-                    self.st.power.stop();
-                }
-                if self.section != Section::DateTime {
-                    self.st.datetime.stop();
-                }
-                if self.section != Section::Storage {
-                    self.st.storage.stop();
-                }
-                if self.section != Section::Updates {
-                    self.st.updates.stop();
-                }
-                if self.section != Section::Accessibility {
-                    self.st.access.stop();
-                }
-                if self.section != Section::Privacy {
-                    self.st.privacy.stop();
-                }
-                if self.section != Section::DefaultApps {
-                    self.st.default_apps.stop();
-                }
-                if self.section != Section::Mouse {
-                    self.st.mouse.stop();
-                }
-                if self.section != Section::Startup {
-                    self.st.startup.stop();
-                }
-                if self.section != Section::Apps {
-                    self.st.apps.stop();
-                }
-                if self.section != Section::Fonts {
-                    self.st.fonts.stop();
-                }
-                if self.section != Section::Terminal {
-                    self.st.terminal.stop();
-                }
+                // The column, centred; the scroll bar stays at the pane's right edge, clear of it.
+                ui.add_space(4.0);
+                let inset = (left - area.left()).max(0.0);
+                ui.horizontal_top(|ui| {
+                    ui.add_space(inset);
+                    ui.vertical(|ui| {
+                        ui.set_width(width.min(ui.available_width()));
+                        if searching {
+                            self.results(ui);
+                            return;
+                        }
+                        // A page that declares no groups goes on one island as a whole.
+                        if self.section.grouped() {
+                            self.section.show(ui, &mut self.st);
+                        } else {
+                            page::group(ui, "", |ui| self.section.show(ui, &mut self.st));
+                        }
+                        // The workers run only while their page is shown.
+                        if self.section != Section::Sound {
+                            self.st.sound.stop();
+                        }
+                        if self.section != Section::Display {
+                            self.st.display.stop();
+                        }
+                        if self.section != Section::Power {
+                            self.st.power.stop();
+                        }
+                        if self.section != Section::DateTime {
+                            self.st.datetime.stop();
+                        }
+                        if self.section != Section::Storage {
+                            self.st.storage.stop();
+                        }
+                        if self.section != Section::Updates {
+                            self.st.updates.stop();
+                        }
+                        if self.section != Section::Accessibility {
+                            self.st.access.stop();
+                        }
+                        if self.section != Section::Privacy {
+                            self.st.privacy.stop();
+                        }
+                        if self.section != Section::DefaultApps {
+                            self.st.default_apps.stop();
+                        }
+                        if self.section != Section::Mouse {
+                            self.st.mouse.stop();
+                        }
+                        if self.section != Section::Startup {
+                            self.st.startup.stop();
+                        }
+                        if self.section != Section::Apps {
+                            self.st.apps.stop();
+                        }
+                        if self.section != Section::Fonts {
+                            self.st.fonts.stop();
+                        }
+                        if self.section != Section::Terminal {
+                            self.st.terminal.stop();
+                        }
+                    });
+                });
+                ui.add_space(24.0);
             });
             shellman_ui::widgets::name_scroll_bar(ui.ctx(), &out, "the page");
         });
         if let Some(section) = self.st.goto.take() {
             self.section = section;
         }
-        list.extend(page::take_groups().into_iter().map(|r| Island::new(r, page::GROUP_RADIUS)));
     }
 }
 
 impl SettingsApp {
     /// The search's answer, in place of the page: one row for each place the query leads, the
-    /// best one lifted out in the accent (Enter takes it).
+    /// best one in the field fill (Enter takes it).
     fn results(&mut self, ui: &mut egui::Ui) {
         let hits = search::find(&self.query);
         let mut chosen = None;
@@ -335,19 +320,20 @@ fn result_row(ui: &mut egui::Ui, hit: &Hit, best: bool) -> egui::Response {
     let (row, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 44.0), Sense::click());
     let label = hit.label();
     resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, best, label.clone()));
-    theme::focus_ring(ui, &resp, row, 14.0);
-    let fill = if best {
-        c.accent_fill
+    let round = theme::shape::NAV_ROW;
+    theme::focus_ring(ui, &resp, row, round);
+    // As a sidebar's chosen row: the one Enter opens in the field fill, not the accent; the
+    // others only show a wash under the pointer. High contrast outlines instead.
+    if c.high_contrast {
+        theme::contrast_outline(ui, row, round, resp.hovered(), best);
+    } else if best {
+        ui.painter().rect_filled(row, round, c.field);
     } else if resp.hovered() {
-        c.control_hover
-    } else {
-        c.control
-    };
-    ui.painter().rect_filled(row, 14.0, fill);
-    let ink = if best { c.on_accent } else { c.text };
-    ui.painter().text(pos2(row.left() + 18.0, row.center().y), Align2::LEFT_CENTER, hit.label(), egui::FontId::proportional(14.0), ink);
+        ui.painter().rect_filled(row, round, c.row_hover);
+    }
+    ui.painter().text(pos2(row.left() + 18.0, row.center().y), Align2::LEFT_CENTER, hit.label(), egui::FontId::proportional(14.0), c.text);
     if best {
-        ui.painter().text(pos2(row.right() - 16.0, row.center().y), Align2::RIGHT_CENTER, "Enter", egui::FontId::proportional(12.0), ink.gamma_multiply(0.85));
+        ui.painter().text(pos2(row.right() - 16.0, row.center().y), Align2::RIGHT_CENTER, "Enter", egui::FontId::proportional(12.0), c.muted);
     }
     resp.on_hover_cursor(egui::CursorIcon::PointingHand)
 }

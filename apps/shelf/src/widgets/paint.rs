@@ -5,9 +5,8 @@
 use super::icons::{Icons, Pic, SkyPic};
 use super::model::{NowModel, TodayModel};
 use super::place::{self, ART, NOTE_H, PAD_TOP, PAD_X, PLAY_PAD, ROW_H, ROWS_GAP};
-use egui::{pos2, vec2, Align2, Color32, CornerRadius, FontId, Rect, Sense, Stroke, Ui};
+use egui::{pos2, vec2, Align2, Color32, FontId, Rect, Sense, Stroke, Ui};
 use shellman_core::system::media::Action;
-use shellman_ui::glass::islands::shows_as;
 use shellman_ui::theme::{self, colors, light_font, semibold_font};
 use shellman_ui::widgets::draw_text;
 
@@ -28,22 +27,19 @@ fn dim() -> Color32 {
     theme::mix(c.muted, if c.light { Color32::WHITE } else { Color32::BLACK }, 0.22)
 }
 
+/// Glasshouse's hairline between rows (the theme's, already as it shows over the glass).
 fn hairline() -> Color32 {
-    let c = colors();
-    if c.high_contrast {
-        return c.text;
-    }
-    theme::with_alpha(c.text, if c.light { 18 } else { 20 })
+    colors().hairline
 }
 
-/// The text colour's faint wash, for hover.
-fn soft(light: u8, dark: u8) -> Color32 {
-    let c = colors();
-    if c.high_contrast {
+/// One of Glasshouse's faint fills of the text colour (`row_hover`, `field`), already as it shows
+/// over the glass.
+fn wash(fill: Color32) -> Color32 {
+    if colors().high_contrast {
         // No washes in high contrast (hovered buttons are outlined).
         return Color32::TRANSPARENT;
     }
-    shows_as(theme::with_alpha(c.text, if c.light { light } else { dark }))
+    fill
 }
 
 /// Painted text a screen reader should read: a label node over `rect`.
@@ -103,10 +99,11 @@ pub fn today(ui: &mut Ui, rect: Rect, m: &TodayModel, icons: &mut Icons, events:
         let mut room = right - x;
         if let Some(chip) = &row.chip {
             let font = semibold_font(12.0);
-            let w = ui.fonts(|f| f.layout_no_wrap(chip.clone(), font.clone(), c.bg).size().x) + 22.0;
+            let w = ui.fonts(|f| f.layout_no_wrap(chip.clone(), font.clone(), c.on_primary).size().x) + 22.0;
             let r = Rect::from_min_size(pos2(right - w, y + 11.0), vec2(w, 26.0));
-            p.rect_filled(r, CornerRadius::same(13), c.text);
-            p.text(r.center(), Align2::CENTER_CENTER, chip, font, c.bg);
+            // The one thing to look at ("Now", "in 5 min"): a pill in the main button's colours.
+            p.rect_filled(r, theme::shape::pill(r), c.primary);
+            p.text(r.center(), Align2::CENTER_CENTER, chip, font, c.on_primary);
             room -= w + 10.0;
         }
         let title_font = if row.next { semibold_font(14.0) } else { FontId::proportional(14.0) };
@@ -126,7 +123,7 @@ pub fn today(ui: &mut Ui, rect: Rect, m: &TodayModel, icons: &mut Icons, events:
         // A note that opens Settings is a button; otherwise a line to read.
         let role = if note.settings { egui::WidgetType::Button } else { egui::WidgetType::Label };
         theme::speak(&resp, role, || crate::text::spoken(&[&note.title, note.detail.as_deref().unwrap_or("")]));
-        theme::focus_ring(ui, &resp, r, 8.0);
+        theme::focus_ring(ui, &resp, r, theme::shape::MENU_ROW);
         p.hline(left..=right, y, Stroke::new(1.0_f32, hairline()));
         let line1 = if note.detail.is_some() { y + 22.0 } else { y + h / 2.0 + 1.0 };
         let line2 = y + 11.0 + 22.0 + 2.0 + 9.0;
@@ -175,7 +172,7 @@ pub fn playing_stand_in(ui: &mut Ui, rect: Rect) {
     let p = ui.painter().clone();
     let inner = rect.shrink(PLAY_PAD);
     let art_rect = Rect::from_min_size(inner.min, vec2(ART, ART));
-    p.rect_filled(art_rect, CornerRadius::same(14), soft(14, 22));
+    p.rect_filled(art_rect, theme::shape::TILE, wash(c.field));
     p.text(art_rect.center(), Align2::CENTER_CENTER, theme::glyph::AUDIO, theme::icon_font(22.0), c.muted);
     let x = art_rect.right() + 14.0;
     p.text(pos2(x, inner.center().y - 10.0), Align2::LEFT_CENTER, "Now playing", theme::semibold_font(14.0), c.text);
@@ -190,12 +187,12 @@ pub fn playing(ui: &mut Ui, rect: Rect, m: &NowModel, art: Option<&egui::Texture
     let art_rect = Rect::from_min_size(inner.min, vec2(ART, ART));
     match art {
         Some(t) => {
-            let shape = egui::epaint::RectShape::filled(art_rect, CornerRadius::same(14), Color32::WHITE)
+            let shape = egui::epaint::RectShape::filled(art_rect, theme::shape::corner(theme::shape::TILE), Color32::WHITE)
                 .with_texture(t.id(), crate::cards::cover_uv(t.size_vec2()));
             p.add(shape);
         }
         None => {
-            p.rect_filled(art_rect, CornerRadius::same(14), soft(14, 22));
+            p.rect_filled(art_rect, theme::shape::TILE, wash(c.field));
             p.text(art_rect.center(), Align2::CENTER_CENTER, theme::glyph::AUDIO, theme::icon_font(22.0), c.muted);
         }
     }
@@ -208,24 +205,26 @@ pub fn playing(ui: &mut Ui, rect: Rect, m: &NowModel, art: Option<&egui::Texture
     let quiet = |on: bool| if on { c.muted } else { theme::with_alpha(c.muted, 90) };
     let r = button(ui, "prev", "Previous", prev_c, 28.0, m.can_previous);
     if r.hovered() && m.can_previous {
-        p.circle_filled(prev_c, 14.0, soft(14, 22));
+        p.circle_filled(prev_c, 14.0, wash(c.row_hover));
     }
     icons.paint(ui, Pic::Previous, Rect::from_center_size(prev_c, vec2(15.0, 15.0)), if r.hovered() && m.can_previous { c.text } else { quiet(m.can_previous) });
     if r.clicked() {
         events.push(Event::Media(Action::Previous));
     }
     let r = button(ui, "play", if m.playing { "Pause" } else { "Play" }, play_c, 36.0, m.can_toggle);
-    let fill = if r.hovered() && m.can_toggle && !c.high_contrast { theme::mix(c.text, c.bg, 0.12) } else { c.text };
-    p.circle_filled(play_c, 18.0, if m.can_toggle { fill } else { theme::with_alpha(c.text, 120) });
+    // Play / pause is the widget's main button: near-black on light, near-white on dark (in high
+    // contrast the highlight, under highlight text).
+    let fill = if r.hovered() && m.can_toggle && !c.high_contrast { theme::mix(c.primary, c.bg, 0.12) } else { c.primary };
+    p.circle_filled(play_c, 18.0, if m.can_toggle { fill } else { theme::with_alpha(c.primary, 120) });
     let glyph = if m.playing { Pic::Pause } else { Pic::Play };
     let nudge = if m.playing { 0.0 } else { 1.0 };
-    icons.paint(ui, glyph, Rect::from_center_size(play_c + vec2(nudge, 0.0), vec2(14.0, 14.0)), c.bg);
+    icons.paint(ui, glyph, Rect::from_center_size(play_c + vec2(nudge, 0.0), vec2(14.0, 14.0)), c.on_primary);
     if r.clicked() {
         events.push(Event::Media(Action::PlayPause));
     }
     let r = button(ui, "next", "Next", next_c, 28.0, m.can_next);
     if r.hovered() && m.can_next {
-        p.circle_filled(next_c, 14.0, soft(14, 22));
+        p.circle_filled(next_c, 14.0, wash(c.row_hover));
     }
     icons.paint(ui, Pic::Next, Rect::from_center_size(next_c, vec2(15.0, 15.0)), if r.hovered() && m.can_next { c.text } else { quiet(m.can_next) });
     if r.clicked() {
@@ -242,12 +241,12 @@ pub fn playing(ui: &mut Ui, rect: Rect, m: &NowModel, art: Option<&egui::Texture
     draw_text(ui, Rect::from_min_size(pos2(x, y0 + 23.0), vec2(room, 18.0)), &m.line, FontId::proportional(12.0), c.muted, false);
     if has_bar {
         let bar = Rect::from_min_size(pos2(x, y0 + 20.0 + 3.0 + 18.0 + 9.0), vec2(room, 4.0));
-        let track = if c.high_contrast { c.muted } else { theme::with_alpha(c.text, if c.light { 22 } else { 30 }) };
-        p.rect_filled(bar, CornerRadius::same(2), track);
+        // Progress, so the accent on the track (grey and the highlight in high contrast).
+        p.rect_filled(bar, theme::shape::pill(bar), c.track);
         let f = (m.position / m.duration).clamp(0.0, 1.0) as f32;
         if f > 0.0 {
             let done = Rect::from_min_size(bar.min, vec2((bar.width() * f).max(4.0), 4.0));
-            p.rect_filled(done, CornerRadius::same(2), c.text);
+            p.rect_filled(done, theme::shape::pill(done), c.accent_fill);
         }
     }
 }

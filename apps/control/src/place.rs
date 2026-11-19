@@ -4,7 +4,7 @@
 /// The panel's width, in points.
 pub const WIDTH: f32 = 360.0;
 /// The panel's corner radius, in points.
-pub const RADIUS: f32 = 22.0;
+pub const RADIUS: f32 = shellman_ui::theme::shape::ISLAND;
 /// The gap the panel keeps from the screen's edges. The side gap is the top bar's, so the panel
 /// lines up with the tray island above it.
 pub const GAP: f32 = 8.0;

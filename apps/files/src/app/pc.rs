@@ -2,9 +2,9 @@
 
 use super::actions::Action;
 use super::tab::Loc;
-use egui::{Align2, CornerRadius, FontId, Id, Rect, ScrollArea, Sense, Ui, Vec2};
+use egui::{Align2, FontId, Id, Rect, ScrollArea, Sense, Ui, Vec2};
 use shellman_core::fsops;
-use shellman_ui::theme::{self, colors, glyph, icon_font};
+use shellman_ui::theme::{self, colors, glyph, icon_font, shape};
 use shellman_ui::widgets::draw_text;
 
 const CARD_MIN_W: f32 = 250.0;
@@ -13,10 +13,9 @@ const GAP: f32 = 12.0;
 
 impl super::FileMan {
     pub(super) fn pc_page(&mut self, ui: &mut Ui, actions: &mut Vec<Action>) {
-        let c = colors();
         let out = ScrollArea::vertical().show(ui, |ui| {
             ui.add_space(8.0);
-            ui.label(theme::muted("Drives").size(13.0));
+            ui.label(theme::group_heading("Drives"));
             ui.add_space(4.0);
             // Same column rule as the icons view: whole cards per line, stretched to fill it.
             // Wrapping layouts neither wrapped these cards nor top-aligned them.
@@ -37,17 +36,9 @@ impl super::FileMan {
                         false => d.title(),
                     };
                     resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &spoken));
-                    theme::focus_ring(ui, &resp, rect, 12.0);
-                    super::dnd::zone(ui, rect, super::dnd::Dest::Dir(d.root.clone()), 12.0);
-                    if c.high_contrast {
-                        ui.painter().rect_stroke(rect, CornerRadius::same(12), egui::Stroke::new(1.0_f32, c.text), egui::StrokeKind::Inside);
-                    }
-                    let fill = if resp.hovered() {
-                        c.control_hover
-                    } else {
-                        c.control
-                    };
-                    ui.painter().rect_filled(rect, CornerRadius::same(12), fill);
+                    theme::focus_ring(ui, &resp, rect, shape::TILE);
+                    super::dnd::zone(ui, rect, super::dnd::Dest::Dir(d.root.clone()), shape::TILE);
+                    tile_back(ui, rect, resp.hovered());
                     drive_card(ui, rect, glyph::DRIVE, &d.title(), (d.total > 0).then_some((d.free, d.total)));
                     if resp.clicked() {
                         actions.push(Action::Navigate(Loc::Dir(d.root.clone())));
@@ -61,7 +52,7 @@ impl super::FileMan {
             // start them.
             if !self.linux.is_empty() {
                 ui.add_space(8.0);
-                ui.label(theme::muted("Linux").size(13.0));
+                ui.label(theme::group_heading("Linux"));
                 ui.add_space(4.0);
                 ui.spacing_mut().item_spacing.y = GAP;
                 for (line, distros) in self.linux.chunks(cols).enumerate() {
@@ -73,10 +64,9 @@ impl super::FileMan {
                         );
                         let resp = ui.interact(rect, Id::new(("linux", line, col)), Sense::click());
                         resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, format!("{} (Linux)", d.name)));
-                        theme::focus_ring(ui, &resp, rect, 12.0);
-                        super::dnd::zone(ui, rect, super::dnd::Dest::Dir(d.root.clone()), 12.0);
-                        let fill = if resp.hovered() { c.control_hover } else { c.control };
-                        ui.painter().rect_filled(rect, CornerRadius::same(12), fill);
+                        theme::focus_ring(ui, &resp, rect, shape::TILE);
+                        super::dnd::zone(ui, rect, super::dnd::Dest::Dir(d.root.clone()), shape::TILE);
+                        tile_back(ui, rect, resp.hovered());
                         drive_card(ui, rect, glyph::LINUX, &d.name, None);
                         if resp.clicked() {
                             actions.push(Action::Navigate(Loc::Dir(d.root.clone())));
@@ -89,6 +79,17 @@ impl super::FileMan {
             }
         });
         shellman_ui::widgets::name_scroll_bar(ui.ctx(), &out, "This PC");
+    }
+}
+
+/// A card's back: a tile in the control fill, deeper under the pointer. In high contrast the
+/// fill is the window colour, so the outline goes on after it.
+fn tile_back(ui: &Ui, rect: Rect, hovered: bool) {
+    let c = colors();
+    let fill = if hovered { c.control_hover } else { c.control };
+    ui.painter().rect_filled(rect, shape::TILE, fill);
+    if c.high_contrast {
+        ui.painter().rect_stroke(rect, shape::TILE, egui::Stroke::new(1.0_f32, c.text), egui::StrokeKind::Inside);
     }
 }
 
@@ -131,8 +132,8 @@ fn drive_card(ui: &Ui, rect: Rect, icon: char, name: &str, space: Option<(u64, u
     fill.set_width(bar.width() * used);
     let col = if used > 0.9 { c.danger } else { c.accent_fill };
     let p = ui.painter();
-    p.rect_filled(bar, CornerRadius::same(2), c.track);
-    p.rect_filled(fill, CornerRadius::same(2), col);
+    p.rect_filled(bar, shape::pill(bar), c.track);
+    p.rect_filled(fill, shape::pill(fill), col);
     let free = format!(
         "{} free of {}",
         fsops::format_size(free),

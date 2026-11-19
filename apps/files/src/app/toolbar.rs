@@ -1,112 +1,98 @@
-//! The bar under the tabs: back, forward, up and refresh, the path as chips (the current folder
-//! lit with the accent), the search field, and the view switch (or the bin's buttons).
+//! The header bar across the pane: back and forward, the path as chips (the current folder lit
+//! with the accent) in a field, the search field, the details switch, the view switch (or the
+//! bin's buttons) and the sort button, then Windows' own window buttons flush in the corner.
+//! Where they go is `plan::tools`.
 //!
-//! Its empty stretch is the window's to drag; clicking just after the path, or Ctrl+L, types a
-//! path instead.
+//! Its empty stretch is the window's to drag; clicking the path's field after the crumbs, or
+//! Ctrl+L, types a path instead.
 
 use super::actions::Action;
+use super::plan::{self, Plan, BUTTON};
 use super::tab::Loc;
 use crate::settings::ViewMode;
-use egui::{Align, Align2, CornerRadius, FontId, Id, Key, Rect, RichText, Sense, Stroke, Ui, Vec2};
+use egui::{Align, Align2, FontId, Id, Key, Rect, RichText, Sense, Stroke, Ui, Vec2};
 use shellman_core::fsops::Drive;
-use shellman_ui::chips::{chip, chip_width, round_icon, soft_colors, Chip, CHIP_H};
-use shellman_ui::theme::{self, colors, glyph, icon_font};
-use shellman_ui::widgets::select_all;
+use shellman_ui::chips::{chip, chip_width, round_icon, soft_colors, window_buttons_flush, Chip, CHIP_H};
+use shellman_ui::theme::{self, colors, glyph, icon_font, shape};
+use shellman_ui::widgets::{select_all, window_drag};
 use std::path::{Path, PathBuf};
 
-/// Inside the bar, at each end.
-const PAD: f32 = 9.0;
-const BUTTON: f32 = 34.0;
-const SEARCH_W: f32 = 230.0;
 const TOGGLE_W: f32 = 76.0;
-/// The room after the last crumb where a click starts typing a path.
+/// The room the path's crumbs leave at the end of its field, where a click starts typing one.
 const TYPE_ZONE: f32 = 56.0;
 const SEP_W: f32 = 16.0;
 
+/// A field: Glasshouse's 12 pt rounded square in the field fill (see `sheet::field`).
+fn field_fill(ui: &Ui, rect: Rect) {
+    shellman_ui::sheet::field(ui, rect);
+}
+
+/// A field with the keyboard in it: the accent round its edge.
+fn field_focus(ui: &Ui, rect: Rect) {
+    let c = colors();
+    ui.painter().rect_stroke(rect, shape::corner(shape::FIELD), Stroke::new(2.0_f32, c.accent_fill), egui::StrokeKind::Inside);
+}
+
 impl super::FileMan {
-    pub(super) fn toolbar(&mut self, ui: &mut Ui, bar: Rect, actions: &mut Vec<Action>) {
+    /// The header bar of `plan`; `radius` is the window's corner, for the close button's.
+    pub(super) fn toolbar(&mut self, ui: &mut Ui, plan: &Plan, radius: f32, actions: &mut Vec<Action>) {
+        // Its empty space moves the window, and a double click maximizes it. Made first, so the
+        // tools on it win.
+        let drag = ui.interact(plan.header, Id::new("header-drag"), Sense::click_and_drag());
+        window_drag(ui, &drag);
+        let bin = self.tabs[self.active].loc == Loc::Bin;
+        let t = if bin {
+            plan::tools(plan.tools, super::bin::BUTTONS_W, super::bin::BUTTONS_LEAST_W)
+        } else {
+            plan::tools(plan.tools, TOGGLE_W, TOGGLE_W)
+        };
         let tab = &self.tabs[self.active];
-        let enabled = [
-            !tab.back.is_empty(),
-            !tab.fwd.is_empty(),
-            tab.loc.parent().is_some(),
-            true,
-        ];
         let nav = [
-            (glyph::BACK, "Back (Alt+Left)", Action::Back),
-            (glyph::FORWARD, "Forward (Alt+Right)", Action::Forward),
-            (glyph::UP, "Up (Alt+Up)", Action::Up),
-            (glyph::REFRESH, "Refresh (F5)", Action::Refresh),
+            (t.back, glyph::BACK, "Back (Alt+Left)", Action::Back, !tab.back.is_empty()),
+            (t.forward, glyph::FORWARD, "Forward (Alt+Right)", Action::Forward, !tab.fwd.is_empty()),
         ];
-        let mut x = bar.left() + PAD;
-        for ((g, tip, action), on) in nav.into_iter().zip(enabled) {
-            let r = Rect::from_center_size(
-                egui::pos2(x + BUTTON / 2.0, bar.center().y),
-                Vec2::splat(BUTTON),
-            );
-            if round_icon(ui, r, Id::new(("nav", tip)), g, on, false, tip)
-                .on_hover_text(tip)
-                .clicked()
-            {
+        for (r, g, tip, action, on) in nav {
+            if round_icon(ui, r, Id::new(("nav", tip)), g, on, false, tip).on_hover_text(tip).clicked() {
                 actions.push(action);
             }
-            x += BUTTON;
         }
-        x += 8.0;
-
-        // From the right: the view switch (or the bin's buttons), then search.
-        let bin = self.tabs[self.active].loc == Loc::Bin;
-        let toggle_w = if bin { super::bin::BUTTONS_W } else { TOGGLE_W };
-        let right = bar.right() - PAD;
-        let toggle = Rect::from_min_max(
-            egui::pos2(right - toggle_w, bar.center().y - 16.0),
-            egui::pos2(right, bar.center().y + 16.0),
-        );
-        if bin {
-            self.bin_buttons(ui, toggle, actions);
-        } else {
-            self.view_toggle(ui, toggle, actions);
-        }
-        // The details island's switch, lit while it shows.
-        let info = Rect::from_center_size(
-            egui::pos2(toggle.left() - 8.0 - BUTTON / 2.0, bar.center().y),
-            Vec2::splat(BUTTON),
-        );
+        self.path_bar(ui, t.path, actions);
+        self.search_box(ui, t.search);
+        // The details box's switch, lit while it shows.
         // In a narrow window the details show only alone, in the folder's place.
         let on = self.details_on() && (!self.narrow || self.details_alone);
         if on {
             let c = colors();
-            ui.painter().circle_filled(info.center(), BUTTON / 2.0, soft_colors(c.light).1);
+            ui.painter().circle_filled(t.info.center(), BUTTON / 2.0, soft_colors(c.light).1);
         }
         let tip = if on { "Hide details" } else { "Show details" };
-        if round_icon(ui, info, Id::new("details-toggle"), glyph::INFO, true, false, tip)
+        if round_icon(ui, t.info, Id::new("details-toggle"), glyph::INFO, true, false, tip)
             .on_hover_text(tip)
             .clicked()
         {
             actions.push(Action::ToggleDetails);
         }
-        let toggle = Rect::from_min_max(egui::pos2(info.left(), toggle.top()), toggle.max);
-        let room = (toggle.left() - 10.0 - x).max(0.0);
-        let search_w = (room * 0.4).clamp(140.0, SEARCH_W);
-        let search = Rect::from_min_max(
-            egui::pos2(toggle.left() - 10.0 - search_w, bar.center().y - 16.0),
-            egui::pos2(toggle.left() - 10.0, bar.center().y + 16.0),
-        );
-        self.search_box(ui, search);
-        let path = Rect::from_min_max(
-            egui::pos2(x, bar.center().y - 16.0),
-            egui::pos2((search.left() - 12.0).max(x), bar.center().y + 16.0),
-        );
-        self.path_bar(ui, path, actions);
+        if let Some(view) = t.view {
+            if bin {
+                self.bin_buttons(ui, view, actions);
+            } else {
+                self.view_toggle(ui, view, actions);
+            }
+        }
+        if let Some(sort) = t.sort {
+            self.sort_button(ui, sort);
+        }
+        window_buttons_flush(ui, plan.captions, radius);
     }
 
-    /// List or grid, as a pill with two halves; the current one is lit.
+    /// List or grid, as a pill with two halves; the current one is raised (Glasshouse's chosen
+    /// toggle: the active tab's fill, not the accent; the highlight in high contrast).
     fn view_toggle(&self, ui: &mut Ui, rect: Rect, actions: &mut Vec<Action>) {
         let c = colors();
         let (soft, soft_hover, line) = soft_colors(c.light);
         ui.painter().rect(
             rect,
-            CornerRadius::same(16),
+            shape::pill(rect),
             soft,
             line,
             egui::StrokeKind::Inside,
@@ -128,15 +114,20 @@ impl super::FileMan {
             let current = self.settings.view == mode;
             let name = if mode == ViewMode::List { "List view" } else { "Cards view" };
             resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::RadioButton, true, current, name));
-            theme::focus_ring(ui, &resp, r, 13.0);
+            theme::focus_ring(ui, &resp, r, r.height() / 2.0);
             if current {
                 ui.painter()
-                    .rect_filled(r, CornerRadius::same(13), c.accent_fill);
+                    .rect_filled(r, shape::pill(r), c.control_active);
             } else if resp.hovered() && !c.high_contrast {
                 ui.painter()
-                    .rect_filled(r, CornerRadius::same(13), soft_hover);
+                    .rect_filled(r, shape::pill(r), soft_hover);
             }
-            let color = if current { c.on_accent } else { c.muted };
+            // On the high contrast highlight, only highlight text.
+            let color = match (current, c.high_contrast) {
+                (true, true) => c.on_accent,
+                (true, false) => c.text,
+                (false, _) => c.muted,
+            };
             ui.painter()
                 .text(r.center(), Align2::CENTER_CENTER, g, icon_font(13.0), color);
             if resp.clicked() && !current {
@@ -150,20 +141,13 @@ impl super::FileMan {
         let id = Id::new("search");
         let focused = ui.memory(|m| m.has_focus(id));
         let hovered = ui.rect_contains_pointer(rect);
-        let (soft, soft_hover, line) = soft_colors(c.light);
-        let fill = if focused || hovered { soft_hover } else { soft };
-        let stroke = if focused {
-            Stroke::new(1.0_f32, theme::with_alpha(c.accent_fill, 190))
-        } else {
-            line
-        };
-        ui.painter().rect(
-            rect,
-            CornerRadius::same(16),
-            fill,
-            stroke,
-            egui::StrokeKind::Inside,
-        );
+        field_fill(ui, rect);
+        if !c.high_contrast && (focused || hovered) {
+            ui.painter().rect_filled(rect, shape::corner(shape::FIELD), c.row_hover);
+        }
+        if focused {
+            field_focus(ui, rect);
+        }
         ui.painter().text(
             egui::pos2(rect.left() + 16.0, rect.center().y),
             Align2::LEFT_CENTER,
@@ -200,7 +184,7 @@ impl super::FileMan {
         }
     }
 
-    /// The path, as chips in `rect`; or the box to type one.
+    /// The path, as chips in a field at `rect`; or the field to type one.
     fn path_bar(&mut self, ui: &mut Ui, rect: Rect, actions: &mut Vec<Action>) {
         let c = colors();
         let loc = self.tabs[self.active].loc.clone();
@@ -211,15 +195,9 @@ impl super::FileMan {
                     .unwrap_or_default(),
             );
         }
+        field_fill(ui, rect);
         if let Some(text) = &mut self.editing_path {
-            let (_, soft_hover, _) = soft_colors(c.light);
-            ui.painter().rect(
-                rect,
-                CornerRadius::same(16),
-                soft_hover,
-                Stroke::new(1.0_f32, theme::with_alpha(c.accent_fill, 190)),
-                egui::StrokeKind::Inside,
-            );
+            field_focus(ui, rect);
             let resp = ui.put(
                 rect.shrink2(Vec2::new(4.0, 2.0)),
                 egui::TextEdit::singleline(text)
@@ -268,29 +246,12 @@ impl super::FileMan {
             used += w;
             first -= 1;
         }
-        if first > 0 {
-            used += ellipsis_w;
-        }
-        // Just after the path, a click types one; the field shows faintly while hovered.
-        let zone = Rect::from_min_max(
-            rect.min,
-            egui::pos2(
-                (rect.left() + used + TYPE_ZONE).min(rect.right()),
-                rect.bottom(),
-            ),
-        );
-        let bg = ui.interact(zone, Id::new("path-bg"), Sense::click());
+        // A click on the field around the crumbs types a path; the field lights while hovered.
+        let bg = ui.interact(rect, Id::new("path-bg"), Sense::click());
         bg.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Type a path"));
-        theme::focus_ring(ui, &bg, zone, 16.0);
-        if bg.hovered() {
-            let (soft, _, line) = soft_colors(c.light);
-            ui.painter().rect(
-                zone,
-                CornerRadius::same(16),
-                soft,
-                line,
-                egui::StrokeKind::Inside,
-            );
+        theme::focus_ring(ui, &bg, rect, shape::FIELD);
+        if bg.hovered() && !c.high_contrast {
+            ui.painter().rect_filled(rect, shape::corner(shape::FIELD), c.row_hover);
         }
         let bg = bg.on_hover_text("Click to type a path (Ctrl+L)");
         if bg.clicked() {

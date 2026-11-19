@@ -10,7 +10,7 @@ use crate::state::State;
 use shellman_core::system::region::{self, Current, Intl, Refused};
 use shellman_core::system::region_logic::{self as logic, Zone};
 use shellman_ui::theme;
-use shellman_ui::widgets::switch;
+use shellman_ui::widgets::toggle;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::time::Duration;
 
@@ -98,28 +98,34 @@ pub fn show(ui: &mut egui::Ui, st: &mut State) {
     v.poll();
     let Some(data) = v.data.take() else {
         page::group(ui, "", |ui| {
-            ui.label(theme::muted("Reading the time settings..."));
+            page::row_with(ui, |ui| {
+                ui.label(theme::muted("Reading the time settings..."));
+            });
         });
         return;
     };
     let ctx = ui.ctx().clone();
     page::group(ui, "Time zone", |ui| time_zone(ui, v, &ctx, &data));
     page::group(ui, "Format", |ui| formats(ui, v, &ctx, &data));
+    // A refused write, said once for both groups.
+    if let Some(n) = &v.notice {
+        page::group(ui, "", |ui| {
+            page::row_with(ui, |ui| {
+                ui.add(egui::Label::new(theme::muted(n).size(12.5)).wrap());
+            });
+        });
+    }
     v.data = Some(data);
     ui.ctx().request_repaint_after(Duration::from_secs(10));
 }
 
-fn note(ui: &mut egui::Ui, v: &DateTimeView) {
-    if let Some(n) = &v.notice {
-        ui.add_space(8.0);
-        ui.label(theme::muted(n).size(12.0));
-    }
-}
+/// How wide a row's own control (a drop-down) is, at most.
+const CONTROL_W: f32 = 340.0;
 
 fn time_zone(ui: &mut egui::Ui, v: &mut DateTimeView, ctx: &egui::Context, data: &Data) {
     let now = &data.intl;
-    ui.label(format!("{}, {}", region::sample_time(&now.short_time), region::sample_date(&now.long_date)));
-    ui.add_space(12.0);
+    let sample = format!("{}, {}", region::sample_time(&now.short_time), region::sample_date(&now.long_date));
+    page::row(ui, "Now", &sample, |_| {});
     let current = data.current.as_ref();
     let shown = current
         .and_then(|c| data.zones.iter().find(|z| z.key == c.key))
@@ -127,53 +133,51 @@ fn time_zone(ui: &mut egui::Ui, v: &mut DateTimeView, ctx: &egui::Context, data:
         .unwrap_or_else(|| "Unknown time zone".to_owned());
     let mut pick = None;
     let label = format!("Time zone: {shown}");
-    let out = egui::ComboBox::from_id_salt("tz").width(460.0).selected_text(shown).height(360.0).show_ui(ui, |ui| {
-        let filter = ui.add(egui::TextEdit::singleline(&mut v.filter).hint_text("Filter").desired_width(f32::INFINITY));
-        shellman_ui::widgets::name_field(&filter, "Filter time zones", Some(&v.filter));
-        let q = v.filter.trim().to_lowercase();
-        for z in data.zones.iter().filter(|z| q.is_empty() || z.display.to_lowercase().contains(&q)) {
-            let on = current.is_some_and(|c| c.key == z.key);
-            if ui.selectable_label(on, &z.display).clicked() && !on {
-                pick = Some(z.key.clone());
+    page::row(ui, "Time zone", "", |ui| {
+        let out = egui::ComboBox::from_id_salt("tz").width(CONTROL_W.min(ui.available_width() * 0.6)).selected_text(shown).height(360.0).show_ui(ui, |ui| {
+            let filter = ui.add(egui::TextEdit::singleline(&mut v.filter).hint_text("Filter").desired_width(f32::INFINITY));
+            shellman_ui::widgets::name_field(&filter, "Filter time zones", Some(&v.filter));
+            let q = v.filter.trim().to_lowercase();
+            for z in data.zones.iter().filter(|z| q.is_empty() || z.display.to_lowercase().contains(&q)) {
+                let on = current.is_some_and(|c| c.key == z.key);
+                if ui.selectable_label(on, &z.display).clicked() && !on {
+                    pick = Some(z.key.clone());
+                }
             }
-        }
+        });
+        out.response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::ComboBox, true, label.clone()));
     });
-    out.response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::ComboBox, true, label.clone()));
     if let Some(key) = pick {
         v.filter.clear();
         v.write(ctx, Box::new(move || region::set_zone(&key)));
     }
     if let Some(c) = current.filter(|c| c.observes_dst) {
-        ui.add_space(12.0);
         let mut on = !c.dst_disabled;
-        if switch(ui, &mut on, "Adjust for daylight saving time automatically").changed() {
+        let title = "Adjust for daylight saving time automatically";
+        if page::row(ui, title, "", |ui| toggle(ui, &mut on, title)).changed() {
             v.write(ctx, Box::new(move || region::set_dst_adjust(on)));
         }
     }
-    note(ui, v);
 }
 
 fn formats(ui: &mut egui::Ui, v: &mut DateTimeView, ctx: &egui::Context, data: &Data) {
     let intl = &data.intl;
     let mut h24 = intl.is_24h();
-    if switch(ui, &mut h24, "Use a 24-hour clock").changed() {
+    let title = "Use a 24-hour clock";
+    let detail = format!("Shown as {}", region::sample_time(&intl.long_time));
+    if page::row(ui, title, &detail, |ui| toggle(ui, &mut h24, title)).changed() {
         v.write(ctx, Box::new(move || region::set_24h(h24)));
     }
-    ui.add_space(4.0);
-    ui.label(theme::muted(format!("Shown as {}", region::sample_time(&intl.long_time))).size(12.0));
-    ui.add_space(14.0);
     if let Some(p) = pattern_picker(ui, "Short date", "short-date", &data.short_dates, &intl.short_date) {
         v.write(ctx, Box::new(move || region::set_short_date(&p)));
     }
-    ui.add_space(12.0);
     if let Some(p) = pattern_picker(ui, "Long date", "long-date", &data.long_dates, &intl.long_date) {
         v.write(ctx, Box::new(move || region::set_long_date(&p)));
     }
-    ui.add_space(12.0);
-    page::label(ui, "First day of the week");
     let mut pick = None;
     let rows: Vec<(String, bool)> = logic::DAYS.iter().enumerate().map(|(n, name)| (name.to_string(), n as u32 == intl.first_day)).collect();
-    if let Some(n) = dropdown(ui, "first-day", 220.0, logic::day_name(intl.first_day), &rows) {
+    let picked = page::row(ui, "First day of the week", "", |ui| dropdown(ui, "first-day", 220.0, logic::day_name(intl.first_day), &rows));
+    if let Some(n) = picked {
         if n as u32 != intl.first_day {
             pick = Some(n as u32);
         }
@@ -181,13 +185,11 @@ fn formats(ui: &mut egui::Ui, v: &mut DateTimeView, ctx: &egui::Context, data: &
     if let Some(day) = pick {
         v.write(ctx, Box::new(move || region::set_first_day(day)));
     }
-    note(ui, v);
 }
 
-/// A date pattern picker; each entry is shown as today's date in that pattern. The current
+/// A date pattern picker row; each entry is shown as today's date in that pattern. The current
 /// pattern is listed even when the locale does not offer it. Returns the pattern picked.
 fn pattern_picker(ui: &mut egui::Ui, title: &str, id: &str, offered: &[String], current: &str) -> Option<String> {
-    page::label(ui, title);
     let mut list: Vec<&str> = offered.iter().map(String::as_str).collect();
     if !current.is_empty() && !list.contains(&current) {
         list.insert(0, current);
@@ -195,7 +197,9 @@ fn pattern_picker(ui: &mut egui::Ui, title: &str, id: &str, offered: &[String], 
     let text = |p: &str| format!("{}    ({p})", region::sample_date(p));
     let mut pick = None;
     let rows: Vec<(String, bool)> = list.iter().map(|p| (text(p), *p == current)).collect();
-    if let Some(i) = dropdown(ui, id, 460.0, &text(current), &rows) {
+    let width = CONTROL_W.min(ui.available_width() * 0.6);
+    let picked = page::row(ui, title, "", |ui| dropdown(ui, id, width, &text(current), &rows));
+    if let Some(i) = picked {
         if list[i] != current {
             pick = Some(list[i].to_owned());
         }

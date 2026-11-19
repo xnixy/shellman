@@ -87,7 +87,9 @@ pub fn draw(ui: &mut egui::Ui, mid: f32, right: f32, badge: Badge) -> (egui::Rec
     ui.painter().text(egui::pos2(icon_x, mid), egui::Align2::CENTER_CENTER, glyph, icon_font(ICON), color);
     if let Some(g) = chip {
         let r = egui::Rect::from_min_size(egui::pos2(icon_x + ICON / 2.0 + CHIP_GAP, mid - CHIP_H / 2.0), egui::vec2(chip_w, CHIP_H));
-        let fill = if resp.hovered() { mix(c.accent_fill, egui::Color32::WHITE, 0.12) } else { c.accent_fill };
+        // Hovered, the accent leans toward the text colour (darker on light, lighter on dark) so
+        // the count keeps its contrast; high contrast keeps Windows' highlight pair as it is.
+        let fill = if resp.hovered() && !c.high_contrast { mix(c.accent_fill, c.text, 0.12) } else { c.accent_fill };
         ui.painter().rect_filled(r, (CHIP_H / 2.0) as u8, fill);
         ui.painter().galley(r.center() - g.size() / 2.0, g, c.on_accent);
     }

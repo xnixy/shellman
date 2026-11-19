@@ -1,5 +1,5 @@
 //! The picture under the pointer while items are dragged out: a small stack of cards in the
-//! Islands look (one card per item, up to three), the first item's icon and name on the front
+//! cards view's look (one card per item, up to three), the first item's icon and name on the front
 //! card, and a count badge in the accent when there is more than one.
 //!
 //! It is drawn here pixel by pixel (shapes by their distance from the edge, for smooth corners),
@@ -19,7 +19,8 @@ const CARD: Rect = Rect {
 };
 /// How far each card behind is shifted.
 const STEP: Vec2 = Vec2::new(7.0, -7.0);
-const CARD_RADIUS: f32 = 18.0;
+/// A tile, as the cards view's cards are.
+const CARD_RADIUS: f32 = shellman_ui::theme::shape::TILE;
 
 /// A canvas of premultiplied RGBA, `scale` pixels to the point.
 pub(super) struct Canvas {
@@ -138,12 +139,11 @@ pub(super) fn render(ctx: &egui::Context, items: &[Entry], scale: f32) -> Option
     let c = colors();
     let scale = scale.clamp(1.0, 4.0);
     let mut cv = Canvas::new(SIZE, scale);
-    let css = |r, g, b, a| Color32::from_rgba_unmultiplied(r, g, b, a);
-    let (fill, back, line) = if c.light {
-        (css(255, 255, 255, 240), css(246, 247, 250, 225), css(0, 0, 0, 34))
-    } else {
-        (css(46, 48, 56, 240), css(38, 40, 47, 225), css(255, 255, 255, 40))
-    };
+    // The popup sheet, a touch see-through, inside a hairline; the cards behind a shade toward
+    // the page. A picture, not the window, so the colours go in as they are (no `shows_as`).
+    let fill = theme::with_alpha(c.popup, 240);
+    let back = theme::with_alpha(theme::mix(c.popup, c.bg, 0.5), 225);
+    let line = c.hairline;
     // The cards behind, back to front.
     let behind = items.len().clamp(1, 3) - 1;
     for i in (1..=behind).rev() {
@@ -153,7 +153,7 @@ pub(super) fn render(ctx: &egui::Context, items: &[Entry], scale: f32) -> Option
     // The first item's icon and name.
     let (g, gcol) = super::rows::file_icon(first, &c);
     let well = Rect::from_min_max(CARD.min + Vec2::splat(9.0), egui::pos2(CARD.max.x - 9.0, CARD.max.y - 28.0));
-    cv.rounded(well, 12.0, theme::with_alpha(gcol, if c.light { 34 } else { 44 }), Color32::TRANSPARENT, 0.0);
+    cv.rounded(well, CARD_RADIUS - 6.0, theme::with_alpha(gcol, if c.light { 34 } else { 44 }), Color32::TRANSPARENT, 0.0);
     cv.text(ctx, well.center(), &g.to_string(), icon_font(26.0), gcol, well.width());
     cv.text(
         ctx,

@@ -1,6 +1,6 @@
 //! The modal dialogs: confirm-recycle, the warning before a delete that cannot go to the Recycle
 //! Bin, and the Recycle Bin's two confirmations. Each is a piece of the window's glass of its own
-//! (see `island`), floating over the islands.
+//! (see `island`), floating over the window's sheet.
 
 use super::actions::Dialog;
 use egui::{Id, Key, RichText};
@@ -11,7 +11,7 @@ use shellman_ui::theme::{self, colors};
 use std::path::PathBuf;
 
 /// The dialogs' corner radius.
-const RADIUS: f32 = 18.0;
+const RADIUS: f32 = shellman_ui::theme::shape::DIALOG;
 
 /// Where the open dialog is, for the glass panel.
 fn island_id() -> Id {
@@ -40,9 +40,9 @@ enum Enter {
 /// glass. True to go ahead, false to cancel, nothing while it is still open.
 ///
 /// The window's glass lies under everything Files draws, so under the dialog there is also the
-/// folder's list: the dialog is filled with the glass's own colour, opaque (as the islands look
+/// folder's list: the dialog is filled with the glass's own colour, opaque (as the sheet looks
 /// when Windows composes no glass), so nothing shows through it, and its piece of glass gives it
-/// the islands' shadow and rim.
+/// a shadow and rim.
 fn confirm(ctx: &egui::Context, composed: bool, id: &str, title: &str, note: &str, button: &str, enter: Enter) -> Option<bool> {
     let c = colors();
     let style = Style::from_theme(RADIUS);

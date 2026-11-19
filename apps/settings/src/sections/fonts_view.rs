@@ -46,7 +46,7 @@ pub struct FontsView {
     preview_keys: Vec<(String, String)>,
     /// The file picker's answer, while it is open.
     picking: Option<Receiver<Result<Option<PathBuf>, String>>>,
-    /// The message shown in the command pill: the last change's, or a problem of the page's own.
+    /// The message shown in the command group: the last change's, or a problem of the page's own.
     pub(super) message: Option<Result<String, String>>,
     seen_outcome: u64,
     /// A slider moved and the choices are not saved yet (they are once it is let go).
@@ -329,7 +329,7 @@ impl FontsView {
         }
     }
 
-    /// Start the change the command pill confirmed.
+    /// Start the change the command group confirmed.
     pub(super) fn run(&mut self, what: Confirm) {
         self.confirm = None;
         self.message = None;

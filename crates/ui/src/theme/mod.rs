@@ -5,20 +5,22 @@
 //! way Blurman's plum shell carries its rose. Dark and light follow the Windows app mode.
 
 pub mod env;
+pub mod shape;
 pub mod window_style;
 mod icons;
 mod style;
 
 pub use icons::{glyph, icon, icon_font, install_fonts, light_font, semibold_font};
 pub(crate) use icons::mark_text_font_installed;
-pub use style::{apply, checkbox, contrast_outline, danger_button, dialog, focus_ring, muted, primary_button, secondary_button, setting_row, speak, speak_selected, trailing};
+pub use style::{apply, checkbox, contrast_outline, danger_button, dialog, focus_ring, group_heading, muted, primary_button, secondary_button, setting_row, speak, speak_selected, trailing};
 
 use egui::Color32;
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 /// Accent presets, each strong enough to carry its text color on dark and light.
-pub const PRESETS: [(&str, [u8; 3]); 9] = [
+/// Saved by index, so a new one only ever goes at the end.
+pub const PRESETS: [(&str, [u8; 3]); 10] = [
     ("Rose", [196, 54, 78]),
     ("Coral", [214, 82, 52]),
     ("Amber", [204, 132, 0]),
@@ -28,6 +30,8 @@ pub const PRESETS: [(&str, [u8; 3]); 9] = [
     ("Indigo", [84, 82, 214]),
     ("Violet", [136, 64, 200]),
     ("Slate", [96, 108, 128]),
+    // Glasshouse's own blue (#2b59c3); on dark it shows as its soft #8fb4ff-like tone.
+    ("Glasshouse", [43, 89, 195]),
 ];
 
 #[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Debug)]
@@ -175,33 +179,65 @@ pub struct Colors {
     pub press_soft: Color32,
     /// A thin divider between groups of bar items.
     pub separator: Color32,
+    /// The fill of a field, a quiet button, a chosen sidebar row or tab: the text colour, faint.
+    pub field: Color32,
+    /// The 1 px light along the top edge of a raised surface (a menu, a dialog).
+    pub rim: Color32,
+    /// The one main button of a view: near-black on light, near-white on dark (not the accent).
+    pub primary: Color32,
+    /// Text on [`Colors::primary`].
+    pub on_primary: Color32,
+}
+
+/// The Glasshouse neutrals, untinted: the page and its text in light and dark.
+pub const LIGHT_PAGE: Color32 = Color32::from_rgb(0xf4, 0xf4, 0xf1);
+pub const LIGHT_TEXT: Color32 = Color32::from_rgb(0x1b, 0x1c, 0x1f);
+pub const DARK_PAGE: Color32 = Color32::from_rgb(0x07, 0x08, 0x0a);
+pub const DARK_TEXT: Color32 = Color32::from_rgb(0xf4, 0xf5, 0xf7);
+
+/// The accent a dark page shows: the picked one lifted toward white, the soft blue of
+/// Glasshouse's dark accent (#8fb4ff) for its own blue, carrying dark text.
+pub fn dark_accent(accent: Color32) -> Color32 {
+    mix(accent, Color32::WHITE, 0.45)
+}
+
+/// White or near-black, whichever stands out more on `fill`.
+fn ink_on(fill: Color32) -> Color32 {
+    let dark = Color32::from_rgb(7, 18, 43);
+    if contrast(Color32::WHITE, fill) >= contrast(dark, fill) {
+        Color32::WHITE
+    } else {
+        dark
+    }
 }
 
 impl Colors {
+    /// Glasshouse: a warm off-white or near-black page, hairlines instead of shadows, faint text
+    /// fills for fields and chosen rows, a neutral main button, and the picked accent for what is
+    /// on or chosen (lifted to a soft tone on dark).
     pub fn new(light: bool, accent: Color32) -> Self {
-        // Neutral greys with a little of the accent mixed in.
-        let tint = |grey: u8, amount: f32| mix(Color32::from_gray(grey), accent, amount);
         // How much of the window's acrylic shows through: 0 solid, 1 nearly clear.
         let g = glass();
         let see =
             |solid: u8, clear: u8| (solid as f32 + (clear as f32 - solid as f32) * g).round() as u8;
         let (bg, text, text_base) = if light {
-            (tint(242, 0.05), tint(28, 0.06), mix(accent, Color32::BLACK, 0.25))
+            (LIGHT_PAGE, LIGHT_TEXT, mix(accent, Color32::BLACK, 0.25))
         } else {
-            (tint(16, 0.06), tint(240, 0.03), mix(accent, Color32::WHITE, 0.4))
+            (DARK_PAGE, DARK_TEXT, mix(accent, Color32::WHITE, 0.4))
         };
-        let accent_fill = legible(accent, bg, text, FILL_CONTRAST);
-        // The text colour is far brighter than a dim accent, so its wash is fainter.
+        let shown = if light { accent } else { dark_accent(accent) };
+        let accent_fill = legible(shown, bg, text, FILL_CONTRAST);
         // A selected row is a wash of the accent under ordinary text: of the text colour instead
         // where the accent fell back, or is so light (a yellow on dark) that light text on its
         // wash would fade.
-        let fell_back = accent_fill != accent || (!light && luminance(accent_fill) > 0.5);
+        let fell_back = accent_fill != shown || (!light && luminance(accent_fill) > 0.62);
         let accent_text = legible(text_base, bg, text, TEXT_CONTRAST);
-        let on_accent = if luminance(accent_fill) > 0.4 {
-            Color32::from_rgb(20, 16, 20)
-        } else {
-            Color32::WHITE
-        };
+        let on_accent = ink_on(accent_fill);
+        // Everything below is painted by egui on a see-through window, where a faint light colour
+        // shows far lighter than its alpha says (`shows_as`); dark ones barely change. So every
+        // translucent fill goes through it: a 5 % white card stays a faint wash, not a grey slab.
+        use crate::glass::islands::shows_as;
+        let faint = |a: u8| shows_as(with_alpha(text, a));
         if light {
             Self {
                 light,
@@ -211,34 +247,38 @@ impl Colors {
                 on_accent,
                 accent_text,
                 bg,
-                popup: tint(252, 0.02),
+                popup: Color32::WHITE,
                 text,
                 // Small grey text over a see-through window renders lighter than its colour.
-                muted: tint(84, 0.08),
-                warn: Color32::from_rgb(160, 96, 0),
-                row_hover: Color32::from_black_alpha(14),
-                row_selected: if fell_back { with_alpha(text, 22) } else { with_alpha(accent_fill, 48) },
-                hairline: Color32::from_black_alpha(16),
-                well: Color32::from_black_alpha(12),
-                track: tint(188, 0.06),
-                danger: Color32::from_rgb(196, 43, 28),
-                danger_text: Color32::from_rgb(215, 0, 21),
-                card: with_alpha(tint(255, 0.02), 200),
+                muted: Color32::from_rgb(0x55, 0x57, 0x5c),
+                warn: Color32::from_rgb(0x7a, 0x4f, 0x00),
+                row_hover: faint(16),
+                row_selected: if fell_back { faint(24) } else { shows_as(with_alpha(accent_fill, 46)) },
+                hairline: Color32::from_black_alpha(26),
+                well: faint(14),
+                track: Color32::from_rgb(0xd9, 0xd9, 0xd4),
+                danger: Color32::from_rgb(0xb3, 0x26, 0x1e),
+                danger_text: Color32::from_rgb(0xb3, 0x26, 0x1e),
+                card: shows_as(Color32::from_white_alpha(160)),
                 shadow: Color32::from_black_alpha(20),
-                sidebar_glass: with_alpha(tint(230, 0.05), 170),
-                sidebar_solid: tint(230, 0.05),
-                page_glass: with_alpha(tint(248, 0.03), 120),
+                sidebar_glass: with_alpha(LIGHT_PAGE, 150),
+                sidebar_solid: LIGHT_PAGE,
+                page_glass: shows_as(Color32::from_white_alpha(90)),
                 shell: shell(true, accent, g),
                 // Translucent, so the window's acrylic shows through the sheet as well.
-                sheet: with_alpha(tint(255, 0.01), see(240, 60)),
-                control: with_alpha(tint(255, 0.02), 150),
-                control_hover: with_alpha(tint(255, 0.03), 210),
-                control_active: with_alpha(tint(255, 0.0), 245),
-                bar: with_alpha(tint(246, 0.03), bar_alpha(0.72, 0.62, g)),
-                bar_edge: Color32::from_black_alpha(20),
-                hover_soft: with_alpha(text, 25),
-                press_soft: with_alpha(text, 38),
-                separator: with_alpha(text, 26),
+                sheet: with_alpha(Color32::WHITE, see(240, 60)),
+                control: faint(18),
+                control_hover: faint(30),
+                control_active: shows_as(Color32::from_white_alpha(235)),
+                bar: with_alpha(Color32::from_rgb(250, 250, 248), bar_alpha(0.72, 0.62, g)),
+                bar_edge: Color32::from_black_alpha(22),
+                hover_soft: faint(20),
+                press_soft: faint(32),
+                separator: Color32::from_black_alpha(26),
+                field: faint(18),
+                rim: Color32::from_white_alpha(180),
+                primary: LIGHT_TEXT,
+                on_primary: Color32::WHITE,
             }
         } else {
             Self {
@@ -249,35 +289,39 @@ impl Colors {
                 on_accent,
                 accent_text,
                 bg,
-                popup: tint(34, 0.08),
+                popup: Color32::from_rgb(0x14, 0x17, 0x1c),
                 text,
-                muted: tint(150, 0.08),
-                warn: Color32::from_rgb(230, 186, 120),
-                row_hover: Color32::from_rgba_unmultiplied(255, 255, 255, 14),
-                row_selected: if fell_back { with_alpha(text, 34) } else { with_alpha(accent_fill, 64) },
-                hairline: Color32::from_rgba_unmultiplied(255, 255, 255, 16),
-                well: Color32::from_rgba_unmultiplied(255, 255, 255, 12),
-                track: tint(66, 0.1),
-                danger: Color32::from_rgb(196, 43, 28),
-                // Red, not pale pink: it has to read as danger on grey glass.
-                danger_text: Color32::from_rgb(255, 69, 58),
-                card: with_alpha(tint(34, 0.08), 214),
+                muted: Color32::from_rgb(0xa4, 0xa8, 0xb0),
+                warn: Color32::from_rgb(0xf5, 0xc2, 0x6b),
+                row_hover: faint(16),
+                row_selected: if fell_back { faint(30) } else { shows_as(with_alpha(accent_fill, 58)) },
+                hairline: shows_as(Color32::from_white_alpha(23)),
+                well: faint(14),
+                track: Color32::from_rgb(0x2a, 0x2e, 0x36),
+                danger: Color32::from_rgb(0xd9, 0x47, 0x3d),
+                // Glasshouse's soft red: it has to read as danger on dark glass.
+                danger_text: Color32::from_rgb(0xff, 0x8f, 0x85),
+                card: faint(13),
                 shadow: Color32::from_black_alpha(60),
-                sidebar_glass: with_alpha(tint(10, 0.06), 178),
-                sidebar_solid: tint(12, 0.06),
-                page_glass: with_alpha(tint(16, 0.06), 140),
+                sidebar_glass: with_alpha(DARK_PAGE, 160),
+                sidebar_solid: DARK_PAGE,
+                page_glass: with_alpha(DARK_PAGE, 90),
                 shell: shell(false, accent, g),
                 // Translucent, so the window's acrylic shows through the sheet as well.
-                sheet: with_alpha(tint(30, 0.06), see(240, 40)),
-                // Deep tinted fills, not translucent white: over glass, white lifts toward grey.
-                control: with_alpha(tint(34, 0.07), 200),
-                control_hover: with_alpha(tint(44, 0.09), 215),
-                control_active: with_alpha(tint(44, 0.08), 240),
-                bar: with_alpha(tint(12, 0.04), bar_alpha(0.66, 0.54, g)),
-                bar_edge: Color32::from_white_alpha(15),
-                hover_soft: with_alpha(text, 25),
-                press_soft: with_alpha(text, 38),
-                separator: with_alpha(text, 26),
+                sheet: with_alpha(Color32::from_rgb(0x10, 0x12, 0x16), see(240, 40)),
+                // Faint text fills read as one material over glass at every glass amount.
+                control: faint(23),
+                control_hover: faint(36),
+                control_active: faint(44),
+                bar: with_alpha(Color32::from_rgb(0x14, 0x17, 0x1c), bar_alpha(0.66, 0.54, g)),
+                bar_edge: shows_as(Color32::from_white_alpha(18)),
+                hover_soft: faint(20),
+                press_soft: faint(34),
+                separator: shows_as(Color32::from_white_alpha(26)),
+                field: faint(23),
+                rim: Color32::from_white_alpha(41),
+                primary: DARK_TEXT,
+                on_primary: DARK_PAGE,
             }
         }
     }
@@ -334,6 +378,10 @@ impl Colors {
             hover_soft: none,
             press_soft: none,
             separator: text,
+            field: window,
+            rim: none,
+            primary: highlight,
+            on_primary: on_highlight,
         }
     }
 }
@@ -342,21 +390,24 @@ impl Colors {
 /// amount. The floating glass (`glass::Style`) lays the same tint over its backdrop, so the two
 /// materials hide the same amount at every glass setting.
 pub fn shell(light: bool, accent: Color32, glass: f32) -> Color32 {
-    let grey = if light { 238 } else { 10 };
+    let page = if light { LIGHT_PAGE } else { DARK_PAGE };
     let alpha = (225.0 + (110.0 - 225.0) * glass.clamp(0.0, 1.0)).round() as u8;
-    with_alpha(mix(Color32::from_gray(grey), accent, 0.06), alpha)
+    with_alpha(mix(page, accent, NEUTRAL_TINT), alpha)
 }
 
-/// The even tint over a Frosted window's one acrylic backdrop, between its islands (Blurman's
-/// page glass): dark `mix(gray16, accent, .06)`, light `mix(gray248, accent, .03)`. Its alpha
-/// follows the glass amount the way [`shell`] does, and at the default amount it is the look's
-/// 140 (dark) / 120 (light).
+/// How much of the accent the glass tints carry: barely any, Glasshouse's neutrals are untinted.
+pub const NEUTRAL_TINT: f32 = 0.02;
+
+/// The even tint over a Frosted window's one acrylic backdrop, between its islands: the page
+/// colour ([`LIGHT_PAGE`], [`DARK_PAGE`]) with a trace of the accent. Its alpha follows the glass
+/// amount the way [`shell`] does, and at the default amount it is the look's 140 (dark) / 120
+/// (light).
 pub fn frosted_tint(light: bool, accent: Color32, glass: f32) -> Color32 {
     let shell_alpha = 225.0 + (110.0 - 225.0) * glass.clamp(0.0, 1.0);
     let at_default = 225.0 + (110.0 - 225.0) * DEFAULT_GLASS;
-    let (grey, amount, alpha) = if light { (248, 0.03, 120.0) } else { (16, 0.06, 140.0) };
+    let (page, alpha) = if light { (LIGHT_PAGE, 120.0) } else { (DARK_PAGE, 140.0) };
     let alpha = (alpha * shell_alpha / at_default).round().clamp(0.0, 255.0) as u8;
-    with_alpha(mix(Color32::from_gray(grey), accent, amount), alpha)
+    with_alpha(mix(page, accent, NEUTRAL_TINT), alpha)
 }
 
 /// Opacity (0..=255) of the top bar's tint: `solid` with no glass, `clear` with all of it.
@@ -423,15 +474,15 @@ mod tests {
         // Clearer glass, a fainter tint; more solid, a stronger one.
         assert!(frosted_tint(false, accent, 1.0).a() < 140 && frosted_tint(false, accent, 0.0).a() > 140);
         let [r, g, b, _] = frosted_tint(false, accent, 0.5).to_srgba_unmultiplied();
-        let page = mix(Color32::from_gray(16), accent, 0.06);
+        let page = mix(DARK_PAGE, accent, NEUTRAL_TINT);
         assert!(r.abs_diff(page.r()) <= 1 && g.abs_diff(page.g()) <= 1 && b.abs_diff(page.b()) <= 1);
     }
 
     #[test]
     fn text_on_accent_contrasts() {
         for (_, c) in PRESETS {
-            let a = rgb(c);
-            let on = Colors::new(false, a).on_accent;
+            let colors = Colors::new(false, rgb(c));
+            let (a, on) = (colors.accent_fill, colors.on_accent);
             let (la, lo) = (luminance(a), luminance(on));
             let ratio = (la.max(lo) + 0.05) / (la.min(lo) + 0.05);
             assert!(ratio >= 3.0, "{c:?} has contrast {ratio}");
@@ -445,10 +496,12 @@ mod tests {
     }
 
     #[test]
-    fn black_accent_on_dark_and_white_on_light_fall_back_to_text() {
+    fn black_accent_on_dark_and_white_on_light_stay_legible() {
+        // White on light falls back to the text colour; black on dark is lifted to a grey that
+        // shows (see `dark_accent`), so it needs no fallback.
+        assert_eq!(Colors::new(true, Color32::WHITE).accent_fill, LIGHT_TEXT);
         for (light, accent) in [(false, Color32::BLACK), (true, Color32::WHITE)] {
             let c = Colors::new(light, accent);
-            assert_eq!(c.accent_fill, c.text);
             assert!(contrast(c.accent_fill, c.bg) >= FILL_CONTRAST);
             assert!(contrast(c.accent_text, c.bg) >= TEXT_CONTRAST);
             assert!(contrast(c.on_accent, c.accent_fill) >= 3.0);
@@ -457,13 +510,49 @@ mod tests {
         }
     }
 
+    /// Every accent, the presets and the extremes, in both modes: text and grey text read on the
+    /// page, the popup and a card; the accent fill stands out; its ink reads on it; the main
+    /// button's text reads on it.
+    #[test]
+    fn every_surface_reads_in_both_modes() {
+        let mut accents: Vec<Color32> = PRESETS.iter().map(|(_, c)| rgb(*c)).collect();
+        accents.extend([Color32::BLACK, Color32::WHITE, Color32::from_rgb(255, 220, 80), Color32::from_gray(128)]);
+        for light in [false, true] {
+            for &a in &accents {
+                let c = Colors::new(light, a);
+                // A card is translucent: judge it over the page it sits on.
+                let card = over(c.card, c.bg);
+                for surface in [c.bg, c.popup, card] {
+                    assert!(contrast(c.text, surface) >= 7.0, "text {a:?} light={light}");
+                    assert!(contrast(c.muted, surface) >= 4.5, "muted {a:?} light={light}");
+                }
+                assert!(contrast(c.accent_fill, c.bg) >= FILL_CONTRAST, "fill {a:?} light={light}");
+                assert!(contrast(c.accent_text, c.bg) >= TEXT_CONTRAST, "accent text {a:?} light={light}");
+                // A mid accent (a green, a grey) cannot give either ink 4.5:1; 3:1 is the floor, for the
+                // semibold labels and glyphs that go on it.
+                assert!(contrast(c.on_accent, c.accent_fill) >= 3.0, "on accent {a:?} light={light}");
+                assert!(contrast(c.on_primary, c.primary) >= 7.0, "primary light={light}");
+                assert!(contrast(c.danger_text, c.bg) >= 4.5, "danger light={light}");
+            }
+        }
+    }
+
+    /// `top` laid over the opaque `under`.
+    fn over(top: Color32, under: Color32) -> Color32 {
+        let a = top.a() as f32 / 255.0;
+        let [r, g, b, _] = top.to_srgba_unmultiplied();
+        let l = |t: u8, u: u8| (t as f32 * a + u as f32 * (1.0 - a)).round() as u8;
+        Color32::from_rgb(l(r, under.r()), l(g, under.g()), l(b, under.b()))
+    }
+
     #[test]
     fn accents_with_contrast_are_unchanged() {
         for light in [false, true] {
             for (_, p) in PRESETS {
                 let a = rgb(p);
                 let c = Colors::new(light, a);
-                assert_eq!(c.accent_fill, a, "{p:?} light={light}");
+                let shown = if light { a } else { dark_accent(a) };
+                assert_eq!(c.accent_fill, shown, "{p:?} light={light}");
                 let base = if light {
                     mix(a, Color32::BLACK, 0.25)
                 } else {
@@ -477,9 +566,7 @@ mod tests {
     #[test]
     fn mid_grey_stands_out_either_way() {
         let g = Color32::from_gray(128);
-        for light in [false, true] {
-            let c = Colors::new(light, g);
-            assert_eq!(c.accent_fill, g);
-        }
+        assert_eq!(Colors::new(true, g).accent_fill, g);
+        assert_eq!(Colors::new(false, g).accent_fill, dark_accent(g));
     }
 }

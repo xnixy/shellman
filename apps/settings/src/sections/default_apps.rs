@@ -2,26 +2,27 @@
 //!
 //! Windows takes a new default only from its own Settings (see
 //! `shellman_core::system::default_apps_change` for what was tried and measured). So "Change"
-//! lists the apps that can open the type, on an island under its row, and picking one opens
+//! lists the apps that can open the type, as more rows of the list under its row, and picking one opens
 //! Windows' Settings on that app's page, where the person confirms. The page watches the
 //! choice in the registry and shows the new default as soon as Windows writes it. Without the
 //! host for Windows' own apps Settings cannot open, and the page says so and offers the switch.
 
 use crate::page;
 use crate::state::State;
-use egui::{CornerRadius, FontId, Sense, Vec2};
+use egui::{FontId, Sense, Vec2};
 use shellman_core::system::default_apps::{self as da, Entry};
 use shellman_core::apps_index::{App, AppIndex};
 use shellman_core::system::default_apps_change::{self as dc, Candidate};
 use shellman_core::thumbs::Thumbs;
-use shellman_ui::theme::{self, colors, glyph, icon_font};
+use shellman_ui::theme::{self, colors, glyph, icon_font, shape};
 use shellman_ui::widgets::draw_text;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-const ROW_H: f32 = 56.0;
-const APP_H: f32 = 48.0;
+/// The height of an item's content; the list adds its own padding around it.
+const ROW_H: f32 = 36.0;
+const APP_H: f32 = 28.0;
 const ICON: f32 = 28.0;
 
 type Shared<T> = Arc<Mutex<Option<T>>>;
@@ -131,7 +132,9 @@ pub fn show(ui: &mut egui::Ui, st: &mut State) {
     let entries = st.default_apps.entries.lock().ok().and_then(|g| g.clone());
     let Some(entries) = entries else {
         page::group(ui, "", |ui| {
-            ui.label(theme::muted("Asking Windows..."));
+            page::row_with(ui, |ui| {
+                ui.label(theme::muted("Asking Windows..."));
+            });
         });
         return;
     };
@@ -143,54 +146,37 @@ pub fn show(ui: &mut egui::Ui, st: &mut State) {
     if !host {
         st.default_apps.chooser = None;
         page::group(ui, "To change a default", |ui| {
-            ui.label(
-                theme::muted("Windows only takes a new default app from its own Settings, and Settings cannot open while its host is off.")
-                    .size(12.0),
-            );
-            ui.add_space(10.0);
+            page::row_with(ui, |ui| {
+                ui.add(
+                    egui::Label::new(theme::muted("Windows only takes a new default app from its own Settings, and Settings cannot open while its host is off.").size(12.5))
+                        .wrap(),
+                );
+            });
             super::winlink::windows_apps_choice(ui, st);
         });
     }
 
     let open_at = st.default_apps.chooser.as_ref().map(|c| c.item);
     let mut pressed = None;
-    // The list is split under the row being changed, so its chooser is an island of its own
-    // right there.
-    let split = open_at.map_or(entries.len(), |i| (i + 1).min(entries.len()));
-    let thumbs = &mut st.thumbs;
+    let mut close = false;
+    let (view, thumbs) = (&mut st.default_apps, &mut st.thumbs);
+    // The chooser of the type being changed opens as more rows of the same list, right under it.
     page::group(ui, "File types and links", |ui| {
-        ui.spacing_mut().item_spacing.y = 4.0;
-        for (i, e) in entries[..split].iter().enumerate() {
-            if row(ui, e, &apps, thumbs, host, open_at == Some(i)) {
+        for (i, e) in entries.iter().enumerate() {
+            let open = open_at == Some(i);
+            if row(ui, e, &apps, thumbs, host, open) {
                 pressed = Some(i);
+            }
+            if let Some(ch) = view.chooser.as_mut().filter(|_| open) {
+                let (key, kind, title) = da::ITEMS[i];
+                close = chooser(ui, ch, key, kind, title, &apps, thumbs);
             }
         }
     });
-    if let Some(i) = open_at {
-        let mut close = false;
-        let (view, thumbs) = (&mut st.default_apps, &mut st.thumbs);
-        if let Some(ch) = view.chooser.as_mut() {
-            let (key, kind, title) = da::ITEMS[i];
-            page::group(ui, &format!("{title}: choose the app"), |ui| {
-                close = chooser(ui, ch, key, kind, &apps, thumbs);
-            });
-        }
-        if close {
-            view.chooser = None;
-        }
-    }
-    if split < entries.len() {
-        page::group(ui, "", |ui| {
-            ui.spacing_mut().item_spacing.y = 4.0;
-            for (i, e) in entries.iter().enumerate().skip(split) {
-                if row(ui, e, &apps, &mut st.thumbs, host, false) {
-                    pressed = Some(i);
-                }
-            }
-        });
+    if close {
+        view.chooser = None;
     }
     if let Some(i) = pressed {
-        let view = &mut st.default_apps;
         if open_at == Some(i) {
             view.chooser = None;
         } else {
@@ -199,15 +185,20 @@ pub fn show(ui: &mut egui::Ui, st: &mut State) {
     }
 }
 
-/// A small button drawn at `rect` inside a row (the row has already taken its space), looking
-/// like the Apps page's row buttons.
+/// A small button drawn at `rect` inside an item (the item has already taken its space),
+/// looking like the Apps page's row buttons: a quiet pill in the field fill.
 fn small_button(ui: &mut egui::Ui, text: &str, rect: egui::Rect) -> egui::Response {
     let c = colors();
     let resp = ui.interact(rect, ui.id().with(("row-button", rect.min.y as i32)), Sense::click());
-    // The switch track's grey: unlike a faint tint of the text, it shows on light rows too.
-    let fill = if resp.hovered() { theme::with_alpha(c.accent, 70) } else { c.track };
-    ui.painter().rect_filled(rect, CornerRadius::same(8), fill);
-    ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, text, FontId::proportional(13.0), c.text);
+    let round = shape::pill(rect);
+    if c.high_contrast {
+        let (fill, edge) = if resp.hovered() { (c.accent_fill, c.on_accent) } else { (c.bg, c.text) };
+        ui.painter().rect(rect, round, fill, egui::Stroke::new(1.0_f32, edge), egui::StrokeKind::Inside);
+    } else {
+        ui.painter().rect_filled(rect, round, if resp.hovered() { c.control_hover } else { c.field });
+    }
+    let ink = if c.high_contrast && resp.hovered() { c.on_accent } else { c.text };
+    ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, text, FontId::proportional(13.0), ink);
     resp.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
@@ -249,32 +240,34 @@ pub fn action_label(host: bool, open: bool) -> Option<&'static str> {
     }
 }
 
-/// One type: icon, name over its app, the key as typed, and its button. True when pressed.
+/// One type, an item of the list: icon, name over its app, the key as typed, and its button.
+/// True when pressed.
 fn row(ui: &mut egui::Ui, e: &Entry, apps: &[App], thumbs: &mut Thumbs, host: bool, open: bool) -> bool {
     let c = colors();
-    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), ROW_H), Sense::hover());
-    let fill = if open { c.control_hover } else { c.control };
-    ui.painter().rect_filled(rect, CornerRadius::same(10), fill);
-    let at = egui::pos2(rect.left() + 14.0 + ICON / 2.0, rect.center().y);
-    icon(ui, at, icon_source(apps, e.app.as_deref(), e.exe.as_deref()).as_deref(), thumbs);
-    let action = action_label(host, open);
-    let button_w = if action.is_some() { 84.0 } else { 0.0 };
-    let key_w = 90.0;
-    let text_left = at.x + ICON / 2.0 + 12.0;
-    let key_right = rect.right() - 14.0 - if button_w > 0.0 { button_w + 12.0 } else { 0.0 };
-    let text_right = key_right - key_w - 8.0;
-    let line = |top: f32, bottom: f32| egui::Rect::from_min_max(egui::pos2(text_left, top), egui::pos2(text_right, bottom));
-    draw_text(ui, line(rect.top() + 7.0, rect.center().y), e.title, FontId::proportional(14.0), c.text, false);
-    let (app, color) = match &e.app {
-        Some(a) => (a.as_str(), c.muted),
-        None => (da::NO_APP, theme::with_alpha(c.muted, 170)),
-    };
-    draw_text(ui, line(rect.center().y, rect.bottom() - 7.0), app, FontId::proportional(12.0), color, false);
-    let key = egui::Rect::from_min_max(egui::pos2(key_right - key_w, rect.top()), egui::pos2(key_right, rect.bottom()));
-    draw_text(ui, key, &da::key_label(e.key, e.kind), FontId::proportional(12.0), c.muted, true);
-    let Some(label) = action else { return false };
-    let b = egui::Rect::from_center_size(egui::pos2(rect.right() - 14.0 - button_w / 2.0, rect.center().y), Vec2::new(button_w, 30.0));
-    small_button(ui, label, b).clicked()
+    // The item whose chooser is open wears the selection wash, so it reads as the one being changed.
+    page::item(ui, open, |ui| {
+        let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), ROW_H), Sense::hover());
+        let at = egui::pos2(rect.left() + ICON / 2.0, rect.center().y);
+        icon(ui, at, icon_source(apps, e.app.as_deref(), e.exe.as_deref()).as_deref(), thumbs);
+        let action = action_label(host, open);
+        let button_w = if action.is_some() { 84.0 } else { 0.0 };
+        let key_w = 90.0;
+        let text_left = at.x + ICON / 2.0 + 12.0;
+        let key_right = rect.right() - if button_w > 0.0 { button_w + 12.0 } else { 0.0 };
+        let text_right = key_right - key_w - 8.0;
+        let line = |top: f32, bottom: f32| egui::Rect::from_min_max(egui::pos2(text_left, top), egui::pos2(text_right, bottom));
+        draw_text(ui, line(rect.top(), rect.center().y), e.title, FontId::proportional(13.5), c.text, false);
+        let (app, color) = match &e.app {
+            Some(a) => (a.as_str(), c.muted),
+            None => (da::NO_APP, theme::with_alpha(c.muted, 170)),
+        };
+        draw_text(ui, line(rect.center().y, rect.bottom()), app, FontId::proportional(12.0), color, false);
+        let key = egui::Rect::from_min_max(egui::pos2(key_right - key_w, rect.top()), egui::pos2(key_right, rect.bottom()));
+        draw_text(ui, key, &da::key_label(e.key, e.kind), FontId::proportional(12.0), c.muted, true);
+        let Some(label) = action else { return false };
+        let b = egui::Rect::from_center_size(egui::pos2(rect.right() - button_w / 2.0, rect.center().y), Vec2::new(button_w, 30.0));
+        small_button(ui, label, b).clicked()
+    })
 }
 
 /// How the chooser names the type in a sentence: ".pdf files", "https links".
@@ -293,50 +286,58 @@ pub fn chooser_note(what: &str, sent: Option<&str>) -> String {
     }
 }
 
-/// The apps for one type. Picking one opens its page in Windows' Settings. True to close.
-fn chooser(ui: &mut egui::Ui, ch: &mut Chooser, key: &str, kind: da::Kind, apps: &[App], thumbs: &mut Thumbs) -> bool {
+/// The apps for one type, as rows under its item. Picking one opens its page in Windows'
+/// Settings. True to close.
+fn chooser(ui: &mut egui::Ui, ch: &mut Chooser, key: &str, kind: da::Kind, title: &str, apps: &[App], thumbs: &mut Thumbs) -> bool {
     let c = colors();
     let typed = type_words(key, kind);
     let loaded = ch.list.lock().ok().and_then(|g| g.clone());
     let Some((list, current)) = loaded else {
-        ui.label(theme::muted("Asking Windows...").size(12.0));
+        page::row_with(ui, |ui| {
+            ui.label(theme::muted("Asking Windows...").size(12.5));
+        });
         return false;
     };
-    ui.label(theme::muted(chooser_note(&typed, ch.sent.as_deref())).size(12.0));
-    ui.add_space(10.0);
-    ui.spacing_mut().item_spacing.y = 4.0;
+    page::row_with(ui, |ui| {
+        ui.label(egui::RichText::new(format!("{title}: choose the app")).size(13.5).color(c.text));
+        ui.add(egui::Label::new(theme::muted(chooser_note(&typed, ch.sent.as_deref())).size(12.5)).wrap());
+    });
     if list.is_empty() {
-        ui.label(theme::muted("No app says it opens this type. Windows Settings may still offer some.").size(12.0));
+        page::row_with(ui, |ui| {
+            ui.add(egui::Label::new(theme::muted("No app says it opens this type. Windows Settings may still offer some.").size(12.5)).wrap());
+        });
     }
     for (i, app) in list.iter().enumerate() {
-        let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), APP_H), Sense::click());
-        let fill = if resp.hovered() { c.control_hover } else { c.control };
-        ui.painter().rect_filled(rect, CornerRadius::same(10), fill);
-        let at = egui::pos2(rect.left() + 14.0 + ICON / 2.0, rect.center().y);
-        icon(ui, at, icon_source(apps, Some(&app.name), app.icon.as_deref().or(app.exe.as_deref())).as_deref(), thumbs);
-        let right = rect.right() - 150.0;
-        let name = egui::Rect::from_min_max(egui::pos2(at.x + ICON / 2.0 + 12.0, rect.top()), egui::pos2(right, rect.bottom()));
-        draw_text(ui, name, &app.name, FontId::proportional(14.0), c.text, false);
-        let side = egui::Rect::from_min_max(egui::pos2(right, rect.top()), egui::pos2(rect.right() - 16.0, rect.bottom()));
-        let (tag, color) = if current == Some(i) { ("Current", c.accent_text) } else { ("Open in Settings", c.muted) };
-        draw_text(ui, side, tag, FontId::proportional(12.0), color, true);
-        if resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked() {
+        let clicked = page::item(ui, current == Some(i), |ui| {
+            let (rect, resp) = ui.allocate_exact_size(Vec2::new(ui.available_width(), APP_H), Sense::click());
+            let at = egui::pos2(rect.left() + ICON / 2.0, rect.center().y);
+            icon(ui, at, icon_source(apps, Some(&app.name), app.icon.as_deref().or(app.exe.as_deref())).as_deref(), thumbs);
+            let right = rect.right() - 140.0;
+            let name = egui::Rect::from_min_max(egui::pos2(at.x + ICON / 2.0 + 12.0, rect.top()), egui::pos2(right, rect.bottom()));
+            draw_text(ui, name, &app.name, FontId::proportional(13.5), c.text, false);
+            let side = egui::Rect::from_min_max(egui::pos2(right, rect.top()), rect.right_bottom());
+            let (tag, color) = if current == Some(i) { ("Current", c.accent_text) } else { ("Open in Settings", c.muted) };
+            draw_text(ui, side, tag, FontId::proportional(12.5), color, true);
+            theme::focus_ring(ui, &resp, rect.expand2(Vec2::new(6.0, 3.0)), shape::TILE);
+            resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked()
+        });
+        if clicked {
             open_link(app.link.clone());
             ch.sent = Some(app.name.clone());
         }
     }
-    ui.add_space(10.0);
     let mut close = false;
-    ui.horizontal(|ui| {
-        if ui.button("All default apps in Windows Settings").clicked() {
-            open_link(dc::SETTINGS_PAGE.to_owned());
-        }
+    page::row(ui, "More apps", "Windows Settings lists every app that can be the default.", |ui| {
+        // Right to left: Close is the row's last button.
         if ui.button("Close").clicked() {
             close = true;
         }
+        if ui.button("All default apps in Windows Settings").clicked() {
+            open_link(dc::SETTINGS_PAGE.to_owned());
+        }
     });
     if !ch.shown {
-        // Bring the whole island into view the first time it is drawn with its list.
+        // Bring the whole list into view the first time it is drawn with its apps.
         ch.shown = true;
         ui.scroll_to_cursor(Some(egui::Align::BOTTOM));
     }

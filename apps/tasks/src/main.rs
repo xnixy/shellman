@@ -1,6 +1,6 @@
 #![windows_subsystem = "windows"]
-//! Task Manager: what runs, what it uses, and ending what hangs. Islands of glass like Settings:
-//! a rail of pages, a title pill with the search, and the page's islands.
+//! Task Manager: what runs, what it uses, and ending what hangs. One sheet of glass like Settings:
+//! a rail of pages, a header with the search, and the page's boxes.
 //!
 //! The processes and the machine are read on a thread of their own (`shellman_core::procs`) once
 //! a second, and not at all while the window is minimised or hidden; the window repaints when a

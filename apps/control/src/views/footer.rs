@@ -4,10 +4,12 @@
 
 use super::kit::{self, chip, clipped_text, label_font, small_font, CHIP, GAP};
 use crate::power_menu::{self, PowerMenu, CHOICES};
-use egui::{Align2, CornerRadius, Pos2, Rect, Sense, Ui, Vec2};
+use egui::{Align2, CornerRadius, Pos2, Rect, Sense, Stroke, Ui, Vec2};
 use shellman_core::system::power::Action;
 use shellman_core::system::status::Battery;
-use shellman_ui::theme::{colors, glyph};
+use shellman_ui::chips::soft_colors;
+use shellman_ui::glass::islands::shows_as;
+use shellman_ui::theme::{colors, glyph, with_alpha};
 use std::time::Instant;
 
 const BUTTON: f32 = 38.0;
@@ -101,14 +103,15 @@ fn choice(ui: &mut Ui, menu: &mut PowerMenu, action: Action, r: Rect, slot: usiz
     shellman_ui::theme::speak(&resp, egui::WidgetType::Button, || power_menu::label(action, armed).to_string());
     let radius = CHOICE_HEIGHT / 2.0;
     shellman_ui::theme::focus_ring(ui, &resp, r, radius);
-    let fill = match (armed, resp.hovered()) {
-        (true, _) => c.danger,
-        (false, true) => kit::well(true),
-        (false, false) => kit::tile_fill(false),
+    // Armed, it is Glasshouse's destructive action: red text on a faint red wash inside a
+    // hairline. High contrast: highlight under highlight text (`danger` is highlight there).
+    let (_, _, line) = soft_colors(c.light);
+    let (fill, fg, stroke) = match (armed, resp.hovered()) {
+        (true, _) if c.high_contrast => (c.danger, c.on_accent, Stroke::NONE),
+        (true, _) => (shows_as(with_alpha(c.danger_text, 46)), c.danger_text, line),
+        (false, hovered) => (kit::field(hovered), c.text, Stroke::NONE),
     };
-    // High contrast: armed is highlight under highlight text (`danger` is highlight there).
-    let fg = if armed && c.high_contrast { c.on_accent } else if armed { egui::Color32::WHITE } else { c.text };
-    ui.painter().rect_filled(r, CornerRadius::same(radius as u8), fill);
+    ui.painter().rect(r, CornerRadius::same(radius as u8), fill, stroke, egui::StrokeKind::Inside);
     if !armed {
         shellman_ui::theme::contrast_outline(ui, r, radius, true, false);
         if c.high_contrast && !resp.hovered() {

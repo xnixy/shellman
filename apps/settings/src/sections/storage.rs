@@ -55,15 +55,18 @@ pub fn show(ui: &mut egui::Ui, st: &mut State) {
     let volumes = v.volumes.lock().ok().and_then(|g| g.clone());
     let Some(volumes) = volumes else {
         page::group(ui, "", |ui| {
-            ui.label(theme::muted("Reading the drives..."));
+            page::row_with(ui, |ui| {
+                ui.label(theme::muted("Reading the drives..."));
+            });
         });
         return;
     };
     page::group(ui, "Drives", |ui| {
         if volumes.is_empty() {
-            ui.label(theme::muted("Windows reports no fixed drive."));
+            page::row_with(ui, |ui| {
+                ui.label(theme::muted("Windows reports no fixed drive."));
+            });
         }
-        ui.spacing_mut().item_spacing.y = 4.0;
         for d in &volumes {
             let name = format!("{} ({})", d.label, d.root.to_string_lossy().trim_end_matches('\\'));
             let detail = format!("{} free of {}", format_size(d.free), format_size(d.total));
@@ -88,27 +91,22 @@ fn folders(ui: &mut egui::Ui, v: &mut StorageView, ctx: &egui::Context, system: 
     // Bars are drawn against the largest folder, so the rows can be compared with each other.
     let biggest = states.iter().filter_map(Count::bytes).max().unwrap_or(0);
     let mut again = false;
-    ui.horizontal(|ui| {
-        if running {
-            ui.label(theme::muted(format!("Counting: {done} of {total} done")).size(12.5));
-            if ui.button("Cancel").clicked() {
-                scan.cancel();
-            }
-        } else {
-            let line = match system {
-                Some(d) => format!("{} used on {}", format_size(d.used()), d.root.to_string_lossy().trim_end_matches('\\')),
-                None => "Counted.".to_owned(),
-            };
-            ui.label(theme::muted(line).size(12.5));
-            again = ui.button("Count again").clicked();
+    if running {
+        let detail = format!("{done} of {total} done");
+        if page::row(ui, "Counting", &detail, |ui| ui.button("Cancel").clicked()) {
+            scan.cancel();
         }
-    });
+    } else {
+        let line = match system {
+            Some(d) => format!("{} used on {}", format_size(d.used()), d.root.to_string_lossy().trim_end_matches('\\')),
+            None => "Counted.".to_owned(),
+        };
+        again = page::row(ui, &line, "", |ui| ui.button("Count again").clicked());
+    }
     if again {
         v.rescan(ctx);
         return;
     }
-    ui.add_space(8.0);
-    ui.spacing_mut().item_spacing.y = 4.0;
     for (t, s) in targets.iter().zip(&states) {
         let (detail, bytes) = match s {
             Count::Waiting => ("Waiting".to_owned(), None),
@@ -123,6 +121,7 @@ fn folders(ui: &mut egui::Ui, v: &mut StorageView, ctx: &egui::Context, system: 
             shellman_core::sibling::start_with("files", &[&sto::open_arg(t)]);
         }
     }
-    ui.add_space(8.0);
-    ui.label(theme::muted("Sizes are the files' own length. Links and cloud placeholders are not counted.").size(12.0));
+    page::row_with(ui, |ui| {
+        ui.add(egui::Label::new(theme::muted("Sizes are the files' own length. Links and cloud placeholders are not counted.").size(12.5)).wrap());
+    });
 }

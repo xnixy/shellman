@@ -8,12 +8,11 @@
 //! `--unregister-default-terminal` (`shellman_core::terminal::handoff`), off the UI thread.
 
 use crate::page;
-use crate::sections::slider_row;
 use crate::state::State;
 use shellman_core::terminal::file::File;
 use shellman_core::terminal::{handoff, profiles, Choice, Which};
 use shellman_ui::theme;
-use shellman_ui::widgets::switch;
+use shellman_ui::widgets::toggle;
 use std::sync::mpsc::{channel, Receiver};
 
 /// History lengths offered; a value set by hand shows beside them.
@@ -82,41 +81,37 @@ pub fn show(ui: &mut egui::Ui, st: &mut State) {
         ui.ctx().request_repaint_after(std::time::Duration::from_millis(100));
     }
 
-    page::group(ui, "Default profile", |ui| profile(ui, st));
-    page::group(ui, "Font", |ui| font(ui, st));
-    page::group(ui, "Colours", |ui| colours(ui, st));
-    page::group(ui, "History and copying", |ui| history(ui, st));
-    page::group(ui, "New terminal opens in", |ui| {
-        ui.label(theme::muted("Starting the terminal while one is open.").size(12.5));
-        ui.add_space(8.0);
-        let v = &mut st.terminal;
-        let Some(f) = v.file.as_mut() else { return };
-        let mut tab = f.new_instance() == "tab";
-        if page::segmented(ui, &mut tab, &[(false, "A new window"), (true, "A new tab")]) {
-            f.set("new_instance", if tab { "tab" } else { "window" });
-            let f = f.clone();
-            st.saver.run(move || f.save());
-        }
+    page::group(ui, "Profiles", |ui| {
+        profile(ui, st);
+        colours(ui, st);
     });
-    page::group(ui, "Open Terminal here uses", |ui| open_with(ui, st));
+    page::group(ui, "Font", |ui| font(ui, st));
+    page::group(ui, "History and copying", |ui| history(ui, st));
+    page::group(ui, "Opening", |ui| {
+        new_instance(ui, st);
+        open_with(ui, st);
+    });
     page::group(ui, "Console programs", |ui| consoles(ui, st));
 }
+
+/// How wide a row's own control (a drop-down, a field, a slider) is, at most.
+const CONTROL_W: f32 = 260.0;
 
 fn profile(ui: &mut egui::Ui, st: &mut State) {
     let v = &mut st.terminal;
     let Some(f) = v.file.as_mut() else { return };
-    ui.label(theme::muted("What a new tab runs.").size(12.5));
-    ui.add_space(8.0);
     let current = f.default_profile();
     let mut picked = None;
-    let resp = egui::ComboBox::from_id_salt("terminal-profile").width(300.0_f32.min(ui.available_width())).selected_text(&current).show_ui(ui, |ui| {
-        for name in &v.profiles {
-            if ui.selectable_label(name.eq_ignore_ascii_case(&current), name).clicked() {
-                picked = Some(name.clone());
+    page::row(ui, "Default profile", "What a new tab runs.", |ui| {
+        let resp = egui::ComboBox::from_id_salt("terminal-profile").width(CONTROL_W.min(ui.available_width() * 0.5)).selected_text(&current).show_ui(ui, |ui| {
+            for name in &v.profiles {
+                if ui.selectable_label(name.eq_ignore_ascii_case(&current), name).clicked() {
+                    picked = Some(name.clone());
+                }
             }
-        }
+        });
+        resp.response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::ComboBox, true, format!("Default profile, {current}")));
     });
-    resp.response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::ComboBox, true, format!("Default profile, {current}")));
     if let Some(name) = picked {
         f.set("default_profile", name);
         let f = f.clone();
@@ -127,24 +122,28 @@ fn profile(ui: &mut egui::Ui, st: &mut State) {
 fn font(ui: &mut egui::Ui, st: &mut State) {
     let v = &mut st.terminal;
     let Some(f) = v.file.as_mut() else { return };
-    page::label(ui, "Family");
-    let edit = ui.add(
-        egui::TextEdit::singleline(&mut v.family)
-            .hint_text(theme::muted("Cascadia Mono"))
-            .desired_width(300.0_f32.min(ui.available_width())),
-    );
+    let mut changed = false;
+    let edit = page::row(ui, "Family", "Empty for Cascadia Mono (then Cascadia Code, then Consolas).", |ui| {
+        ui.add(
+            egui::TextEdit::singleline(&mut v.family)
+                .hint_text(theme::muted("Cascadia Mono"))
+                .desired_width(CONTROL_W.min(ui.available_width() * 0.5)),
+        )
+    });
     shellman_ui::widgets::name_field(&edit, "Font family", Some(&v.family));
     let done = edit.lost_focus() || (edit.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)));
-    let mut changed = false;
     if done && v.family.trim() != f.font_family() {
         f.set("font_family", v.family.trim());
         changed = true;
     }
-    ui.label(theme::muted("Empty for Cascadia Mono (then Cascadia Code, then Consolas).").size(12.0));
-    page::gap(ui);
     let pt = f.font_size().clamp(FONT_MIN, FONT_MAX);
     let at = (pt - FONT_MIN) / (FONT_MAX - FONT_MIN);
-    let moved = slider_row::show(ui, egui::Id::new("terminal-font-size"), "Size", at, &format!("{pt:.0} pt"));
+    let moved = page::row(ui, "Size", "", |ui| {
+        // Right to left: the value at the row's end, the slider before it.
+        ui.add_sized(egui::vec2(44.0, 20.0), egui::Label::new(theme::muted(format!("{pt:.0} pt")).size(12.5)));
+        ui.add_space(6.0);
+        shellman_ui::slider::thin(ui, egui::Id::new("terminal-font-size"), at, Some(CONTROL_W.min(ui.available_width() * 0.5)), true).named("Size")
+    });
     if let Some(a) = moved.value {
         let new = (FONT_MIN + a * (FONT_MAX - FONT_MIN)).round();
         if new != pt {
@@ -162,18 +161,19 @@ fn colours(ui: &mut egui::Ui, st: &mut State) {
     use shellman_core::terminal::file::COLOR_SCHEMES;
     let v = &mut st.terminal;
     let Some(f) = v.file.as_mut() else { return };
-    ui.label(theme::muted("The 16 colours programs use. Text in them is kept readable on the glass.").size(12.5));
     let current = f.color_scheme();
     let shown = COLOR_SCHEMES.iter().find(|(n, _)| *n == current).map_or(COLOR_SCHEMES[0].1, |(_, label)| label);
     let mut picked = None;
-    let resp = egui::ComboBox::from_id_salt("terminal-colours").width(300.0_f32.min(ui.available_width())).selected_text(shown).show_ui(ui, |ui| {
-        for (name, label) in COLOR_SCHEMES {
-            if ui.selectable_label(name == current, label).clicked() {
-                picked = Some(name);
+    page::row(ui, "Colours", "The 16 colours programs use. Text in them is kept readable on the glass.", |ui| {
+        let resp = egui::ComboBox::from_id_salt("terminal-colours").width(CONTROL_W.min(ui.available_width() * 0.5)).selected_text(shown).show_ui(ui, |ui| {
+            for (name, label) in COLOR_SCHEMES {
+                if ui.selectable_label(name == current, label).clicked() {
+                    picked = Some(name);
+                }
             }
-        }
+        });
+        resp.response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::ComboBox, true, format!("Colour scheme, {shown}")));
     });
-    resp.response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::ComboBox, true, format!("Colour scheme, {shown}")));
     if let Some(name) = picked.filter(|n| *n != current) {
         f.set("color_scheme", name);
         let f = f.clone();
@@ -184,7 +184,6 @@ fn colours(ui: &mut egui::Ui, st: &mut State) {
 fn history(ui: &mut egui::Ui, st: &mut State) {
     let v = &mut st.terminal;
     let Some(f) = v.file.as_mut() else { return };
-    page::label(ui, "Lines of history kept");
     let mut lines = f.scrollback();
     let mut options: Vec<(u64, String)> = SCROLLBACK.iter().map(|&n| (n, group_digits(n))).collect();
     if !SCROLLBACK.contains(&lines) {
@@ -193,13 +192,13 @@ fn history(ui: &mut egui::Ui, st: &mut State) {
     }
     let shown: Vec<(u64, &str)> = options.iter().map(|(n, s)| (*n, s.as_str())).collect();
     let mut changed = false;
-    if page::segmented(ui, &mut lines, &shown) {
+    if page::row(ui, "Lines of history kept", "", |ui| page::segmented(ui, &mut lines, &shown)) {
         f.set("scrollback", lines);
         changed = true;
     }
-    page::gap(ui);
     let mut copy = f.copy_on_select();
-    if switch(ui, &mut copy, "Copy text as soon as it is selected").changed() {
+    let title = "Copy text as soon as it is selected";
+    if page::row(ui, title, "", |ui| toggle(ui, &mut copy, title)).changed() {
         f.set("copy_on_select", copy);
         changed = true;
     }
@@ -208,25 +207,40 @@ fn history(ui: &mut egui::Ui, st: &mut State) {
     }
 }
 
+fn new_instance(ui: &mut egui::Ui, st: &mut State) {
+    let v = &mut st.terminal;
+    let Some(f) = v.file.as_mut() else { return };
+    let mut tab = f.new_instance() == "tab";
+    let picked = page::row(ui, "New terminal opens in", "Starting the terminal while one is open.", |ui| {
+        page::segmented(ui, &mut tab, &[(false, "A new window"), (true, "A new tab")])
+    });
+    if picked {
+        f.set("new_instance", if tab { "tab" } else { "window" });
+        let f = f.clone();
+        st.saver.run(move || f.save());
+    }
+}
+
 fn open_with(ui: &mut egui::Ui, st: &mut State) {
     let v = &mut st.terminal;
     let Some(f) = v.file.as_mut() else { return };
-    ui.label(theme::muted("What the desktop's and Files' \u{201C}Open Terminal here\u{201D} start.").size(12.5));
-    ui.add_space(8.0);
     let mut choice: Choice = f.choice();
-    let mut changed = page::segmented(
-        ui,
-        &mut choice.default_terminal,
-        &[(Which::Shellman, "shellman Terminal"), (Which::WindowsTerminal, "Windows Terminal"), (Which::Custom, "A command")],
-    );
+    let mut changed = page::row(ui, "Open Terminal here uses", "What the desktop's and Files' \u{201C}Open Terminal here\u{201D} start.", |ui| {
+        page::segmented(
+            ui,
+            &mut choice.default_terminal,
+            &[(Which::Shellman, "shellman Terminal"), (Which::WindowsTerminal, "Windows Terminal"), (Which::Custom, "A command")],
+        )
+    });
     if choice.default_terminal == Which::Custom {
-        page::gap(ui);
-        page::label(ui, "Command line ({dir} is the folder)");
-        let edit = ui.add(
-            egui::TextEdit::singleline(&mut v.custom)
-                .hint_text(theme::muted("\"C:\\Tools\\wezterm.exe\" start --cwd {dir}"))
-                .desired_width(ui.available_width().min(520.0)),
-        );
+        let edit = page::row(ui, "Command line", "{dir} is the folder.", |ui| {
+            ui.add(
+                egui::TextEdit::singleline(&mut v.custom)
+                    .hint_text(theme::muted("\"C:\\Tools\\wezterm.exe\" start --cwd {dir}"))
+                    .font(egui::TextStyle::Monospace)
+                    .desired_width((ui.available_width() * 0.6).min(420.0)),
+            )
+        });
         shellman_ui::widgets::name_field(&edit, "Command line", Some(&v.custom));
         if (edit.lost_focus() || (edit.has_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)))) && v.custom.trim() != choice.custom_terminal {
             choice.custom_terminal = v.custom.trim().to_owned();
@@ -247,9 +261,10 @@ fn consoles(ui: &mut egui::Ui, st: &mut State) {
     let exe = shellman_core::terminal::shellman_exe();
     let mut on = state.is_shellman();
     let can = !busy && exe.is_some() && (v.wt_installed || on);
-    let resp = ui.add_enabled_ui(can, |ui| switch(ui, &mut on, "Use shellman Terminal for all console programs")).inner;
-    ui.label(theme::muted("Needs Windows Terminal installed: its console host hands each console over.").size(12.0));
-    ui.add_space(6.0);
+    let title = "Use shellman Terminal for all console programs";
+    let resp = page::row(ui, title, "Needs Windows Terminal installed: its console host hands each console over.", |ui| {
+        ui.add_enabled_ui(can, |ui| toggle(ui, &mut on, title)).inner
+    });
     let line = if busy {
         "Changing it\u{2026}".to_owned()
     } else if exe.is_none() {
@@ -259,10 +274,12 @@ fn consoles(ui: &mut egui::Ui, st: &mut State) {
     } else {
         state.describe()
     };
-    ui.label(theme::muted(line).size(12.5));
-    if let Some(note) = &v.note {
-        ui.label(egui::RichText::new(note).size(12.5).color(theme::colors().danger_text));
-    }
+    page::row_with(ui, |ui| {
+        ui.add(egui::Label::new(theme::muted(line).size(12.5)).wrap());
+        if let Some(note) = &v.note {
+            ui.add(egui::Label::new(egui::RichText::new(note).size(12.5).color(theme::colors().danger_text)).wrap());
+        }
+    });
     if resp.changed() {
         if let Some(exe) = exe {
             let (tx, rx) = channel();

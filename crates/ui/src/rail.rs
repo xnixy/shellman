@@ -1,6 +1,6 @@
 //! The rail: the labelled list of pages (or places) at a window's left, as one island of glass.
 //! Every shellman app that has one draws it with this, so they all look and behave alike: an icon
-//! and a name per row, the current row filled with the accent, optional quiet group headings, and
+//! and a name per row, the current row in the soft field fill, optional quiet group headings, and
 //! a button at the foot that folds it to icons only (the name then shows as a hover pill).
 //!
 //! The caller lays the window out around it: ask [`width`] how wide the rail is, then call
@@ -241,14 +241,33 @@ pub fn show(
     solid: Option<&Style>,
     radius: f32,
 ) -> Out {
-    let c = colors();
     let w = width(ui, entries, mode);
     let wide = mode == Mode::Wide;
-    let foot = if has_foot(mode) { GAP + row_h(mode) } else { 0.0 };
     // The whole column down to the window's margin, the fold button at its foot.
     let height = (screen.bottom() - MARGIN - top).max(ICON_CELL + 2.0 * INSET);
     let rail = Rect::from_min_size(pos2(screen.left() + MARGIN, top), vec2(w, height));
     list.push(if wide { Island::new(rail, radius) } else { Island::pill(rail) });
+    show_in(ui, list, rail, screen, entries, selected, mode, solid)
+}
+
+/// The rail's rows in `rail`, a column the caller has placed (a window's sidebar: no island of
+/// its own, it sits on the window's sheet). `list` only takes the pill a folded rail shows a
+/// name in. Otherwise as [`show`].
+#[allow(clippy::too_many_arguments)]
+pub fn show_in(
+    ui: &mut Ui,
+    list: &mut Vec<Island>,
+    rail: Rect,
+    screen: Rect,
+    entries: &[Entry],
+    selected: Option<&str>,
+    mode: Mode,
+    solid: Option<&Style>,
+) -> Out {
+    let c = colors();
+    let w = rail.width();
+    let wide = mode == Mode::Wide;
+    let foot = if has_foot(mode) { GAP + row_h(mode) } else { 0.0 };
 
     // Its empty space moves the window, like the gaps around it. Made first, so rows win.
     // Not FOCUSABLE: no Tab stop, and no unnamed control for a screen reader.
@@ -267,16 +286,21 @@ pub fn show(
         let resp = ui.interact(cell, Id::new(("rail", row.key.as_ref())), Sense::click());
         // A page: read as a selectable item, named by its label, with a ring under the keyboard.
         crate::access::describe(&resp, || egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, !row.dim, current, row.label.as_ref()));
-        crate::theme::focus_ring(ui, &resp, cell, 12.0);
-        let (fill, fg) = if current {
-            (c.accent_fill, c.on_accent)
+        let round = crate::theme::shape::NAV_ROW;
+        crate::theme::focus_ring(ui, &resp, cell, round);
+        // Glasshouse's sidebar: the open page in the soft field fill, never the accent.
+        let (fill, fg) = if c.high_contrast {
+            if current { (c.accent_fill, c.on_accent) } else { (Color32::TRANSPARENT, c.text) }
+        } else if current {
+            (c.field, c.text)
         } else if resp.hovered() {
             (hover, c.text)
         } else {
             (Color32::TRANSPARENT, c.muted)
         };
         let fade = |col: Color32| if row.dim { col.gamma_multiply(0.4) } else { col };
-        ui.painter().rect_filled(cell, 12.0, fill);
+        ui.painter().rect_filled(cell, round, fill);
+        crate::theme::contrast_outline(ui, cell, round, resp.hovered(), false);
         let icon_at = if wide { pos2(cell.left() + ROW_PAD + ICON_COL / 2.0 - 4.0, cell.center().y) } else { cell.center() };
         paint_icon(ui, &row.icon, icon_at, fade(fg));
         if wide {
@@ -306,7 +330,7 @@ pub fn show(
                 let (slot, _) = ui.allocate_exact_size(vec2(inner.width(), eh), Sense::hover());
                 match entry {
                     Entry::Heading(text) if wide => {
-                        let galley = fit(ui, &text.to_uppercase(), semibold_font(10.5), c.muted.gamma_multiply(0.8), slot.width() - 2.0 * (INSET + ROW_PAD));
+                        let galley = fit(ui, &text.to_uppercase(), semibold_font(10.5), c.muted, slot.width() - 2.0 * (INSET + ROW_PAD));
                         let at = pos2(slot.left() + INSET + ROW_PAD, slot.bottom() - 6.0 - galley.size().y);
                         ui.painter().galley(at, galley, c.muted);
                     }
@@ -421,7 +445,7 @@ fn pill(ui: &mut Ui, anchor: Rect, text: &str, bounds: Rect, list: &mut Vec<Isla
     let size = vec2(galley.size().x + 2.0 * TIP_PAD, (galley.size().y + 2.0 * TIP_PAD_Y).max(TIP_H));
     let rect = place(anchor, size, bounds);
     // One line is a pill; more is a rounded card.
-    let island = if size.y <= TIP_H { Island::pill(rect) } else { Island::new(rect, 14.0) };
+    let island = if size.y <= TIP_H { Island::pill(rect) } else { Island::new(rect, crate::theme::shape::TOOLTIP) };
     list.push(island);
     // Above everything, so neither the page nor the rail covers it.
     let painter = ui.ctx().layer_painter(egui::LayerId::new(egui::Order::Tooltip, Id::new("rail-tip")));
@@ -434,7 +458,7 @@ fn pill(ui: &mut Ui, anchor: Rect, text: &str, bounds: Rect, list: &mut Vec<Isla
         // Over glass the pill may stand partly on the page's island, where a second pane of
         // glass would not show against the first; a backing of its own does.
         None => {
-            let r = if size.y <= TIP_H { (rect.height() / 2.0).round() as u8 } else { 14 };
+            let r = if size.y <= TIP_H { (rect.height() / 2.0).round() as u8 } else { crate::theme::shape::TOOLTIP as u8 };
             painter.rect(rect, r, c.popup, egui::Stroke::new(1.0_f32, c.hairline), egui::StrokeKind::Inside);
         }
     }

@@ -1,9 +1,9 @@
-//! The rail: the shared sidebar (`shellman_ui::rail`) down the left, with the places, the pinned
-//! folders, the tags in use as coloured dots, the apps' places, and This PC with the drives, each
-//! group under its heading (a thin line when the rail shows icons only). The current place is lit
-//! with the accent. Rows take drops, open in a new tab on a middle click, and pins and apps'
-//! places have menus; the rail's empty part moves the window, and its menu brings hidden places
-//! back.
+//! The rail: the shared sidebar's rows (`shellman_ui::rail`) in the window's sidebar, under its
+//! head, with the places, the pinned folders, the tags in use as coloured dots, the apps' places,
+//! and This PC with the drives, each group under its heading (a thin line when the rail shows
+//! icons only). The current place is lit. Rows take drops, open in a new tab on a middle click,
+//! and pins and apps' places have menus; the rail's empty part moves the window, and its menu
+//! brings hidden places back.
 
 use super::actions::Action;
 use super::dnd::{self, Dest};
@@ -141,21 +141,22 @@ impl super::FileMan {
         rail::mode(window_width, self.look.rail_folded(RailApp::Files))
     }
 
-    /// Draw the rail at the window's left, `top` down, onto `list`, and act on what was done to it.
+    /// Draw the rail in `column` (the sidebar under its head), and act on what was done to it.
+    /// `list` only takes the pill a folded rail shows a name in.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn rail(
         &mut self,
         ui: &mut Ui,
         list: &mut Vec<Island>,
+        column: Rect,
         screen: Rect,
-        top: f32,
         rows: &Rail,
         mode: Mode,
         solid: Option<&Style>,
         actions: &mut Vec<Action>,
     ) {
         let current = self.tabs[self.active].loc.clone();
-        let out = rail::show(ui, list, screen, top, &rows.entries, rows.selected(&current), mode, solid, super::RADIUS);
+        let out = rail::show_in(ui, list, column, screen, &rows.entries, rows.selected(&current), mode, solid);
         self.rail_background_menu(&out.background);
         if out.toggled {
             self.look = shellman_ui::appearance::Appearance::toggle_rail_saved(RailApp::Files, self.look);

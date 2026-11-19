@@ -8,7 +8,7 @@
 use crate::chips::soft_colors;
 use crate::theme::{self, colors, icon_font};
 use crate::widgets::draw_text;
-use egui::{Align2, Color32, CornerRadius, FontId, Id, Rect, Sense, Ui, Vec2};
+use egui::{Align2, Color32, FontId, Id, Rect, Sense, Ui, Vec2};
 
 /// Inside the pill, around the tabs.
 pub const PAD: f32 = 5.0;
@@ -123,22 +123,23 @@ pub fn tab(ui: &mut Ui, rect: Rect, clip: Rect, t: &Tab) -> TabResponse {
     // the keyboard on it, it has a ring.
     crate::access::describe(&resp, || egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, t.active, t.title));
     let hovered = resp.hovered() || resp.dragged() || resp.has_focus();
-    let r = CornerRadius::same((h / 2.0) as u8);
-    let (soft, soft_hover, line) = soft_colors(c.light);
+    // Glasshouse's tabs: rounded squares, the shown one in the field fill with a hairline.
+    let r = crate::theme::shape::corner(crate::theme::shape::TAB.min(h / 2.0));
+    let (soft, _, line) = soft_colors(c.light);
     let p = ui.painter().with_clip_rect(clip);
     if c.high_contrast {
         // Highlight only as an outline, never a fill under ordinary text.
         let stroke = if t.active { egui::Stroke::new(2.0_f32, c.accent_fill) } else { egui::Stroke::new(1.0_f32, c.text) };
         p.rect_stroke(rect, r, stroke, egui::StrokeKind::Inside);
     } else if t.active {
-        p.rect(rect, r, soft_hover, line, egui::StrokeKind::Inside);
+        p.rect(rect, r, soft, line, egui::StrokeKind::Inside);
     } else if hovered {
-        p.rect_filled(rect, r, soft);
+        p.rect_filled(rect, r, c.row_hover);
     }
-    theme::focus_ring(ui, &resp, rect, h / 2.0);
+    theme::focus_ring(ui, &resp, rect, crate::theme::shape::TAB.min(h / 2.0));
     let icon_at = egui::pos2(rect.left() + 16.0, rect.center().y);
     if let Some(g) = t.icon {
-        p.text(icon_at, Align2::CENTER_CENTER, g, icon_font(12.0), if t.active { c.accent_text } else { c.muted });
+        p.text(icon_at, Align2::CENTER_CENTER, g, icon_font(12.0), if t.active { c.text } else { c.muted });
     }
     let show_close = t.closable && (t.active || hovered);
     let text_right = rect.right() - if show_close || t.mark != Mark::None { 28.0 } else { 12.0 };

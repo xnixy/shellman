@@ -4,7 +4,7 @@
 
 use crate::page;
 use crate::state::State;
-use egui::{Align, CornerRadius, FontId, Layout, Sense, UiBuilder, Vec2};
+use egui::{Align, FontId, Layout, Sense, UiBuilder, Vec2};
 use crate::pick::{self, Pick};
 use shellman_core::icon_pack::{self, IconSettings};
 use shellman_core::installed::app::{App, Kind};
@@ -15,8 +15,8 @@ use shellman_ui::theme::{self, colors, glyph, icon_font};
 use shellman_ui::widgets::draw_text;
 use std::sync::Arc;
 
-const ROW_H: f32 = 56.0;
-const GAP: f32 = 4.0;
+/// The height of an app item's content; the list adds its own padding around it.
+const ROW_H: f32 = 36.0;
 const ICON: f32 = 28.0;
 
 /// The page's live state. The worker starts when the page is first drawn and ends when another
@@ -145,13 +145,13 @@ impl AppsView {
     }
 }
 
-/// What a press in a row asks for.
+/// What a press in an item asks for.
 enum Press {
     Ask,
     Cancel,
     Uninstall,
     Modify,
-    /// Open the icon choices in the row.
+    /// Open the icon choices in the item.
     Icon,
     CloseIcon,
     ChangeIcon,
@@ -171,61 +171,60 @@ pub fn show(ui: &mut egui::Ui, st: &mut State) {
     st.apps.poll();
     if !st.apps.loaded {
         page::group(ui, "", |ui| {
-            ui.label(theme::muted("Reading the installed apps..."));
+            page::row_with(ui, |ui| {
+                ui.label(theme::muted("Reading the installed apps..."));
+            });
         });
         return;
     }
     st.apps.refresh_shown();
-    // The search and the sort on one island, the list on the next. Only the list's rows in view
-    // are drawn, and the island it sits on is the part of it in view.
-    page::group(ui, "", |ui| {
-        controls(ui, &mut st.apps);
-        for note in [&st.apps.page.notice, &st.apps.note].into_iter().flatten() {
-            ui.add_space(8.0);
-            ui.label(theme::muted(note).size(12.0));
-        }
-    });
+    // The search and the sort are the first rows of the list's box, then its items. Only the
+    // items in view are drawn.
     let apps = &mut st.apps;
-    if apps.shown.is_empty() {
-        page::group(ui, "", |ui| {
-            ui.label(theme::muted(if apps.query.trim().is_empty() { "No apps found." } else { "No app matches the search." }));
-        });
-        return;
-    }
     let thumbs = &mut st.thumbs;
-    page::group(ui, "", |ui| list_rows(ui, apps, thumbs));
+    page::group(ui, "", |ui| {
+        controls(ui, apps);
+        for note in [&apps.page.notice, &apps.note].into_iter().flatten() {
+            page::row_with(ui, |ui| {
+                ui.add(egui::Label::new(theme::muted(note).size(12.5)).wrap());
+            });
+        }
+        if apps.shown.is_empty() {
+            page::row_with(ui, |ui| {
+                ui.label(theme::muted(if apps.query.trim().is_empty() { "No apps found." } else { "No app matches the search." }));
+            });
+            return;
+        }
+        list_rows(ui, apps, thumbs);
+    });
 }
 
 /// The search box, the sort choice and the count.
 fn controls(ui: &mut egui::Ui, v: &mut AppsView) {
     let c = colors();
-    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 36.0), Sense::hover());
-    ui.painter().rect_filled(rect, CornerRadius::same(10), c.control);
-    ui.painter().text(egui::pos2(rect.left() + 18.0, rect.center().y), egui::Align2::CENTER_CENTER, glyph::SEARCH, icon_font(15.0), c.muted);
-    let edit_rect = egui::Rect::from_min_max(egui::pos2(rect.left() + 36.0, rect.top()), egui::pos2(rect.right() - 10.0, rect.bottom()));
-    let edit = egui::TextEdit::singleline(&mut v.query)
-        .id(egui::Id::new("apps_search"))
-        .font(FontId::proportional(14.0))
-        .frame(false)
-        .margin(egui::Margin::ZERO)
-        .vertical_align(Align::Center)
-        .hint_text(egui::RichText::new("Search apps").color(c.muted))
-        .desired_width(edit_rect.width());
-    let resp = ui.put(edit_rect, edit);
-    shellman_ui::widgets::name_field(&resp, "Search apps", Some(&v.query));
-
-    ui.add_space(10.0);
-    ui.horizontal(|ui| {
-        page::segmented(ui, &mut v.sort, &[(Sort::Name, "Name"), (Sort::Size, "Size"), (Sort::Date, "Install date")]);
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            let shown = v.shown.len();
-            let mut count = if shown == v.page.apps.len() { format!("{shown} apps") } else { format!("{shown} of {} apps", v.page.apps.len()) };
-            if v.page.reading_packaged {
-                count.push_str("  \u{b7}  looking for Store apps...");
-            }
-            ui.label(theme::muted(count).size(12.0));
-        });
+    page::row_with(ui, |ui| {
+        let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 36.0), Sense::hover());
+        page::field_fill(ui, rect);
+        ui.painter().text(egui::pos2(rect.left() + 18.0, rect.center().y), egui::Align2::CENTER_CENTER, glyph::SEARCH, icon_font(15.0), c.muted);
+        let edit_rect = egui::Rect::from_min_max(egui::pos2(rect.left() + 36.0, rect.top()), egui::pos2(rect.right() - 10.0, rect.bottom()));
+        let edit = egui::TextEdit::singleline(&mut v.query)
+            .id(egui::Id::new("apps_search"))
+            .font(FontId::proportional(14.0))
+            .frame(false)
+            .margin(egui::Margin::ZERO)
+            .vertical_align(Align::Center)
+            .hint_text(egui::RichText::new("Search apps").color(c.muted))
+            .desired_width(edit_rect.width());
+        let resp = ui.put(edit_rect, edit);
+        shellman_ui::widgets::name_field(&resp, "Search apps", Some(&v.query));
     });
+
+    let shown = v.shown.len();
+    let mut count = if shown == v.page.apps.len() { format!("{shown} apps") } else { format!("{shown} of {} apps", v.page.apps.len()) };
+    if v.page.reading_packaged {
+        count.push_str("  \u{b7}  looking for Store apps...");
+    }
+    page::row(ui, "Sort by", &count, |ui| page::segmented(ui, &mut v.sort, &[(Sort::Name, "Name"), (Sort::Size, "Size"), (Sort::Date, "Install date")]));
 }
 
 /// Which rows of `n` (each `stride` tall, the first at `top`) a clip rect reaches.
@@ -235,19 +234,19 @@ fn visible_range(clip_top: f32, clip_bottom: f32, top: f32, stride: f32, n: usiz
     first..last.max(first)
 }
 
-/// The rows in view are drawn; the space of those above and below is left empty, so the page's
+/// The items in view are drawn; the space of those above and below is left empty, so the page's
 /// scroll bar is the whole list's.
 fn list_rows(ui: &mut egui::Ui, v: &mut AppsView, thumbs: &mut Thumbs) {
-    let stride = ROW_H + GAP;
-    ui.spacing_mut().item_spacing.y = GAP;
+    let stride = page::item_stride(ROW_H);
+    // Items sit flush: each is exactly one stride, which the spacers count on.
+    ui.spacing_mut().item_spacing.y = 0.0;
     let n = v.shown.len();
     let top = ui.cursor().top();
     let clip = ui.clip_rect();
     let range = visible_range(clip.top(), clip.bottom(), top, stride, n);
-    // Each allocation is followed by one gap, so a spacer of `k` rows is `k * stride - GAP` tall.
     let spacer = |ui: &mut egui::Ui, rows: usize| {
         if rows > 0 {
-            ui.allocate_space(Vec2::new(1.0, rows as f32 * stride - GAP));
+            ui.allocate_space(Vec2::new(1.0, rows as f32 * stride));
         }
     };
     spacer(ui, range.start);
@@ -322,23 +321,20 @@ struct RowState {
 
 /// A small button for a row.
 fn small_button(ui: &mut egui::Ui, text: &str, danger: bool) -> egui::Response {
-    let c = colors();
-    let (fill, ink) = if danger { (c.danger, egui::Color32::WHITE) } else { (c.control_hover, c.text) };
-    let button = egui::Button::new(egui::RichText::new(text).size(13.0).color(ink))
-        .fill(fill)
-        .stroke(egui::Stroke::NONE)
-        .corner_radius(CornerRadius::same(8))
-        .min_size(Vec2::new(0.0, 30.0));
-    ui.add(button)
+    ui.add(page::row_button(text, danger, 30.0))
 }
 
-/// One app: icon, name over details, and its buttons. Returns what was pressed.
+/// One app, an item of the list: icon, name over details, and its buttons. Returns what was
+/// pressed.
 fn row(ui: &mut egui::Ui, app: &App, state: &RowState, thumbs: &mut Thumbs) -> Option<Press> {
+    page::item(ui, false, |ui| item_content(ui, app, state, thumbs))
+}
+
+fn item_content(ui: &mut egui::Ui, app: &App, state: &RowState, thumbs: &mut Thumbs) -> Option<Press> {
     let c = colors();
     let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), ROW_H), Sense::hover());
-    ui.painter().rect_filled(rect, CornerRadius::same(10), c.control);
 
-    let icon = egui::Rect::from_center_size(egui::pos2(rect.left() + 14.0 + ICON / 2.0, rect.center().y), Vec2::splat(ICON));
+    let icon = egui::Rect::from_center_size(egui::pos2(rect.left() + ICON / 2.0, rect.center().y), Vec2::splat(ICON));
     // Shellman's own apps wear the accent, unless the icon pack has a tile for them.
     let own = app.icon.as_deref().filter(|p| shellman_ui::app_icon::own_from_pack(p).is_none()).and_then(shellman_ui::app_icon::kind_for_exe);
     let image = match own {
@@ -369,7 +365,7 @@ fn row(ui: &mut egui::Ui, app: &App, state: &RowState, thumbs: &mut Thumbs) -> O
         (if modify { 76.0 } else { 0.0 }) + (if uninstall { 96.0 } else { 0.0 }) + (if icon_button { 62.0 } else { 0.0 })
     };
     let text_left = icon.right() + 12.0;
-    let text_right = (rect.right() - controls_w - 16.0).max(text_left + 40.0);
+    let text_right = (rect.right() - controls_w - 8.0).max(text_left + 40.0);
     let line = |top: f32, bottom: f32| egui::Rect::from_min_max(egui::pos2(text_left, top), egui::pos2(text_right, bottom));
 
     let (title, sub) = if state.asking {
@@ -385,13 +381,13 @@ fn row(ui: &mut egui::Ui, app: &App, state: &RowState, thumbs: &mut Thumbs) -> O
     } else {
         (app.name.clone(), app.detail())
     };
-    draw_text(ui, line(rect.top() + 7.0, rect.center().y), &title, FontId::proportional(14.0), c.text, false);
-    draw_text(ui, line(rect.center().y, rect.bottom() - 7.0), &sub, FontId::proportional(11.5), c.muted, false);
+    draw_text(ui, line(rect.top(), rect.center().y), &title, FontId::proportional(13.5), c.text, false);
+    draw_text(ui, line(rect.center().y, rect.bottom()), &sub, FontId::proportional(12.0), c.muted, false);
 
     if controls_w == 0.0 {
         return None;
     }
-    let area = egui::Rect::from_min_max(egui::pos2(rect.right() - controls_w - 8.0, rect.top()), egui::pos2(rect.right() - 8.0, rect.bottom()));
+    let area = egui::Rect::from_min_max(egui::pos2(rect.right() - controls_w, rect.top()), rect.right_bottom());
     let mut child = ui.new_child(UiBuilder::new().max_rect(area).layout(Layout::right_to_left(Align::Center)));
     child.spacing_mut().item_spacing.x = 8.0;
     // Right to left, so the first one added sits furthest right.

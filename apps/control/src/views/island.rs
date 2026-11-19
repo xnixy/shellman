@@ -7,7 +7,7 @@ use egui::{Margin, Ui, Vec2};
 use shellman_ui::glass::Island;
 
 /// Corner radius of an island, in points.
-pub const RADIUS: f32 = 22.0;
+pub const RADIUS: f32 = shellman_ui::theme::shape::ISLAND;
 /// The space between stacked islands, in points.
 pub const SPACING: f32 = 12.0;
 

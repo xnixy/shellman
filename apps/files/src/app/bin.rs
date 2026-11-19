@@ -9,14 +9,18 @@
 use super::actions::{Action, Dialog};
 use super::tab::{Loc, SortKey};
 use super::{FileMan, Msg};
-use egui::{Align2, CornerRadius, Id, Rect, Sense, Ui};
+use egui::{Align2, Id, Rect, Sense, Ui};
 use shellman_core::recycle_bin::{self, BinItem, BinState, Handle};
 use super::menu::item;
 use shellman_ui::menu::popup::Entry;
-use shellman_ui::theme::{self, colors, glyph, icon_font};
+use shellman_ui::chips::soft_colors;
+use shellman_ui::glass::islands::shows_as;
+use shellman_ui::theme::{self, colors, glyph, icon_font, shape};
 
-/// Width of the toolbar slot the two buttons take, in place of the view toggle.
+/// Width of the header's slot the two buttons take, in place of the view switch; and the least
+/// it makes do with in a narrow header, the buttons showing only their glyphs.
 pub(super) const BUTTONS_W: f32 = 268.0;
+pub(super) const BUTTONS_LEAST_W: f32 = 76.0;
 const RESTORE_W: f32 = 96.0;
 
 /// Which bin actions make sense now.
@@ -222,41 +226,55 @@ impl FileMan {
         }
     }
 
-    /// Restore and Empty, as two pills in the toolbar where the view toggle sits elsewhere.
+    /// Restore and Empty, as two pills in the header where the view switch sits elsewhere; only
+    /// their glyphs when the header gave `rect` less than `BUTTONS_W`.
     pub(super) fn bin_buttons(&self, ui: &mut Ui, rect: Rect, actions: &mut Vec<Action>) {
         let tab = &self.tabs[self.active];
         let on = enabled(tab.selected.len(), tab.entries.len());
-        let (restore, empty) = rect.split_left_right_at_x(rect.left() + RESTORE_W);
+        let split = if rect.width() > (BUTTONS_W + BUTTONS_LEAST_W) / 2.0 { RESTORE_W } else { (rect.width() - 8.0) / 2.0 };
+        let (restore, empty) = rect.split_left_right_at_x(rect.left() + split);
         let empty = Rect::from_min_max(egui::pos2(empty.left() + 8.0, empty.top()), empty.max);
-        if pill(ui, restore, glyph::UNDO, "Restore", on.restore, "Restore the selected items") {
+        if pill(ui, restore, glyph::UNDO, "Restore", on.restore, "Restore the selected items", false) {
             actions.push(Action::BinRestore);
         }
-        if pill(ui, empty, glyph::DELETE, "Empty Recycle Bin", on.empty, "Delete everything in the bin for good") {
+        if pill(ui, empty, glyph::DELETE, "Empty Recycle Bin", on.empty, "Delete everything in the bin for good", true) {
             actions.push(Action::BinEmpty);
         }
     }
 }
 
-/// A rounded button with a glyph and a label. True when clicked.
-fn pill(ui: &mut Ui, rect: Rect, g: char, label: &str, enabled: bool, tip: &str) -> bool {
+/// A pill button with a glyph and a label (only the glyph when the pill is too narrow for it).
+/// True when clicked. `danger` (emptying the bin) gives it Glasshouse's destructive look while it
+/// can be used: red text on a faint red wash inside a hairline.
+fn pill(ui: &mut Ui, rect: Rect, g: char, label: &str, enabled: bool, tip: &str, danger: bool) -> bool {
     let c = colors();
     let sense = if enabled { Sense::click() } else { Sense::hover() };
     let resp = ui.interact(rect, Id::new(("bin-pill", label)), sense).on_hover_text(tip);
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, label));
-    theme::focus_ring(ui, &resp, rect, 16.0);
-    if c.high_contrast {
-        ui.painter().rect_stroke(rect, CornerRadius::same(16), egui::Stroke::new(1.0_f32, c.text), egui::StrokeKind::Inside);
+    theme::focus_ring(ui, &resp, rect, rect.height() / 2.0);
+    let hovered = enabled && resp.hovered();
+    let (_, _, line) = soft_colors(c.light);
+    let (fill, edge, ink, icon) = if c.high_contrast {
+        // The window colour inside a text-coloured outline (drawn over the fill), no red.
+        (c.control, egui::Stroke::new(1.0_f32, c.text), c.text, c.accent_text)
+    } else if danger && enabled {
+        let wash = shows_as(theme::with_alpha(c.danger_text, if hovered { 46 } else { 22 }));
+        (wash, line, c.danger_text, c.danger_text)
+    } else {
+        (if hovered { c.control_hover } else { c.control }, egui::Stroke::NONE, c.text, c.accent_text)
+    };
+    ui.painter().rect(rect, shape::pill(rect), fill, edge, egui::StrokeKind::Inside);
+    let color = if enabled { ink } else { theme::with_alpha(c.muted, 90) };
+    let glyph_only = rect.width() < 60.0;
+    let (at, align) = if glyph_only {
+        (rect.center(), Align2::CENTER_CENTER)
+    } else {
+        (egui::pos2(rect.left() + 14.0, rect.center().y), Align2::LEFT_CENTER)
+    };
+    ui.painter().text(at, align, g, icon_font(13.0), if enabled { icon } else { color });
+    if glyph_only {
+        return enabled && resp.clicked();
     }
-    let fill = if enabled && resp.hovered() { c.control_hover } else { c.control };
-    ui.painter().rect_filled(rect, CornerRadius::same(16), fill);
-    let color = if enabled { c.text } else { theme::with_alpha(c.muted, 90) };
-    ui.painter().text(
-        egui::pos2(rect.left() + 14.0, rect.center().y),
-        Align2::LEFT_CENTER,
-        g,
-        icon_font(13.0),
-        if enabled { c.accent_text } else { color },
-    );
     ui.painter().text(
         egui::pos2(rect.left() + 36.0, rect.center().y),
         Align2::LEFT_CENTER,

@@ -1,17 +1,16 @@
 //! The Services page: Windows services, read only. The list (a click on a header sorts, the
-//! title pill's search filters), the selected service's description under it, and a pill of
-//! commands. The services are read through the Service Control Manager off the UI thread, and
+//! header's search filters), the selected service's description under it, and a bar of
+//! commands, each a box on the sheet. The services are read through the Service Control Manager off the UI thread, and
 //! only while this page shows (see [`Page::tick`]).
 
 mod list;
 mod pill;
 
-use crate::app::{State, MARGIN, RADIUS};
+use crate::app::{card_box, State, MARGIN};
 use egui::{pos2, Rect};
 use shellman_core::services::logic::{self, SortBy};
 use shellman_core::services::reader::Reader;
 use shellman_core::services::Service;
-use shellman_ui::glass::islands::Island;
 use std::time::{Duration, Instant};
 
 const PILL_H: f32 = 52.0;
@@ -82,7 +81,7 @@ impl Page {
     }
 }
 
-pub fn show(ui: &mut egui::Ui, area: Rect, st: &mut State, islands: &mut Vec<Island>) {
+pub fn show(ui: &mut egui::Ui, area: Rect, st: &mut State) {
     let pill = Rect::from_min_max(pos2(area.left(), area.bottom() - PILL_H), area.max);
     let mut bottom = pill.top() - MARGIN;
     let card = st.services.current().is_some().then(|| {
@@ -92,13 +91,13 @@ pub fn show(ui: &mut egui::Ui, area: Rect, st: &mut State, islands: &mut Vec<Isl
     });
     let list = Rect::from_min_max(area.min, pos2(area.right(), bottom));
     if list.height() > 60.0 {
-        islands.push(Island::new(list, RADIUS));
+        card_box(ui, list);
         list::show(ui, list, st);
     }
     if let Some(card) = card.filter(|c| c.top() > area.top()) {
-        islands.push(Island::new(card, RADIUS));
+        card_box(ui, card);
         list::card(ui, card, st);
     }
-    islands.push(Island::pill(pill));
+    card_box(ui, pill);
     pill::show(ui, pill, st);
 }

@@ -14,7 +14,7 @@ use shellman_core::system::display::modes::{self, Group};
 use shellman_core::system::display::page::{self as model, Change, Monitor, Orientation, Page, Topology};
 use shellman_core::system::display::{revert, DisplayPage};
 use shellman_ui::theme;
-use shellman_ui::widgets::switch;
+use shellman_ui::widgets::toggle;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -119,58 +119,66 @@ pub fn show(ui: &mut egui::Ui, st: &mut State) {
     let Some(h) = v.handle.clone() else { return };
     if !v.loaded {
         page::group(ui, "", |ui| {
-            ui.label(theme::muted("Reading the displays..."));
+            page::row_with(ui, |ui| {
+                ui.label(theme::muted("Reading the displays..."));
+            });
         });
         return;
     }
     if v.page.monitors.is_empty() {
         page::group(ui, "", |ui| {
-            ui.label(theme::muted("Windows reports no active display."));
+            page::row_with(ui, |ui| {
+                ui.label(theme::muted("Windows reports no active display."));
+            });
         });
         return;
     }
     if let Some(deadline) = v.page.pending {
-        page::group(ui, "", |ui| confirm(ui, &h, deadline));
+        page::group(ui, "Keep these display settings?", |ui| confirm(ui, &h, deadline));
     }
     let duplicated = v.page.topology == Some(Topology::Duplicate);
-    page::group(ui, "", |ui| arrangement(ui, v, duplicated));
+    page::group(ui, "Arrangement", |ui| arrangement(ui, v, duplicated));
     if let Some(m) = v.page.monitors.iter().find(|m| m.id == v.selected).cloned() {
-        page::group(ui, "", |ui| monitor_section(ui, v, &m));
+        let main = v.primary == m.id;
+        let title = format!("{} \u{b7} {}{}", m.number, m.name.trim(), if main { " \u{b7} main display" } else { "" });
+        page::group(ui, &title, |ui| monitor_section(ui, v, &m));
     }
-    page::group(ui, "", |ui| {
-        apply_row(ui, v);
-        page::gap(ui);
-        links(ui);
-    });
+    page::group(ui, "Apply", |ui| apply_row(ui, v));
+    page::group(ui, "More display settings", links);
 }
 
 /// "Keep these display settings?" with the seconds left. The worker reverts by itself at the end;
 /// this only shows it.
 fn confirm(ui: &mut egui::Ui, h: &DisplayPage, deadline: Instant) {
     let left = revert::seconds_left(deadline, Instant::now());
-    page::label(ui, "Keep these display settings?");
-    ui.label(theme::muted(format!("The previous settings come back in {left} s if you do nothing.")).size(12.5));
-    ui.add_space(6.0);
-    ui.horizontal(|ui| {
-        if ui.button("Keep changes").clicked() {
-            h.keep();
-        }
+    let detail = format!("The previous settings come back in {left} s if you do nothing.");
+    page::row(ui, "Keep these display settings?", &detail, |ui| {
+        // Right to left: the first button added is the row's last.
         if ui.button("Revert").clicked() {
             h.revert();
+        }
+        if ui.button("Keep changes").clicked() {
+            h.keep();
         }
     });
     ui.ctx().request_repaint_after(Duration::from_millis(500));
 }
 
 fn arrangement(ui: &mut egui::Ui, v: &mut DisplayView, duplicated: bool) {
-    page::label(ui, "Arrangement");
     let Some(h) = v.handle.clone() else { return };
     if duplicated {
-        ui.label(theme::muted("The screens show the same picture, so there is nothing to arrange.").size(12.5));
+        page::row_with(ui, |ui| {
+            ui.add(egui::Label::new(theme::muted("The screens show the same picture, so there is nothing to arrange.").size(12.5)).wrap());
+        });
     } else {
         let plan = v.plan();
         let sel = v.page.monitors.iter().position(|m| m.id == v.selected).unwrap_or(0);
-        let out = display_map::show(ui, &plan, &v.page.monitors, sel, &v.primary, &mut v.drag);
+        let out = page::row_with(ui, |ui| {
+            let out = display_map::show(ui, &plan, &v.page.monitors, sel, &v.primary, &mut v.drag);
+            ui.add_space(6.0);
+            ui.label(theme::muted("Drag a screen to move it. Screens snap to each other's edges.").size(12.5));
+            out
+        });
         if let Some(i) = out.select {
             v.selected = v.page.monitors[i].id.clone();
         }
@@ -179,48 +187,39 @@ fn arrangement(ui: &mut egui::Ui, v: &mut DisplayView, duplicated: bool) {
             v.staged[i].y = y;
             v.settle_positions();
         }
-        ui.add_space(4.0);
-        ui.label(theme::muted("Drag a screen to move it. Screens snap to each other's edges.").size(12.0));
     }
-    ui.add_space(8.0);
-    ui.horizontal(|ui| {
-        if ui.button("Identify").on_hover_text("Show each screen's number for a few seconds").clicked() {
-            identify::show(v.page.monitors.iter().map(|m| (m.rect, m.number)).collect());
+    let identify_now = page::row(ui, "Identify", "Show each screen's number for a few seconds.", |ui| ui.button("Identify").clicked());
+    if identify_now {
+        identify::show(v.page.monitors.iter().map(|m| (m.rect, m.number)).collect());
+    }
+    if v.page.monitors.len() > 1 {
+        let mut layout = v.page.topology.unwrap_or(Topology::Other);
+        let before = layout;
+        let busy = v.page.pending.is_some();
+        let opts = [(Topology::Extend, "Extend"), (Topology::Duplicate, "Duplicate")];
+        if page::row(ui, "Multiple displays", "", |ui| page::segmented(ui, &mut layout, &opts)) && layout != before && !busy {
+            h.set_topology(layout);
         }
-        if v.page.monitors.len() > 1 {
-            ui.add_space(12.0);
-            let mut layout = v.page.topology.unwrap_or(Topology::Other);
-            let before = layout;
-            ui.label(theme::muted("Multiple displays").size(12.0));
-            let busy = v.page.pending.is_some();
-            let opts = [(Topology::Extend, "Extend"), (Topology::Duplicate, "Duplicate")];
-            if page::segmented(ui, &mut layout, &opts) && layout != before && !busy {
-                h.set_topology(layout);
-            }
-        }
-    });
+    }
 }
+
+/// How wide a row's own drop-down is.
+const PICKER_W: f32 = 260.0;
 
 fn monitor_section(ui: &mut egui::Ui, v: &mut DisplayView, m: &Monitor) {
     let i = v.page.monitors.iter().position(|x| x.id == m.id).unwrap_or(0);
     let main = v.primary == m.id;
-    page::label(ui, &format!("{} \u{b7} {}{}", m.number, m.name.trim(), if main { " \u{b7} main display" } else { "" }));
-    ui.add_space(4.0);
     let staged = v.staged[i].clone();
     resolution_and_rate(ui, m, &staged, &mut v.staged[i]);
-    ui.add_space(10.0);
-    page::label(ui, "Orientation");
     let mut o = v.staged[i].orientation;
     let rows: Vec<(String, bool)> = Orientation::ALL.iter().map(|opt| (opt.label().to_string(), *opt == o)).collect();
-    if let Some(k) = dropdown(ui, ("orient", &m.id), 220.0, o.label(), &rows) {
+    if let Some(k) = page::row(ui, "Orientation", "", |ui| dropdown(ui, ("orient", &m.id), PICKER_W, o.label(), &rows)) {
         o = Orientation::ALL[k];
     }
     if o != v.staged[i].orientation {
         v.staged[i].orientation = o;
     }
-    ui.add_space(10.0);
     if let Some(s) = m.scale {
-        page::label(ui, "Scale");
         let now = v.scale.get(&m.id).copied().or(s.current()).unwrap_or(100);
         let options: Vec<_> = s.options().into_iter().collect();
         let rows: Vec<(String, bool)> = options
@@ -230,26 +229,21 @@ fn monitor_section(ui: &mut egui::Ui, v: &mut DisplayView, m: &Monitor) {
                 (format!("{p}%{tag}"), p == now)
             })
             .collect();
-        if let Some(k) = dropdown(ui, ("scale", &m.id), 220.0, &format!("{now}%"), &rows) {
+        if let Some(k) = page::row(ui, "Scale", "", |ui| dropdown(ui, ("scale", &m.id), PICKER_W, &format!("{now}%"), &rows)) {
             v.scale.insert(m.id.clone(), options[k]);
         }
-        ui.add_space(10.0);
     }
     if let Some(hdr) = m.hdr {
         let mut on = v.hdr.get(&m.id).copied().unwrap_or(hdr.enabled);
-        if switch(ui, &mut on, "HDR").changed() {
+        if page::row(ui, "HDR", "", |ui| toggle(ui, &mut on, "HDR")).changed() {
             v.hdr.insert(m.id.clone(), on);
         }
-        ui.add_space(10.0);
     }
     if let Some(screen) = v.screens.iter().find(|s| s.id == m.id) {
-        page::label(ui, screen.label());
-        if let Some(hint) = screen.hint() {
-            ui.label(theme::muted(hint).size(12.0));
-            ui.add_space(4.0);
-        }
         let id = egui::Id::new(("display-brightness", &m.id));
-        let level = ui.horizontal(|ui| level_slider(ui, id, "Brightness", screen.percent as f32 / 100.0, false, 0.0)).inner;
+        let level = page::stacked(ui, screen.label(), screen.hint().unwrap_or(""), |ui| {
+            ui.horizontal(|ui| level_slider(ui, id, "Brightness", screen.percent as f32 / 100.0, false, 0.0)).inner
+        });
         if let (Some(level), Some(b)) = (level, &v.brightness) {
             let percent = (level * 100.0).round() as u8;
             b.set(&m.id, percent);
@@ -258,9 +252,8 @@ fn monitor_section(ui: &mut egui::Ui, v: &mut DisplayView, m: &Monitor) {
                 s.percent = percent;
             }
         }
-        ui.add_space(10.0);
     }
-    if !main && ui.button("Make this my main display").clicked() {
+    if !main && page::row(ui, "Main display", "Where the taskbar and new windows start.", |ui| ui.button("Make this my main display").clicked()) {
         v.primary = m.id.clone();
         v.settle_positions();
     }
@@ -268,22 +261,19 @@ fn monitor_section(ui: &mut egui::Ui, v: &mut DisplayView, m: &Monitor) {
 
 /// The resolution and refresh pickers; picking a resolution keeps the rate where it can.
 fn resolution_and_rate(ui: &mut egui::Ui, m: &Monitor, staged: &Change, out: &mut Change) {
-    page::label(ui, "Resolution");
     let group = |c: &Change| m.groups.iter().find(|g| g.w == c.w && g.h == c.h);
     let text = |g: &Group| format!("{}{}", g.label(), if g.recommended { " (recommended)" } else { "" });
     let shown = group(staged).map(text).unwrap_or_else(|| format!("{} \u{d7} {}", staged.w, staged.h));
     let rows: Vec<(String, bool)> = m.groups.iter().map(|g| (text(g), g.w == staged.w && g.h == staged.h)).collect();
-    if let Some(k) = dropdown(ui, ("res", &m.id), 300.0, &shown, &rows) {
+    if let Some(k) = page::row(ui, "Resolution", "", |ui| dropdown(ui, ("res", &m.id), 300.0, &shown, &rows)) {
         let g = &m.groups[k];
         out.w = g.w;
         out.h = g.h;
         out.hz = modes::rate_for(g, staged.hz);
     }
-    ui.add_space(10.0);
-    page::label(ui, "Refresh rate");
     let rates: Vec<u32> = group(out).map(|g| g.rates.clone()).unwrap_or_default();
     let rows: Vec<(String, bool)> = rates.iter().map(|&r| (format!("{r} Hz"), r == out.hz)).collect();
-    if let Some(k) = dropdown(ui, ("hz", &m.id), 220.0, &format!("{} Hz", out.hz), &rows) {
+    if let Some(k) = page::row(ui, "Refresh rate", "", |ui| dropdown(ui, ("hz", &m.id), PICKER_W, &format!("{} Hz", out.hz), &rows)) {
         out.hz = rates[k];
     }
 }
@@ -294,7 +284,22 @@ fn apply_row(ui: &mut egui::Ui, v: &mut DisplayView) {
     let fits = model::plan_valid(&plan);
     let busy = v.page.pending.is_some();
     let dirty = v.dirty();
-    ui.horizontal(|ui| {
+    let mut detail = String::new();
+    if dirty && !fits {
+        detail.push_str("The screens must touch along an edge without overlapping.");
+    }
+    if let Some(n) = &v.page.notice {
+        if !detail.is_empty() {
+            detail.push('\n');
+        }
+        detail.push_str(n);
+    }
+    page::row(ui, "Apply changes", &detail, |ui| {
+        // Right to left: Reset is the row's last control, Apply the one before it.
+        if ui.add_enabled(dirty, egui::Button::new("Reset")).clicked() {
+            let monitors = v.page.monitors.clone();
+            v.reset_to(&monitors);
+        }
         if ui.add_enabled(dirty && fits && !busy, egui::Button::new("Apply")).clicked() {
             for m in &v.page.monitors {
                 if let Some(p) = v.scale_wanted(m) {
@@ -312,29 +317,17 @@ fn apply_row(ui: &mut egui::Ui, v: &mut DisplayView) {
                 h.refresh();
             }
         }
-        if ui.add_enabled(dirty, egui::Button::new("Reset")).clicked() {
-            let monitors = v.page.monitors.clone();
-            v.reset_to(&monitors);
-        }
     });
-    if dirty && !fits {
-        ui.add_space(4.0);
-        ui.label(theme::muted("The screens must touch along an edge without overlapping.").size(12.0));
-    }
-    if let Some(n) = &v.page.notice {
-        ui.add_space(4.0);
-        ui.label(theme::muted(n).size(12.5));
-    }
 }
 
 fn links(ui: &mut egui::Ui) {
-    ui.spacing_mut().item_spacing.y = 4.0;
     if link_row(ui, "Colour management").clicked() {
         let _ = std::process::Command::new("colorcpl.exe").spawn();
     }
     if link_row(ui, "Adjust ClearType text").clicked() {
         let _ = std::process::Command::new("cttune.exe").spawn();
     }
-    ui.add_space(6.0);
-    ui.label(theme::muted("Night light is kept by Windows in a private format, so it cannot be set from here.").size(12.0));
+    page::row_with(ui, |ui| {
+        ui.add(egui::Label::new(theme::muted("Night light is kept by Windows in a private format, so it cannot be set from here.").size(12.5)).wrap());
+    });
 }

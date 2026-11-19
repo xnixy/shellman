@@ -4,7 +4,7 @@
 use egui::{pos2, Color32, Mesh, Painter, Pos2, Rect, Shape, Stroke};
 use shellman_core::procs::history::{Ring, LEN};
 use shellman_ui::glass::islands::shows_as;
-use shellman_ui::theme::{self, colors};
+use shellman_ui::theme::{self, colors, shape};
 
 /// Where each value goes in `rect`, `max` at the top. The newest value is at the right edge and
 /// each older one a step left, so a graph that is not full yet grows in from the right.
@@ -41,15 +41,14 @@ pub fn draw(painter: &Painter, rect: Rect, ring: &Ring, max: f32, color: Color32
     let c = colors();
     if c.high_contrast {
         // No tints: the well is outlined, the line drawn alone.
-        painter.rect_stroke(rect, 10.0, Stroke::new(1.0_f32, c.text), egui::StrokeKind::Inside);
+        painter.rect_stroke(rect, shape::TILE, Stroke::new(1.0_f32, c.text), egui::StrokeKind::Inside);
         let pts = points(ring, rect.shrink2(egui::vec2(1.0, 3.0)), max);
         if pts.len() > 1 {
             painter.add(Shape::line(pts, Stroke::new(2.0_f32, color)));
         }
         return;
     }
-    let well = shows_as(theme::with_alpha(c.text, if c.light { 10 } else { 8 }));
-    painter.rect_filled(rect, 10.0, well);
+    painter.rect_filled(rect, shape::TILE, c.well);
     if grid {
         let line = Stroke::new(1.0_f32, shows_as(theme::with_alpha(c.text, 12)));
         for i in 1..4 {

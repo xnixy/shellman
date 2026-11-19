@@ -1,14 +1,15 @@
-//! The command bar along the bottom: a pill that says what is selected and offers what can be
-//! done to it (Open, Copy, Cut, Rename, Move to…, Copy to…, Delete, Properties); with nothing
-//! selected, what can be done in the folder (New folder, Paste, Select all, Sort, View). In the
-//! Recycle Bin, Restore and Delete for good. When the window is narrow the buttons drop their
-//! labels, the least used first (see `fit`).
+//! The bar along the bottom of the pane, under a hairline: at its left what is selected (or how
+//! many items there are), at its right what can be done to the selection (Open, Copy, Cut,
+//! Rename, Move to…, Copy to…, Delete, Properties); with nothing selected, what can be done in
+//! the folder (New folder, Paste, Select all, Sort, View). In the Recycle Bin, Restore and Delete
+//! for good. When the window is narrow the buttons drop their labels, the least used first (see
+//! `fit`).
 //!
-//! Messages ("Copy done") show in a small pill of their own beside it, or in the free end of
-//! the top row, never over a button (see `toast_slot`).
+//! Messages ("Copy done") show in the bar's free stretch between the two, or in the free end of
+//! the tabs row, never over a button (see `toast_slot`).
 
 use super::actions::Action;
-use super::plan::GAP;
+use super::plan::INSET;
 use super::tab::Loc;
 use crate::settings::ViewMode;
 use egui::{Align2, Color32, FontId, Id, Rect, Ui, Vec2};
@@ -18,10 +19,12 @@ use shellman_ui::menu::popup::Anchor;
 use shellman_ui::theme::{colors, glyph, semibold_font};
 
 const TOAST_SECS: f64 = 3.0;
-/// Inside the pill, at each end, and between its parts.
-const PAD: f32 = 8.0;
-const LEAD: f32 = 20.0;
+/// The least room between the text at the bar's left and its buttons.
+const PAD: f32 = 16.0;
+/// Between the bar's parts.
 const SPACE: f32 = 6.0;
+/// Between a message and what is beside it.
+const TOAST_GAP: f32 = 10.0;
 /// A button without its label.
 const ICON_ONLY_W: f32 = 38.0;
 const TOAST_H: f32 = 32.0;
@@ -106,10 +109,10 @@ pub(super) fn buttons(place: Place, count: usize, clip: bool, view: ViewMode) ->
     list
 }
 
-/// Which buttons keep their labels when the bar may be `room` wide: `lead` for the text at its
-/// start and `full`/`bare` for each button with and without its label. Labels go from the end
-/// of the list backwards (the least used are last), but the first button's goes last of all.
-/// Returns the labels kept, and the bar's width.
+/// Which buttons keep their labels when the bar has `room`: `lead` for the text at its start and
+/// `full`/`bare` for each button with and without its label, with at least `PAD` between the two.
+/// Labels go from the end of the list backwards (the least used are last), but the first
+/// button's goes last of all. Returns the labels kept, and the width it all takes.
 pub(super) fn fit(lead: f32, full: &[f32], bare: f32, room: f32) -> (Vec<bool>, f32) {
     let gaps = SPACE * full.len().saturating_sub(1) as f32;
     let width = |labels: &[bool]| {
@@ -137,33 +140,24 @@ pub(super) fn fit(lead: f32, full: &[f32], bare: f32, room: f32) -> (Vec<bool>, 
     (labels, w)
 }
 
-/// Where a message of `w` goes: beside the bottom `pill` in `band` (right, else left), else in
-/// `top` (the free end of the top row), else wherever there is most room, cut to fit. Never over
-/// the pill.
-pub(super) fn toast_slot(band: Rect, pill: Rect, top: Rect, w: f32) -> Rect {
-    let h = TOAST_H.min(band.height());
-    let right = Rect::from_min_max(egui::pos2(pill.right() + GAP, band.top()), band.max);
-    let left = Rect::from_min_max(band.min, egui::pos2(pill.left() - GAP, band.bottom()));
-    let at = |area: Rect, from_right: bool| {
+/// Where a message of `w` goes: at the right of `free` (the bar's stretch between its text and
+/// its buttons), else in `top` (the free end of the tabs row), else wherever there is most room,
+/// cut to fit. Never over the bar's text or buttons.
+pub(super) fn toast_slot(free: Rect, top: Rect, w: f32) -> Rect {
+    let at = |area: Rect| {
+        let h = TOAST_H.min(area.height());
         let w = w.min(area.width()).max(0.0);
-        let x = if from_right { area.right() - w } else { area.left() };
-        Rect::from_min_size(egui::pos2(x, area.center().y - h / 2.0), Vec2::new(w, h))
+        Rect::from_min_size(egui::pos2(area.right() - w, area.center().y - h / 2.0), Vec2::new(w, h))
     };
-    if right.width() >= w {
-        return at(right, true);
-    }
-    if left.width() >= w {
-        return at(left, false);
+    let free = Rect::from_min_max(egui::pos2(free.left() + TOAST_GAP, free.top()), egui::pos2(free.right() - TOAST_GAP, free.bottom()));
+    let top = Rect::from_min_max(egui::pos2(top.left() + TOAST_GAP, top.top()), top.max);
+    if free.width() >= w {
+        return at(free);
     }
     if top.width() >= w {
-        return at(top, true);
+        return at(top);
     }
-    // The most room there is.
-    let best = [right, left, top]
-        .into_iter()
-        .max_by(|a, b| a.width().total_cmp(&b.width()))
-        .unwrap_or(right);
-    at(best, best != left)
+    at(if top.width() > free.width() { top } else { free })
 }
 
 fn text_width(ui: &Ui, text: &str, font: FontId) -> f32 {
@@ -174,9 +168,9 @@ fn text_width(ui: &Ui, text: &str, font: FontId) -> f32 {
 }
 
 impl super::FileMan {
-    /// The message pill ("Copy done"), while there is a message; it is added to `extra`. `band`
-    /// is the bottom band, `pill` the command bar in it, `top` the free end of the top row.
-    pub(super) fn toast_pill(&mut self, ui: &mut Ui, band: Rect, pill: Rect, top: Rect, extra: &mut Vec<Rect>) {
+    /// The message ("Copy done"), while there is one: in `free`, the bar's free stretch, else in
+    /// `top`, the free end of the tabs row.
+    pub(super) fn toast_text(&mut self, ui: &mut Ui, free: Rect, top: Rect) {
         let c = colors();
         let now = ui.input(|i| i.time);
         let Some((msg, at)) = &self.toast else { return };
@@ -184,18 +178,19 @@ impl super::FileMan {
             return;
         }
         let font = FontId::proportional(12.5);
-        let w = text_width(ui, msg, font.clone()) + 36.0;
-        let r = toast_slot(band, pill, top, w);
-        shellman_ui::widgets::draw_text(ui, r.shrink2(Vec2::new(16.0, 0.0)), msg, font, c.accent_text, false);
-        extra.push(r);
+        let w = text_width(ui, msg, font.clone());
+        let r = toast_slot(free, top, w);
+        shellman_ui::widgets::draw_text(ui, r, msg, font, c.accent_text, false);
         let left = TOAST_SECS - (now - at);
         ui.ctx()
             .request_repaint_after(std::time::Duration::from_secs_f64(left.max(0.05)));
     }
 
-    /// Draw the command bar in `band`; returns its pill, if one shows.
-    pub(super) fn band(&mut self, ui: &mut Ui, band: Rect, actions: &mut Vec<Action>) -> Option<Rect> {
+    /// Draw the bar in `band`, the hairline above it; returns its free stretch, for messages.
+    pub(super) fn band(&mut self, ui: &mut Ui, band: Rect, actions: &mut Vec<Action>) -> Rect {
         let c = colors();
+        hairline(ui, band);
+        let inner = band.shrink2(Vec2::new(INSET, 0.0));
         let tab = &self.tabs[self.active];
         let place = match tab.loc {
             Loc::Pc => {
@@ -203,7 +198,7 @@ impl super::FileMan {
                     0 => format!("{} drives", self.drives.len()),
                     n => format!("{} drives, {n} Linux", self.drives.len()),
                 };
-                return Some(self.muted_pill(ui, band, &text));
+                return muted_text(ui, inner, &text);
             }
             Loc::Bin => Place::Bin,
             Loc::Tag(_) => Place::Tag,
@@ -228,7 +223,7 @@ impl super::FileMan {
         };
         let size = (count > 0 && bytes > 0).then(|| fsops::format_size(bytes));
         if list.is_empty() {
-            return Some(self.muted_pill(ui, band, &lead_text));
+            return muted_text(ui, inner, &lead_text);
         }
         let lead_w = text_width(ui, &lead_text, lead_font.clone());
         let size_w = size
@@ -238,11 +233,10 @@ impl super::FileMan {
             .iter()
             .map(|b| chip_width(ui, b.label, true, b.kind))
             .collect();
-        let lead = LEAD + lead_w + size_w + SPACE * 2.0;
-        let (labels, wanted) = fit(lead, &full, ICON_ONLY_W, band.width());
-        let pill = super::plan::centred(band, wanted);
-        let y = pill.center().y;
-        let mut x = pill.left() + LEAD;
+        let lead = lead_w + SPACE * 2.0 + size_w;
+        let (labels, _) = fit(lead, &full, ICON_ONLY_W, inner.width());
+        let y = inner.center().y;
+        let mut x = inner.left();
         let p = ui.painter();
         p.text(egui::pos2(x, y), Align2::LEFT_CENTER, &lead_text, lead_font, lead_color);
         x += lead_w + SPACE * 2.0;
@@ -256,8 +250,13 @@ impl super::FileMan {
             );
             x += size_w;
         }
-        for ((b, w), label) in list.into_iter().zip(full).zip(labels) {
-            let w = if label { w } else { ICON_ONLY_W };
+        let lead_end = x;
+        // The buttons at the right end.
+        let widths: Vec<f32> = full.iter().zip(&labels).map(|(w, &on)| if on { *w } else { ICON_ONLY_W }).collect();
+        let buttons_w = widths.iter().sum::<f32>() + SPACE * widths.len().saturating_sub(1) as f32;
+        let mut x = (inner.right() - buttons_w).max(lead_end + PAD);
+        let free = Rect::from_min_max(egui::pos2(lead_end, band.top()), egui::pos2(x.max(lead_end), band.bottom()));
+        for ((b, w), label) in list.into_iter().zip(widths).zip(labels) {
             let r = Rect::from_min_size(egui::pos2(x, y - CHIP_H / 2.0), Vec2::new(w, CHIP_H));
             x += w + SPACE;
             let resp = ui
@@ -287,19 +286,24 @@ impl super::FileMan {
                 _ => {}
             }
         }
-        Some(pill)
+        free
     }
+}
 
-    /// A small muted pill with `text` in the middle of `band`.
-    fn muted_pill(&self, ui: &Ui, band: Rect, text: &str) -> Rect {
-        let c = colors();
-        let font = FontId::proportional(12.5);
-        let w = text_width(ui, text, font.clone()) + LEAD * 2.0;
-        let pill = Rect::from_center_size(band.center(), Vec2::new(w.min(band.width()), 32.0));
-        ui.painter()
-            .text(pill.center(), Align2::CENTER_CENTER, text, font, c.muted);
-        pill
-    }
+/// The hairline along the top of the bottom bar `band`, between it and the folder.
+pub(super) fn hairline(ui: &Ui, band: Rect) {
+    let c = colors();
+    let line = if c.high_contrast { c.text } else { c.hairline };
+    ui.painter().hline(band.x_range(), band.top() + 0.5, egui::Stroke::new(1.0_f32, line));
+}
+
+/// Muted `text` at the left of `inner`; returns the stretch right of it.
+fn muted_text(ui: &Ui, inner: Rect, text: &str) -> Rect {
+    let c = colors();
+    let font = FontId::proportional(12.5);
+    let w = text_width(ui, text, font.clone()).min(inner.width());
+    shellman_ui::widgets::draw_text(ui, Rect::from_min_size(inner.min, Vec2::new(w, inner.height())), text, font, c.muted, false);
+    Rect::from_min_max(egui::pos2(inner.left() + w, inner.top()), inner.max)
 }
 
 #[cfg(test)]
@@ -360,17 +364,17 @@ mod tests {
     fn a_message_never_covers_the_bar() {
         let band = Rect::from_min_size(egui::pos2(80.0, 600.0), Vec2::new(1000.0, 44.0));
         let top = Rect::from_min_size(egui::pos2(500.0, 12.0), Vec2::new(300.0, 40.0));
-        // A narrow bar: beside it, on the right.
-        let pill = Rect::from_center_size(band.center(), Vec2::new(300.0, 44.0));
-        let r = toast_slot(band, pill, top, 200.0);
-        assert!(!r.intersects(pill) && band.contains_rect(r));
-        assert_eq!(r.right(), band.right());
-        // A bar as wide as the band: up in the top row.
-        let wide = band;
-        let r = toast_slot(band, wide, top, 200.0);
+        // Room between the text and the buttons: there, at its right.
+        let free = Rect::from_min_max(egui::pos2(200.0, band.top()), egui::pos2(700.0, band.bottom()));
+        let r = toast_slot(free, top, 200.0);
+        assert!(free.contains_rect(r) && band.contains_rect(r));
+        assert_eq!(r.right(), free.right() - TOAST_GAP);
+        // No room there: up in the tabs row.
+        let tight = Rect::from_min_max(egui::pos2(200.0, band.top()), egui::pos2(260.0, band.bottom()));
+        let r = toast_slot(tight, top, 200.0);
         assert!(top.contains_rect(r));
-        // Too long for anywhere: cut to the most room, still clear of the bar.
-        let r = toast_slot(band, pill, top, 5000.0);
-        assert!(!r.intersects(pill));
+        // Too long for anywhere: cut to the most room, still clear of the text and buttons.
+        let r = toast_slot(free, top, 5000.0);
+        assert!(free.contains_rect(r));
     }
 }

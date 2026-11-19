@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 /// The window size a first start asks for, in points.
 pub const DEFAULT_SIZE: (f32, f32) = (1100.0, 700.0);
 /// The smallest window a saved rectangle may describe, in points (the viewport's minimum).
-/// Islands need this much room to stay apart (see `app::plan`).
+/// The layout needs this much room for its parts (see `app::plan`).
 pub const MIN_SIZE: (f32, f32) = (760.0, 480.0);
 
 /// A rectangle in physical pixels, edges as in a Win32 `RECT`.

@@ -207,7 +207,7 @@ impl super::TerminalApp {    /// Keys, typed text and pastes go to the shell of 
             return;
         }
         if self.find.has_focus(ctx) || self.chrome_has_focus(ctx) {
-            // The find pill, or a tab or button (Ctrl+F6), has the keyboard (Tab, Enter and
+            // Find, or a tab or button (Ctrl+F6), has the keyboard (Tab, Enter and
             // Escape are egui's then); the terminal's own shortcuts still work.
             let events = ctx.input(|i| i.events.clone());
             for event in events {

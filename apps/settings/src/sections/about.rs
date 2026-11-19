@@ -3,8 +3,8 @@
 
 use crate::page;
 use crate::state::State;
-use shellman_ui::theme::{self, colors};
-use shellman_ui::widgets::switch;
+use shellman_ui::theme;
+use shellman_ui::widgets::toggle;
 use shellman_update_core::state::{Outcome, State as UpdateState};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -23,23 +23,16 @@ static CHECK: Mutex<Check> = Mutex::new(Check { child: None, seen: None, error: 
 pub fn show(ui: &mut egui::Ui, st: &mut State) {
     page::heading(ui, "About", "shellman replaces everything Explorer does, in one style.");
 
-    page::group(ui, "", |ui| {
-        ui.label(
-            egui::RichText::new("shellman Settings")
-                .size(15.0)
-                .strong()
-                .color(colors().text),
-        );
-        ui.label(theme::muted(format!("Version {}", version())));
-    });
+    page::group(ui, "shellman", |ui| page::row(ui, "shellman Settings", &format!("Version {}", version()), |_| {}));
 
     page::group(ui, "Updates", |ui| updates(ui, st));
 
+    // Without Explorer these apps only open while Windows' own host for them runs; the desktop
+    // starts and watches it (`app_host`).
     page::group(ui, "Windows Settings, Calculator and the Store", |ui| {
-        // Without Explorer these apps only open while Windows' own host for them runs; the
-        // desktop starts and watches it (`app_host`).
-        ui.add(egui::Label::new(theme::muted("They need Windows' own host, which shellman runs for them.").size(12.0)).wrap());
-        ui.add_space(8.0);
+        page::row_with(ui, |ui| {
+            ui.add(egui::Label::new(theme::muted("They need Windows' own host, which shellman runs for them.").size(12.5)).wrap());
+        });
         super::winlink::windows_apps_choice(ui, st);
     });
 
@@ -49,19 +42,19 @@ pub fn show(ui: &mut egui::Ui, st: &mut State) {
 fn folder(ui: &mut egui::Ui) {
     match shellman_core::config::config_dir() {
         Some(dir) => {
-            ui.label(egui::RichText::new(dir.display().to_string()).color(colors().text));
-            ui.add_space(8.0);
-            if ui.button("Open settings folder").clicked() {
-                // It is created by the first save; make sure there is something to open.
-                let _ = std::fs::create_dir_all(&dir);
-                // In Files, not whatever the system opens folders with (Explorer).
-                if !shellman_core::sibling::start_with("files", &[&dir.display().to_string()]) {
-                    shellman_core::fsops::open(&dir);
+            page::row(ui, "Settings folder", &dir.display().to_string(), |ui| {
+                if ui.button("Open settings folder").clicked() {
+                    // It is created by the first save; make sure there is something to open.
+                    let _ = std::fs::create_dir_all(&dir);
+                    // In Files, not whatever the system opens folders with (Explorer).
+                    if !shellman_core::sibling::start_with("files", &[&dir.display().to_string()]) {
+                        shellman_core::fsops::open(&dir);
+                    }
                 }
-            }
+            });
         }
         None => {
-            ui.label(theme::muted("Windows did not say where."));
+            page::row(ui, "Settings folder", "Windows did not say where.", |_| {});
         }
     }
 }
@@ -72,11 +65,10 @@ fn version() -> String {
 }
 
 fn updates(ui: &mut egui::Ui, st: &mut State) {
-    if switch(ui, &mut st.shell.auto_update, "Update automatically").changed() {
+    let detail = "Looks for a new release about 5 minutes after you sign in, then once a day. A release is checked against shellman's signing key before it runs, and is never installed while an app is fullscreen or files are being copied. The apps restart; you are never signed out.";
+    if page::row(ui, "Update automatically", detail, |ui| toggle(ui, &mut st.shell.auto_update, "Update automatically")).changed() {
         st.save_shell();
     }
-    ui.label(theme::muted("Looks for a new release about 5 minutes after you sign in, then once a day. A release is checked against shellman's signing key before it runs, and is never installed while an app is fullscreen or files are being copied. The apps restart; you are never signed out.").size(12.0));
-    ui.add_space(8.0);
 
     let Ok(mut c) = CHECK.lock() else { return };
     // The helper ends by itself; read `update.json` again every second while it runs, else
@@ -106,7 +98,18 @@ fn updates(ui: &mut egui::Ui, st: &mut State) {
         state.detail = "the check was interrupted".into();
     }
 
-    ui.horizontal(|ui| {
+    let line = match &c.error {
+        Some(e) => e.clone(),
+        None if running && state.outcome != Outcome::Working => "Checking…".to_string(),
+        None => state.summary(),
+    };
+    let detail = if state.last_check > 0 && !busy {
+        format!("{line}\nLast checked {}.", ago(shellman_update_core::state::now().saturating_sub(state.last_check)))
+    } else {
+        line
+    };
+    // Right to left: the button at the row's end, the spinner before it.
+    page::row(ui, "Check now", &detail, |ui| {
         if ui.add_enabled(!busy, egui::Button::new("Check now")).clicked() {
             match start_check() {
                 Ok(child) => {
@@ -121,21 +124,12 @@ fn updates(ui: &mut egui::Ui, st: &mut State) {
             ui.spinner();
         }
     });
-    ui.add_space(4.0);
-    let line = match &c.error {
-        Some(e) => e.clone(),
-        None if running && state.outcome != Outcome::Working => "Checking…".to_string(),
-        None => state.summary(),
-    };
-    ui.label(egui::RichText::new(line).color(colors().text));
-    if state.last_check > 0 && !busy {
-        ui.label(theme::muted(format!("Last checked {}.", ago(shellman_update_core::state::now().saturating_sub(state.last_check)))).size(12.0));
-    }
-    ui.add_space(6.0);
     let page = if state.page.starts_with("https://") { state.page.clone() } else { shellman_update_core::RELEASES_PAGE.to_string() };
-    if ui.link("Release notes").on_hover_text(&page).clicked() {
-        open_link(page);
-    }
+    page::row(ui, "Release notes", "What changed in each release.", |ui| {
+        if ui.link("Open release notes").on_hover_text(&page).clicked() {
+            open_link(page.clone());
+        }
+    });
 }
 
 /// Start `shellman-update --now` from beside this exe (it installs what it finds, whatever the

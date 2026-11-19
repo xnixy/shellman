@@ -114,7 +114,7 @@ pub fn style(light: bool, rgb: u32, glass: f32) -> Style {
         1.0
     };
     // The radius only sizes the room left for the shadow; every island has its own.
-    Style::new(&Colors::new(light, accent), glass, 22.0)
+    Style::new(&Colors::new(light, accent), glass, shellman_ui::theme::shape::ISLAND)
 }
 
 /// One attached browser window.

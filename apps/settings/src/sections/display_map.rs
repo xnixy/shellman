@@ -5,7 +5,7 @@
 use egui::{Align2, CornerRadius, FontId, Pos2, Rect as ERect, Sense, Stroke, StrokeKind, Ui, Vec2};
 use shellman_core::system::display::geom::{self, Rect};
 use shellman_core::system::display::page::{Change, Monitor};
-use shellman_ui::theme::{self, colors};
+use shellman_ui::theme::{self, colors, shape};
 
 /// A drag in progress: where the monitor's corner wants to be, in desktop pixels.
 pub struct Drag {
@@ -28,9 +28,13 @@ const PAD: f32 = 14.0;
 const SNAP_PX: f32 = 14.0;
 
 pub fn show(ui: &mut Ui, plan: &[Change], monitors: &[Monitor], selected: usize, primary: &str, drag: &mut Option<Drag>) -> Out {
-    let c = colors();
     let (area, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), HEIGHT), Sense::hover());
-    ui.painter().rect_filled(area, CornerRadius::same(10), c.control);
+    // A well the monitors sit in: a field-filled panel, outlined in high contrast.
+    if colors().high_contrast {
+        ui.painter().rect(area, shape::corner(shape::TILE), colors().bg, Stroke::new(1.0_f32, colors().text), StrokeKind::Inside);
+    } else {
+        ui.painter().rect_filled(area, shape::corner(shape::TILE), colors().well);
+    }
     let rects: Vec<Rect> = plan.iter().map(Change::rect).collect();
     let mut out = Out::default();
     if rects.is_empty() {

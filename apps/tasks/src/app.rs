@@ -1,12 +1,13 @@
-//! The window: a rail of pages at the left, a title pill on top ("Task Manager / <page>", the
-//! search, how often it updates, the window buttons), and the page's islands below it.
+//! The window: one sheet of glass (`shellman_ui::sheet`). The rail of pages down the sidebar, a
+//! header bar over the page with its name, the search, how often it updates and Windows' own
+//! buttons, and the page's boxes under it.
 
 use crate::actions::Actions;
 use crate::histories::Histories;
 use crate::instance::Instance;
 use crate::model::List;
 use crate::{performance, processes, services};
-use egui::{pos2, vec2, Align2, Rect};
+use egui::{pos2, vec2, Align2, Rect, Stroke, StrokeKind};
 use shellman_core::procs::end::Native;
 use shellman_core::procs::native::NativeSource;
 use shellman_core::procs::sampler::Sampler;
@@ -17,20 +18,24 @@ use shellman_ui::chips::{self, Chip};
 use shellman_ui::glass::islands::{self, Island};
 use shellman_ui::glass::{GlassPanel, Style};
 use shellman_ui::rail;
-use shellman_ui::theme::{self, colors, glyph, icon_font, semibold_font, AccentChoice};
+use shellman_ui::sheet::Sheet;
+use shellman_ui::theme::{self, colors, glyph, icon_font, shape, AccentChoice};
 use std::collections::HashMap;
 use std::time::Duration;
 use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::WindowsAndMessaging::{IsIconic, IsWindowVisible};
 
-/// Space between the window's edge and the islands, and between islands.
-pub const MARGIN: f32 = 12.0;
-/// Corner radius of an island.
-pub const RADIUS: f32 = 22.0;
-
-const TITLE_H: f32 = 46.0;
-const BUTTON_H: f32 = 30.0;
-const SEARCH_W: f32 = 240.0;
+/// Space between boxes on a page.
+pub const MARGIN: f32 = 16.0;
+/// Corner radius of a box on the sheet.
+pub const RADIUS: f32 = shape::ISLAND;
+/// A page's room on either side of its boxes.
+pub const PAGE_PAD: f32 = 24.0;
+/// The sidebar is at least this wide when it shows names.
+const SIDEBAR_MIN: f32 = 240.0;
+/// The search field in the header bar.
+const SEARCH_W: f32 = 280.0;
+const SEARCH_H: f32 = 32.0;
 /// The update speeds offered, and the one to start with.
 const INTERVALS: [(u64, &str); 3] = [(500, "0.5 s"), (1000, "1 s"), (2000, "2 s")];
 const START_INTERVAL: Duration = Duration::from_millis(1000);
@@ -185,25 +190,31 @@ impl TasksApp {
     }
 
     fn layout(&mut self, ctx: &egui::Context) {
-        self.panel.set_style(Style::from_theme(RADIUS));
+        self.panel.set_style(Style::from_theme(shellman_ui::sheet::RADIUS));
         let mut list: Vec<Island> = Vec::new();
         egui::CentralPanel::default().frame(egui::Frame::new()).show(ctx, |ui| {
             let screen = ctx.screen_rect();
             let under = ui.painter().add(egui::Shape::Noop);
-            islands::drag_gaps(ui, screen);
-            let rail_w = rail::width(ui, &rail_entries(), self.rail_mode(screen));
-            let left = screen.left() + MARGIN + rail_w + MARGIN;
-            let title = Rect::from_min_max(pos2(left, screen.top() + MARGIN), pos2(screen.right() - MARGIN, screen.top() + MARGIN + TITLE_H));
-            list.push(Island::pill(title));
-            self.title(ui, title);
-            let top = title.bottom() + MARGIN;
-            // The rail runs the window's whole height, level with the title pill.
-            self.rail(ui, &mut list, screen, title.top());
-            let area = Rect::from_min_max(pos2(left, top), pos2(screen.right() - MARGIN, screen.bottom() - MARGIN));
+            let entries = rail_entries();
+            let mode = self.rail_mode(screen);
+            let rail_w = rail::width(ui, &entries, mode);
+            let side_w = if mode.icons_only() { rail_w } else { rail_w.max(SIDEBAR_MIN) };
+            let sheet = Sheet::new(ctx, screen, side_w);
+            list.push(sheet.island());
+            sheet.paint(ui);
+
+            let rest = sheet.sidebar_head(ui, if mode.icons_only() { "" } else { "Task Manager" });
+            self.rail(ui, &mut list, rest, screen, &entries, mode);
+
+            let tools = sheet.header(ui, self.page.label());
+            self.tools(ui, tools);
+
+            let body = sheet.body;
+            let area = Rect::from_min_max(pos2(body.left() + PAGE_PAD, body.top() + 8.0), pos2(body.right() - PAGE_PAD, body.bottom() - PAGE_PAD));
             match self.page {
-                Page::Processes => processes::show(ui, area, &mut self.st, &mut list),
-                Page::Performance => performance::show(ui, area, &mut self.st, &mut list),
-                Page::Services => services::show(ui, area, &mut self.st, &mut list),
+                Page::Processes => processes::show(ui, area, &mut self.st),
+                Page::Performance => performance::show(ui, area, &mut self.st),
+                Page::Services => services::show(ui, area, &mut self.st),
             }
             if !self.panel.composed() {
                 ui.painter().set(under, egui::Shape::Vec(islands::under(screen, &list, &self.panel.style())));
@@ -219,63 +230,72 @@ impl TasksApp {
         }
     }
 
-    /// "Task Manager / <page>", the search (on the Processes page), the update speed and the
-    /// window buttons.
-    fn title(&mut self, ui: &mut egui::Ui, rect: Rect) {
-        let c = colors();
-        let y = rect.center().y;
-        let name = ui.painter().text(pos2(rect.left() + 22.0, y), Align2::LEFT_CENTER, "Task Manager", semibold_font(15.0), c.text);
-        let slash = ui.painter().text(pos2(name.right() + 10.0, y), Align2::LEFT_CENTER, "/", egui::FontId::proportional(15.0), c.muted);
-        let label = self.page.label();
-        let w = chips::chip_width(ui, label, false, Chip::Accent);
-        let chip = Rect::from_center_size(pos2(slash.right() + 10.0 + w / 2.0, y), vec2(w, chips::CHIP_H));
-        chips::chip(ui, chip, egui::Id::new("title-chip"), label, None, Chip::Accent);
-
-        let buttons = Rect::from_min_max(pos2(rect.right() - 10.0 - BUTTON_H * 3.0, y - BUTTON_H / 2.0), pos2(rect.right() - 10.0, y + BUTTON_H / 2.0));
-        chips::window_buttons(ui, buttons);
-        let speed = self.speed_chip(ui, buttons.left() - 12.0, y);
+    /// The header's tools, in the room left of the page's name: the search (on the Processes and
+    /// Services pages) and, at the right, the update speed. Each is left out when it does not fit.
+    fn tools(&mut self, ui: &mut egui::Ui, room: Rect) {
+        let y = room.center().y;
+        let left = room.left() + 8.0;
+        let speed = self.speed_chip(ui, room.right(), y, left);
         if matches!(self.page, Page::Processes | Page::Services) {
-            let room = speed - 12.0 - (chip.right() + 16.0);
-            let width = SEARCH_W.min(room);
-            if width > 80.0 {
-                let field = Rect::from_min_size(pos2(speed - 12.0 - width, y - chips::CHIP_H / 2.0), vec2(width, chips::CHIP_H));
+            let right = speed.map_or(room.right(), |at| at - 12.0);
+            let width = SEARCH_W.min(right - left);
+            if width > 90.0 {
+                let field = Rect::from_min_size(pos2(right - width, y - SEARCH_H / 2.0), vec2(width, SEARCH_H));
                 self.search(ui, field);
             }
         }
     }
 
-    /// The chip that says how often the numbers update; a click takes the next speed. Returns its
-    /// left edge.
-    fn speed_chip(&mut self, ui: &mut egui::Ui, right: f32, y: f32) -> f32 {
+    /// The chip that says how often the numbers update; a click takes the next speed. Ends at
+    /// `right`; returns its left edge, or None when it would reach past `least`.
+    fn speed_chip(&mut self, ui: &mut egui::Ui, right: f32, y: f32, least: f32) -> Option<f32> {
         let now = self.sampler.interval().as_millis() as u64;
         let at = INTERVALS.iter().position(|(ms, _)| *ms == now).unwrap_or(1);
         let label = format!("Every {}", INTERVALS[at].1);
         let w = chips::chip_width(ui, &label, true, Chip::Soft);
+        if right - w < least {
+            return None;
+        }
         let rect = Rect::from_min_size(pos2(right - w, y - chips::CHIP_H / 2.0), vec2(w, chips::CHIP_H));
         let resp = chips::chip(ui, rect, egui::Id::new("speed"), &label, Some(glyph::REFRESH), Chip::Soft);
         if resp.on_hover_text("How often the numbers update. Click for the next speed.").clicked() {
             let next = INTERVALS[(at + 1) % INTERVALS.len()].0;
             self.sampler.set_interval(Duration::from_millis(next));
         }
-        rect.left()
+        Some(rect.left())
     }
 
-    /// The search field: a soft pill with a magnifier; Esc clears it.
+    /// The search field: Glasshouse's field with a magnifier; Esc clears it.
     fn search(&mut self, ui: &mut egui::Ui, rect: Rect) {
         let c = colors();
-        let (soft, _, line) = chips::soft_colors(c.light);
-        ui.painter().rect(rect, rect.height() / 2.0, soft, line, egui::StrokeKind::Inside);
-        ui.painter().text(pos2(rect.left() + 14.0, rect.center().y), Align2::CENTER_CENTER, glyph::SEARCH, icon_font(11.0), c.muted);
-        let inner = Rect::from_min_max(pos2(rect.left() + 26.0, rect.top() + 4.0), pos2(rect.right() - 10.0, rect.bottom() - 4.0));
+        let id = egui::Id::new("tasks-search");
+        let focused = ui.memory(|m| m.has_focus(id));
+        let round = shape::corner(shape::FIELD);
+        if c.high_contrast {
+            ui.painter().rect(rect, round, c.bg, Stroke::new(1.0_f32, c.text), StrokeKind::Inside);
+        } else {
+            ui.painter().rect_filled(rect, round, c.field);
+            if focused || ui.rect_contains_pointer(rect) {
+                ui.painter().rect_filled(rect, round, c.row_hover);
+            }
+            if focused {
+                ui.painter().rect_stroke(rect, round, Stroke::new(2.0_f32, c.accent_fill), StrokeKind::Inside);
+            }
+        }
+        ui.painter().text(pos2(rect.left() + 16.0, rect.center().y), Align2::CENTER_CENTER, glyph::SEARCH, icon_font(13.0), c.muted);
+        let inner = Rect::from_min_max(pos2(rect.left() + 30.0, rect.top()), pos2(rect.right() - 12.0, rect.bottom()));
+        let hint = if self.page == Page::Services { "Search name, description or PID" } else { "Search name, PID or command line" };
         let edit = egui::TextEdit::singleline(&mut self.query)
-            .hint_text(if self.page == Page::Services { "Search name, description or PID" } else { "Search name, PID or command line" })
+            .id(id)
+            .hint_text(egui::RichText::new(hint).color(c.muted))
             .frame(false)
-            .margin(egui::Margin::symmetric(2, 2))
+            .margin(egui::Margin::ZERO)
             .vertical_align(egui::Align::Center)
-            .font(egui::FontId::proportional(13.0));
+            .font(egui::FontId::proportional(13.0))
+            .desired_width(inner.width());
         let resp = ui.put(inner, edit);
         shellman_ui::widgets::name_field(&resp, if self.page == Page::Services { "Search services" } else { "Search processes" }, Some(&self.query));
-        // Ctrl+F or typing "/" puts the cursor here.
+        // Ctrl+F puts the cursor here.
         if ui.input(|i| i.modifiers.command && i.key_pressed(egui::Key::F)) {
             resp.request_focus();
         }
@@ -285,13 +305,12 @@ impl TasksApp {
         self.st.list.set_query(&self.query);
     }
 
-    /// The rail of pages (shared with the other apps): icon and name each, folded to icons by
-    /// the user or by a narrow window.
-    fn rail(&mut self, ui: &mut egui::Ui, list: &mut Vec<Island>, screen: Rect, top: f32) {
+    /// The rail of pages (shared with the other apps), in `column`: icon and name each, folded to
+    /// icons by the user or by a narrow window.
+    fn rail(&mut self, ui: &mut egui::Ui, list: &mut Vec<Island>, column: Rect, screen: Rect, entries: &[rail::Entry<'static>], mode: rail::Mode) {
         let solid = (!self.panel.composed()).then(|| self.panel.style());
-        let entries = rail_entries();
         let current = RAIL.iter().find(|(item, ..)| *item == RailItem::Page(self.page)).map(|(_, key, ..)| *key);
-        let out = rail::show(ui, list, screen, top, &entries, current, self.rail_mode(screen), solid.as_ref(), RADIUS);
+        let out = rail::show_in(ui, list, column, screen, entries, current, mode, solid.as_ref());
         if let Some(i) = out.clicked {
             match RAIL[i].0 {
                 RailItem::Page(p) => self.page = p,
@@ -331,6 +350,13 @@ fn rail_entries() -> Vec<rail::Entry<'static>> {
         })
         .collect()
 }
+
+/// A box on the sheet: the card fill with a hairline and rounded corners (Glasshouse's boxed
+/// list). High contrast: the window colour with a text-coloured outline.
+pub fn card_box(ui: &egui::Ui, rect: Rect) {
+    shellman_ui::sheet::card(ui, rect);
+}
+
 impl eframe::App for TasksApp {
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
         [0.0; 4]

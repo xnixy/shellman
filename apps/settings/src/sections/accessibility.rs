@@ -13,6 +13,7 @@ use egui::Ui;
 use shellman_core::system::access::{self as a, Access, Change, Flash, Keys, Program, Touch};
 use shellman_ui::look_controls::choice_chips;
 use shellman_ui::theme;
+use shellman_ui::widgets::toggle;
 use std::time::Duration;
 
 /// The page's live state; its worker runs while the page shows.
@@ -67,7 +68,9 @@ pub fn show(ui: &mut Ui, st: &mut State) {
     st.access.live.refresh_every(ui.ctx(), Duration::from_secs(2));
     let Some(s) = st.access.live.shown.clone() else {
         page::group(ui, "", |ui| {
-            ui.label(theme::muted("Reading Windows' accessibility settings..."));
+            page::row_with(ui, |ui| {
+                ui.label(theme::muted("Reading Windows' accessibility settings..."));
+            });
         });
         return;
     };
@@ -77,7 +80,9 @@ pub fn show(ui: &mut Ui, st: &mut State) {
     if let Some(n) = &v.live.notice {
         let n = n.clone();
         page::group(ui, "", |ui| {
-            ui.label(theme::muted(n).size(12.0));
+            page::row_with(ui, |ui| {
+                ui.add(egui::Label::new(theme::muted(n).size(12.5)).wrap());
+            });
         });
     }
     vision(ui, v, &s, host);
@@ -89,11 +94,9 @@ fn vision(ui: &mut Ui, v: &mut AccessView, s: &Access, host: bool) {
     page::group(ui, "Text and colour", |ui| {
         let detail = format!("{}%. shellman's own windows follow it too.", s.look.text_scale);
         winlink::row(ui, "Text size", &detail, "ms-settings:easeofaccess-display", host);
-        ui.add_space(8.0);
         let value = if s.look.color_filter { format!("On: {}", a::filter_label(s.look.color_filter_kind)) } else { "Off".to_owned() };
         let value = format!("{value}. Keyboard shortcut {}", if s.look.color_filter_hotkey { "on" } else { "off" });
         winlink::row(ui, "Colour filters", &value, "ms-settings:easeofaccess-colorfilter", host);
-        ui.add_space(8.0);
         let value = match &s.high_contrast {
             Some(h) if h.on && !h.theme.is_empty() => format!("On: {}", h.theme),
             Some(h) if h.on => "On".to_owned(),
@@ -110,7 +113,6 @@ fn vision(ui: &mut Ui, v: &mut AccessView, s: &Access, host: bool) {
         if let Some(on) = winlink::setting(ui, "Transparency effects", "Windows and surfaces look see-through.", s.transparency, None) {
             change(v, Change::Transparency(on));
         }
-        ui.add_space(8.0);
         match s.animations {
             Some(anim) => {
                 if let Some(on) = winlink::setting(ui, "Animation effects", "Windows and controls move when they open and close.", anim, None) {
@@ -119,14 +121,12 @@ fn vision(ui: &mut Ui, v: &mut AccessView, s: &Access, host: bool) {
             }
             None => winlink::row(ui, "Animation effects", "Windows did not say.", "ms-settings:easeofaccess-visualeffects", host),
         }
-        ui.add_space(8.0);
         winlink::row(ui, "Always show scroll bars", on_off(s.look.scrollbars_always), "ms-settings:easeofaccess-visualeffects", host);
         if let Some(secs) = s.message_seconds {
-            ui.add_space(12.0);
-            page::label(ui, "Dismiss notifications after this amount of time");
             let labels: Vec<String> = a::MESSAGE_SECONDS.iter().map(|s| a::seconds_label(*s)).collect();
             let opts: Vec<(u32, &str)> = a::MESSAGE_SECONDS.iter().copied().zip(labels.iter().map(String::as_str)).collect();
-            if let Some(n) = choice_chips(ui, a::nearest_seconds(secs), &opts, true) {
+            let picked = page::stacked(ui, "Dismiss notifications after this amount of time", "", |ui| choice_chips(ui, a::nearest_seconds(secs), &opts, true));
+            if let Some(n) = picked {
                 change(v, Change::MessageSeconds(n));
             }
         }
@@ -135,15 +135,14 @@ fn vision(ui: &mut Ui, v: &mut AccessView, s: &Access, host: bool) {
         let detail = format!("{}, size {} of 15", a::pointer_style_label(s.look.pointer_style), s.look.pointer_size);
         winlink::row(ui, "Mouse pointer style and size", &detail, "ms-settings:easeofaccess-mousepointer", host);
         if let Some(raw) = s.touch {
-            ui.add_space(8.0);
             let t = Touch::from_raw(raw);
             if let Some(on) = winlink::setting(ui, "Touch indicator", "Show a circle where the screen is touched.", t != Touch::Off, None) {
                 change(v, Change::Touch(if on { Touch::On } else { Touch::Off }));
             }
             if t != Touch::Off {
-                ui.add_space(4.0);
                 let mut larger = t == Touch::Larger;
-                if theme::checkbox(ui, &mut larger, "Make the circle darker and larger").changed() {
+                let title = "Make the circle darker and larger";
+                if page::row(ui, title, "", |ui| toggle(ui, &mut larger, title)).changed() {
                     change(v, Change::Touch(if larger { Touch::Larger } else { Touch::On }));
                 }
             }
@@ -165,19 +164,17 @@ fn vision(ui: &mut Ui, v: &mut AccessView, s: &Access, host: bool) {
             }
             // A preview of the thickness, as Windows shows one.
             let at = v.caret_drag.unwrap_or(at);
-            let (rect, _) = ui.allocate_exact_size(egui::vec2(24.0, 22.0), egui::Sense::hover());
-            ui.painter().rect_filled(egui::Rect::from_min_size(rect.min + egui::vec2(4.0, 0.0), egui::vec2(at as f32, 22.0)), 0.0, theme::colors().text);
-            ui.add_space(8.0);
+            page::row(ui, "Preview", "", |ui| {
+                let (rect, _) = ui.allocate_exact_size(egui::vec2(24.0, 22.0), egui::Sense::hover());
+                ui.painter().rect_filled(egui::Rect::from_min_size(rect.min + egui::vec2(4.0, 0.0), egui::vec2(at as f32, 22.0)), 0.0, theme::colors().text);
+            });
         }
         winlink::row(ui, "Text cursor indicator", "A coloured marker on the text cursor.", "ms-settings:easeofaccess-cursor", host);
     });
     page::group(ui, "Narrator and Magnifier", |ui| {
         program(ui, v, Program::Narrator, s.narrator, "Reads the screen aloud. Windows + Ctrl + Enter turns it on and off; so does Caps Lock + Esc while it runs.");
-        ui.add_space(8.0);
         winlink::row(ui, "Narrator's voice, verbosity and shortcuts", "", "ms-settings:easeofaccess-narrator", host);
-        ui.add_space(12.0);
         program(ui, v, Program::Magnifier, s.magnifier, "Zooms in on part of the screen. Windows + Plus turns it on, Windows + Esc turns it off.");
-        ui.add_space(8.0);
         winlink::row(ui, "Magnifier's zoom, views and shortcuts", "", "ms-settings:easeofaccess-magnifier", host);
     });
 }
@@ -186,18 +183,16 @@ fn hearing(ui: &mut Ui, v: &mut AccessView, s: &Access, host: bool) {
     page::group(ui, "Audio", |ui| {
         winlink::row(ui, "Mono audio", on_off(s.look.mono_audio), "ms-settings:easeofaccess-audio", host);
         if s.sound_sentry.is_some() {
-            ui.add_space(12.0);
-            page::label(ui, "Flash during audio notifications");
             let opts: Vec<(Flash, &str)> = Flash::ALL.iter().map(|f| (*f, f.label())).collect();
-            if let Some(f) = choice_chips(ui, s.flash(), &opts, true) {
-                change(v, Change::Flash(f));
+            let mut flash = s.flash();
+            if page::row(ui, "Flash during audio notifications", "", |ui| page::segmented(ui, &mut flash, &opts)) {
+                change(v, Change::Flash(flash));
             }
         }
     });
     page::group(ui, "Captions", |ui| {
         if s.has_live_captions {
             program(ui, v, Program::LiveCaptions, s.live_captions, "Captions of what any app plays. Windows + Ctrl + L turns them on.");
-            ui.add_space(8.0);
         }
         winlink::row(ui, "Caption style", "", "ms-settings:easeofaccess-closedcaptioning", host);
     });
@@ -210,30 +205,21 @@ fn interaction(ui: &mut Ui, v: &mut AccessView, s: &Access, host: bool) {
             (Keys::Filter, "Filter keys", "Ignore brief or repeated keystrokes.", "Keyboard shortcut: hold the right Shift for eight seconds"),
             (Keys::Toggle, "Toggle keys", "Play a sound when Caps Lock, Num Lock or Scroll Lock is pressed.", "Keyboard shortcut: hold Num Lock for five seconds"),
         ];
-        let mut first = true;
         for (k, title, detail, shortcut) in aids {
             let Some(flags) = s.keys(k) else { continue };
-            if !first {
-                ui.add_space(10.0);
-            }
-            first = false;
             keys_rows(ui, v, k, flags, title, detail, shortcut);
         }
         if let Some(cues) = s.keyboard_cues {
-            ui.add_space(10.0);
             if let Some(on) = winlink::setting(ui, "Underline access keys", "Underline the letter that picks a menu item or button with Alt.", cues, None) {
                 change(v, Change::KeyboardCues(on));
             }
         }
-        ui.add_space(10.0);
         program(ui, v, Program::Keyboard, s.keyboard, "A keyboard on the screen, for a mouse, pen or touch.");
-        ui.add_space(8.0);
         winlink::row(ui, "More keyboard settings", "", "ms-settings:easeofaccess-keyboard", host);
     });
     page::group(ui, "Mouse", |ui| {
         if let Some(flags) = s.mouse_keys {
             keys_rows(ui, v, Keys::Mouse, flags, "Mouse keys", "Move the pointer with the number pad.", "Keyboard shortcut: Left Alt + Left Shift + Num Lock");
-            ui.add_space(8.0);
         }
         winlink::row(ui, "Mouse keys speed", "", "ms-settings:easeofaccess-mouse", host);
     });
@@ -244,9 +230,8 @@ fn keys_rows(ui: &mut Ui, v: &mut AccessView, k: Keys, flags: u32, title: &str, 
     if let Some(on) = winlink::setting(ui, title, detail, flags & a::ON != 0, None) {
         change(v, Change::KeysOn(k, on));
     }
-    ui.add_space(4.0);
     let mut hot = flags & a::HOTKEY != 0;
-    if theme::checkbox(ui, &mut hot, shortcut).changed() {
+    if page::row(ui, shortcut, "", |ui| toggle(ui, &mut hot, shortcut)).changed() {
         change(v, Change::KeysHotkey(k, hot));
     }
 }
@@ -259,25 +244,14 @@ fn program(ui: &mut Ui, v: &mut AccessView, p: Program, running: bool, detail: &
         Program::Keyboard => "On-screen keyboard",
         Program::LiveCaptions => "Live captions",
     };
-    let c = theme::colors();
-    let pressed = theme::trailing(
-        ui,
-        |ui| {
-            if running {
-                ui.label(theme::muted("Running").size(12.5));
-                false
-            } else {
-                ui.add(theme::secondary_button(&format!("Start {}", name.to_lowercase()))).clicked()
-            }
-        },
-        |ui| {
-            ui.vertical(|ui| {
-                ui.spacing_mut().item_spacing.y = 2.0;
-                ui.add(egui::Label::new(egui::RichText::new(name).size(13.0).color(c.text)).wrap());
-                ui.add(egui::Label::new(egui::RichText::new(detail).size(11.5).color(c.muted)).wrap());
-            });
-        },
-    );
+    let pressed = page::row(ui, name, detail, |ui| {
+        if running {
+            ui.label(theme::muted("Running").size(12.5));
+            false
+        } else {
+            ui.add(theme::secondary_button(&format!("Start {}", name.to_lowercase()))).clicked()
+        }
+    });
     if pressed {
         start(v, p);
     }

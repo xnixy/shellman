@@ -33,7 +33,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 /// The island's size.
 pub const W: f32 = 660.0;
 pub const H: f32 = 136.0;
-pub const RADIUS: f32 = 22.0;
+pub const RADIUS: f32 = shellman_ui::theme::shape::ISLAND;
 
 /// What the bar asks for.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -348,9 +348,9 @@ fn chip(ui: &mut egui::Ui, p: &Piece, several: bool, focus: bool) -> Control {
         egui::Color32::TRANSPARENT
     };
     let stroke = egui::Stroke::new(1.0_f32, if selected && !c.high_contrast { c.accent_fill } else { c.hairline });
-    ui.painter().rect(rect, 15.0, fill, stroke, egui::StrokeKind::Inside);
+    ui.painter().rect(rect, theme::shape::pill(rect), fill, stroke, egui::StrokeKind::Inside);
     ui.painter().galley(rect.center() - galley.size() / 2.0, galley, c.text);
-    theme::focus_ring(ui, &resp, rect, 15.0);
+    theme::focus_ring(ui, &resp, rect, rect.height() / 2.0);
     if resp.clicked() {
         super::select(&p.key, p.item);
         resp.request_focus();

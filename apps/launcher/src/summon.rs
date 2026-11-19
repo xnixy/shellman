@@ -34,8 +34,8 @@ pub const WIDTH: f32 = 560.0;
 pub const HEIGHT: f32 = 560.0;
 const CENTRE_FRACTION: f64 = 0.46;
 const MARGIN: f32 = 24.0;
-/// The panel's corner radius in points.
-pub const RADIUS: f32 = 24.0;
+/// The panel's corner radius in points: Glasshouse's dialog.
+pub const RADIUS: f32 = shellman_ui::theme::shape::DIALOG;
 
 /// Whether this process is the resident launcher; if not, the resident one has been signalled
 /// and this process has nothing more to do.

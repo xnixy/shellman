@@ -9,11 +9,13 @@ use crate::layout::{Layout, Tile, HEADER_H};
 use shellman_core::thumbs::Thumbs;
 use shellman_core::winlist::AppWindow;
 use shellman_ui::chips;
-use shellman_ui::theme::{self, colors, glyph, icon_font, semibold_font};
+use shellman_ui::theme::{self, colors, glyph, icon_font, semibold_font, shape};
 use shellman_ui::widgets::draw_text;
 
-const TILE_RADIUS: u8 = 16;
-const PLATE_RADIUS: u8 = 8;
+const TILE_RADIUS: f32 = shape::TILE;
+/// The plate behind a minimized window's icon, in its preview frame: concentric with the tile,
+/// which is `layout::PAD` outside it.
+const PLATE_RADIUS: f32 = TILE_RADIUS - crate::layout::PAD;
 const BIG_ICON: f32 = 56.0;
 
 pub struct View<'a> {
@@ -126,12 +128,12 @@ fn draw_tile(ui: &mut egui::Ui, window: &AppWindow, app: &str, tile: &Tile, sele
     let name = spoken(window, app);
     resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, selected, &name));
     lock_arrows(ui, &resp);
-    pill(ui, tile.outer, TILE_RADIUS as f32, selected, resp.hovered());
-    theme::focus_ring(ui, &resp, tile.outer, TILE_RADIUS as f32);
+    pill(ui, tile.outer, TILE_RADIUS, selected, resp.hovered());
+    theme::focus_ring(ui, &resp, tile.outer, TILE_RADIUS);
     let icon = window.icon_source().and_then(|p| shellman_ui::app_icon::get(ui.ctx(), &p, true, icons));
     if !live {
         // Minimized, or not previewable: the app's icon on a plate.
-        ui.painter().rect_filled(tile.preview, PLATE_RADIUS, c.well);
+        ui.painter().rect_filled(tile.preview, shape::corner(PLATE_RADIUS), c.well);
         if c.high_contrast {
             ui.painter().rect_stroke(tile.preview, PLATE_RADIUS, egui::Stroke::new(1.0_f32, c.muted), egui::StrokeKind::Inside);
         }
@@ -160,8 +162,9 @@ fn draw_tile(ui: &mut egui::Ui, window: &AppWindow, app: &str, tile: &Tile, sele
 }
 
 /// A tile's or the header's island: a card on the glass with its hairline; hovered, a wash;
-/// selected, the accent's wash and outline. In high contrast: the window colour outlined in the
-/// text colour, the selection a thick highlight outline, no washes.
+/// selected, Glasshouse's chosen tile, a deeper field fill (the focus ring marks it further, as
+/// the selection is the focused tile). In high contrast: the window colour outlined in the text
+/// colour, the selection a thick highlight outline, no washes.
 fn pill(ui: &egui::Ui, r: egui::Rect, radius: f32, selected: bool, hovered: bool) {
     let c = colors();
     let radius = radius.round().clamp(0.0, 255.0) as u8;
@@ -173,14 +176,11 @@ fn pill(ui: &egui::Ui, r: egui::Rect, radius: f32, selected: bool, hovered: bool
         return;
     }
     if selected {
-        p.rect_filled(r, radius, c.row_selected);
-        p.rect_stroke(r, radius, egui::Stroke::new(2.0_f32, c.accent_fill), egui::StrokeKind::Inside);
-    } else {
-        if hovered {
-            p.rect_filled(r, radius, c.row_hover);
-        }
-        p.rect_stroke(r, radius, egui::Stroke::new(1.0_f32, c.hairline), egui::StrokeKind::Inside);
+        p.rect_filled(r, radius, c.control_hover);
+    } else if hovered {
+        p.rect_filled(r, radius, c.row_hover);
     }
+    p.rect_stroke(r, radius, egui::Stroke::new(1.0_f32, c.hairline), egui::StrokeKind::Inside);
 }
 
 /// Painted text a screen reader should read: a label node over where it was drawn.

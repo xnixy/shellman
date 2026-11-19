@@ -24,7 +24,7 @@ pub enum Outcome {
     Enter(PathBuf),
     /// Show only names matching this typed filter (`*.log`).
     Filter(String),
-    /// The file exists: ask "Replace it?" in the pill before choosing it.
+    /// The file exists: ask "Replace it?" in the bottom bar before choosing it.
     Replace(PathBuf),
     /// Can't: say why, and keep picking.
     Problem(String),

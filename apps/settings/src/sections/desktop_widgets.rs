@@ -4,15 +4,14 @@
 //! units of its weather. Everything is saved to `desktop.json`, which the shelf follows live.
 //! "Test connection" and "Find" run on worker threads.
 
-use super::desktop::row;
 use crate::page;
 use crate::state::State;
-use egui::{pos2, vec2, Align, CornerRadius, FontId, Rect, Sense, Ui};
+use egui::{pos2, vec2, Align, FontId, Rect, Sense, Ui};
 use shellman_core::calendar::{self, CalError, CalendarRef};
 use shellman_core::credentials;
 use shellman_core::settings::desktop::ShelfOn;
 use shellman_core::weather::{self, Place, Units};
-use shellman_ui::theme::{self, colors};
+use shellman_ui::theme::{self, colors, shape};
 use shellman_ui::widgets::toggle;
 use std::sync::mpsc::{channel, Receiver};
 
@@ -53,12 +52,16 @@ impl WidgetsView {
     }
 }
 
-/// A text box filling the rest of a row. `secret` hides what is typed.
+/// How wide a row's text box is, at most.
+const FIELD_W: f32 = 300.0;
+
+/// A text box for the end of a row, as wide as the row has room for, at most [`FIELD_W`].
+/// `secret` hides what is typed.
 fn field(ui: &mut Ui, id: &str, text: &mut String, hint: &str, secret: bool) -> egui::Response {
     let c = colors();
-    let w = ui.available_width();
+    let w = FIELD_W.min(ui.available_width() * 0.6);
     let (rect, _) = ui.allocate_exact_size(vec2(w, 32.0), Sense::hover());
-    ui.painter().rect_filled(rect, CornerRadius::same(10), c.control);
+    page::field_fill(ui, rect);
     let inner = Rect::from_min_max(pos2(rect.left() + 12.0, rect.top()), pos2(rect.right() - 10.0, rect.bottom()));
     let edit = egui::TextEdit::singleline(text)
         .id(egui::Id::new(("desktop-widgets", id)))
@@ -74,24 +77,12 @@ fn field(ui: &mut Ui, id: &str, text: &mut String, hint: &str, secret: bool) -> 
     resp
 }
 
-/// A pill button in the control colour.
+/// A quiet pill button; true when pressed.
 fn button(ui: &mut Ui, label: &str, enabled: bool) -> bool {
-    let c = colors();
-    let font = FontId::proportional(13.0);
-    let w = ui.fonts(|f| f.layout_no_wrap(label.to_owned(), font.clone(), c.text).size().x) + 28.0;
-    let (rect, _) = ui.allocate_exact_size(vec2(w, 32.0), Sense::hover());
-    let resp = ui.interact(rect, ui.id().with(("btn", label)), if enabled { Sense::click() } else { Sense::hover() });
-    let fill = if enabled && resp.hovered() { c.control_hover } else { c.control };
-    ui.painter().rect_filled(rect, CornerRadius::same(10), fill);
-    let text = if enabled { c.text } else { theme::with_alpha(c.muted, 150) };
-    ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, label, font, text);
-    if enabled && resp.hovered() {
-        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-    }
-    enabled && resp.clicked()
+    ui.add_enabled(enabled, page::row_button(label, false, 32.0)).clicked()
 }
 
-/// A muted line under a group's rows.
+/// A muted line as a row of the group, or in the good or the bad colour for an outcome.
 fn note(ui: &mut Ui, text: &str, good: Option<bool>) {
     let c = colors();
     let color = match good {
@@ -99,32 +90,27 @@ fn note(ui: &mut Ui, text: &str, good: Option<bool>) {
         Some(false) => c.danger_text,
         None => c.muted,
     };
-    ui.add_space(4.0);
-    ui.label(egui::RichText::new(text).size(12.0).color(color));
+    page::row_with(ui, |ui| {
+        ui.add(egui::Label::new(egui::RichText::new(text).size(12.5).color(color)).wrap());
+    });
 }
 
-/// A row with a name, a line under it (or a colour dot before the name), and a switch.
-fn switch_row(ui: &mut Ui, name: &str, about: &str, on: &mut bool) -> bool {
-    switch_row_dot(ui, name, about, None, on)
-}
-
-fn switch_row_dot(ui: &mut Ui, name: &str, about: &str, dot: Option<egui::Color32>, on: &mut bool) -> bool {
-    let c = colors();
-    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 52.0), Sense::hover());
-    ui.painter().hline(rect.x_range(), rect.top(), egui::Stroke::new(1.0_f32, c.hairline));
-    let text = if ui.is_enabled() { c.text } else { theme::with_alpha(c.muted, 150) };
-    let (mut x, name_y) = (rect.left(), if about.is_empty() { rect.center().y } else { rect.center().y - 9.0 });
-    if let Some(d) = dot {
-        ui.painter().circle_filled(pos2(x + 5.0, name_y), 5.0, d);
-        x += 18.0;
-    }
-    ui.painter().text(pos2(x, name_y), egui::Align2::LEFT_CENTER, name, FontId::proportional(14.0), text);
-    if !about.is_empty() {
-        ui.painter().text(pos2(rect.left(), rect.center().y + 10.0), egui::Align2::LEFT_CENTER, about, FontId::proportional(12.0), c.muted);
-    }
-    let right = Rect::from_min_max(pos2(rect.right() - 60.0, rect.top()), rect.max);
-    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(right).layout(egui::Layout::right_to_left(Align::Center)));
-    toggle(&mut child, on, name).changed()
+/// A calendar's row: a colour dot before its name, and a switch.
+fn calendar_row(ui: &mut Ui, name: &str, dot: Option<egui::Color32>, on: &mut bool) -> bool {
+    page::row_with(ui, |ui| {
+        theme::trailing(
+            ui,
+            |ui| toggle(ui, on, name).changed(),
+            |ui| {
+                if let Some(d) = dot {
+                    let (rect, _) = ui.allocate_exact_size(vec2(10.0, 10.0), Sense::hover());
+                    ui.painter().circle_filled(rect.center(), 5.0, d);
+                    ui.add_space(8.0);
+                }
+                ui.add(egui::Label::new(egui::RichText::new(name).size(13.5).color(colors().text)).wrap());
+            },
+        )
+    })
 }
 
 pub fn show(ui: &mut Ui, st: &mut State, clean: bool) {
@@ -133,20 +119,19 @@ pub fn show(ui: &mut Ui, st: &mut State, clean: bool) {
     let mut changed = false;
     page::group(ui, "Widgets", |ui| {
         if clean {
-            ui.label(theme::muted("Clean shows no widgets. Pick Shelf + widgets to use them.").size(12.0));
-            ui.add_space(6.0);
+            note(ui, "Clean shows no widgets. Pick Shelf + widgets to use them.", None);
         }
         ui.add_enabled_ui(!clean, |ui| {
             let w = &mut st.desktop.widgets;
-            changed |= row(ui, "Show widgets", true, |ui| toggle(ui, &mut w.show, "Show widgets").changed());
-            changed |= row(ui, "Show widgets on", false, |ui| {
+            changed |= page::row(ui, "Show widgets", "", |ui| toggle(ui, &mut w.show, "Show widgets")).changed();
+            changed |= page::row(ui, "Show widgets on", "", |ui| {
                 let options = ShelfOn::ALL.map(|o| (o, o.label()));
                 // Its own id: the shelf's row above has the same choices.
                 ui.push_id("widgets-on", |ui| page::segmented(ui, &mut w.on, &options)).inner
             });
             ui.add_enabled_ui(w.show, |ui| {
-                changed |= switch_row(ui, "Today", "Date, weather and next events", &mut w.today);
-                changed |= switch_row(ui, "Now playing", "Media from any app", &mut w.now_playing);
+                changed |= page::row(ui, "Today", "Date, weather and next events", |ui| toggle(ui, &mut w.today, "Today")).changed();
+                changed |= page::row(ui, "Now playing", "Media from any app", |ui| toggle(ui, &mut w.now_playing, "Now playing")).changed();
             });
         });
     });
@@ -169,7 +154,7 @@ pub fn show(ui: &mut Ui, st: &mut State, clean: bool) {
 fn calendar_rows(ui: &mut Ui, st: &mut State, v: &mut WidgetsView) -> bool {
     let mut changed = false;
     let cal = &mut st.desktop.widgets.calendar;
-    changed |= row(ui, "Server", true, |ui| {
+    changed |= page::row(ui, "Server", "", |ui| {
         let r = field(ui, "server", &mut v.server, calendar::client::FASTMAIL, false);
         if r.lost_focus() && v.server.trim() != cal.server {
             cal.server = if v.server.trim().is_empty() { calendar::client::FASTMAIL.to_owned() } else { v.server.trim().to_owned() };
@@ -178,7 +163,7 @@ fn calendar_rows(ui: &mut Ui, st: &mut State, v: &mut WidgetsView) -> bool {
         }
         false
     });
-    changed |= row(ui, "User name", false, |ui| {
+    changed |= page::row(ui, "User name", "", |ui| {
         let r = field(ui, "user", &mut v.username, "you@fastmail.com", false);
         if r.lost_focus() && v.username.trim() != cal.username {
             cal.username = v.username.trim().to_owned();
@@ -187,19 +172,18 @@ fn calendar_rows(ui: &mut Ui, st: &mut State, v: &mut WidgetsView) -> bool {
         false
     });
     let hint = if v.has_password { "Saved (type a new one to replace it)" } else { "App password" };
-    row(ui, "App password", false, |ui| {
+    page::row(ui, "App password", "", |ui| {
         field(ui, "password", &mut v.password, hint, true);
-        false
     });
-    ui.add_space(8.0);
     let mut test = false;
     let mut forget = false;
-    ui.horizontal(|ui| {
-        let ready = v.testing.is_none() && !v.username.trim().is_empty() && (v.has_password || !v.password.is_empty());
-        test = button(ui, if v.testing.is_some() { "Testing…" } else { "Test connection" }, ready);
+    page::row(ui, "Connection", "", |ui| {
+        // Right to left: Test connection is the row's first button.
         if v.has_password && button(ui, "Forget password", v.testing.is_none()) {
             forget = true;
         }
+        let ready = v.testing.is_none() && !v.username.trim().is_empty() && (v.has_password || !v.password.is_empty());
+        test = button(ui, if v.testing.is_some() { "Testing…" } else { "Test connection" }, ready);
     });
     if forget {
         credentials::delete(calendar::CREDENTIAL);
@@ -262,12 +246,13 @@ fn calendar_rows(ui: &mut Ui, st: &mut State, v: &mut WidgetsView) -> bool {
         None => {}
     }
     if !cal.calendars.is_empty() {
-        ui.add_space(8.0);
-        page::label(ui, "Calendars to show");
+        page::row_with(ui, |ui| {
+            ui.label(theme::muted("Calendars to show").size(12.5));
+        });
         let list = cal.calendars.clone();
         for c in &list {
             let mut on = cal.shows(&c.href);
-            if switch_row_dot(ui, &c.name, "", c.color.as_deref().and_then(hex), &mut on) {
+            if calendar_row(ui, &c.name, c.color.as_deref().and_then(hex), &mut on) {
                 cal.hidden.retain(|h| h != &c.href);
                 if !on {
                     cal.hidden.push(c.href.clone());
@@ -289,13 +274,13 @@ fn weather_rows(ui: &mut Ui, st: &mut State, v: &mut WidgetsView) -> bool {
     let mut changed = false;
     let w = &mut st.desktop.widgets.weather;
     let mut find = false;
-    row(ui, "City", true, |ui| {
+    page::row(ui, "City", "", |ui| {
+        // Right to left: the button at the row's end, the box before it.
         let ready = v.finding.is_none() && !v.city.trim().is_empty();
         find |= button(ui, if v.finding.is_some() { "Finding…" } else { "Find" }, ready);
         ui.add_space(8.0);
         let r = field(ui, "city", &mut v.city, "London", false);
         find |= r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) && ready;
-        false
     });
     if find {
         let name = v.city.trim().to_owned();
@@ -320,7 +305,14 @@ fn weather_rows(ui: &mut Ui, st: &mut State, v: &mut WidgetsView) -> bool {
     let mut picked = None;
     for (i, p) in v.found.iter().enumerate() {
         let label = if p.area.is_empty() { p.name.clone() } else { format!("{} · {}", p.name, p.area) };
-        if ui.selectable_label(false, label).clicked() {
+        let clicked = page::item(ui, false, |ui| {
+            let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 22.0), Sense::click());
+            shellman_ui::widgets::draw_text(ui, rect, &label, FontId::proportional(13.5), colors().text, false);
+            theme::speak(&resp, egui::WidgetType::Button, || label.clone());
+            theme::focus_ring(ui, &resp, rect.expand2(vec2(6.0, 4.0)), shape::TILE);
+            resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked()
+        });
+        if clicked {
             picked = Some(i);
         }
     }
@@ -333,7 +325,7 @@ fn weather_rows(ui: &mut Ui, st: &mut State, v: &mut WidgetsView) -> bool {
         v.found.clear();
         changed = true;
     }
-    changed |= row(ui, "Units", false, |ui| {
+    changed |= page::row(ui, "Units", "", |ui| {
         let options = Units::ALL.map(|u| (u, u.label()));
         ui.push_id("weather-units", |ui| page::segmented(ui, &mut w.units, &options)).inner
     });
