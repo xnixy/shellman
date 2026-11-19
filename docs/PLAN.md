@@ -2177,6 +2177,37 @@ would make them open like the panels. The residents' first showing could be done
 at start. Whether a full signature update makes Defender scan unchanged exes again is open; if
 it does, warming again after event 2000 would cover it.
 
+## Glasshouse look (19 Nov)
+
+The shell took the look of the user's Glasshouse GTK theme (`~/Projects/glasshouse`, its
+`src/gtk4/` palette and shapes), kept native to Windows where it counts: Windows' own window
+buttons, its 8 pt window corners, the Windows accent by default. App windows (Settings, Files,
+Task Manager, Terminal, the installer) are one sheet of glass (`crates/ui/src/sheet.rs`): the
+sidebar on the window's glass, a 48 pt header bar with the page's title and tools, the content
+pane a shade denser, boxed lists with rows and hairlines. Shapes live in `theme::shape`. The
+shell's own surfaces (bar, dock, launcher, panels, Alt+Tab, Task View, shelf) stay floating glass
+in the same palette. Window style is Frosted or No transparency (Invisible folded into Frosted).
+
+- Any translucent light fill egui paints on these see-through windows goes through
+  `glass::islands::shows_as`, or it shows as a light grey slab; the theme's colours already are,
+  so never wrap them twice.
+- Blurman has the same look in its own copy of the code (it ships alone in the Store, MIT), on
+  its branch `glasshouse-look`, not yet merged there.
+
+Left to do:
+- Look on Windows at Files, Task Manager, Terminal and the installer (only Settings and Blurman
+  have been seen), and at light mode everywhere.
+- Snap layouts: hovering a window's maximize button should show Windows' layouts. The buttons are
+  drawn by shellman, and `window.rs` answers `HTCLIENT` there, so it needs `HTMAXBUTTON` over the
+  button's rect and the non-client mouse messages handled.
+- Blurman: test the `glasshouse-look` branch, then merge it; its Settings still offers Invisible,
+  Frosted and No transparency, to match shellman's two.
+- New screenshots for the README (shellman and Blurman still show the old look).
+- Motion: open, close and slide panels on the compositor (Windows.UI.Composition animations)
+  instead of egui frames. That needs egui drawn into the glass's own visual tree (a Direct3D 11
+  painter into a composition swapchain) rather than an OpenGL window over it; first measure the
+  dock's 14 ms frame. Plan: a launcher prototype first.
+
 ## Order of work
 
 1. Dock hover previews (done 13 Nov).
