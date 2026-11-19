@@ -61,9 +61,8 @@
 //!
 //! An app window (Settings, Files, Task Manager, Terminal, the installer) attaches with
 //! [`GlassPanel::attach_window`] and then follows the user's Window choice
-//! (`theme::window_style`): Invisible puts each island on glass; Frosted puts one piece of glass
-//! under the whole client area, with the even page tint ([`Style::frosted`]), and the app paints
-//! its islands over it; No transparency (or high contrast, or transparency effects off) makes no
+//! (`theme::window_style`): Frosted puts each island on glass (an app window's one sheet, see
+//! `crate::sheet`); No transparency (or high contrast, or transparency effects off) makes no
 //! backdrop at all and gives the window back Windows' rounded corners and border, and the app
 //! paints a solid page ([`islands::under`]). The panel notices a change on the app's next frame
 //! (or when Windows' settings change) and switches in place: same window, place and size.
@@ -107,7 +106,7 @@ use windows::Win32::Graphics::Gdi::{
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
 use windows::Win32::UI::Shell::{DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass};
 use windows::Win32::UI::WindowsAndMessaging::{
-    DestroyWindow, GetClientRect, GetWindowRect, IsIconic, IsZoomed, IsWindowVisible, KillTimer, PostMessageW,
+    DestroyWindow, GetWindowRect, IsIconic, IsWindowVisible, KillTimer, PostMessageW,
     RegisterWindowMessageW, SetTimer, SetWindowPos, SWP_HIDEWINDOW, SWP_NOACTIVATE, SWP_NOMOVE,
     SWP_NOSIZE, SWP_NOZORDER, SWP_SHOWWINDOW, WM_DPICHANGED, WM_TIMER, WM_DWMCOLORIZATIONCOLORCHANGED, WM_DWMCOMPOSITIONCHANGED,
     WM_NCDESTROY, WM_SETTINGCHANGE, WM_WINDOWPOSCHANGED,
@@ -500,10 +499,9 @@ impl Inner {
         }
     }
 
-    /// An app window: follow the user's Window choice as Windows lets it be now. Switching
-    /// between Invisible and Frosted keeps the backdrop (only its pieces and tint change); to a
-    /// solid window it goes, and Windows' corners and border come back; from one, a backdrop is
-    /// made again. Cheap when nothing changed, so it runs every frame.
+    /// An app window: follow the user's Window choice as Windows lets it be now. To a solid
+    /// window the backdrop goes, and Windows' corners and border come back; from one, a backdrop
+    /// is made again. Cheap when nothing changed, so it runs every frame.
     fn check_look(&self) {
         if !self.window || !self.alive.get() {
             return;
@@ -570,15 +568,7 @@ impl Inner {
             let dpi = GetDpiForWindow(self.target).max(96);
             let scale = dpi as f32 / 96.0;
             let look = self.look.get();
-            let style = match look {
-                // The one backdrop under a Frosted window: the page's even tint, not the islands'.
-                WindowLook::Frosted => {
-                    let own = self.style.get();
-                    let frosted = Style::frosted(&crate::theme::colors(), crate::theme::glass(), own.radius);
-                    Style { tint: frosted.tint, luminosity: frosted.luminosity, ..own }
-                }
-                _ => self.style.get(),
-            };
+            let style = self.style.get();
             let islands = self.islands.borrow();
             // With `Hit::Islands`, the islands in the window's pixels and their radii: the
             // window's region, which is all of it that shows and takes clicks.
@@ -600,37 +590,21 @@ impl Inner {
                             .collect();
                         cut = Some((pieces, extra));
                     }
-                    let placed: Vec<Placed> = if look == WindowLook::Frosted {
-                        // One piece under the whole client area, with Windows 11's corners
-                        // (none while maximized).
-                        let mut cr = RECT::default();
-                        let _ = GetClientRect(self.target, &mut cr);
-                        let radius = if IsZoomed(self.target).as_bool() { 0.0 } else { FROSTED_RADIUS * scale };
-                        let piece = Placed {
-                            left: geo.left + client.0,
-                            top: geo.top + client.1,
-                            size: (cr.right - cr.left, cr.bottom - cr.top),
-                            radius,
-                            opacity: 1.0,
-                            shadow: true,
-                        };
-                        if piece.size.0 > 0 && piece.size.1 > 0 { vec![piece] } else { Vec::new() }
-                    } else {
-                        list.iter()
-                            .map(|i| {
-                                let (e, radius) = islands::to_pixels(i, *points);
-                                Placed {
-                                    left: geo.left + client.0 + e[0],
-                                    top: geo.top + client.1 + e[1],
-                                    size: (e[2] - e[0], e[3] - e[1]),
-                                    radius,
-                                    opacity: i.opacity,
-                                    shadow: i.shadow,
-                                }
-                            })
-                            .filter(|p| p.size.0 > 0 && p.size.1 > 0)
-                            .collect()
-                    };
+                    let placed: Vec<Placed> = list
+                        .iter()
+                        .map(|i| {
+                            let (e, radius) = islands::to_pixels(i, *points);
+                            Placed {
+                                left: geo.left + client.0 + e[0],
+                                top: geo.top + client.1 + e[1],
+                                size: (e[2] - e[0], e[3] - e[1]),
+                                radius,
+                                opacity: i.opacity,
+                                shadow: i.shadow,
+                            }
+                        })
+                        .filter(|p| p.size.0 > 0 && p.size.1 > 0)
+                        .collect();
                     let whole = RECT {
                         left: 0,
                         top: 0,
@@ -784,9 +758,6 @@ fn client_origin(hwnd: HWND, rc: &RECT) -> (i32, i32) {
     }
     (p.x - rc.left, p.y - rc.top)
 }
-
-/// The corner radius of a Frosted window's backdrop, in points: Windows 11's window corners.
-const FROSTED_RADIUS: f32 = 8.0;
 
 /// What Windows draws around the window for `look`: nothing (the panel draws it all), or for a
 /// solid app window its own rounded corners and border.

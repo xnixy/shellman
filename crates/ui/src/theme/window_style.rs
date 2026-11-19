@@ -1,13 +1,14 @@
 //! The user's Window and Theme choices (Settings › Appearance), and what a window actually
 //! looks like once Windows has had its say.
 //!
-//! - **Window**: Invisible (the default: only the islands show, each on real glass), Frosted
-//!   (one acrylic backdrop behind all the islands, with an even tint), or No transparency (a
-//!   solid window).
+//! - **Window**: Frosted (the default: the window is one sheet of real glass, see
+//!   `crate::sheet`) or No transparency (a solid window). Before app windows became one sheet
+//!   there was a third, Invisible (each island on its own glass, the desktop between them); a
+//!   saved "invisible" now reads as Frosted, which draws the same way.
 //! - **Theme**: Windows' light or dark mode, or always light, or always dark.
 //!
 //! The glass amount (`theme::glass`) is a separate dial: how much of the glass shows through its
-//! tint. It applies to Invisible and Frosted alike and has nothing to do in a solid window.
+//! tint. It has nothing to do in a solid window.
 //!
 //! The choices are saved in `appearance.json` and set here by `Appearance::apply`, so every app
 //! that applies the look follows them. App windows read [`window_look`]; shell surfaces (bars,
@@ -20,10 +21,9 @@ use std::sync::atomic::{AtomicU8, Ordering};
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WindowStyle {
-    /// Only the islands show, each on its own piece of glass, the desktop between them.
+    /// The window on real glass. Saved as "frosted"; "invisible", the old default, reads as this.
     #[default]
-    Invisible,
-    /// One acrylic backdrop behind all the islands, evenly tinted.
+    #[serde(alias = "invisible")]
     Frosted,
     /// A solid window: islands on a page in the theme's colour.
     #[serde(rename = "solid")]
@@ -31,11 +31,10 @@ pub enum WindowStyle {
 }
 
 impl WindowStyle {
-    pub const ALL: [WindowStyle; 3] = [WindowStyle::Invisible, WindowStyle::Frosted, WindowStyle::NoTransparency];
+    pub const ALL: [WindowStyle; 2] = [WindowStyle::Frosted, WindowStyle::NoTransparency];
 
     pub fn label(self) -> &'static str {
         match self {
-            WindowStyle::Invisible => "Invisible",
             WindowStyle::Frosted => "Frosted",
             WindowStyle::NoTransparency => "No transparency",
         }
@@ -76,10 +75,8 @@ impl ThemeChoice {
 /// What an app window actually looks like.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum WindowLook {
-    /// Invisible: each island on real glass.
+    /// Frosted: the window's islands (an app window's one sheet) on real glass.
     Glass,
-    /// One acrylic backdrop under the whole window; the islands painted over it.
-    Frosted,
     /// Over Remote Desktop: the islands painted nearly opaque, nothing around them, no blur.
     Bare,
     /// A plain solid window.
@@ -92,9 +89,9 @@ impl WindowLook {
         self == WindowLook::Glass
     }
 
-    /// Whether the window has a composed backdrop at all (one per island, or one for all).
+    /// Whether the window has a composed backdrop at all.
     pub fn composed(self) -> bool {
-        matches!(self, WindowLook::Glass | WindowLook::Frosted)
+        self == WindowLook::Glass
     }
 }
 
@@ -144,8 +141,7 @@ pub fn resolve(chosen: WindowStyle, w: Conditions) -> (WindowLook, Option<Overru
     match chosen {
         WindowStyle::NoTransparency => (WindowLook::Solid, None),
         _ if w.remote => (WindowLook::Bare, Some(Overruled::Remote)),
-        WindowStyle::Invisible => (WindowLook::Glass, None),
-        WindowStyle::Frosted => (WindowLook::Frosted, None),
+        WindowStyle::Frosted => (WindowLook::Glass, None),
     }
 }
 
@@ -168,8 +164,7 @@ pub fn shown(chosen: WindowStyle, w: Conditions) -> Shown {
         Some(why) => why.explain(),
         None if w.forced_solid => "No transparency (SHELLMAN_SOLID is set).",
         None => match chosen {
-            WindowStyle::Invisible => "Only the islands show, each on glass; the desktop shows between them.",
-            WindowStyle::Frosted => "One frosted pane behind all the islands.",
+            WindowStyle::Frosted => "The window is frosted glass: the desktop shows through it, blurred.",
             WindowStyle::NoTransparency => "A solid window: nothing see-through.",
         },
     };
@@ -229,14 +224,14 @@ mod tests {
 
     #[test]
     fn each_style_as_chosen_when_windows_allows() {
-        assert_eq!(resolve(WindowStyle::Invisible, PLAIN), (WindowLook::Glass, None));
-        assert_eq!(resolve(WindowStyle::Frosted, PLAIN), (WindowLook::Frosted, None));
+        assert_eq!(resolve(WindowStyle::Frosted, PLAIN), (WindowLook::Glass, None));
         assert_eq!(resolve(WindowStyle::NoTransparency, PLAIN), (WindowLook::Solid, None));
     }
 
     #[test]
     fn high_contrast_and_transparency_off_force_solid_and_say_why() {
-        for chosen in [WindowStyle::Invisible, WindowStyle::Frosted] {
+        {
+            let chosen = WindowStyle::Frosted;
             let hc = Conditions { high_contrast: true, remote: true, transparency_off: true, ..PLAIN };
             assert_eq!(resolve(chosen, hc), (WindowLook::Solid, Some(Overruled::HighContrast)));
             let off = Conditions { transparency_off: true, ..PLAIN };
@@ -250,7 +245,6 @@ mod tests {
     #[test]
     fn remote_desktop_keeps_islands_without_blur() {
         let remote = Conditions { remote: true, ..PLAIN };
-        assert_eq!(resolve(WindowStyle::Invisible, remote), (WindowLook::Bare, Some(Overruled::Remote)));
         assert_eq!(resolve(WindowStyle::Frosted, remote), (WindowLook::Bare, Some(Overruled::Remote)));
         assert_eq!(resolve(WindowStyle::NoTransparency, remote), (WindowLook::Solid, None));
         // The preview override is the "No transparency" choice.
@@ -261,7 +255,6 @@ mod tests {
     #[test]
     fn only_glass_puts_each_island_on_glass() {
         assert!(WindowLook::Glass.islands_on_glass() && WindowLook::Glass.composed());
-        assert!(!WindowLook::Frosted.islands_on_glass() && WindowLook::Frosted.composed());
         assert!(!WindowLook::Bare.composed() && !WindowLook::Solid.composed());
     }
 
@@ -271,14 +264,13 @@ mod tests {
         let s = shown(WindowStyle::Frosted, hc);
         assert_eq!((s.lit, s.enabled, s.glass_applies), (WindowStyle::NoTransparency, false, false));
         assert!(s.detail.contains("high contrast"), "{}", s.detail);
-        let off = shown(WindowStyle::Invisible, Conditions { transparency_off: true, ..PLAIN });
+        let off = shown(WindowStyle::Frosted, Conditions { transparency_off: true, ..PLAIN });
         assert!(!off.enabled && off.detail.contains("transparency effects"));
         // Over Remote Desktop the choice stays the user's; the line says there is no blur.
         let remote = shown(WindowStyle::Frosted, Conditions { remote: true, ..PLAIN });
         assert_eq!((remote.lit, remote.enabled, remote.glass_applies), (WindowStyle::Frosted, true, false));
         assert!(remote.detail.contains("Remote Desktop"));
-        // As chosen: the glass amount applies to both glass styles only.
-        assert!(shown(WindowStyle::Invisible, PLAIN).glass_applies);
+        // As chosen: the glass amount applies to glass only.
         assert!(shown(WindowStyle::Frosted, PLAIN).glass_applies);
         assert!(!shown(WindowStyle::NoTransparency, PLAIN).glass_applies);
     }
@@ -288,7 +280,8 @@ mod tests {
         assert_eq!(serde_json::to_string(&WindowStyle::NoTransparency).unwrap(), r#""solid""#);
         assert_eq!(serde_json::to_string(&WindowStyle::Frosted).unwrap(), r#""frosted""#);
         assert_eq!(serde_json::to_string(&ThemeChoice::Dark).unwrap(), r#""dark""#);
+        // The old default, Invisible, comes back as Frosted, which now draws the same.
         let back: WindowStyle = serde_json::from_str(r#""invisible""#).unwrap();
-        assert_eq!(back, WindowStyle::Invisible);
+        assert_eq!(back, WindowStyle::Frosted);
     }
 }

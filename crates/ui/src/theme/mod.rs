@@ -398,18 +398,6 @@ pub fn shell(light: bool, accent: Color32, glass: f32) -> Color32 {
 /// How much of the accent the glass tints carry: barely any, Glasshouse's neutrals are untinted.
 pub const NEUTRAL_TINT: f32 = 0.02;
 
-/// The even tint over a Frosted window's one acrylic backdrop, between its islands: the page
-/// colour ([`LIGHT_PAGE`], [`DARK_PAGE`]) with a trace of the accent. Its alpha follows the glass
-/// amount the way [`shell`] does, and at the default amount it is the look's 140 (dark) / 120
-/// (light).
-pub fn frosted_tint(light: bool, accent: Color32, glass: f32) -> Color32 {
-    let shell_alpha = 225.0 + (110.0 - 225.0) * glass.clamp(0.0, 1.0);
-    let at_default = 225.0 + (110.0 - 225.0) * DEFAULT_GLASS;
-    let (page, alpha) = if light { (LIGHT_PAGE, 120.0) } else { (DARK_PAGE, 140.0) };
-    let alpha = (alpha * shell_alpha / at_default).round().clamp(0.0, 255.0) as u8;
-    with_alpha(mix(page, accent, NEUTRAL_TINT), alpha)
-}
-
 /// Opacity (0..=255) of the top bar's tint: `solid` with no glass, `clear` with all of it.
 fn bar_alpha(solid: f32, clear: f32, glass: f32) -> u8 {
     ((solid + (clear - solid) * glass) * 255.0).round() as u8
@@ -465,18 +453,6 @@ pub fn set_accent(ctx: &egui::Context, c: Color32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn frosted_tint_is_the_look_at_the_default_amount_and_follows_the_dial() {
-        let accent = Color32::from_rgb(0, 103, 192);
-        assert_eq!(frosted_tint(false, accent, DEFAULT_GLASS).a(), 140);
-        assert_eq!(frosted_tint(true, accent, DEFAULT_GLASS).a(), 120);
-        // Clearer glass, a fainter tint; more solid, a stronger one.
-        assert!(frosted_tint(false, accent, 1.0).a() < 140 && frosted_tint(false, accent, 0.0).a() > 140);
-        let [r, g, b, _] = frosted_tint(false, accent, 0.5).to_srgba_unmultiplied();
-        let page = mix(DARK_PAGE, accent, NEUTRAL_TINT);
-        assert!(r.abs_diff(page.r()) <= 1 && g.abs_diff(page.g()) <= 1 && b.abs_diff(page.b()) <= 1);
-    }
 
     #[test]
     fn text_on_accent_contrasts() {

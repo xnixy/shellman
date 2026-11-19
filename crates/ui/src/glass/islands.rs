@@ -86,9 +86,9 @@ pub fn shows_as(css: egui::Color32) -> egui::Color32 {
 
 /// The page under the islands of a solid app window (No transparency, high contrast,
 /// transparency effects off, `SHELLMAN_SOLID`): the whole client area in the page colour, so the
-/// window is plainly solid rather than islands over the desktop. `None` otherwise, Remote Desktop
-/// and Frosted included (the window is invisible around its islands, or the frosted backdrop is
-/// the page). Paint it first, under [`solid_shapes`].
+/// window is plainly solid rather than glass. `None` otherwise, Remote Desktop and Frosted
+/// included (the window is invisible around its islands, or its islands are glass). Paint it
+/// first, under [`solid_shapes`].
 pub fn solid_window(screen: egui::Rect) -> Option<egui::Shape> {
     (theme::window_style::window_look() == theme::window_style::WindowLook::Solid)
         .then(|| egui::Shape::rect_filled(screen, 0.0, theme::colors().bg))
@@ -111,7 +111,6 @@ pub fn solid_shapes(islands: &[Island], style: &Style) -> Vec<egui::Shape> {
     // High contrast: the window colour, opaque, outlined in the text colour. A solid window
     // (`SHELLMAN_SOLID`): opaque cards on the page colour (see [`solid_window`]). Over Remote
     // Desktop: the island look kept, each nearly opaque with its hairline, nothing around them.
-    // Frosted: the islands float on the window's one frosted backdrop, a translucent card each.
     use theme::window_style::{window_look, WindowLook};
     let c = theme::colors();
     let look = window_look();
@@ -121,8 +120,6 @@ pub fn solid_shapes(islands: &[Island], style: &Style) -> Vec<egui::Shape> {
         (theme::with_alpha(c.card, 255), egui::Stroke::new(1.0_f32, c.hairline))
     } else if theme::env::remote_session() {
         (theme::with_alpha(c.card, 242), egui::Stroke::new(1.0_f32, c.hairline))
-    } else if look == WindowLook::Frosted {
-        (c.card, egui::Stroke::new(1.0_f32, c.hairline))
     } else {
         (frame.fill, frame.stroke)
     };

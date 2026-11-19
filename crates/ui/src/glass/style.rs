@@ -125,12 +125,6 @@ impl Style {
         Self::tinted(c, theme::shell(c.light, c.accent, glass), radius)
     }
 
-    /// The one backdrop of a Frosted window: the same acrylic under the even page tint
-    /// (`theme::frosted_tint`), which the islands are painted over.
-    pub fn frosted(c: &Colors, glass: f32, radius: f32) -> Self {
-        Self::tinted(c, theme::frosted_tint(c.light, c.accent, glass), radius)
-    }
-
     fn tinted(c: &Colors, shell: Color32, radius: f32) -> Self {
         let (tint, extra) = as_window_shows(shell);
         let mut luminosity = Luminosity::acrylic(c.light);

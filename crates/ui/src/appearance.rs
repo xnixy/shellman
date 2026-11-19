@@ -238,7 +238,7 @@ mod tests {
     #[test]
     fn window_and_theme_default_and_round_trip() {
         let old: Appearance = serde_json::from_str(r#"{"glass":0.5}"#).unwrap();
-        assert_eq!((old.window, old.theme), (WindowStyle::Invisible, ThemeChoice::Windows));
+        assert_eq!((old.window, old.theme), (WindowStyle::Frosted, ThemeChoice::Windows));
         let look = Appearance { window: WindowStyle::NoTransparency, theme: ThemeChoice::Light, ..Appearance::default() };
         let json = serde_json::to_string(&look).unwrap();
         assert!(json.contains(r#""window":"solid""#) && json.contains(r#""theme":"light""#), "{json}");
