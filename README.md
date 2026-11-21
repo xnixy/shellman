@@ -1,9 +1,10 @@
 # shellman
 
 I wanted Windows 11 to look and feel the way I want, so I'm replacing the shell. shellman takes
-the place of `explorer.exe`: its own top bar, dock, desktop, launcher, Alt+Tab, file manager,
-terminal, settings and task manager. Everything is drawn as floating islands of blurred glass in
-one accent colour. It's written in Rust.
+the place of `explorer.exe`: its own top bar, dock, desktop, launcher, Alt+Tab, Task View,
+control centre, file manager, terminal, settings and task manager. The look comes from my
+Glasshouse GTK theme: app windows are one sheet of frosted glass with a sidebar and boxed rows,
+the bar, dock and panels float as islands of glass, all in one accent colour. It's written in Rust.
 
 I use it every day as my real shell. It's still a personal project and a lot is unfinished, so
 expect rough edges. What's done, what's not and why things work the way they do is in
@@ -13,15 +14,15 @@ expect rough edges. What's done, what's not and why things work the way they do 
 
 ### Files
 
-Tabs, a sidebar that folds down to icons, tags, and glass context menus.
+Tabs, a sidebar that folds down to icons, thumbnails, tags, and glass context menus.
 
-![Files with an item's context menu](docs/screenshots/files.png)
+![Files in a folder, in grid view](docs/screenshots/files.png)
 
 ### Terminal
 
-Tabs, profiles, find, selection and mouse support, on a bundled ConPTY.
+Tabs, split panes, profiles, find, selection and mouse support, on a bundled ConPTY.
 
-![Terminal with the find bar open](docs/screenshots/terminal.png)
+![Terminal split in two, with the find bar open](docs/screenshots/terminal.png)
 
 ### Dock
 
@@ -43,15 +44,31 @@ notifications under the bell.
 |---|---|
 | ![Calendar panel](docs/screenshots/calendar.png) | ![Notifications panel](docs/screenshots/notifications.png) |
 
+### Control centre
+
+Wi-Fi, Bluetooth, the sound output and microphone, brightness for each monitor, and lock, sleep,
+restart, shut down and sign out, from the top bar's right end.
+
+![Control centre](docs/screenshots/control-centre.png)
+
 ### Desktop widgets
 
 Today (calendar and weather) and Now playing, under the tray.
 
 ![The Today widget under the tray](docs/screenshots/widgets.png)
 
+### Task Manager
+
+Processes, performance graphs, services and startup apps.
+
+![Task Manager, Performance page](docs/screenshots/task-manager.png)
+
 ### Settings
 
-![Settings, Terminal page](docs/screenshots/settings.png)
+Appearance, display, sound, default apps, Windows Update, startup apps, accessibility, privacy,
+and the dock, top bar, launcher and terminal.
+
+![Settings, Appearance page](docs/screenshots/settings.png)
 
 ## Before you try it
 
@@ -159,10 +176,11 @@ GitHub with `--publish`. The signing key is in my password manager, not in the r
 | `apps/session` | The shell process Windows starts at sign-in. Starts and watches over everything else |
 | `apps/bar` | Top bar, tray, dock, notifications, calendar |
 | `apps/desktop`, `apps/shelf` | Wallpaper, the file shelf and the widgets |
-| `apps/launcher`, `apps/switcher` | App launcher and Alt+Tab |
+| `apps/launcher`, `apps/switcher`, `apps/taskview` | App launcher, Alt+Tab, and Task View (Win+Tab) |
 | `apps/files`, `apps/pickhook` | File manager, and the hook that gives other apps its Open and Save dialogs |
 | `apps/terminal` | Terminal |
-| `apps/settings`, `apps/control`, `apps/tasks` | Settings, quick controls, task manager |
+| `apps/settings`, `apps/control`, `apps/tasks` | Settings, the control centre, task manager |
+| `apps/elevate` | The administrator helper: the few things that need admin rights, behind a UAC prompt |
 | `apps/setup`, `apps/installer` | Install, update and uninstall, and the one-file setup |
 | `apps/update`, `crates/update` | Automatic updates: finding, checking and installing a new release |
 | `xtask` | The release command (`cargo xtask release`) |

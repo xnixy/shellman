@@ -2191,18 +2191,34 @@ in the same palette. Window style is Frosted or No transparency (Invisible folde
 - Any translucent light fill egui paints on these see-through windows goes through
   `glass::islands::shows_as`, or it shows as a light grey slab; the theme's colours already are,
   so never wrap them twice.
-- Blurman has the same look in its own copy of the code (it ships alone in the Store, MIT), on
-  its branch `glasshouse-look`, not yet merged there.
+- Blurman got the same look in its own copy of the egui code (it ships alone in the Store, MIT),
+  on its branch `glasshouse-look`. That evening Blurman's `main` dropped egui for a native WinUI 3
+  window (Mica, Mica Alt or Acrylic) and shipped 0.10.0, so that branch is not merged and will
+  not be. Whether Blurman's WinUI window should take the Glasshouse look is open.
 
 Left to do:
-- Look on Windows at Files, Task Manager, Terminal and the installer (only Settings and Blurman
-  have been seen), and at light mode everywhere.
+- Look on Windows at the installer, and at light mode everywhere (Settings, Files, Task Manager,
+  Terminal, the launcher and the control centre were seen in dark on 20 Nov, as the real shell).
+- Settings › Appearance › Glass amount still says "in Invisible and Frosted windows"; Invisible
+  is gone.
+- Terminal: cargo's progress bar left the end of an older, longer line behind ("Finished ... in
+  1m 09sminal(bin)"), so a line rewritten after `\r` may not clear what it does not cover; check
+  against Windows Terminal before calling it a bug.
+- Win+Shift+S and Print Screen open nothing while shellman is the shell (Explorer handled them);
+  Snipping Tool itself opens through its alias (`SnippingTool.exe`); PowerShell's
+  `Start-Process shell:AppsFolder\<id>` gave "Class not registered" (the dock's pins, which open
+  the same kind of path, were not tried).
 - Snap layouts: hovering a window's maximize button should show Windows' layouts. The buttons are
   drawn by shellman, and `window.rs` answers `HTCLIENT` there, so it needs `HTMAXBUTTON` over the
   button's rect and the non-client mouse messages handled.
-- Blurman: test the `glasshouse-look` branch, then merge it; its Settings still offers Invisible,
-  Frosted and No transparency, to match shellman's two.
-- New screenshots for the README (shellman and Blurman still show the old look).
+- README screenshots: Files, Terminal, Settings, Task Manager and the control centre are new (20
+  Nov, test copies with `SHELLMAN_INSTANCE`/`SHELLMAN_CONFIG_DIR` over a plain gradient, made-up
+  files). The dock, top bar panels and widgets still show the old look, since a new shot would
+  show real events, notifications and weather. The launcher has none: it lists the installed apps
+  of whoever takes it. Alt+Tab and Task View have none: they preview every open window on every
+  monitor, so a shot needs a session with only staged windows open (Alt+Tab's test copy shows
+  with `SHELLMAN_TEST_SUMMON=1`, Task View's with `SHELLMAN_TEST_AT`). Check each preview at full
+  size before publishing: a 4K window shrunk into a Task View tile stays readable.
 - Motion: open, close and slide panels on the compositor (Windows.UI.Composition animations)
   instead of egui frames. That needs egui drawn into the glass's own visual tree (a Direct3D 11
   painter into a composition swapchain) rather than an OpenGL window over it; first measure the
